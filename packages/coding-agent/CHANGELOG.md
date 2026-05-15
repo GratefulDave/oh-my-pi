@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed OpenRouter image-gen `HTTP-Referer` to point at the project homepage `https://omp.sh` instead of the outdated GitHub repo URL ([#1102](https://github.com/can1357/oh-my-pi/issues/1102))
+
 ## [15.1.0] - 2026-05-15
 ### Breaking Changes
 
