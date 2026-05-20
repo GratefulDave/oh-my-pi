@@ -9,7 +9,7 @@ pub fn supports(subcommand: Option<&str>) -> bool {
 }
 
 pub fn supports_program(program: &str, subcommand: Option<&str>) -> bool {
-	matches!(program, "ruff" | "mypy" | "rubocop")
+	matches!(program, "ruff" | "mypy" | "rubocop" | "pyright" | "basedpyright")
 		|| matches!(
 			subcommand,
 			None | Some("check" | "lint" | "run" | "format" | "fmt" | "typecheck")
@@ -58,6 +58,7 @@ fn is_lint_noise(program: &str, line: &str, exit_code: i32) -> bool {
 		|| matches!(program, "eslint" | "biome") && lower.starts_with("warning: react version")
 		|| matches!(program, "ruff") && lower.starts_with("all checks passed")
 		|| matches!(program, "mypy") && lower.starts_with("success: no issues found")
+		|| matches!(program, "pyright" | "basedpyright") && lower.starts_with("0 errors, 0 warnings")
 		|| matches!(program, "rubocop")
 			&& (lower.starts_with("inspecting ")
 				|| lower == "offenses:"
@@ -261,5 +262,12 @@ mod tests {
 		assert!(out.contains("src/app.ts (2 diagnostics)"));
 		assert!(out.contains("TS2322"));
 		assert!(out.contains("TS7006"));
+	}
+
+	#[test]
+	fn direct_basedpyright_success_noise_is_stripped() {
+		assert!(supports_program("basedpyright", None));
+		let out = condense_lint_output("basedpyright", "0 errors, 0 warnings, 0 notes\n", 0);
+		assert_eq!(out, "");
 	}
 }

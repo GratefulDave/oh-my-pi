@@ -226,6 +226,17 @@ fn is_progress_line(line: &str) -> bool {
 		|| line.contains("Extracting")
 		|| line.contains("Waiting")
 		|| line.contains("Verifying Checksum")
+		|| line.starts_with("Attaching to ")
+		|| line.starts_with("Gracefully stopping")
+		|| is_compose_container_status_line(line)
+}
+
+fn is_compose_container_status_line(line: &str) -> bool {
+	let line = line.trim_start();
+	line.starts_with("Container ")
+		&& ["Creating", "Created", "Starting", "Started", "Waiting", "Healthy", "Running"]
+			.iter()
+			.any(|status| line.contains(status))
 }
 
 fn drop_repeated_blank_lines(input: &str) -> String {
@@ -302,6 +313,16 @@ mod tests {
 		assert!(out.contains("20 rows"));
 		assert!(out.contains("svc-0"));
 		assert!(out.contains("… 8 more rows"));
+	}
+
+	#[test]
+	fn strips_compose_up_progress_lines() {
+		let input =
+			"Attaching to api-1, worker-1\n Container api-1  Creating\n Container api-1  Created\napi-1  | ready\n";
+		let out = compact_build_or_progress(input);
+		assert!(!out.contains("Attaching to"));
+		assert!(!out.contains("Container api-1  Creating"));
+		assert!(out.contains("api-1  | ready"));
 	}
 
 	#[test]
