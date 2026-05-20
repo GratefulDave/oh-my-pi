@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { getBundledModel } from "@oh-my-pi/pi-ai";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import type { Skill } from "@oh-my-pi/pi-coding-agent/sdk";
+import type { Skill, WorkspaceTree } from "@oh-my-pi/pi-coding-agent/sdk";
 import { createAgentSession } from "@oh-my-pi/pi-coding-agent/sdk";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { cleanupTempHome } from "./helpers/temp-home-cleanup";
@@ -18,6 +19,15 @@ function createIsolatedSkillsSettings(): Settings {
 		"skills.enablePiProject": true,
 	});
 }
+
+const emptyWorkspaceTree = (cwd: string): WorkspaceTree => ({
+	rootPath: cwd,
+	rendered: ".",
+	truncated: false,
+	totalLines: 1,
+	agentsMdFiles: [],
+});
+
 
 describe("createAgentSession skills option", () => {
 	let tempDir: string;
@@ -69,13 +79,27 @@ Loaded via symbolic link.
 
 	afterEach(cleanupTempHome(() => ({ tempDir, tempHomeDir, originalHome })));
 
-	it("should discover skills by default and expose them on session.skills", async () => {
-		const { session } = await createAgentSession({
+	function createSessionOptions(overrides: Partial<Parameters<typeof createAgentSession>[0]> = {}) {
+		return {
 			cwd: tempDir,
 			agentDir: tempDir,
 			sessionManager: SessionManager.inMemory(),
 			settings: createIsolatedSkillsSettings(),
-		});
+			model: getBundledModel("openai", "gpt-4o-mini"),
+			disableExtensionDiscovery: true,
+			contextFiles: [],
+			promptTemplates: [],
+			slashCommands: [],
+			workspaceTree: emptyWorkspaceTree(tempDir),
+			enableMCP: false,
+			enableLsp: false,
+			...overrides,
+		};
+	}
+
+
+	it("should discover skills by default and expose them on session.skills", async () => {
+		const { session } = await createAgentSession(createSessionOptions());
 
 		// Skills should be discovered and exposed on the session
 		expect(session.skills.length).toBeGreaterThan(0);
@@ -83,12 +107,7 @@ Loaded via symbolic link.
 	});
 
 	it("should discover skills when skill directory is a symlink", async () => {
-		const { session } = await createAgentSession({
-			cwd: tempDir,
-			agentDir: tempDir,
-			sessionManager: SessionManager.inMemory(),
-			settings: createIsolatedSkillsSettings(),
-		});
+		const { session } = await createAgentSession(createSessionOptions());
 
 		expect(session.skills.some((s: Skill) => s.name === "symlinked-skill")).toBe(true);
 	});
@@ -98,23 +117,16 @@ Loaded via symbolic link.
 		fs.rmSync(path.join(userAgentDir, "skills"), { recursive: true, force: true });
 		fs.writeFileSync(path.join(userAgentDir, "placeholder.txt"), "placeholder");
 
-		const { session } = await createAgentSession({
-			cwd: tempDir,
-			agentDir: tempDir,
-			sessionManager: SessionManager.inMemory(),
-			settings: createIsolatedSkillsSettings(),
-		});
+		const { session } = await createAgentSession(createSessionOptions());
 
 		expect(session.skills.some((s: Skill) => s.name === "test-skill")).toBe(true);
 	});
 	it("should have empty skills when options.skills is empty array (--no-skills)", async () => {
-		const { session } = await createAgentSession({
-			cwd: tempDir,
-			agentDir: tempDir,
-			sessionManager: SessionManager.inMemory(),
-			skills: [], // Explicitly empty - like --no-skills
-			settings: createIsolatedSkillsSettings(),
-		});
+		const { session } = await createAgentSession(
+			createSessionOptions({
+				skills: [], // Explicitly empty - like --no-skills
+			}),
+		);
 
 		// session.skills should be empty
 		expect(session.skills).toEqual([]);
@@ -131,13 +143,11 @@ Loaded via symbolic link.
 			source: "custom" as const,
 		};
 
-		const { session } = await createAgentSession({
-			cwd: tempDir,
-			agentDir: tempDir,
-			sessionManager: SessionManager.inMemory(),
-			skills: [customSkill],
-			settings: createIsolatedSkillsSettings(),
-		});
+		const { session } = await createAgentSession(
+			createSessionOptions({
+				skills: [customSkill],
+			}),
+		);
 
 		// session.skills should contain only the provided skill
 		expect(session.skills).toEqual([customSkill]);
