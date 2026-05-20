@@ -1,5 +1,7 @@
 //! Package manager output filters.
 
+use std::collections::HashSet;
+
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
 const PACKAGE_TREE_HEAD_LINES: usize = 80;
 
@@ -42,14 +44,18 @@ pub fn supports(subcommand: Option<&str>) -> bool {
 
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	let cleaned = primitives::strip_ansi(input);
-	let stripped = strip_package_noise(ctx.program, &cleaned, exit_code);
-	let deduped = primitives::dedup_consecutive_lines(&stripped);
-	let text = if contains_audit_or_security_summary(&deduped) {
-		deduped
-	} else if exit_code == 0 && (is_package_tree_command(ctx) || is_package_export_command(ctx)) {
-		compact_package_tree_output(&deduped)
+	let text = if exit_code == 0 && is_package_lock_command(ctx) {
+		compact_package_lock_output(ctx, &cleaned)
 	} else {
-		primitives::head_tail_lines(&deduped, 120, 80)
+		let stripped = strip_package_noise(ctx, &cleaned, exit_code);
+		let deduped = primitives::dedup_consecutive_lines(&stripped);
+		if contains_audit_or_security_summary(&deduped) {
+			deduped
+		} else if exit_code == 0 && (is_package_tree_command(ctx) || is_package_export_command(ctx)) {
+			compact_package_tree_output(&deduped)
+		} else {
+			primitives::head_tail_lines(&deduped, 120, 80)
+		}
 	};
 
 	if text == input {
@@ -59,7 +65,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 	}
 }
 
-fn strip_package_noise(program: &str, input: &str, exit_code: i32) -> String {
+fn strip_package_noise(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
 	let mut out = String::new();
 	let mut previous_blank = false;
 	for line in input.lines() {
@@ -73,7 +79,7 @@ fn strip_package_noise(program: &str, input: &str, exit_code: i32) -> String {
 		}
 		previous_blank = false;
 
-		if is_noise_line(program, trimmed, exit_code) {
+		if is_noise_line(ctx, trimmed, exit_code) {
 			continue;
 		}
 		out.push_str(line.trim_end());
@@ -112,12 +118,19 @@ fn is_package_export_command(ctx: &MinimizerCtx<'_>) -> bool {
 	}
 }
 
+fn is_package_lock_command(ctx: &MinimizerCtx<'_>) -> bool {
+	matches!((ctx.program, ctx.subcommand), ("uv" | "poetry", Some("lock")))
+}
+
 fn command_contains_any(command: &str, words: &[&str]) -> bool {
 	command.split_whitespace().any(|part| words.contains(&part))
 }
 
 fn compact_package_tree_output(input: &str) -> String {
 	if let Some(summary) = compact_package_tree_json_output(input) {
+		return summary;
+	}
+	if let Some(summary) = compact_package_tree_ndjson_output(input) {
 		return summary;
 	}
 	let lines: Vec<&str> = input
@@ -144,7 +157,27 @@ fn compact_package_tree_output(input: &str) -> String {
 fn compact_package_tree_json_output(input: &str) -> Option<String> {
 	let value: serde_json::Value = serde_json::from_str(input).ok()?;
 	let mut rows = Vec::new();
-	collect_package_tree_json_rows(&value, &mut rows);
+	let mut seen = HashSet::new();
+	collect_package_tree_json_rows(&value, &mut rows, &mut seen);
+	summarize_package_rows(rows)
+}
+
+fn compact_package_tree_ndjson_output(input: &str) -> Option<String> {
+	let mut rows = Vec::new();
+	let mut seen = HashSet::new();
+	for line in input.lines().map(str::trim).filter(|line| !line.is_empty()) {
+		let value: serde_json::Value = serde_json::from_str(line).ok()?;
+		collect_package_tree_json_rows(&value, &mut rows, &mut seen);
+		if let Some(data) = value.get("data").and_then(serde_json::Value::as_str) {
+			for row in data.lines().map(str::trim_end).filter(|row| !row.trim().is_empty()) {
+				push_unique_row(&mut rows, &mut seen, row.to_string());
+			}
+		}
+	}
+	summarize_package_rows(rows)
+}
+
+fn summarize_package_rows(rows: Vec<String>) -> Option<String> {
 	if rows.is_empty() {
 		return None;
 	}
@@ -162,51 +195,68 @@ fn compact_package_tree_json_output(input: &str) -> Option<String> {
 	Some(out)
 }
 
-fn collect_package_tree_json_rows(value: &serde_json::Value, rows: &mut Vec<String>) {
+fn collect_package_tree_json_rows(
+	value: &serde_json::Value,
+	rows: &mut Vec<String>,
+	seen: &mut HashSet<String>,
+) {
 	match value {
 		serde_json::Value::Object(map) => {
 			if let Some(name) = map.get("name").and_then(serde_json::Value::as_str) {
 				let version = map.get("version").and_then(serde_json::Value::as_str).unwrap_or("");
-				rows.push(if version.is_empty() {
-					name.to_string()
-				} else {
-					format!("{name} {version}")
-				});
+				push_unique_row(
+					rows,
+					seen,
+					if version.is_empty() {
+						name.to_string()
+					} else {
+						format!("{name} {version}")
+					},
+				);
 			}
 			if let Some(dependencies) = map.get("dependencies").and_then(serde_json::Value::as_object) {
 				for (name, child) in dependencies {
-					push_json_dependency_row(rows, name, child);
-					collect_package_tree_json_rows(child, rows);
+					push_json_dependency_row(rows, seen, name, child);
 				}
 			}
-			if let Some(items) = map.get("packages").and_then(serde_json::Value::as_array) {
-				for item in items {
-					collect_package_tree_json_rows(item, rows);
+			for value in map.values() {
+				if value.is_array() || value.is_object() {
+					collect_package_tree_json_rows(value, rows, seen);
 				}
 			}
 		},
 		serde_json::Value::Array(items) => {
 			for item in items {
-				collect_package_tree_json_rows(item, rows);
+				collect_package_tree_json_rows(item, rows, seen);
 			}
 		},
 		_ => {},
 	}
 }
 
-fn push_json_dependency_row(rows: &mut Vec<String>, name: &str, child: &serde_json::Value) {
+fn push_json_dependency_row(rows: &mut Vec<String>, seen: &mut HashSet<String>, name: &str, child: &serde_json::Value) {
 	let version = child
 		.get("version")
 		.and_then(serde_json::Value::as_str)
 		.unwrap_or("");
-	rows.push(if version.is_empty() {
-		name.to_string()
-	} else {
-		format!("{name} {version}")
-	});
+	push_unique_row(
+		rows,
+		seen,
+		if version.is_empty() {
+			name.to_string()
+		} else {
+			format!("{name} {version}")
+		},
+	);
 }
 
-fn is_noise_line(program: &str, line: &str, exit_code: i32) -> bool {
+fn push_unique_row(rows: &mut Vec<String>, seen: &mut HashSet<String>, row: String) {
+	if seen.insert(row.clone()) {
+		rows.push(row);
+	}
+}
+
+fn is_noise_line(ctx: &MinimizerCtx<'_>, line: &str, exit_code: i32) -> bool {
 	if is_audit_or_security_summary(line) {
 		return false;
 	}
@@ -215,10 +265,51 @@ fn is_noise_line(program: &str, line: &str, exit_code: i32) -> bool {
 	}
 
 	let lower = line.to_ascii_lowercase();
+	if is_package_lock_command(ctx) && is_lock_summary_line(&lower) {
+		return false;
+	}
 	is_generic_progress(line, &lower)
-		|| is_js_package_noise(program, line, &lower)
-		|| is_python_package_noise(program, line, &lower)
-		|| is_ruby_php_brew_noise(program, line, &lower)
+		|| is_js_package_noise(ctx.program, line, &lower)
+		|| is_python_package_noise(ctx.program, line, &lower)
+		|| is_ruby_php_brew_noise(ctx.program, line, &lower)
+}
+
+fn compact_package_lock_output(ctx: &MinimizerCtx<'_>, input: &str) -> String {
+	let mut out = String::new();
+	for line in input.lines() {
+		let trimmed = line.trim();
+		if trimmed.is_empty() {
+			continue;
+		}
+		let lower = trimmed.to_ascii_lowercase();
+		if is_lock_summary_line(&lower) {
+			out.push_str(trimmed);
+			out.push('\n');
+			continue;
+		}
+		if is_generic_progress(trimmed, &lower)
+			|| is_python_package_noise(ctx.program, trimmed, &lower)
+			|| is_js_package_noise(ctx.program, trimmed, &lower)
+		{
+			continue;
+		}
+		out.push_str(trimmed);
+		out.push('\n');
+	}
+	if out.trim().is_empty() {
+		primitives::head_tail_lines(input, 40, 20)
+	} else {
+		primitives::head_tail_lines(&out, 40, 20)
+	}
+}
+
+fn is_lock_summary_line(lower: &str) -> bool {
+	lower.starts_with("writing lock file")
+		|| lower.starts_with("updated lockfile")
+		|| lower.starts_with("resolved ")
+		|| lower.starts_with("installing dependencies from lock file")
+		|| lower == "no changes."
+		|| lower.starts_with("no dependencies to install or update")
 }
 
 fn is_generic_progress(line: &str, lower: &str) -> bool {
@@ -323,9 +414,10 @@ mod tests {
 
 	#[test]
 	fn strips_progress_but_keeps_package_errors() {
-		let input = "Resolving: total 10\nDownloading: left-pad\nERROR failed to install \
-		             left-pad\nfound 1 vulnerability\n";
-		let out = strip_package_noise("npm", input, 1);
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("npm", Some("install"), "npm install", &cfg);
+		let input = "Resolving: total 10\nDownloading: left-pad\nERROR failed to install left-pad\nfound 1 vulnerability\n";
+		let out = strip_package_noise(&ctx, input, 1);
 		assert!(!out.contains("Resolving:"));
 		assert!(!out.contains("Downloading:"));
 		assert!(out.contains("ERROR failed"));
@@ -334,9 +426,11 @@ mod tests {
 
 	#[test]
 	fn preserves_successful_install_audit_and_security_summaries() {
-		let input = "Resolving: total 10\nadded 3 packages, and audited 4 packages in 1s\n2 \
-		             packages are looking for funding\nfound 0 vulnerabilities\n";
-		let out = strip_package_noise("npm", input, 0);
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("npm", Some("install"), "npm install", &cfg);
+		let input =
+			"Resolving: total 10\nadded 3 packages, and audited 4 packages in 1s\n2 packages are looking for funding\nfound 0 vulnerabilities\n";
+		let out = strip_package_noise(&ctx, input, 0);
 		assert!(!out.contains("Resolving:"));
 		assert!(out.contains("added 3 packages, and audited 4 packages in 1s"));
 		assert!(out.contains("2 packages are looking for funding"));
@@ -356,8 +450,10 @@ mod tests {
 
 	#[test]
 	fn bun_install_noise_uses_js_package_rules() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("bun", Some("install"), "bun install", &cfg);
 		let input = "Resolving dependencies\nDownloaded foo\nerror: failed\n";
-		let out = strip_package_noise("bun", input, 1);
+		let out = strip_package_noise(&ctx, input, 1);
 		assert!(!out.contains("Resolving dependencies"));
 		assert!(!out.contains("Downloaded foo"));
 		assert!(out.contains("error: failed"));
@@ -431,6 +527,44 @@ mod tests {
 		assert!(out.text.contains("app 1.0.0"));
 		assert!(out.text.contains("react 19.0.0"));
 		assert!(out.text.contains("scheduler 0.25.0"));
+	}
+
+	#[test]
+	fn compacts_pnpm_why_json_output() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let context = ctx("pnpm", Some("why"), "pnpm why react --json", &cfg);
+		let input =
+			r#"[{"name":"react","version":"19.0.0","dependents":[{"name":"app","version":"1.0.0"},{"name":"docs","version":"1.0.0"}]}]"#;
+		let out = filter(&context, input, 0);
+		assert!(out.text.starts_with("package tree/list: 3 entries\n"));
+		assert!(out.text.contains("react 19.0.0"));
+		assert!(out.text.contains("app 1.0.0"));
+		assert!(out.text.contains("docs 1.0.0"));
+	}
+
+	#[test]
+	fn compacts_yarn_why_ndjson_output() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let context = ctx("yarn", Some("why"), "yarn why react --json", &cfg);
+		let input =
+			"{\"type\":\"info\",\"data\":\"=> Found \\\"react@npm:19.0.0\\\"\"}\n{\"type\":\"tree\",\"data\":\"react@npm:19.0.0\\n└─ app@workspace:.\"}\n";
+		let out = filter(&context, input, 0);
+		assert!(out.text.starts_with("package tree/list: 3 entries\n"));
+		assert!(out.text.contains("=> Found \"react@npm:19.0.0\""));
+		assert!(out.text.contains("react@npm:19.0.0"));
+		assert!(out.text.contains("└─ app@workspace:."));
+	}
+
+	#[test]
+	fn compacts_npm_explain_json_output() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let context = ctx("npm", Some("explain"), "npm explain react --json", &cfg);
+		let input =
+			r#"{"name":"react","version":"19.0.0","dependents":[{"name":"app","version":"1.0.0","location":"."}]}"#;
+		let out = filter(&context, input, 0);
+		assert!(out.text.starts_with("package tree/list: 2 entries\n"));
+		assert!(out.text.contains("react 19.0.0"));
+		assert!(out.text.contains("app 1.0.0"));
 	}
 
 
@@ -529,5 +663,27 @@ mod tests {
 		assert!(out.text.starts_with("package tree/list: 91 entries\n"));
 		assert!(out.text.contains("dep000==2.0.0"));
 		assert!(out.text.contains("… 11 package entries omitted …"));
+	}
+
+	#[test]
+	fn compacts_uv_lock_output() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let context = ctx("uv", Some("lock"), "uv lock", &cfg);
+		let input = "Resolved 42 packages in 7ms\nDownloading requests\nUpdated lockfile at uv.lock\n";
+		let out = filter(&context, input, 0);
+		assert!(out.text.contains("Resolved 42 packages in 7ms"));
+		assert!(out.text.contains("Updated lockfile at uv.lock"));
+		assert!(!out.text.contains("Downloading requests"));
+	}
+
+	#[test]
+	fn compacts_poetry_lock_output() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let context = ctx("poetry", Some("lock"), "poetry lock", &cfg);
+		let input =
+			"Resolving dependencies...\nInstalling dependencies from lock file\nWriting lock file\n";
+		let out = filter(&context, input, 0);
+		assert!(out.text.contains("Installing dependencies from lock file"));
+		assert!(out.text.contains("Writing lock file"));
 	}
 }
