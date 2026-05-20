@@ -2,6 +2,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { getAgentDir } from "@oh-my-pi/pi-utils";
 
+export type MinimizerGainKind = "saved" | "missed";
+
 export interface MinimizerGainRecord {
 	timestamp: string;
 	cwd?: string;
@@ -11,6 +13,7 @@ export interface MinimizerGainRecord {
 	outputBytes: number;
 	savedBytes: number;
 	exitCode: number | null;
+	kind?: MinimizerGainKind;
 }
 
 export interface MinimizerGainTotals {
@@ -44,6 +47,20 @@ export interface MinimizerGainDiscovery {
 	commands: MinimizerGainDiscoveryItem[];
 }
 
+export interface MinimizerMissedItem {
+	command: string;
+	filter: string;
+	commands: number;
+	inputBytes: number;
+	outputBytes: number;
+	avgInputBytes: number;
+	exitCodes: Array<number | null>;
+}
+
+export interface MinimizerMissedSummary {
+	commands: MinimizerMissedItem[];
+}
+
 export interface ReadMinimizerGainOptions {
 	sinceDays?: number;
 	cwd?: string;
@@ -65,6 +82,7 @@ type ParsedRecordFields = {
 	outputBytes: number | Invalid;
 	savedBytes: number | Invalid;
 	exitCode: number | null | Invalid;
+	kind: MinimizerGainKind | undefined | Invalid;
 };
 type ValidRecordFields = {
 	timestamp: string;
@@ -75,11 +93,13 @@ type ValidRecordFields = {
 	outputBytes: number;
 	savedBytes: number;
 	exitCode: number | null;
+	kind: MinimizerGainKind | undefined;
 };
 
 const INVALID = Symbol("invalid");
 const BYTES_PER_TOKEN_ESTIMATE = 4;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MISSED_FILTER = "missed";
 
 export function getMinimizerGainPath(agentDir?: string): string {
 	return path.join(agentDir ?? getAgentDir(), "minimizer-gain.jsonl");
@@ -96,6 +116,27 @@ export async function recordMinimizerGain(
 	} catch {
 		// Best-effort local analytics must never affect command execution.
 	}
+}
+
+export function buildMinimizerMissedRecord(input: {
+	timestamp: string;
+	cwd?: string;
+	command: string;
+	totalBytes: number;
+	exitCode: number | null;
+}): MinimizerGainRecord | null {
+	if (input.totalBytes <= 0) return null;
+	return {
+		timestamp: input.timestamp,
+		...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+		command: input.command,
+		filter: MISSED_FILTER,
+		inputBytes: input.totalBytes,
+		outputBytes: input.totalBytes,
+		savedBytes: 0,
+		exitCode: input.exitCode,
+		kind: "missed",
+	};
 }
 
 export async function readMinimizerGain(options: ReadMinimizerGainOptions = {}): Promise<MinimizerGainRecord[]> {
@@ -120,6 +161,7 @@ export function summarizeMinimizerGain(records: MinimizerGainRecord[]): Minimize
 	const byCommand = new Map<string, MinimizerGainCommandSummary>();
 
 	for (const record of records) {
+		if (!isSavedRecord(record)) continue;
 		addRecord(totals, record);
 		addRecord(getFilterSummary(byFilter, record.filter), record);
 		addRecord(getCommandSummary(byCommand, record.command), record);
@@ -135,10 +177,32 @@ export function summarizeMinimizerGain(records: MinimizerGainRecord[]): Minimize
 export function discoverMinimizerGain(records: MinimizerGainRecord[], limit = 10): MinimizerGainDiscovery {
 	const groups = new Map<string, MinimizerGainDiscoveryItem>();
 	for (const record of records) {
+		if (!isSavedRecord(record)) continue;
 		const item = getDiscoveryItem(groups, record);
 		addRecord(item, record);
 	}
 	return { commands: finalizeGroups(groups).slice(0, limit).map(finalizeDiscoveryItem) };
+}
+
+export function summarizeMissedMinimizerGain(records: MinimizerGainRecord[], limit = 10): MinimizerMissedSummary {
+	const groups = new Map<string, MinimizerMissedAccumulator>();
+	for (const record of records) {
+		if (record.kind !== "missed") continue;
+		const item = getMissedItem(groups, record);
+		item.commands += 1;
+		item.inputBytes += record.inputBytes;
+		item.outputBytes += record.outputBytes;
+		addExitCode(item, record.exitCode);
+	}
+	const commands = [...groups.values()]
+		.map(finalizeMissedItem)
+		.sort((a, b) => b.inputBytes - a.inputBytes)
+		.slice(0, limit);
+	return { commands };
+}
+
+function isSavedRecord(record: MinimizerGainRecord): boolean {
+	return record.kind === undefined || record.kind === "saved";
 }
 
 function getDiscoveryItem(
@@ -159,6 +223,50 @@ function finalizeDiscoveryItem(item: MinimizerGainDiscoveryItem): MinimizerGainD
 	return item;
 }
 
+interface MinimizerMissedAccumulator extends MinimizerMissedItem {
+	_exitCodes: Set<number | null>;
+}
+
+function getMissedItem(
+	map: Map<string, MinimizerMissedAccumulator>,
+	record: MinimizerGainRecord,
+): MinimizerMissedAccumulator {
+	const key = `${record.command}\0${record.filter}`;
+	return getOrInsert(map, key, () => ({
+		command: record.command,
+		filter: record.filter,
+		commands: 0,
+		inputBytes: 0,
+		outputBytes: 0,
+		avgInputBytes: 0,
+		exitCodes: [],
+		_exitCodes: new Set(),
+	}));
+}
+
+function addExitCode(item: MinimizerMissedAccumulator, exitCode: number | null): void {
+	item._exitCodes.add(exitCode);
+}
+
+function finalizeMissedItem(item: MinimizerMissedAccumulator): MinimizerMissedItem {
+	return {
+		command: item.command,
+		filter: item.filter,
+		commands: item.commands,
+		inputBytes: item.inputBytes,
+		outputBytes: item.outputBytes,
+		avgInputBytes: item.commands === 0 ? 0 : Math.round(item.inputBytes / item.commands),
+		exitCodes: [...item._exitCodes].sort(compareExitCodes),
+	};
+}
+
+function compareExitCodes(a: number | null, b: number | null): number {
+	if (a === b) return 0;
+	if (a === null) return -1;
+	if (b === null) return 1;
+	return a - b;
+}
+
 function parseMinimizerGainRecord(line: string): MinimizerGainRecord | null {
 	const value = parseJsonObject(line);
 	return value ? parseRecordFields(value) : null;
@@ -174,13 +282,18 @@ function parseRecordFields(value: JsonObject): MinimizerGainRecord | null {
 		outputBytes: requiredNumber(value.outputBytes),
 		savedBytes: requiredNumber(value.savedBytes),
 		exitCode: parseExitCode(value.exitCode),
+		kind: parseKind(value.kind),
 	};
 	return hasInvalidField(fields) ? null : toMinimizerGainRecord(fields as ValidRecordFields);
 }
 
 function toMinimizerGainRecord(fields: ValidRecordFields): MinimizerGainRecord {
-	const { cwd, ...record } = fields;
-	return cwd === undefined ? record : { ...record, cwd };
+	const { cwd, kind, ...record } = fields;
+	return {
+		...record,
+		...(cwd === undefined ? {} : { cwd }),
+		...(kind === undefined ? {} : { kind }),
+	};
 }
 
 function hasInvalidField(fields: Record<string, unknown>): boolean {
@@ -216,6 +329,11 @@ function requiredNumber(value: unknown): number | Invalid {
 
 function parseExitCode(value: unknown): number | null | Invalid {
 	return value === null || (typeof value === "number" && Number.isInteger(value)) ? value : INVALID;
+}
+
+function parseKind(value: unknown): MinimizerGainKind | undefined | Invalid {
+	if (value === undefined) return undefined;
+	return value === "saved" || value === "missed" ? value : INVALID;
 }
 
 function resolveCutoff(sinceDays: number | undefined): number | null {

@@ -17,6 +17,10 @@ export default class Gain extends Command {
 			description: "Show highest observed native minimizer savings opportunities",
 			default: false,
 		}),
+		missed: Flags.boolean({
+			description: "Show largest unminimized shell outputs for filter prioritization",
+			default: false,
+		}),
 	};
 
 	async run(): Promise<void> {
@@ -27,6 +31,7 @@ export default class Gain extends Command {
 			cwd: flags.cwd,
 			all: flags.all,
 			discover: flags.discover,
+			missed: flags.missed,
 		};
 
 		await initTheme();

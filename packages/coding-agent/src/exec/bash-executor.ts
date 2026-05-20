@@ -6,7 +6,7 @@
 import * as fs from "node:fs/promises";
 import { executeShell, type MinimizerOptions, Shell } from "@oh-my-pi/pi-natives";
 import { Settings, type ShellMinimizerSettings } from "../config/settings";
-import { recordMinimizerGain } from "../minimizer-gain";
+import { buildMinimizerMissedRecord, recordMinimizerGain } from "../minimizer-gain";
 import { OutputSink } from "../session/streaming-output";
 import { resolveOutputMaxColumns, resolveOutputSinkHeadBytes } from "../tools/output-meta";
 import { getOrCreateSnapshot } from "../utils/shell-snapshot";
@@ -266,14 +266,28 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 				outputBytes: minimized.outputBytes,
 				savedBytes: Math.max(0, minimized.inputBytes - minimized.outputBytes),
 				exitCode: winner.result.exitCode ?? null,
+				kind: "saved",
 			});
 		}
 
 		// Normal completion
+		const summary = await sink.dump();
+		if (!minimized) {
+			const missed = buildMinimizerMissedRecord({
+				timestamp: new Date().toISOString(),
+				...(commandCwd === undefined ? {} : { cwd: commandCwd }),
+				command,
+				totalBytes: summary.totalBytes,
+				exitCode: winner.result.exitCode ?? null,
+			});
+			if (missed) {
+				await recordMinimizerGain(missed);
+			}
+		}
 		return {
 			exitCode: winner.result.exitCode,
 			cancelled: false,
-			...(await sink.dump()),
+			...summary,
 		};
 	} catch (err) {
 		resetSession = true;

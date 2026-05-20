@@ -3,11 +3,13 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	buildMinimizerMissedRecord,
 	discoverMinimizerGain,
 	getMinimizerGainPath,
 	readMinimizerGain,
 	recordMinimizerGain,
 	summarizeMinimizerGain,
+	summarizeMissedMinimizerGain,
 } from "../src/minimizer-gain";
 
 async function withTempAgentDir<T>(fn: (agentDir: string) => Promise<T>): Promise<T> {
@@ -70,6 +72,32 @@ describe("minimizer gain analytics", () => {
 				savedBytes: 2000,
 				avgSavedBytes: 2000,
 			});
+
+			await recordMinimizerGain(
+				{
+					timestamp: "2026-05-20T00:02:00.000Z",
+					cwd: "/repo",
+					command: "unknown-tool --verbose",
+					filter: "missed",
+					inputBytes: 5000,
+					outputBytes: 5000,
+					savedBytes: 0,
+					exitCode: 0,
+					kind: "missed",
+				},
+				{ agentDir },
+			);
+			const mixedRecords = await readMinimizerGain({ agentDir, cwd: "/repo" });
+			expect(summarizeMinimizerGain(mixedRecords).commands).toBe(2);
+			expect(discoverMinimizerGain(mixedRecords).commands).toHaveLength(2);
+
+			const missed = summarizeMissedMinimizerGain(mixedRecords);
+			expect(missed.commands[0]).toMatchObject({
+				command: "unknown-tool --verbose",
+				inputBytes: 5000,
+				avgInputBytes: 5000,
+				exitCodes: [0],
+			});
 		});
 	});
 
@@ -116,5 +144,36 @@ describe("minimizer gain analytics", () => {
 			const records = await readMinimizerGain({ agentDir, cwd: "/repo", sinceDays: 1 });
 			expect(records.map(record => record.command)).toEqual(["git diff"]);
 		});
+	});
+
+	it("builds missed records without raw output", () => {
+		const record = buildMinimizerMissedRecord({
+			timestamp: "2026-05-20T00:00:00.000Z",
+			cwd: "/repo",
+			command: "huge-command",
+			totalBytes: 4096,
+			exitCode: 0,
+		});
+
+		expect(record).toEqual({
+			timestamp: "2026-05-20T00:00:00.000Z",
+			cwd: "/repo",
+			command: "huge-command",
+			filter: "missed",
+			inputBytes: 4096,
+			outputBytes: 4096,
+			savedBytes: 0,
+			exitCode: 0,
+			kind: "missed",
+		});
+		expect(JSON.stringify(record)).not.toContain("output:");
+		expect(
+			buildMinimizerMissedRecord({
+				timestamp: "2026-05-20T00:00:00.000Z",
+				command: "empty",
+				totalBytes: 0,
+				exitCode: 0,
+			}),
+		).toBeNull();
 	});
 });

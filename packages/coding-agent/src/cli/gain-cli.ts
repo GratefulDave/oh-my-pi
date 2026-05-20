@@ -5,9 +5,12 @@ import {
 	discoverMinimizerGain,
 	getMinimizerGainPath,
 	type MinimizerGainDiscovery,
+	type MinimizerGainRecord,
 	type MinimizerGainSummary,
+	type MinimizerMissedSummary,
 	readMinimizerGain,
 	summarizeMinimizerGain,
+	summarizeMissedMinimizerGain,
 } from "../minimizer-gain";
 
 export interface GainCommandArgs {
@@ -16,7 +19,10 @@ export interface GainCommandArgs {
 	cwd?: string;
 	all: boolean;
 	discover: boolean;
+	missed: boolean;
 }
+
+type OutputMode = "json" | "missed" | "discover" | "summary";
 
 type GainRow = {
 	commands: number;
@@ -24,31 +30,52 @@ type GainRow = {
 	estimatedTokensSaved: number;
 };
 
+type GainContext = {
+	path: string;
+	days: number;
+	cwd: string | undefined;
+	all: boolean;
+	records: MinimizerGainRecord[];
+	summary: MinimizerGainSummary;
+	discovery: MinimizerGainDiscovery;
+	missed: MinimizerMissedSummary;
+};
+
 export async function runGainCommand(cmd: GainCommandArgs): Promise<void> {
 	validateDays(cmd.days);
+	writeGainOutput(selectOutputMode(cmd), await loadGainContext(cmd));
+}
 
+function selectOutputMode(cmd: GainCommandArgs): OutputMode {
+	if (cmd.json) return "json";
+	if (cmd.missed) return "missed";
+	if (cmd.discover) return "discover";
+	return "summary";
+}
+
+async function loadGainContext(cmd: GainCommandArgs): Promise<GainContext> {
 	const cwd = resolveCwdScope(cmd);
 	const records = await readMinimizerGain({ sinceDays: cmd.days, cwd });
-	const summary = summarizeMinimizerGain(records);
-	const gainPath = getMinimizerGainPath();
+	return {
+		path: getMinimizerGainPath(),
+		days: cmd.days,
+		cwd,
+		all: cmd.all,
+		records,
+		summary: summarizeMinimizerGain(records),
+		discovery: discoverMinimizerGain(records),
+		missed: summarizeMissedMinimizerGain(records),
+	};
+}
 
-	if (cmd.json) {
-		process.stdout.write(`${JSON.stringify(buildGainPayload(gainPath, records, summary, cmd.discover), null, 2)}\n`);
-		return;
-	}
-
-	if (cmd.discover) {
-		printGainDiscovery({
-			path: gainPath,
-			days: cmd.days,
-			cwd,
-			all: cmd.all,
-			discovery: discoverMinimizerGain(records),
-		});
-		return;
-	}
-
-	printGainSummary({ path: gainPath, days: cmd.days, cwd, all: cmd.all, summary });
+function writeGainOutput(mode: OutputMode, context: GainContext): void {
+	const writers: Record<OutputMode, (context: GainContext) => void> = {
+		json: printJsonPayload,
+		missed: printMissedSummary,
+		discover: printGainDiscovery,
+		summary: printGainSummary,
+	};
+	writers[mode](context);
 }
 
 function validateDays(days: number): void {
@@ -62,29 +89,23 @@ function resolveCwdScope(cmd: GainCommandArgs): string | undefined {
 	return cmd.cwd ? path.resolve(cmd.cwd) : process.cwd();
 }
 
-function buildGainPayload(
-	path: string,
-	records: unknown[],
-	summary: MinimizerGainSummary,
-	includeDiscovery: boolean,
-): object {
-	return includeDiscovery
-		? {
-				path,
-				records,
-				summary,
-				discovery: discoverMinimizerGain(records as Parameters<typeof discoverMinimizerGain>[0]),
-			}
-		: { path, records, summary };
+function printJsonPayload(context: GainContext): void {
+	process.stdout.write(
+		`${JSON.stringify(
+			{
+				path: context.path,
+				records: context.records,
+				summary: context.summary,
+				discovery: context.discovery,
+				missed: context.missed,
+			},
+			null,
+			2,
+		)}\n`,
+	);
 }
 
-function printGainSummary(input: {
-	path: string;
-	days: number;
-	cwd: string | undefined;
-	all: boolean;
-	summary: MinimizerGainSummary;
-}): void {
+function printGainSummary(input: GainContext): void {
 	const { summary } = input;
 	process.stdout.write(chalk.bold(`\n=== ${APP_NAME} Minimizer Gain ===\n\n`));
 
@@ -97,17 +118,10 @@ function printGainSummary(input: {
 
 	printRows("Top Filters", summary.byFilter, row => row.filter);
 	printRows("Top Commands", summary.byCommand, row => row.command);
-	process.stdout.write(`\n${chalk.bold("Scope:")} ${formatScope(input)}\n`);
-	process.stdout.write(`${chalk.bold("Path:")} ${input.path}\n\n`);
+	printScope(input);
 }
 
-function printGainDiscovery(input: {
-	path: string;
-	days: number;
-	cwd: string | undefined;
-	all: boolean;
-	discovery: MinimizerGainDiscovery;
-}): void {
+function printGainDiscovery(input: GainContext): void {
 	process.stdout.write(chalk.bold(`\n=== ${APP_NAME} Minimizer Discovery ===\n\n`));
 	if (input.discovery.commands.length === 0) {
 		process.stdout.write("No native minimizer savings recorded for this scope yet.\n");
@@ -119,8 +133,32 @@ function printGainDiscovery(input: {
 			);
 		}
 	}
+	printScope(input);
+}
+
+function printMissedSummary(input: GainContext): void {
+	process.stdout.write(chalk.bold(`\n=== ${APP_NAME} Minimizer Misses ===\n\n`));
+	if (input.missed.commands.length === 0) {
+		process.stdout.write("No unminimized shell output recorded for this scope yet.\n");
+	} else {
+		process.stdout.write(chalk.bold("Largest unminimized command outputs:\n"));
+		for (const row of input.missed.commands) {
+			process.stdout.write(
+				`  ${row.command}: ${formatNumber(row.inputBytes)} bytes total (${formatNumber(row.avgInputBytes)} avg), ${formatNumber(row.commands)} cmds, exit=${formatExitCodes(row.exitCodes)}\n`,
+			);
+		}
+	}
+	printScope(input);
+}
+
+function printScope(input: Pick<GainContext, "days" | "cwd" | "all" | "path">): void {
 	process.stdout.write(`\n${chalk.bold("Scope:")} ${formatScope(input)}\n`);
 	process.stdout.write(`${chalk.bold("Path:")} ${input.path}\n\n`);
+}
+
+function formatExitCodes(exitCodes: Array<number | null>): string {
+	if (exitCodes.length === 0) return "-";
+	return exitCodes.map(code => (code === null ? "null" : String(code))).join(",");
 }
 
 function formatScope(input: { days: number; cwd: string | undefined; all: boolean }): string {
