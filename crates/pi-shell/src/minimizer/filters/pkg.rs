@@ -309,6 +309,37 @@ mod tests {
 	}
 
 	#[test]
+	fn compacts_depth_limited_package_tree_commands() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let context = ctx("npm", Some("ls"), "npm ls --depth=0", &cfg);
+		let mut input = String::from("app@1.0.0\n");
+		for idx in 0..90 {
+			input.push_str(&format!("├── dep{idx:03}@1.0.0\n"));
+		}
+
+		let out = filter(&context, &input, 0);
+		assert!(out.text.starts_with("package tree/list: 91 entries\n"));
+		assert!(out.text.contains("dep000"));
+		assert!(out.text.contains("… 11 package entries omitted …"));
+	}
+
+	#[test]
+	fn compacts_pnpm_why_style_output() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let context = ctx("pnpm", Some("why"), "pnpm why react", &cfg);
+		let mut input = String::from("Legend: production dependency, optional only, dev only\nreact 19.0.0\n");
+		for idx in 0..90 {
+			input.push_str(&format!("└─ dependent{idx:03}\n"));
+		}
+
+		let out = filter(&context, &input, 0);
+		assert!(out.text.starts_with("package tree/list: 92 entries\n"));
+		assert!(out.text.contains("react 19.0.0"));
+		assert!(out.text.contains("└─ dependent000"));
+		assert!(out.text.contains("… 12 package entries omitted …"));
+	}
+
+	#[test]
 	fn compacts_uv_pip_list_and_strips_progress_noise() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("uv", Some("pip"), "uv pip list", &cfg);
@@ -326,6 +357,22 @@ mod tests {
 		assert!(out.text.contains("pkg000 1.0.0"));
 		assert!(out.text.contains("pkg078 1.0.78"));
 		assert!(!out.text.contains("pkg089 1.0.89"));
+		assert!(out.text.contains("… 11 package entries omitted …"));
+	}
+
+	#[test]
+	fn compacts_uv_tree_output() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let context = ctx("uv", Some("tree"), "uv tree", &cfg);
+		let mut input = String::from("project v1.0.0\n");
+		for idx in 0..90 {
+			input.push_str(&format!("├── pkg{idx:03} v1.0.{idx}\n"));
+		}
+
+		let out = filter(&context, &input, 0);
+		assert!(out.text.starts_with("package tree/list: 91 entries\n"));
+		assert!(out.text.contains("project v1.0.0"));
+		assert!(out.text.contains("pkg000"));
 		assert!(out.text.contains("… 11 package entries omitted …"));
 	}
 }

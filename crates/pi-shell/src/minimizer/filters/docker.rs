@@ -286,6 +286,25 @@ mod tests {
 	}
 
 	#[test]
+	fn docker_compose_ps_uses_table_filter() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let compose_ctx = MinimizerCtx {
+			program: "docker",
+			subcommand: Some("compose"),
+			command: "docker compose ps",
+			config: &cfg,
+		};
+		let mut input = String::from("NAME IMAGE COMMAND SERVICE CREATED STATUS PORTS\n");
+		for idx in 0..20 {
+			input.push_str(&format!("svc-{idx} img command api 1m running 8080/tcp\n"));
+		}
+		let out = filter(&compose_ctx, &input, 0).text;
+		assert!(out.contains("20 rows"));
+		assert!(out.contains("svc-0"));
+		assert!(out.contains("… 8 more rows"));
+	}
+
+	#[test]
 	fn prioritizes_error_lines_for_large_log_windows() {
 		let mut input = String::new();
 		for i in 0..260 {
