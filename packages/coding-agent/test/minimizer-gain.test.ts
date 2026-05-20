@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	discoverMinimizerGain,
 	getMinimizerGainPath,
 	readMinimizerGain,
 	recordMinimizerGain,
@@ -61,6 +62,14 @@ describe("minimizer gain analytics", () => {
 			expect(summary.savedBytes).toBe(2750);
 			expect(summary.estimatedTokensSaved).toBe(687);
 			expect(summary.byFilter.map(row => row.filter)).toEqual(["cargo", "git"]);
+
+			const discovery = discoverMinimizerGain(records);
+			expect(discovery.commands[0]).toMatchObject({
+				command: "cargo test",
+				filter: "cargo",
+				savedBytes: 2000,
+				avgSavedBytes: 2000,
+			});
 		});
 	});
 

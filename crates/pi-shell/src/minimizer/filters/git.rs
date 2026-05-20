@@ -6,9 +6,10 @@ pub fn supports(subcommand: Option<&str>) -> bool {
 	matches!(
 		subcommand,
 		Some(
-			"diff"
-				| "show" | "log"
-				| "add" | "commit"
+			"status"
+				| "diff" | "show"
+				| "log" | "add"
+				| "commit"
 				| "push" | "pull"
 				| "branch"
 				| "fetch"
@@ -33,6 +34,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, _exit_code: i32) -> Minimizer
 
 	let cleaned = primitives::strip_ansi(input);
 	let text = match ctx.subcommand {
+		Some("status") => condense_status(&cleaned),
 		Some("diff") => condense_diff(&cleaned),
 		Some("show") => primitives::head_tail_lines(&cleaned, 80, 40),
 		Some("log") => condense_log(&cleaned, 32, 16),
@@ -86,6 +88,175 @@ fn has_token(command: &str, token: &str) -> bool {
 	command.split_whitespace().any(|part| part == token)
 }
 
+#[derive(Default)]
+struct StatusSummary {
+	branch: Option<String>,
+	clean: bool,
+	staged: usize,
+	unstaged: usize,
+	untracked: usize,
+	conflicts: usize,
+	paths: Vec<String>,
+}
+
+fn condense_status(input: &str) -> String {
+	let mut summary = StatusSummary::default();
+	let mut in_untracked = false;
+
+	for line in input.lines() {
+		let line = line.trim_end();
+		let trimmed = line.trim();
+		if trimmed.is_empty() {
+			continue;
+		}
+		if parse_short_status_line(line, &mut summary) {
+			continue;
+		}
+		if let Some(branch) = trimmed.strip_prefix("On branch ") {
+			summary.branch = Some(branch.to_string());
+			continue;
+		}
+		if trimmed.starts_with("nothing to commit") || trimmed == "working tree clean" {
+			summary.clean = true;
+			continue;
+		}
+		if trimmed.starts_with("Untracked files:") {
+			in_untracked = true;
+			continue;
+		}
+		if parse_long_status_line(trimmed, in_untracked, &mut summary) {
+			continue;
+		}
+		if !trimmed.starts_with('(')
+			&& !trimmed.ends_with(':')
+			&& !trimmed.starts_with("use ")
+			&& !trimmed.starts_with("no changes added")
+			&& in_untracked
+		{
+			summary.untracked += 1;
+			push_status_path(&mut summary, "??", trimmed);
+		}
+	}
+
+	if status_has_no_signal(&summary) {
+		return input.to_string();
+	}
+	format_status_summary(&summary)
+}
+
+fn parse_short_status_line(line: &str, summary: &mut StatusSummary) -> bool {
+	let Some(status) = line.get(..2) else {
+		return false;
+	};
+	let Some(path) = line.get(3..) else {
+		return false;
+	};
+	if !is_short_status(status) {
+		return false;
+	}
+	if status == "??" {
+		summary.untracked += 1;
+	} else if status.contains('U') {
+		summary.conflicts += 1;
+	} else {
+		let bytes = status.as_bytes();
+		if bytes[0] != b' ' {
+			summary.staged += 1;
+		}
+		if bytes[1] != b' ' {
+			summary.unstaged += 1;
+		}
+	}
+	push_status_path(summary, status.trim(), path.trim());
+	true
+}
+
+fn is_short_status(status: &str) -> bool {
+	status
+		.bytes()
+		.all(|byte| matches!(byte, b' ' | b'M' | b'A' | b'D' | b'R' | b'C' | b'U' | b'?' | b'!'))
+}
+
+fn parse_long_status_line(line: &str, in_untracked: bool, summary: &mut StatusSummary) -> bool {
+	for (prefix, label, staged) in [
+		("modified:", "M", false),
+		("deleted:", "D", false),
+		("new file:", "A", true),
+		("renamed:", "R", true),
+		("both modified:", "UU", false),
+	] {
+		if let Some(path) = line.strip_prefix(prefix) {
+			if label == "UU" {
+				summary.conflicts += 1;
+			} else if staged {
+				summary.staged += 1;
+			} else {
+				summary.unstaged += 1;
+			}
+			push_status_path(summary, label, path.trim());
+			return true;
+		}
+	}
+	if in_untracked && !line.starts_with('(') && !line.ends_with(':') {
+		summary.untracked += 1;
+		push_status_path(summary, "??", line);
+		return true;
+	}
+	false
+}
+
+fn push_status_path(summary: &mut StatusSummary, label: &str, path: &str) {
+	if path.is_empty() {
+		return;
+	}
+	summary
+		.paths
+		.push(format!("{label} {}", primitives::truncate_line(path, 160)));
+}
+
+fn status_has_no_signal(summary: &StatusSummary) -> bool {
+	summary.branch.is_none()
+		&& !summary.clean
+		&& summary.staged == 0
+		&& summary.unstaged == 0
+		&& summary.untracked == 0
+		&& summary.conflicts == 0
+}
+
+fn format_status_summary(summary: &StatusSummary) -> String {
+	let mut out = String::new();
+	if let Some(branch) = &summary.branch {
+		out.push_str("branch ");
+		out.push_str(branch);
+		out.push('\n');
+	}
+	if summary.clean && summary.paths.is_empty() {
+		out.push_str("clean\n");
+		return out;
+	}
+	out.push_str("staged ");
+	out.push_str(&summary.staged.to_string());
+	out.push_str(", unstaged ");
+	out.push_str(&summary.unstaged.to_string());
+	out.push_str(", untracked ");
+	out.push_str(&summary.untracked.to_string());
+	if summary.conflicts > 0 {
+		out.push_str(", conflicts ");
+		out.push_str(&summary.conflicts.to_string());
+	}
+	out.push('\n');
+	for path in summary.paths.iter().take(40) {
+		out.push_str(path);
+		out.push('\n');
+	}
+	if summary.paths.len() > 40 {
+		out.push_str("… ");
+		out.push_str(&(summary.paths.len() - 40).to_string());
+		out.push_str(" paths omitted\n");
+	}
+	out
+}
+
 fn condense_log(input: &str, head: usize, tail: usize) -> String {
 	let entries = parse_log_entries(input);
 	if !entries.is_empty() {
@@ -129,7 +300,7 @@ fn condense_log(input: &str, head: usize, tail: usize) -> String {
 }
 
 struct LogEntry {
-	hash:    String,
+	hash: String,
 	subject: String,
 }
 
@@ -190,15 +361,15 @@ fn short_hash(hash: &str) -> String {
 }
 
 struct DiffFile {
-	path:    String,
-	added:   usize,
+	path: String,
+	added: usize,
 	removed: usize,
-	hunks:   Vec<DiffHunk>,
+	hunks: Vec<DiffHunk>,
 }
 
 struct DiffHunk {
 	header: String,
-	lines:  Vec<String>,
+	lines: Vec<String>,
 }
 
 fn condense_diff(input: &str) -> String {
@@ -381,8 +552,37 @@ mod tests {
 	}
 
 	#[test]
-	fn status_is_not_supported() {
-		assert!(!supports(Some("status")));
+	fn status_is_supported() {
+		assert!(supports(Some("status")));
+	}
+
+	#[test]
+	fn short_status_is_compacted() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status --short", &cfg);
+		let input = " M src/main.rs\nM  Cargo.toml\n?? scratch.txt\nUU conflicted.rs\n";
+		let out = filter(&ctx, input, 0);
+
+		assert!(out.changed);
+		assert!(
+			out.text
+				.contains("staged 1, unstaged 1, untracked 1, conflicts 1")
+		);
+		assert!(out.text.contains("M src/main.rs"));
+		assert!(out.text.contains("M Cargo.toml"));
+		assert!(out.text.contains("?? scratch.txt"));
+		assert!(out.text.contains("UU conflicted.rs"));
+	}
+
+	#[test]
+	fn long_status_clean_is_compacted() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status", &cfg);
+		let input = "On branch main\nYour branch is up to date with 'origin/main'.\n\nnothing to commit, working tree clean\n";
+		let out = filter(&ctx, input, 0);
+
+		assert!(out.changed);
+		assert_eq!(out.text, "branch main\nclean\n");
 	}
 
 	#[test]

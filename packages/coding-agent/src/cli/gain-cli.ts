@@ -2,7 +2,9 @@ import * as path from "node:path";
 import { APP_NAME, formatNumber } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
 import {
+	discoverMinimizerGain,
 	getMinimizerGainPath,
+	type MinimizerGainDiscovery,
 	type MinimizerGainSummary,
 	readMinimizerGain,
 	summarizeMinimizerGain,
@@ -13,6 +15,7 @@ export interface GainCommandArgs {
 	days: number;
 	cwd?: string;
 	all: boolean;
+	discover: boolean;
 }
 
 type GainRow = {
@@ -30,7 +33,18 @@ export async function runGainCommand(cmd: GainCommandArgs): Promise<void> {
 	const gainPath = getMinimizerGainPath();
 
 	if (cmd.json) {
-		process.stdout.write(`${JSON.stringify({ path: gainPath, records, summary }, null, 2)}\n`);
+		process.stdout.write(`${JSON.stringify(buildGainPayload(gainPath, records, summary, cmd.discover), null, 2)}\n`);
+		return;
+	}
+
+	if (cmd.discover) {
+		printGainDiscovery({
+			path: gainPath,
+			days: cmd.days,
+			cwd,
+			all: cmd.all,
+			discovery: discoverMinimizerGain(records),
+		});
 		return;
 	}
 
@@ -46,6 +60,22 @@ function validateDays(days: number): void {
 function resolveCwdScope(cmd: GainCommandArgs): string | undefined {
 	if (cmd.all) return undefined;
 	return cmd.cwd ? path.resolve(cmd.cwd) : process.cwd();
+}
+
+function buildGainPayload(
+	path: string,
+	records: unknown[],
+	summary: MinimizerGainSummary,
+	includeDiscovery: boolean,
+): object {
+	return includeDiscovery
+		? {
+				path,
+				records,
+				summary,
+				discovery: discoverMinimizerGain(records as Parameters<typeof discoverMinimizerGain>[0]),
+			}
+		: { path, records, summary };
 }
 
 function printGainSummary(input: {
@@ -67,6 +97,28 @@ function printGainSummary(input: {
 
 	printRows("Top Filters", summary.byFilter, row => row.filter);
 	printRows("Top Commands", summary.byCommand, row => row.command);
+	process.stdout.write(`\n${chalk.bold("Scope:")} ${formatScope(input)}\n`);
+	process.stdout.write(`${chalk.bold("Path:")} ${input.path}\n\n`);
+}
+
+function printGainDiscovery(input: {
+	path: string;
+	days: number;
+	cwd: string | undefined;
+	all: boolean;
+	discovery: MinimizerGainDiscovery;
+}): void {
+	process.stdout.write(chalk.bold(`\n=== ${APP_NAME} Minimizer Discovery ===\n\n`));
+	if (input.discovery.commands.length === 0) {
+		process.stdout.write("No native minimizer savings recorded for this scope yet.\n");
+	} else {
+		process.stdout.write(chalk.bold("Highest observed savings by command:\n"));
+		for (const row of input.discovery.commands) {
+			process.stdout.write(
+				`  ${row.command}: ${formatNumber(row.savedBytes)} bytes saved (${formatNumber(row.avgSavedBytes)} avg), ${formatNumber(row.commands)} cmds, filter=${row.filter}\n`,
+			);
+		}
+	}
 	process.stdout.write(`\n${chalk.bold("Scope:")} ${formatScope(input)}\n`);
 	process.stdout.write(`${chalk.bold("Path:")} ${input.path}\n\n`);
 }

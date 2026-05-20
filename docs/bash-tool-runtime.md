@@ -184,7 +184,7 @@ When a command is minimized:
 - local-only metadata is appended to `minimizer-gain.jsonl` under the agent directory;
 - the metadata contains command identity, cwd, filter label, byte counts, saved bytes, timestamp, and exit code only — never raw stdout/stderr.
 
-Use `omp gain` to inspect the native minimizer's savings. By default it reports the current working directory for the last 30 days; `omp gain --all --json` returns all local records as JSON. This is intentionally analytics-only and does not rewrite commands to `rtk ...` or encourage bypassing dedicated OMP tools such as `read`, `search`, `find`, or `lsp`.
+Use `omp gain` to inspect the native minimizer's savings. By default it reports the current working directory for the last 30 days; `omp gain --all --json` returns all local records as JSON. `omp gain --discover` ranks the observed command/filter pairs with the largest local byte savings, which helps prioritize future native filters from real usage. This is intentionally analytics-only and does not rewrite commands to `rtk ...` or encourage bypassing dedicated OMP tools such as `read`, `search`, `find`, or `lsp`.
 
 ## Live tool updates and async jobs
 

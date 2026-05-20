@@ -34,6 +34,16 @@ export interface MinimizerGainSummary extends MinimizerGainTotals {
 	byCommand: MinimizerGainCommandSummary[];
 }
 
+export interface MinimizerGainDiscoveryItem extends MinimizerGainTotals {
+	command: string;
+	filter: string;
+	avgSavedBytes: number;
+}
+
+export interface MinimizerGainDiscovery {
+	commands: MinimizerGainDiscoveryItem[];
+}
+
 export interface ReadMinimizerGainOptions {
 	sinceDays?: number;
 	cwd?: string;
@@ -120,6 +130,33 @@ export function summarizeMinimizerGain(records: MinimizerGainRecord[]): Minimize
 		byFilter: finalizeGroups(byFilter),
 		byCommand: finalizeGroups(byCommand),
 	};
+}
+
+export function discoverMinimizerGain(records: MinimizerGainRecord[], limit = 10): MinimizerGainDiscovery {
+	const groups = new Map<string, MinimizerGainDiscoveryItem>();
+	for (const record of records) {
+		const item = getDiscoveryItem(groups, record);
+		addRecord(item, record);
+	}
+	return { commands: finalizeGroups(groups).slice(0, limit).map(finalizeDiscoveryItem) };
+}
+
+function getDiscoveryItem(
+	map: Map<string, MinimizerGainDiscoveryItem>,
+	record: MinimizerGainRecord,
+): MinimizerGainDiscoveryItem {
+	const key = `${record.command}\0${record.filter}`;
+	return getOrInsert(map, key, () => ({
+		command: record.command,
+		filter: record.filter,
+		avgSavedBytes: 0,
+		...createTotals(),
+	}));
+}
+
+function finalizeDiscoveryItem(item: MinimizerGainDiscoveryItem): MinimizerGainDiscoveryItem {
+	item.avgSavedBytes = item.commands === 0 ? 0 : Math.round(item.savedBytes / item.commands);
+	return item;
 }
 
 function parseMinimizerGainRecord(line: string): MinimizerGainRecord | null {

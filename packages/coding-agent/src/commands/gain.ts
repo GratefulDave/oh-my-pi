@@ -13,6 +13,10 @@ export default class Gain extends Command {
 		days: Flags.integer({ char: "d", description: "Number of days to include", default: 30 }),
 		cwd: Flags.string({ description: "Only include entries from this working directory" }),
 		all: Flags.boolean({ description: "Include entries from all working directories", default: false }),
+		discover: Flags.boolean({
+			description: "Show highest observed native minimizer savings opportunities",
+			default: false,
+		}),
 	};
 
 	async run(): Promise<void> {
@@ -22,6 +26,7 @@ export default class Gain extends Command {
 			days: flags.days,
 			cwd: flags.cwd,
 			all: flags.all,
+			discover: flags.discover,
 		};
 
 		await initTheme();
