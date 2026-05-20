@@ -221,8 +221,13 @@ fn compact_build_or_progress(input: &str) -> String {
 fn is_progress_line(line: &str) -> bool {
 	line.starts_with("=> ")
 		|| line.starts_with('#') && line.contains("DONE")
+		|| line.starts_with('#') && line.contains("CACHED")
+		|| line.starts_with('#') && line.contains("transferring ")
+		|| line.starts_with('#') && line.contains("extracting ")
 		|| line.contains("Pulling fs layer")
+		|| line.contains("Pull complete")
 		|| line.contains("Download complete")
+		|| line.contains("Downloading")
 		|| line.contains("Extracting")
 		|| line.contains("Waiting")
 		|| line.contains("Verifying Checksum")
@@ -323,6 +328,25 @@ mod tests {
 		assert!(!out.contains("Attaching to"));
 		assert!(!out.contains("Container api-1  Creating"));
 		assert!(out.contains("api-1  | ready"));
+	}
+
+	#[test]
+	fn strips_compose_build_progress_lines() {
+		let input = "#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 512B done\n#2 [1/2] FROM docker.io/library/node:22\n#2 CACHED\n#3 exporting to image\n#3 DONE 0.1s\nnaming to docker.io/library/app:latest\n";
+		let out = compact_build_or_progress(input);
+		assert!(!out.contains("transferring dockerfile"));
+		assert!(!out.contains("#2 CACHED"));
+		assert!(!out.contains("#3 DONE"));
+		assert!(out.contains("naming to docker.io/library/app:latest"));
+	}
+
+	#[test]
+	fn strips_compose_pull_progress_lines() {
+		let input = "app Pulling fs layer\napp Downloading\napp Verifying Checksum\napp Download complete\napp Extracting\napp Pull complete\nStatus: Downloaded newer image for docker.io/library/app:latest\n";
+		let out = compact_build_or_progress(input);
+		assert!(!out.contains("Pulling fs layer"));
+		assert!(!out.contains("Pull complete"));
+		assert!(out.contains("Status: Downloaded newer image for docker.io/library/app:latest"));
 	}
 
 	#[test]
