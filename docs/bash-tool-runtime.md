@@ -173,6 +173,19 @@ Both PTY and non-PTY paths use `OutputSink`.
 
 Runtime truncation is byte-threshold based in `OutputSink` (50KB default). It does not enforce a hard 2000-line cap in this code path.
 
+## Native shell minimizer
+
+Non-PTY shell execution can enable the native minimizer through the `shellMinimizer.*` settings. The minimizer is not an external `rtk` wrapper: it runs inside `pi-shell`, only captures simple single commands selected by the minimizer planner, and leaves piped, compound, unsupported, or oversized output unchanged.
+
+When a command is minimized:
+
+- the visible tool output is replaced with the compact form;
+- the full original capture remains recoverable through the existing `artifact://...` raw-output path;
+- local-only metadata is appended to `minimizer-gain.jsonl` under the agent directory;
+- the metadata contains command identity, cwd, filter label, byte counts, saved bytes, timestamp, and exit code only — never raw stdout/stderr.
+
+Use `omp gain` to inspect the native minimizer's savings. By default it reports the current working directory for the last 30 days; `omp gain --all --json` returns all local records as JSON. This is intentionally analytics-only and does not rewrite commands to `rtk ...` or encourage bypassing dedicated OMP tools such as `read`, `search`, `find`, or `lsp`.
+
 ## Live tool updates and async jobs
 
 For non-PTY foreground execution, `BashTool` uses a separate `TailBuffer` for partial updates and emits `onUpdate` snapshots while command is running.
@@ -259,6 +272,7 @@ This component is wired by `CommandController.handleBashCommand()` and fed from 
 - [`src/tools/bash-normalize.ts`](../packages/coding-agent/src/tools/bash-normalize.ts) — post-run head/tail filtering; also contains an unused command-normalization helper.
 - [`src/tools/bash-interceptor.ts`](../packages/coding-agent/src/tools/bash-interceptor.ts) — interceptor rule matching and blocked-command messages.
 - [`src/exec/bash-executor.ts`](../packages/coding-agent/src/exec/bash-executor.ts) — non-PTY executor, shell session reuse, cancellation wiring, output sink integration.
+- [`src/minimizer-gain.ts`](../packages/coding-agent/src/minimizer-gain.ts) — local JSONL accounting for native minimizer byte/token savings used by `omp gain`.
 - [`src/tools/bash-interactive.ts`](../packages/coding-agent/src/tools/bash-interactive.ts) — PTY runtime, overlay UI, input normalization, non-interactive env defaults.
 - [`src/session/streaming-output.ts`](../packages/coding-agent/src/session/streaming-output.ts) — `OutputSink`, `TailBuffer`, truncation/artifact spill, and summary metadata.
 - [`src/tools/output-meta.ts`](../packages/coding-agent/src/tools/output-meta.ts) — truncation metadata shape + notice injection wrapper.

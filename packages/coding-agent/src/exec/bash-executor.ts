@@ -6,6 +6,7 @@
 import * as fs from "node:fs/promises";
 import { executeShell, type MinimizerOptions, Shell } from "@oh-my-pi/pi-natives";
 import { Settings, type ShellMinimizerSettings } from "../config/settings";
+import { recordMinimizerGain } from "../minimizer-gain";
 import { OutputSink } from "../session/streaming-output";
 import { resolveOutputMaxColumns, resolveOutputSinkHeadBytes } from "../tools/output-meta";
 import { getOrCreateSnapshot } from "../utils/shell-snapshot";
@@ -256,6 +257,16 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 					sink.push(`${sep}[raw output: artifact://${artifactId}]\n`);
 				}
 			}
+			await recordMinimizerGain({
+				timestamp: new Date().toISOString(),
+				...(commandCwd === undefined ? {} : { cwd: commandCwd }),
+				command,
+				filter: minimized.filter,
+				inputBytes: minimized.inputBytes,
+				outputBytes: minimized.outputBytes,
+				savedBytes: Math.max(0, minimized.inputBytes - minimized.outputBytes),
+				exitCode: winner.result.exitCode ?? null,
+			});
 		}
 
 		// Normal completion

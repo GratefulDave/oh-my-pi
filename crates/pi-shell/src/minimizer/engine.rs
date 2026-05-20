@@ -313,13 +313,49 @@ pub fn verify_builtin_filters() -> Vec<pipeline::TestOutcome> {
 #[cfg(test)]
 mod tests {
 	use super::*;
-
+	use crate::minimizer::MinimizerOptions;
+	use std::fs;
+	fn config_from_settings(contents: &str) -> MinimizerConfig {
+		let path = std::env::temp_dir()
+			.join(format!("pi-shell-minimizer-engine-{}.toml", std::process::id()));
+		fs::write(&path, contents).expect("write minimizer settings");
+		let cfg = MinimizerConfig::from_options(&MinimizerOptions {
+			enabled: Some(true),
+			settings_path: Some(path.to_string_lossy().into_owned()),
+			..Default::default()
+		});
+		let _ = fs::remove_file(path);
+		cfg
+	}
 	#[test]
 	fn disabled_config_does_not_minimize() {
 		let cfg = MinimizerConfig::default();
 		assert!(!should_minimize("git status", &cfg));
 		let out = apply("git status", "## main\n", 0, &cfg);
 		assert!(!out.changed);
+	}
+
+	#[test]
+	fn disabled_minimizer_and_disabled_program_do_not_transform_supported_command() {
+		let input = "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n";
+
+		let disabled = MinimizerConfig::default();
+		assert!(!should_minimize("git diff", &disabled));
+		let out = apply("git diff", input, 0, &disabled);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+		assert_eq!(out.filter, "disabled");
+
+		let except_git = MinimizerConfig {
+			enabled: true,
+			except: ["git".to_string()].into_iter().collect(),
+			..Default::default()
+		};
+		assert!(!should_minimize("git diff", &except_git));
+		let out = apply("git diff", input, 0, &except_git);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+		assert_eq!(out.filter, "disabled");
 	}
 
 	#[test]
@@ -359,6 +395,27 @@ mod tests {
 	}
 
 	#[test]
+	fn successful_user_pipeline_empty_output_returns_visible_ok() {
+		let cfg = config_from_settings(
+			r#"
+schema_version = 1
+[filters.empty_ok]
+match_command = "^printf$"
+strip_lines_matching = [".*"]
+"#,
+		);
+
+		assert!(should_minimize("printf done", &cfg));
+		let out = apply("printf done", "drop me\n", 0, &cfg);
+
+		assert!(out.changed);
+		assert_eq!(out.text, "OK\n");
+		assert_eq!(out.filter, "pipeline");
+		assert_eq!(out.output_bytes, out.text.len());
+		assert_eq!(out.original_text.as_deref(), Some("drop me\n"));
+	}
+
+	#[test]
 	fn failed_minimization_does_not_invent_ok_for_empty_output() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let out = apply("cargo build", "   Compiling app v0.1.0\n", 1, &cfg);
@@ -383,6 +440,22 @@ mod tests {
 		assert_eq!(mode_for("echo start ; git status", &cfg), MinimizerMode::None);
 		assert_eq!(mode_for("false && git status", &cfg), MinimizerMode::None);
 		assert_eq!(mode_for("git status | cat", &cfg), MinimizerMode::None);
+	}
+
+	#[test]
+	fn compound_supported_command_is_passthrough_without_unknown_record() {
+		reset_unknown_command_count();
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let input = "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n";
+		let before = unknown_command_count();
+
+		assert_eq!(mode_for("git diff ; printf done", &cfg), MinimizerMode::None);
+		let out = apply("git diff ; printf done", input, 0, &cfg);
+
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+		assert_eq!(out.filter, "compound");
+		assert_eq!(unknown_command_count(), before);
 	}
 
 	#[test]
