@@ -2046,9 +2046,9 @@ export const SETTINGS_SCHEMA = {
 	// Async jobs
 	"async.enabled": {
 		type: "boolean",
-		default: false,
+		default: true,
 		ui: {
-			tab: "tools",
+			tab: "tasks",
 			label: "Async Execution",
 			description: "Enable async bash commands and background task execution",
 		},
@@ -2326,13 +2326,13 @@ export const SETTINGS_SCHEMA = {
 
 	"task.maxConcurrency": {
 		type: "number",
-		default: 32,
+		default: 0,
 		ui: {
 			tab: "tasks",
 			label: "Max Concurrent Tasks",
 			description: "Concurrent limit for subagents",
 			options: [
-				{ value: "0", label: "Unlimited" },
+				{ value: "0", label: "Unlimited", description: "Default" },
 				{ value: "1", label: "1 task" },
 				{ value: "2", label: "2 tasks" },
 				{ value: "4", label: "4 tasks" },

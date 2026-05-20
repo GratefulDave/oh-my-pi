@@ -1,5 +1,10 @@
 import type { AssistantMessage, AssistantMessageEvent } from "../types";
 
+export interface EventStreamOptions<T> {
+	maxQueueSize?: number;
+	coalesceQueuedEvent?: (queued: T, next: T) => T | undefined;
+}
+
 // Generic event stream class for async iteration
 export class EventStream<T, R = T> implements AsyncIterable<T> {
 	queue: T[] = [];
@@ -12,8 +17,10 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	rejectFinalResult!: (err: unknown) => void;
 	isComplete: (event: T) => boolean;
 	extractResult: (event: T) => R;
+	#maxQueueSize: number | undefined;
+	#coalesceQueuedEvent: ((queued: T, next: T) => T | undefined) | undefined;
 
-	constructor(isComplete: (event: T) => boolean, extractResult: (event: T) => R) {
+	constructor(isComplete: (event: T) => boolean, extractResult: (event: T) => R, options?: EventStreamOptions<T>) {
 		const { promise, resolve, reject } = Promise.withResolvers<R>();
 		// Prevent an unhandled rejection when fail() is called but nobody awaits result().
 		// Callers who do await result() still receive the rejection normally.
@@ -23,32 +30,47 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 		this.rejectFinalResult = reject;
 		this.isComplete = isComplete;
 		this.extractResult = extractResult;
+		this.#maxQueueSize =
+			options?.maxQueueSize === undefined ? undefined : Math.max(1, Math.floor(options.maxQueueSize));
+		this.#coalesceQueuedEvent = options?.coalesceQueuedEvent;
 	}
 
 	push(event: T): void {
 		if (this.done) return;
 
-		if (this.isComplete(event)) {
+		const complete = this.isComplete(event);
+		if (complete) {
 			this.done = true;
 			this.resolveFinalResult(this.extractResult(event));
 		}
 
 		// Deliver to waiting consumer or queue it
-		const waiter = this.waiting.shift();
-		if (waiter) {
-			waiter.resolve({ value: event, done: false });
-		} else {
-			this.queue.push(event);
-		}
+		this.deliver(event, complete);
 	}
 
-	deliver(event: T): void {
+	deliver(event: T, bypassQueueLimit = false): void {
 		const waiter = this.waiting.shift();
 		if (waiter) {
 			waiter.resolve({ value: event, done: false });
-		} else {
-			this.queue.push(event);
+			return;
 		}
+
+		const lastIndex = this.queue.length - 1;
+		const last = this.queue[lastIndex];
+		if (last !== undefined && this.#coalesceQueuedEvent) {
+			const coalesced = this.#coalesceQueuedEvent(last, event);
+			if (coalesced !== undefined) {
+				this.queue[lastIndex] = coalesced;
+				return;
+			}
+		}
+
+		if (!bypassQueueLimit && this.#maxQueueSize !== undefined && this.queue.length >= this.#maxQueueSize) {
+			this.fail(new Error(`EventStream queue exceeded ${this.#maxQueueSize} queued events`));
+			return;
+		}
+
+		this.queue.push(event);
 	}
 
 	end(result?: R): void {
@@ -91,9 +113,9 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 			} else if (this.done) {
 				return;
 			} else {
-				const result = await new Promise<IteratorResult<T>>((resolve, reject) =>
-					this.waiting.push({ resolve, reject }),
-				);
+				const { promise, resolve, reject } = Promise.withResolvers<IteratorResult<T>>();
+				this.waiting.push({ resolve, reject });
+				const result = await promise;
 				if (result.done) return;
 				yield result.value;
 			}
@@ -103,6 +125,27 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	result(): Promise<R> {
 		return this.finalResultPromise;
 	}
+}
+
+function coalesceAssistantMessageEvent(
+	queued: AssistantMessageEvent,
+	next: AssistantMessageEvent,
+): AssistantMessageEvent | undefined {
+	if (queued.contentIndex !== next.contentIndex) return undefined;
+
+	if (queued.type === "text_delta" && next.type === "text_delta") {
+		return { ...next, delta: queued.delta + next.delta };
+	}
+
+	if (queued.type === "thinking_delta" && next.type === "thinking_delta") {
+		return { ...next, delta: queued.delta + next.delta };
+	}
+
+	if (queued.type === "toolcall_delta" && next.type === "toolcall_delta") {
+		return { ...next, delta: queued.delta + next.delta };
+	}
+
+	return undefined;
 }
 
 export class AssistantMessageEventStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
@@ -117,19 +160,21 @@ export class AssistantMessageEventStream extends EventStream<AssistantMessageEve
 				}
 				throw new Error("Unexpected event type for final result");
 			},
+			{ maxQueueSize: 2048, coalesceQueuedEvent: coalesceAssistantMessageEvent },
 		);
 	}
 
 	override push(event: AssistantMessageEvent): void {
 		if (this.done) return;
 
+		const complete = this.isComplete(event);
 		// Completion resolves the final result and still emits the terminal event.
-		if (this.isComplete(event)) {
+		if (complete) {
 			this.done = true;
 			this.resolveFinalResult(this.extractResult(event));
 		}
 
-		this.deliver(event);
+		this.deliver(event, complete);
 	}
 
 	override end(result?: AssistantMessage): void {

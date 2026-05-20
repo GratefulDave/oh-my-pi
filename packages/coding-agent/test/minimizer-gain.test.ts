@@ -50,20 +50,50 @@ describe("minimizer gain analytics", () => {
 				},
 				{ agentDir },
 			);
+			await recordMinimizerGain(
+				{
+					timestamp: "2026-05-20T00:02:00.000Z",
+					cwd: "/repo",
+					command: "git status --short",
+					filter: "git",
+					inputBytes: 300,
+					outputBytes: 330,
+					savedBytes: 0,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+			await recordMinimizerGain(
+				{
+					timestamp: "2026-05-20T00:03:00.000Z",
+					cwd: "/other-repo",
+					command: "bun test",
+					filter: "bun",
+					inputBytes: 1000,
+					outputBytes: 400,
+					savedBytes: 600,
+					exitCode: 0,
+				},
+				{ agentDir },
+			);
 
 			const content = await fs.readFile(getMinimizerGainPath(agentDir), "utf-8");
 			expect(content).not.toContain("full raw output");
 
-			const records = await readMinimizerGain({ agentDir, cwd: "/repo" });
-			expect(records).toHaveLength(2);
+			const records = await readMinimizerGain({ agentDir });
+			expect(records).toHaveLength(4);
 
 			const summary = summarizeMinimizerGain(records);
-			expect(summary.commands).toBe(2);
-			expect(summary.inputBytes).toBe(3200);
-			expect(summary.outputBytes).toBe(450);
-			expect(summary.savedBytes).toBe(2750);
-			expect(summary.estimatedTokensSaved).toBe(687);
-			expect(summary.byFilter.map(row => row.filter)).toEqual(["cargo", "git"]);
+			expect(summary.commands).toBe(3);
+			expect(summary.inputBytes).toBe(4200);
+			expect(summary.outputBytes).toBe(850);
+			expect(summary.savedBytes).toBe(3350);
+			expect(summary.estimatedTokensSaved).toBe(837);
+			expect(summary.byFilter.map(row => row.filter)).toEqual(["cargo", "git", "bun"]);
+			expect(summary.byCwd.map(row => row.cwd)).toEqual(["/repo", "/other-repo"]);
+			expect(summary.byCwd[0]).toMatchObject({ cwd: "/repo", savedBytes: 2750 });
+			expect(summary.byCwd[1]).toMatchObject({ cwd: "/other-repo", savedBytes: 600 });
 
 			const discovery = discoverMinimizerGain(records);
 			expect(discovery.commands[0]).toMatchObject({
@@ -72,10 +102,11 @@ describe("minimizer gain analytics", () => {
 				savedBytes: 2000,
 				avgSavedBytes: 2000,
 			});
+			expect(discovery.commands.map(row => row.command)).not.toContain("git status --short");
 
 			await recordMinimizerGain(
 				{
-					timestamp: "2026-05-20T00:02:00.000Z",
+					timestamp: "2026-05-20T00:04:00.000Z",
 					cwd: "/repo",
 					command: "unknown-tool --verbose",
 					filter: "missed",
@@ -87,9 +118,9 @@ describe("minimizer gain analytics", () => {
 				},
 				{ agentDir },
 			);
-			const mixedRecords = await readMinimizerGain({ agentDir, cwd: "/repo" });
-			expect(summarizeMinimizerGain(mixedRecords).commands).toBe(2);
-			expect(discoverMinimizerGain(mixedRecords).commands).toHaveLength(2);
+			const mixedRecords = await readMinimizerGain({ agentDir });
+			expect(summarizeMinimizerGain(mixedRecords).commands).toBe(3);
+			expect(discoverMinimizerGain(mixedRecords).commands).toHaveLength(3);
 
 			const missed = summarizeMissedMinimizerGain(mixedRecords);
 			expect(missed.commands[0]).toMatchObject({

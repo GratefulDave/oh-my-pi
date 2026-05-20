@@ -118,6 +118,7 @@ function printGainSummary(input: GainContext): void {
 
 	printRows("Top Filters", summary.byFilter, row => row.filter);
 	printRows("Top Commands", summary.byCommand, row => row.command);
+	printRows("Repositories", summary.byCwd, row => row.cwd);
 	printScope(input);
 }
 

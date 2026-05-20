@@ -360,10 +360,8 @@ describe("anthropic-messages encodeStream", () => {
 			"content_block_stop",
 			"content_block_start",
 			"content_block_delta",
-			"content_block_delta",
 			"content_block_stop",
 			"content_block_start",
-			"content_block_delta",
 			"content_block_delta",
 			"content_block_stop",
 			"message_delta",
@@ -413,23 +411,23 @@ describe("anthropic-messages encodeStream", () => {
 		expect(sse[6]!.data).toEqual({
 			type: "content_block_delta",
 			index: 1,
-			delta: { type: "text_delta", text: "hi " },
+			delta: { type: "text_delta", text: "hi there" },
 		});
 
 		// tool_use block
-		expect(sse[9]!.data).toEqual({
+		expect(sse[8]!.data).toEqual({
 			type: "content_block_start",
 			index: 2,
 			content_block: { type: "tool_use", id: "toolu_1", name: "go", input: {} },
 		});
-		expect(sse[10]!.data).toEqual({
+		expect(sse[9]!.data).toEqual({
 			type: "content_block_delta",
 			index: 2,
-			delta: { type: "input_json_delta", partial_json: '{"x":' },
+			delta: { type: "input_json_delta", partial_json: '{"x":1}' },
 		});
 
 		// message_delta with mapped stop_reason
-		expect(sse[13]!.data).toEqual({
+		expect(sse[11]!.data).toEqual({
 			type: "message_delta",
 			delta: { stop_reason: "tool_use", stop_sequence: null },
 			usage: {
@@ -440,7 +438,7 @@ describe("anthropic-messages encodeStream", () => {
 			},
 		});
 
-		expect(sse[14]!.data).toEqual({ type: "message_stop" });
+		expect(sse[12]!.data).toEqual({ type: "message_stop" });
 	});
 
 	it("emits an error event when the upstream stream errors", async () => {

@@ -31,10 +31,14 @@ export interface MinimizerGainFilterSummary extends MinimizerGainTotals {
 export interface MinimizerGainCommandSummary extends MinimizerGainTotals {
 	command: string;
 }
+export interface MinimizerGainCwdSummary extends MinimizerGainTotals {
+	cwd: string;
+}
 
 export interface MinimizerGainSummary extends MinimizerGainTotals {
 	byFilter: MinimizerGainFilterSummary[];
 	byCommand: MinimizerGainCommandSummary[];
+	byCwd: MinimizerGainCwdSummary[];
 }
 
 export interface MinimizerGainDiscoveryItem extends MinimizerGainTotals {
@@ -159,25 +163,28 @@ export function summarizeMinimizerGain(records: MinimizerGainRecord[]): Minimize
 	const totals = createTotals();
 	const byFilter = new Map<string, MinimizerGainFilterSummary>();
 	const byCommand = new Map<string, MinimizerGainCommandSummary>();
+	const byCwd = new Map<string, MinimizerGainCwdSummary>();
 
 	for (const record of records) {
-		if (!isSavedRecord(record)) continue;
+		if (!isSavingsRecord(record)) continue;
 		addRecord(totals, record);
 		addRecord(getFilterSummary(byFilter, record.filter), record);
 		addRecord(getCommandSummary(byCommand, record.command), record);
+		addRecord(getCwdSummary(byCwd, record.cwd), record);
 	}
 
 	return {
 		...finalizeTotals(totals),
 		byFilter: finalizeGroups(byFilter),
 		byCommand: finalizeGroups(byCommand),
+		byCwd: finalizeGroups(byCwd),
 	};
 }
 
 export function discoverMinimizerGain(records: MinimizerGainRecord[], limit = 10): MinimizerGainDiscovery {
 	const groups = new Map<string, MinimizerGainDiscoveryItem>();
 	for (const record of records) {
-		if (!isSavedRecord(record)) continue;
+		if (!isSavingsRecord(record)) continue;
 		const item = getDiscoveryItem(groups, record);
 		addRecord(item, record);
 	}
@@ -203,6 +210,10 @@ export function summarizeMissedMinimizerGain(records: MinimizerGainRecord[], lim
 
 function isSavedRecord(record: MinimizerGainRecord): boolean {
 	return record.kind === undefined || record.kind === "saved";
+}
+
+function isSavingsRecord(record: MinimizerGainRecord): boolean {
+	return isSavedRecord(record) && record.savedBytes > 0;
 }
 
 function getDiscoveryItem(
@@ -366,6 +377,11 @@ function getCommandSummary(
 	command: string,
 ): MinimizerGainCommandSummary {
 	return getOrInsert(map, command, () => ({ command, ...createTotals() }));
+}
+
+function getCwdSummary(map: Map<string, MinimizerGainCwdSummary>, cwd: string | undefined): MinimizerGainCwdSummary {
+	const label = cwd ?? "(unknown cwd)";
+	return getOrInsert(map, label, () => ({ cwd: label, ...createTotals() }));
 }
 
 function getOrInsert<T>(map: Map<string, T>, key: string, create: () => T): T {
