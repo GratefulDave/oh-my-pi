@@ -175,7 +175,7 @@ Runtime truncation is byte-threshold based in `OutputSink` (50KB default). It do
 
 ## Native shell minimizer
 
-Non-PTY shell execution can enable the native minimizer through the `shellMinimizer.*` settings. The minimizer is not an external `rtk` wrapper: it runs inside `pi-shell`, only captures simple single commands selected by the minimizer planner, and leaves piped, compound, unsupported, or oversized output unchanged.
+Non-PTY shell execution can enable the native minimizer through the `shellMinimizer.*` settings. The minimizer is not an external `rtk` wrapper: it runs inside `pi-shell`, only captures simple single commands selected by the minimizer planner, and leaves piped, compound, unsupported, or oversized output unchanged. Known wrapper commands are routed to first-class minimizers where safe, including `npx`, `pnpm dlx`, and `uv run` for supported lint/test/typecheck tools.
 
 When a command is minimized:
 
