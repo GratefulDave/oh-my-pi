@@ -267,6 +267,16 @@ mod tests {
 	}
 
 	#[test]
+	fn uv_run_pyright_routes_to_lint_filter() {
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("run"), "uv run pyright", &config);
+		let input =
+			"0 errors, 0 warnings, 0 informations\nsrc/app.ts:4:7 - error TS2322: Type 'string' is not assignable to type 'number'.\n";
+		let out = filter(&context, input, 1).text;
+		assert!(out.contains("TS2322"));
+	}
+
+	#[test]
 	fn uv_run_unknown_tool_is_passthrough() {
 		let config = MinimizerConfig::default();
 		let context = ctx("uv", Some("run"), "uv run custom-tool", &config);

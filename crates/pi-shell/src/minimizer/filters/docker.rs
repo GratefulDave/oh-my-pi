@@ -40,7 +40,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 
 fn filter_docker(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
 	if is_log_command(ctx) {
-		return filter_logs(input);
+		return filter_docker_logs(input);
 	}
 	if exit_code != 0 {
 		return input.to_string();
@@ -92,6 +92,91 @@ fn filter_logs(input: &str) -> String {
 	let without_empty_runs = drop_repeated_blank_lines(input);
 	let deduped = primitives::dedup_consecutive_lines(&without_empty_runs);
 	primitives::head_tail_lines(&deduped, 120, 80)
+}
+
+fn filter_docker_logs(input: &str) -> String {
+	let without_empty_runs = drop_repeated_blank_lines(input);
+	let deduped = dedup_consecutive_log_lines(&without_empty_runs);
+	let priority = collect_priority_log_lines(&deduped);
+	if priority.is_empty() {
+		primitives::head_tail_lines(&deduped, 120, 80)
+	} else {
+		primitives::head_tail_lines(&priority, 120, 80)
+	}
+}
+
+fn dedup_consecutive_log_lines(input: &str) -> String {
+	let mut out = String::new();
+	let mut previous: Option<&str> = None;
+	let mut previous_key: Option<&str> = None;
+	let mut count = 0usize;
+
+	for line in input.lines() {
+		let key = log_dedup_key(line);
+		if previous_key == Some(key) {
+			count += 1;
+			continue;
+		}
+		flush_repeated_log_line(&mut out, previous, count);
+		previous = Some(line);
+		previous_key = Some(key);
+		count = 1;
+	}
+	flush_repeated_log_line(&mut out, previous, count);
+	out
+}
+
+fn flush_repeated_log_line(out: &mut String, line: Option<&str>, count: usize) {
+	let Some(line) = line else {
+		return;
+	};
+	out.push_str(line);
+	if count > 1 {
+		out.push_str(" (×");
+		out.push_str(&count.to_string());
+		out.push(')');
+	}
+	out.push('\n');
+}
+
+fn log_dedup_key(line: &str) -> &str {
+	if let Some((service, message)) = line.split_once('|') {
+		let service = service.trim();
+		if is_compose_log_service(service) {
+			return message.trim_start();
+		}
+	}
+	line
+}
+
+fn is_compose_log_service(value: &str) -> bool {
+	!value.is_empty()
+		&& !matches!(
+			value,
+			"debug" | "error" | "fatal" | "info" | "trace" | "warn" | "warning"
+		)
+		&& value.bytes().any(|byte| byte.is_ascii_lowercase())
+		&& value.bytes().all(|byte| {
+			byte.is_ascii_lowercase()
+				|| byte.is_ascii_digit()
+				|| matches!(byte, b'-' | b'_' | b'.')
+		})
+}
+
+fn collect_priority_log_lines(input: &str) -> String {
+	let mut out = String::new();
+	for line in input.lines() {
+		if is_priority_log_line(line) {
+			out.push_str(line);
+			out.push('\n');
+		}
+	}
+	out
+}
+
+fn is_priority_log_line(line: &str) -> bool {
+	let line = line.to_ascii_lowercase();
+	line.contains("error") || line.contains("fail") || line.contains("warn")
 }
 
 fn compact_table(input: &str, visible_rows: usize) -> String {
@@ -172,10 +257,49 @@ mod tests {
 
 	#[test]
 	fn dedups_repeated_log_lines_before_truncation() {
-		let input = "api | ready\napi | ready\napi | ready\napi | failed\n";
-		let out = filter_logs(input);
+		let input = "api | ready\napi | ready\napi | ready\napi | done\n";
+		let out = filter_docker_logs(input);
 		assert!(out.contains("api | ready (×3)"));
-		assert!(out.contains("api | failed"));
+		assert!(out.contains("api | done"));
+	}
+
+	#[test]
+	fn dedups_compose_service_prefixed_log_messages() {
+		let input = "api-1  | ready\napi-2  | ready\napi | ready\nworker | busy\n";
+		let out = filter_docker_logs(input);
+		assert!(out.contains("api-1  | ready (×3)"));
+		assert!(out.contains("worker | busy"));
+	}
+
+	#[test]
+	fn docker_compose_logs_uses_log_filter() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let compose_ctx = MinimizerCtx {
+			program: "docker",
+			subcommand: Some("compose"),
+			command: "docker compose logs api",
+			config: &cfg,
+		};
+		let input = "api-1  | ready\napi-2  | ready\napi | ready\n";
+		let out = filter(&compose_ctx, input, 0).text;
+		assert!(out.contains("api-1  | ready (×3)"));
+	}
+
+	#[test]
+	fn prioritizes_error_lines_for_large_log_windows() {
+		let mut input = String::new();
+		for i in 0..260 {
+			input.push_str("api-1  | request ");
+			input.push_str(&i.to_string());
+			input.push_str(" complete\n");
+		}
+		input.push_str("api-1  | WARN cache miss\n");
+		input.push_str("worker | failed to process job\n");
+
+		let out = filter_docker_logs(&input);
+		assert!(out.contains("api-1  | WARN cache miss"));
+		assert!(out.contains("worker | failed to process job"));
+		assert!(!out.contains("api-1  | request 0 complete"));
 	}
 
 	#[test]

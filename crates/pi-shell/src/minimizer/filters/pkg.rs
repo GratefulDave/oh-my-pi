@@ -1,6 +1,7 @@
 //! Package manager output filters.
 
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
+const PACKAGE_TREE_HEAD_LINES: usize = 80;
 
 pub fn supports(subcommand: Option<&str>) -> bool {
 	matches!(
@@ -13,6 +14,8 @@ pub fn supports(subcommand: Option<&str>) -> bool {
 				| "remove"
 				| "rm" | "uninstall"
 				| "list" | "ls"
+				| "tree"
+				| "pip"
 				| "outdated"
 				| "sync" | "lock"
 				| "run" | "exec"
@@ -41,6 +44,8 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 	let deduped = primitives::dedup_consecutive_lines(&stripped);
 	let text = if contains_audit_or_security_summary(&deduped) {
 		deduped
+	} else if exit_code == 0 && is_package_tree_command(ctx) {
+		compact_package_tree_output(&deduped)
 	} else {
 		primitives::head_tail_lines(&deduped, 120, 80)
 	};
@@ -72,6 +77,51 @@ fn strip_package_noise(program: &str, input: &str, exit_code: i32) -> String {
 		out.push_str(line.trim_end());
 		out.push('\n');
 	}
+	out
+}
+
+fn is_package_tree_command(ctx: &MinimizerCtx<'_>) -> bool {
+	match ctx.program {
+		"npm" | "pnpm" | "yarn" => {
+			matches!(ctx.subcommand, Some("list" | "ls" | "tree" | "why" | "explain"))
+		},
+		"bun" => {
+			matches!(ctx.subcommand, Some("list" | "ls" | "tree" | "why" | "explain"))
+				|| matches!(ctx.subcommand, Some("pm"))
+					&& command_contains_any(ctx.command, &["list", "ls", "tree", "why"])
+		},
+		"uv" => {
+			matches!(ctx.subcommand, Some("list" | "ls" | "tree"))
+				|| matches!(ctx.subcommand, Some("pip"))
+					&& command_contains_any(ctx.command, &["list", "ls", "tree", "freeze"])
+		},
+		_ => false,
+	}
+}
+
+fn command_contains_any(command: &str, words: &[&str]) -> bool {
+	command.split_whitespace().any(|part| words.contains(&part))
+}
+
+fn compact_package_tree_output(input: &str) -> String {
+	let lines: Vec<&str> = input
+		.lines()
+		.map(str::trim_end)
+		.filter(|line| !line.trim().is_empty())
+		.collect();
+	if lines.len() <= PACKAGE_TREE_HEAD_LINES {
+		return input.to_string();
+	}
+
+	let mut out = format!("package tree/list: {} entries\n", lines.len());
+	for line in lines.iter().take(PACKAGE_TREE_HEAD_LINES) {
+		out.push_str(line);
+		out.push('\n');
+	}
+	out.push_str(&format!(
+		"… {} package entries omitted …\n",
+		lines.len() - PACKAGE_TREE_HEAD_LINES
+	));
 	out
 }
 
@@ -133,6 +183,17 @@ fn is_python_package_noise(program: &str, _line: &str, lower: &str) -> bool {
 		|| lower.starts_with("resolving dependencies")
 		|| lower.starts_with("writing lock file")
 		|| lower.starts_with("package operations:")
+		|| program == "uv" && is_uv_progress_noise(lower)
+}
+
+fn is_uv_progress_noise(lower: &str) -> bool {
+	lower.starts_with("resolved ")
+		|| lower.starts_with("prepared ")
+		|| lower.starts_with("installed ")
+		|| lower.starts_with("uninstalled ")
+		|| lower.starts_with("updated ")
+		|| lower.starts_with("built ")
+		|| lower.starts_with("downloaded ")
 }
 
 fn is_ruby_php_brew_noise(program: &str, _line: &str, lower: &str) -> bool {
@@ -177,6 +238,7 @@ fn is_error_or_summary(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::minimizer::MinimizerConfig;
 
 	#[test]
 	fn strips_progress_but_keeps_package_errors() {
@@ -203,9 +265,9 @@ mod tests {
 	#[test]
 	fn supports_common_package_subcommands_for_future_dispatch() {
 		for subcommand in [
-			"ci", "add", "outdated", "sync", "audit", "why", "view", "fund", "explain", "test", "t",
-			"start", "stop", "restart", "config", "cache", "prune", "dedupe", "publish", "pack",
-			"link",
+			"ci", "add", "outdated", "sync", "audit", "why", "tree", "pip", "view", "fund",
+			"explain", "test", "t", "start", "stop", "restart", "config", "cache", "prune",
+			"dedupe", "publish", "pack", "link",
 		] {
 			assert!(supports(Some(subcommand)), "{subcommand} should be supported");
 		}
@@ -218,5 +280,52 @@ mod tests {
 		assert!(!out.contains("Resolving dependencies"));
 		assert!(!out.contains("Downloaded foo"));
 		assert!(out.contains("error: failed"));
+	}
+
+	fn ctx<'a>(
+		program: &'a str,
+		subcommand: Option<&'a str>,
+		command: &'a str,
+		config: &'a MinimizerConfig,
+	) -> MinimizerCtx<'a> {
+		MinimizerCtx { program, subcommand, command, config }
+	}
+
+	#[test]
+	fn compacts_large_js_package_tree() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let context = ctx("npm", Some("list"), "npm list --all", &cfg);
+		let mut input = String::from("app@1.0.0\n");
+		for idx in 0..90 {
+			input.push_str(&format!("├── dep{idx:03}@1.0.0\n"));
+		}
+
+		let out = filter(&context, &input, 0);
+		assert!(out.text.starts_with("package tree/list: 91 entries\n"));
+		assert!(out.text.contains("├── dep000@1.0.0"));
+		assert!(out.text.contains("├── dep078@1.0.0"));
+		assert!(!out.text.contains("├── dep089@1.0.0"));
+		assert!(out.text.contains("… 11 package entries omitted …"));
+	}
+
+	#[test]
+	fn compacts_uv_pip_list_and_strips_progress_noise() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let context = ctx("uv", Some("pip"), "uv pip list", &cfg);
+		let mut input =
+			String::from("Resolved 91 packages in 12ms\nPrepared 2 packages in 3ms\nPackage Version\n");
+		for idx in 0..90 {
+			input.push_str(&format!("pkg{idx:03} 1.0.{idx}\n"));
+		}
+
+		let out = filter(&context, &input, 0);
+		assert!(!out.text.contains("Resolved 91 packages"));
+		assert!(!out.text.contains("Prepared 2 packages"));
+		assert!(out.text.starts_with("package tree/list: 91 entries\n"));
+		assert!(out.text.contains("Package Version"));
+		assert!(out.text.contains("pkg000 1.0.0"));
+		assert!(out.text.contains("pkg078 1.0.78"));
+		assert!(!out.text.contains("pkg089 1.0.89"));
+		assert!(out.text.contains("… 11 package entries omitted …"));
 	}
 }
