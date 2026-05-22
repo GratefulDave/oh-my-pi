@@ -151,15 +151,10 @@ fn log_dedup_key(line: &str) -> &str {
 
 fn is_compose_log_service(value: &str) -> bool {
 	!value.is_empty()
-		&& !matches!(
-			value,
-			"debug" | "error" | "fatal" | "info" | "trace" | "warn" | "warning"
-		)
+		&& !matches!(value, "debug" | "error" | "fatal" | "info" | "trace" | "warn" | "warning")
 		&& value.bytes().any(|byte| byte.is_ascii_lowercase())
 		&& value.bytes().all(|byte| {
-			byte.is_ascii_lowercase()
-				|| byte.is_ascii_digit()
-				|| matches!(byte, b'-' | b'_' | b'.')
+			byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_' | b'.')
 		})
 }
 
@@ -291,10 +286,10 @@ mod tests {
 	fn docker_compose_logs_uses_log_filter() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let compose_ctx = MinimizerCtx {
-			program: "docker",
+			program:    "docker",
 			subcommand: Some("compose"),
-			command: "docker compose logs api",
-			config: &cfg,
+			command:    "docker compose logs api",
+			config:     &cfg,
 		};
 		let input = "api-1  | ready\napi-2  | ready\napi | ready\n";
 		let out = filter(&compose_ctx, input, 0).text;
@@ -305,10 +300,10 @@ mod tests {
 	fn docker_compose_ps_uses_table_filter() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let compose_ctx = MinimizerCtx {
-			program: "docker",
+			program:    "docker",
 			subcommand: Some("compose"),
-			command: "docker compose ps",
-			config: &cfg,
+			command:    "docker compose ps",
+			config:     &cfg,
 		};
 		let mut input = String::from("NAME IMAGE COMMAND SERVICE CREATED STATUS PORTS\n");
 		for idx in 0..20 {
@@ -322,8 +317,8 @@ mod tests {
 
 	#[test]
 	fn strips_compose_up_progress_lines() {
-		let input =
-			"Attaching to api-1, worker-1\n Container api-1  Creating\n Container api-1  Created\napi-1  | ready\n";
+		let input = "Attaching to api-1, worker-1\n Container api-1  Creating\n Container api-1  \
+		             Created\napi-1  | ready\n";
 		let out = compact_build_or_progress(input);
 		assert!(!out.contains("Attaching to"));
 		assert!(!out.contains("Container api-1  Creating"));
@@ -332,7 +327,9 @@ mod tests {
 
 	#[test]
 	fn strips_compose_build_progress_lines() {
-		let input = "#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 512B done\n#2 [1/2] FROM docker.io/library/node:22\n#2 CACHED\n#3 exporting to image\n#3 DONE 0.1s\nnaming to docker.io/library/app:latest\n";
+		let input = "#1 [internal] load build definition from Dockerfile\n#1 transferring \
+		             dockerfile: 512B done\n#2 [1/2] FROM docker.io/library/node:22\n#2 CACHED\n#3 \
+		             exporting to image\n#3 DONE 0.1s\nnaming to docker.io/library/app:latest\n";
 		let out = compact_build_or_progress(input);
 		assert!(!out.contains("transferring dockerfile"));
 		assert!(!out.contains("#2 CACHED"));
@@ -342,7 +339,9 @@ mod tests {
 
 	#[test]
 	fn strips_compose_pull_progress_lines() {
-		let input = "app Pulling fs layer\napp Downloading\napp Verifying Checksum\napp Download complete\napp Extracting\napp Pull complete\nStatus: Downloaded newer image for docker.io/library/app:latest\n";
+		let input = "app Pulling fs layer\napp Downloading\napp Verifying Checksum\napp Download \
+		             complete\napp Extracting\napp Pull complete\nStatus: Downloaded newer image \
+		             for docker.io/library/app:latest\n";
 		let out = compact_build_or_progress(input);
 		assert!(!out.contains("Pulling fs layer"));
 		assert!(!out.contains("Pull complete"));

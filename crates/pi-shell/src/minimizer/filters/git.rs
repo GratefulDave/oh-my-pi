@@ -90,13 +90,13 @@ fn has_token(command: &str, token: &str) -> bool {
 
 #[derive(Default)]
 struct StatusSummary {
-	branch: Option<String>,
-	clean: bool,
-	staged: usize,
-	unstaged: usize,
+	branch:    Option<String>,
+	clean:     bool,
+	staged:    usize,
+	unstaged:  usize,
 	untracked: usize,
 	conflicts: usize,
-	paths: Vec<String>,
+	paths:     Vec<String>,
 }
 
 fn condense_status(input: &str) -> String {
@@ -214,7 +214,7 @@ fn push_status_path(summary: &mut StatusSummary, label: &str, path: &str) {
 		.push(format!("{label} {}", primitives::truncate_line(path, 160)));
 }
 
-fn status_has_no_signal(summary: &StatusSummary) -> bool {
+const fn status_has_no_signal(summary: &StatusSummary) -> bool {
 	summary.branch.is_none()
 		&& !summary.clean
 		&& summary.staged == 0
@@ -300,7 +300,7 @@ fn condense_log(input: &str, head: usize, tail: usize) -> String {
 }
 
 struct LogEntry {
-	hash: String,
+	hash:    String,
 	subject: String,
 }
 
@@ -361,15 +361,15 @@ fn short_hash(hash: &str) -> String {
 }
 
 struct DiffFile {
-	path: String,
-	added: usize,
+	path:    String,
+	added:   usize,
 	removed: usize,
-	hunks: Vec<DiffHunk>,
+	hunks:   Vec<DiffHunk>,
 }
 
 struct DiffHunk {
 	header: String,
-	lines: Vec<String>,
+	lines:  Vec<String>,
 }
 
 fn condense_diff(input: &str) -> String {
@@ -578,7 +578,8 @@ mod tests {
 	fn long_status_clean_is_compacted() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("status"), "git status", &cfg);
-		let input = "On branch main\nYour branch is up to date with 'origin/main'.\n\nnothing to commit, working tree clean\n";
+		let input = "On branch main\nYour branch is up to date with 'origin/main'.\n\nnothing to \
+		             commit, working tree clean\n";
 		let out = filter(&ctx, input, 0);
 
 		assert!(out.changed);

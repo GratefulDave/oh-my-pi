@@ -312,9 +312,10 @@ pub fn verify_builtin_filters() -> Vec<pipeline::TestOutcome> {
 
 #[cfg(test)]
 mod tests {
+	use std::fs;
+
 	use super::*;
 	use crate::minimizer::MinimizerOptions;
-	use std::fs;
 	fn config_from_settings(contents: &str) -> MinimizerConfig {
 		let path = std::env::temp_dir()
 			.join(format!("pi-shell-minimizer-engine-{}.toml", std::process::id()));

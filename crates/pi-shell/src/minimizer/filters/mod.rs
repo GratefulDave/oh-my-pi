@@ -127,10 +127,10 @@ fn filter_uv_wrapper(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> Min
 	match uv_wrapper_tool(ctx) {
 		Some("pytest") => {
 			let routed = MinimizerCtx {
-				program: "pytest",
+				program:    "pytest",
 				subcommand: Some("pytest"),
-				command: ctx.command,
-				config: ctx.config,
+				command:    ctx.command,
+				config:     ctx.config,
 			};
 			python::filter(&routed, input, exit_code)
 		},
@@ -146,19 +146,19 @@ fn filter_uv_wrapper(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> Min
 		},
 		Some("mypy") => {
 			let routed = MinimizerCtx {
-				program: "mypy",
+				program:    "mypy",
 				subcommand: Some("mypy"),
-				command: ctx.command,
-				config: ctx.config,
+				command:    ctx.command,
+				config:     ctx.config,
 			};
 			python::filter(&routed, input, exit_code)
 		},
 		Some(tool @ ("tsc" | "eslint" | "biome" | "pyright" | "basedpyright" | "oxlint")) => {
 			let routed = MinimizerCtx {
-				program: tool,
+				program:    tool,
 				subcommand: Some(tool),
-				command: ctx.command,
-				config: ctx.config,
+				command:    ctx.command,
+				config:     ctx.config,
 			};
 			lint::filter(&routed, input, exit_code)
 		},
@@ -168,23 +168,20 @@ fn filter_uv_wrapper(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> Min
 }
 
 fn uv_wrapper_tool<'a>(ctx: &'a MinimizerCtx<'_>) -> Option<&'a str> {
-	wrapper_invoked_tool(
-		ctx,
-		&[
-			"pytest",
-			"ruff",
-			"mypy",
-			"tsc",
-			"eslint",
-			"biome",
-			"pyright",
-			"basedpyright",
-			"oxlint",
-			"jest",
-			"vitest",
-			"playwright",
-		],
-	)
+	wrapper_invoked_tool(ctx, &[
+		"pytest",
+		"ruff",
+		"mypy",
+		"tsc",
+		"eslint",
+		"biome",
+		"pyright",
+		"basedpyright",
+		"oxlint",
+		"jest",
+		"vitest",
+		"playwright",
+	])
 }
 
 fn wrapper_invokes(ctx: &MinimizerCtx<'_>, tools: &[&str]) -> bool {
@@ -241,7 +238,14 @@ mod tests {
 	fn uv_run_pytest_routes_to_python_filter() {
 		let config = MinimizerConfig::default();
 		let context = ctx("uv", Some("run"), "uv run -m pytest", &config);
-		let input = "============================= test session starts ==============================\ncollected 2 items\n\na.py .\nb.py F\n\n=================================== FAILURES ===================================\nFAILED b.py::test_fail - AssertionError: expected 2 == 1\n=========================== short test summary info ============================\nFAILED b.py::test_fail - AssertionError: expected 2 == 1\n========================= 1 failed, 1 passed in 0.12s =========================\n";
+		let input = "============================= test session starts \
+		             ==============================\ncollected 2 items\n\na.py .\nb.py \
+		             F\n\n=================================== FAILURES \
+		             ===================================\nFAILED b.py::test_fail - AssertionError: \
+		             expected 2 == 1\n=========================== short test summary info \
+		             ============================\nFAILED b.py::test_fail - AssertionError: \
+		             expected 2 == 1\n========================= 1 failed, 1 passed in 0.12s \
+		             =========================\n";
 		let out = filter(&context, input, 1).text;
 		assert!(out.contains("FAILED b.py::test_fail"));
 		assert!(!out.contains("collected 2 items"));
@@ -260,7 +264,12 @@ mod tests {
 	fn uv_run_python_module_pytest_routes_to_python_filter() {
 		let config = MinimizerConfig::default();
 		let context = ctx("uv", Some("run"), "uv run python -m pytest", &config);
-		let input = "============================= test session starts ==============================\ncollected 1 item\n\na.py F\n\n=================================== FAILURES ===================================\nFAILED a.py::test_fail - AssertionError\n========================= 1 failed in 0.03s =========================\n";
+		let input = "============================= test session starts \
+		             ==============================\ncollected 1 item\n\na.py \
+		             F\n\n=================================== FAILURES \
+		             ===================================\nFAILED a.py::test_fail - \
+		             AssertionError\n========================= 1 failed in 0.03s \
+		             =========================\n";
 		let out = filter(&context, input, 1).text;
 		assert!(out.contains("FAILED a.py::test_fail"));
 		assert!(!out.contains("collected 1 item"));
@@ -270,8 +279,8 @@ mod tests {
 	fn uv_run_pyright_routes_to_lint_filter() {
 		let config = MinimizerConfig::default();
 		let context = ctx("uv", Some("run"), "uv run pyright", &config);
-		let input =
-			"0 errors, 0 warnings, 0 informations\nsrc/app.ts:4:7 - error TS2322: Type 'string' is not assignable to type 'number'.\n";
+		let input = "0 errors, 0 warnings, 0 informations\nsrc/app.ts:4:7 - error TS2322: Type \
+		             'string' is not assignable to type 'number'.\n";
 		let out = filter(&context, input, 1).text;
 		assert!(out.contains("TS2322"));
 	}
@@ -280,8 +289,8 @@ mod tests {
 	fn uv_run_basedpyright_routes_to_lint_filter() {
 		let config = MinimizerConfig::default();
 		let context = ctx("uv", Some("run"), "uv run basedpyright", &config);
-		let input =
-			"0 errors, 0 warnings, 0 notes\nsrc/app.ts:4:7 - error TS2322: Type 'string' is not assignable to type 'number'.\n";
+		let input = "0 errors, 0 warnings, 0 notes\nsrc/app.ts:4:7 - error TS2322: Type 'string' is \
+		             not assignable to type 'number'.\n";
 		let out = filter(&context, input, 1).text;
 		assert!(out.contains("TS2322"));
 	}

@@ -1,6 +1,6 @@
 //! Package manager output filters.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, fmt::Write as _};
 
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
 const PACKAGE_TREE_HEAD_LINES: usize = 80;
@@ -16,8 +16,7 @@ pub fn supports(subcommand: Option<&str>) -> bool {
 				| "remove"
 				| "rm" | "uninstall"
 				| "list" | "ls"
-				| "tree"
-				| "pip"
+				| "tree" | "pip"
 				| "outdated"
 				| "sync" | "lock"
 				| "run" | "exec"
@@ -34,10 +33,8 @@ pub fn supports(subcommand: Option<&str>) -> bool {
 				| "prune"
 				| "dedupe"
 				| "publish"
-				| "pack"
-				| "link"
-				| "why"
-				| "export"
+				| "pack" | "link"
+				| "why" | "export"
 		)
 	)
 }
@@ -105,7 +102,8 @@ fn is_package_tree_command(ctx: &MinimizerCtx<'_>) -> bool {
 		},
 		"poetry" => {
 			matches!(ctx.subcommand, Some("tree"))
-				|| matches!(ctx.subcommand, Some("show")) && command_contains_any(ctx.command, &["--tree"])
+				|| matches!(ctx.subcommand, Some("show"))
+					&& command_contains_any(ctx.command, &["--tree"])
 		},
 		_ => false,
 	}
@@ -147,10 +145,7 @@ fn compact_package_tree_output(input: &str) -> String {
 		out.push_str(line);
 		out.push('\n');
 	}
-	out.push_str(&format!(
-		"… {} package entries omitted …\n",
-		lines.len() - PACKAGE_TREE_HEAD_LINES
-	));
+	let _ = writeln!(out, "… {} package entries omitted …", lines.len() - PACKAGE_TREE_HEAD_LINES);
 	out
 }
 
@@ -169,7 +164,11 @@ fn compact_package_tree_ndjson_output(input: &str) -> Option<String> {
 		let value: serde_json::Value = serde_json::from_str(line).ok()?;
 		collect_package_tree_json_rows(&value, &mut rows, &mut seen);
 		if let Some(data) = value.get("data").and_then(serde_json::Value::as_str) {
-			for row in data.lines().map(str::trim_end).filter(|row| !row.trim().is_empty()) {
+			for row in data
+				.lines()
+				.map(str::trim_end)
+				.filter(|row| !row.trim().is_empty())
+			{
 				push_unique_row(&mut rows, &mut seen, row.to_string());
 			}
 		}
@@ -187,10 +186,7 @@ fn summarize_package_rows(rows: Vec<String>) -> Option<String> {
 		out.push('\n');
 	}
 	if rows.len() > PACKAGE_TREE_HEAD_LINES {
-		out.push_str(&format!(
-			"… {} package entries omitted …\n",
-			rows.len() - PACKAGE_TREE_HEAD_LINES
-		));
+		let _ = writeln!(out, "… {} package entries omitted …", rows.len() - PACKAGE_TREE_HEAD_LINES);
 	}
 	Some(out)
 }
@@ -203,7 +199,10 @@ fn collect_package_tree_json_rows(
 	match value {
 		serde_json::Value::Object(map) => {
 			if let Some(name) = map.get("name").and_then(serde_json::Value::as_str) {
-				let version = map.get("version").and_then(serde_json::Value::as_str).unwrap_or("");
+				let version = map
+					.get("version")
+					.and_then(serde_json::Value::as_str)
+					.unwrap_or("");
 				push_unique_row(
 					rows,
 					seen,
@@ -214,7 +213,10 @@ fn collect_package_tree_json_rows(
 					},
 				);
 			}
-			if let Some(dependencies) = map.get("dependencies").and_then(serde_json::Value::as_object) {
+			if let Some(dependencies) = map
+				.get("dependencies")
+				.and_then(serde_json::Value::as_object)
+			{
 				for (name, child) in dependencies {
 					push_json_dependency_row(rows, seen, name, child);
 				}
@@ -234,7 +236,12 @@ fn collect_package_tree_json_rows(
 	}
 }
 
-fn push_json_dependency_row(rows: &mut Vec<String>, seen: &mut HashSet<String>, name: &str, child: &serde_json::Value) {
+fn push_json_dependency_row(
+	rows: &mut Vec<String>,
+	seen: &mut HashSet<String>,
+	name: &str,
+	child: &serde_json::Value,
+) {
 	let version = child
 		.get("version")
 		.and_then(serde_json::Value::as_str)
@@ -416,7 +423,8 @@ mod tests {
 	fn strips_progress_but_keeps_package_errors() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = ctx("npm", Some("install"), "npm install", &cfg);
-		let input = "Resolving: total 10\nDownloading: left-pad\nERROR failed to install left-pad\nfound 1 vulnerability\n";
+		let input = "Resolving: total 10\nDownloading: left-pad\nERROR failed to install \
+		             left-pad\nfound 1 vulnerability\n";
 		let out = strip_package_noise(&ctx, input, 1);
 		assert!(!out.contains("Resolving:"));
 		assert!(!out.contains("Downloading:"));
@@ -428,8 +436,8 @@ mod tests {
 	fn preserves_successful_install_audit_and_security_summaries() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = ctx("npm", Some("install"), "npm install", &cfg);
-		let input =
-			"Resolving: total 10\nadded 3 packages, and audited 4 packages in 1s\n2 packages are looking for funding\nfound 0 vulnerabilities\n";
+		let input = "Resolving: total 10\nadded 3 packages, and audited 4 packages in 1s\n2 \
+		             packages are looking for funding\nfound 0 vulnerabilities\n";
 		let out = strip_package_noise(&ctx, input, 0);
 		assert!(!out.contains("Resolving:"));
 		assert!(out.contains("added 3 packages, and audited 4 packages in 1s"));
@@ -440,9 +448,9 @@ mod tests {
 	#[test]
 	fn supports_common_package_subcommands_for_future_dispatch() {
 		for subcommand in [
-			"ci", "add", "outdated", "sync", "audit", "why", "tree", "pip", "view", "fund",
-			"explain", "test", "t", "start", "stop", "restart", "config", "cache", "prune",
-			"dedupe", "publish", "pack", "link",
+			"ci", "add", "outdated", "sync", "audit", "why", "tree", "pip", "view", "fund", "explain",
+			"test", "t", "start", "stop", "restart", "config", "cache", "prune", "dedupe", "publish",
+			"pack", "link",
 		] {
 			assert!(supports(Some(subcommand)), "{subcommand} should be supported");
 		}
@@ -504,7 +512,8 @@ mod tests {
 	fn compacts_pnpm_why_style_output() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("pnpm", Some("why"), "pnpm why react", &cfg);
-		let mut input = String::from("Legend: production dependency, optional only, dev only\nreact 19.0.0\n");
+		let mut input =
+			String::from("Legend: production dependency, optional only, dev only\nreact 19.0.0\n");
 		for idx in 0..90 {
 			input.push_str(&format!("└─ dependent{idx:03}\n"));
 		}
@@ -520,8 +529,7 @@ mod tests {
 	fn compacts_npm_json_dependency_tree() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("npm", Some("ls"), "npm ls --json", &cfg);
-		let input =
-			r#"{"name":"app","version":"1.0.0","dependencies":{"react":{"version":"19.0.0","dependencies":{"scheduler":{"version":"0.25.0"}}},"zod":{"version":"4.0.0"}}}"#;
+		let input = r#"{"name":"app","version":"1.0.0","dependencies":{"react":{"version":"19.0.0","dependencies":{"scheduler":{"version":"0.25.0"}}},"zod":{"version":"4.0.0"}}}"#;
 		let out = filter(&context, input, 0);
 		assert!(out.text.starts_with("package tree/list: 4 entries\n"));
 		assert!(out.text.contains("app 1.0.0"));
@@ -533,8 +541,7 @@ mod tests {
 	fn compacts_pnpm_why_json_output() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("pnpm", Some("why"), "pnpm why react --json", &cfg);
-		let input =
-			r#"[{"name":"react","version":"19.0.0","dependents":[{"name":"app","version":"1.0.0"},{"name":"docs","version":"1.0.0"}]}]"#;
+		let input = r#"[{"name":"react","version":"19.0.0","dependents":[{"name":"app","version":"1.0.0"},{"name":"docs","version":"1.0.0"}]}]"#;
 		let out = filter(&context, input, 0);
 		assert!(out.text.starts_with("package tree/list: 3 entries\n"));
 		assert!(out.text.contains("react 19.0.0"));
@@ -546,8 +553,9 @@ mod tests {
 	fn compacts_yarn_why_ndjson_output() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("yarn", Some("why"), "yarn why react --json", &cfg);
-		let input =
-			"{\"type\":\"info\",\"data\":\"=> Found \\\"react@npm:19.0.0\\\"\"}\n{\"type\":\"tree\",\"data\":\"react@npm:19.0.0\\n└─ app@workspace:.\"}\n";
+		let input = "{\"type\":\"info\",\"data\":\"=> Found \
+		             \\\"react@npm:19.0.0\\\"\"}\n{\"type\":\"tree\",\"data\":\"react@npm:19.0.0\\\
+		             n└─ app@workspace:.\"}\n";
 		let out = filter(&context, input, 0);
 		assert!(out.text.starts_with("package tree/list: 3 entries\n"));
 		assert!(out.text.contains("=> Found \"react@npm:19.0.0\""));
@@ -559,21 +567,20 @@ mod tests {
 	fn compacts_npm_explain_json_output() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("npm", Some("explain"), "npm explain react --json", &cfg);
-		let input =
-			r#"{"name":"react","version":"19.0.0","dependents":[{"name":"app","version":"1.0.0","location":"."}]}"#;
+		let input = r#"{"name":"react","version":"19.0.0","dependents":[{"name":"app","version":"1.0.0","location":"."}]}"#;
 		let out = filter(&context, input, 0);
 		assert!(out.text.starts_with("package tree/list: 2 entries\n"));
 		assert!(out.text.contains("react 19.0.0"));
 		assert!(out.text.contains("app 1.0.0"));
 	}
 
-
 	#[test]
 	fn compacts_uv_pip_list_and_strips_progress_noise() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("uv", Some("pip"), "uv pip list", &cfg);
-		let mut input =
-			String::from("Resolved 91 packages in 12ms\nPrepared 2 packages in 3ms\nPackage Version\n");
+		let mut input = String::from(
+			"Resolved 91 packages in 12ms\nPrepared 2 packages in 3ms\nPackage Version\n",
+		);
 		for idx in 0..90 {
 			input.push_str(&format!("pkg{idx:03} 1.0.{idx}\n"));
 		}
@@ -669,7 +676,8 @@ mod tests {
 	fn compacts_uv_lock_output() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("uv", Some("lock"), "uv lock", &cfg);
-		let input = "Resolved 42 packages in 7ms\nDownloading requests\nUpdated lockfile at uv.lock\n";
+		let input =
+			"Resolved 42 packages in 7ms\nDownloading requests\nUpdated lockfile at uv.lock\n";
 		let out = filter(&context, input, 0);
 		assert!(out.text.contains("Resolved 42 packages in 7ms"));
 		assert!(out.text.contains("Updated lockfile at uv.lock"));

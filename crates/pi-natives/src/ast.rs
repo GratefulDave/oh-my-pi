@@ -458,7 +458,7 @@ fn normalize_pattern_list(patterns: Option<Vec<String>>) -> Result<Vec<String>> 
 
 enum FindQuery {
 	Patterns(Vec<String>),
-	Rule(RuleConfig<SupportLang>),
+	Rule(Box<RuleConfig<SupportLang>>),
 }
 
 fn normalize_rule(value: Option<String>) -> Option<String> {
@@ -467,14 +467,12 @@ fn normalize_rule(value: Option<String>) -> Option<String> {
 		.filter(|rule| !rule.is_empty())
 }
 
-fn has_non_empty_pattern(patterns: &Option<Vec<String>>) -> bool {
-	patterns
-		.as_ref()
-		.is_some_and(|values| values.iter().any(|value| !value.trim().is_empty()))
+fn has_non_empty_pattern(patterns: Option<&Vec<String>>) -> bool {
+	patterns.is_some_and(|values| values.iter().any(|value| !value.trim().is_empty()))
 }
 
 fn resolve_find_query(patterns: Option<Vec<String>>, rule: Option<String>) -> Result<FindQuery> {
-	let has_patterns = has_non_empty_pattern(&patterns);
+	let has_patterns = has_non_empty_pattern(patterns.as_ref());
 	let normalized_rule = normalize_rule(rule);
 	if normalized_rule.is_some() && has_patterns {
 		return Err(Error::from_reason(
@@ -491,7 +489,7 @@ fn resolve_find_query(patterns: Option<Vec<String>>, rule: Option<String>) -> Re
 				rules.len()
 			)));
 		}
-		return Ok(FindQuery::Rule(rules.remove(0)));
+		return Ok(FindQuery::Rule(Box::new(rules.remove(0))));
 	}
 	Ok(FindQuery::Patterns(normalize_pattern_list(patterns)?))
 }

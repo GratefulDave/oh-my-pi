@@ -256,7 +256,9 @@ mod tests {
 	#[test]
 	fn direct_pyright_support_and_grouping_work() {
 		assert!(supports_program("pyright", None));
-		let input = "0 errors, 0 warnings, 0 informations\nsrc/app.ts:4:7 - error TS2322: Type 'string' is not assignable to type 'number'.\nsrc/app.ts:9:3 - error TS7006: Parameter 'x' implicitly has an 'any' type.\n";
+		let input = "0 errors, 0 warnings, 0 informations\nsrc/app.ts:4:7 - error TS2322: Type \
+		             'string' is not assignable to type 'number'.\nsrc/app.ts:9:3 - error TS7006: \
+		             Parameter 'x' implicitly has an 'any' type.\n";
 		let out = condense_lint_output("pyright", input, 1);
 		assert!(out.contains("2 diagnostics in 1 files"));
 		assert!(out.contains("src/app.ts (2 diagnostics)"));
