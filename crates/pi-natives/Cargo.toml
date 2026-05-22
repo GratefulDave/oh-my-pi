@@ -16,6 +16,7 @@ workspace = true
 anyhow.workspace = true
 arboard.workspace = true
 ast-grep-core.workspace = true
+ast-grep-config.workspace = true
 clap.workspace = true
 dashmap.workspace = true
 globset.workspace = true

@@ -23,6 +23,7 @@ import type { EventBus } from "../utils/event-bus";
 import { WebSearchTool } from "../web/search";
 import type { WorkspaceTree } from "../workspace-tree";
 import { AskTool } from "./ask";
+import { AstDumpTool } from "./ast-dump";
 import { AstEditTool } from "./ast-edit";
 import { AstGrepTool } from "./ast-grep";
 import { BashTool } from "./bash";
@@ -64,6 +65,7 @@ export * from "../session/streaming-output";
 export * from "../task";
 export * from "../web/search";
 export * from "./ask";
+export * from "./ast-dump";
 export * from "./ast-edit";
 export * from "./ast-grep";
 export * from "./bash";
@@ -285,6 +287,7 @@ export const BUILTIN_TOOLS: Record<string, ToolFactory> = {
 	bash: s => new BashTool(s),
 	edit: s => new EditTool(s),
 	ast_grep: s => new AstGrepTool(s),
+	ast_dump: s => new AstDumpTool(s),
 	ast_edit: s => new AstEditTool(s),
 	render_mermaid: s => new RenderMermaidTool(s),
 	ask: AskTool.createIf,
@@ -452,7 +455,7 @@ export async function createTools(session: ToolSession, toolNames?: string[]): P
 		if (name === "find") return session.settings.get("find.enabled");
 		if (name === "search") return session.settings.get("search.enabled");
 		if (name === "github") return session.settings.get("github.enabled");
-		if (name === "ast_grep") return session.settings.get("astGrep.enabled");
+		if (name === "ast_grep" || name === "ast_dump") return session.settings.get("astGrep.enabled");
 		if (name === "ast_edit") return session.settings.get("astEdit.enabled");
 		if (name === "render_mermaid") return session.settings.get("renderMermaid.enabled");
 		if (name === "inspect_image") return session.settings.get("inspect_image.enabled");

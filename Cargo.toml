@@ -302,6 +302,7 @@ brush-parser = "0.3"
 ast-grep-core = { version = "0.39", default-features = false, features = [
    "tree-sitter",
 ] }
+ast-grep-config = { version = "0.39", default-features = false }
 tree-sitter = "0.25"
 tree-sitter-astro = { version = "0.1.1", package = "tree-sitter-astro-next" }
 tree-sitter-bash = "0.25"

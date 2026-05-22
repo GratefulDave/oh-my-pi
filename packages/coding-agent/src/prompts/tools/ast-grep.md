@@ -4,7 +4,9 @@ Performs structural code search using AST matching via native ast-grep.
 - Use when syntax shape matters more than raw text (calls, declarations, specific language constructs)
 - `paths` is required and accepts an array of files, directories, globs, or internal URLs
 - Language is inferred from `paths`; narrow each call to one language when mixed-language trees could cause parse noise
+- Provide exactly one of `pat` or `rule`
 - `pat` is a single AST pattern. Run separate calls for distinct unrelated patterns
+- `rule` is a single ast-grep YAML rule and supports relational/composite rules such as `inside`, `has`, `follows`, `precedes`, `all`, `any`, and `not`
 - **Patterns match AST structure, not text** — whitespace/formatting is ignored
 - `$NAME` captures one node; `$_` matches one without binding; `$$$NAME` captures zero-or-more (lazy — stops at next matchable element); `$$$` matches zero-or-more without binding. Use `$$$NAME`, NOT `$$NAME` — the two-dollar form is invalid and produces a parse error
 - Metavariable names are UPPERCASE and must be the whole AST node — partial-text like `prefix$VAR`, `"hello $NAME"`, or `a $OP b` does NOT work; match the whole node instead
@@ -33,6 +35,8 @@ Performs structural code search using AST matching via native ast-grep.
 `{"pat":"logger.$_($$$ARGS)","paths":["src/**/*.ts"]}`
 # Loosest existence check for a symbol in one file
 `{"pat":"processItems","paths":["src/worker.ts"]}`
+# YAML rule with a relational `has` clause
+`{"rule":"id: await-in-promise-all\nlanguage: TypeScript\nrule:\n  pattern: Promise.all($A)\n  has:\n    pattern: await $_\n    stopBy: end","paths":["src/**/*.ts"]}`
 </examples>
 
 <critical>

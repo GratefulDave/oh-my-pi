@@ -147,6 +147,36 @@ export declare function __piNativesV15_1_9(): void
  */
 export declare function applyBashFixups(command: string): BashFixupResult
 
+/** Dump the tree-sitter syntax tree for a single source input. */
+export declare function astDump(options: AstDumpOptions): Promise<AstDumpResult>
+
+/**
+ * Options for `astDump`: source text or a single file plus language
+ * resolution.
+ */
+export interface AstDumpOptions {
+  /** Source code to parse. Mutually exclusive with `path`. */
+  code?: string
+  /** Single file to parse. Mutually exclusive with `code`. */
+  path?: string
+  /** Language override; required when `code` is used without `path`. */
+  lang?: string
+  /** Optional cancellation handle (library-specific). */
+  signal?: unknown
+  /** Wall-clock timeout for the worker task in milliseconds. */
+  timeoutMs?: number
+}
+
+/** Tree-sitter parse dump for a single source input. */
+export interface AstDumpResult {
+  /** Canonical parser language used for the dump. */
+  language: string
+  /** Tree-sitter S-expression for the parsed syntax tree. */
+  tree: string
+  /** True when the syntax tree contains error nodes. */
+  hasErrors: boolean
+}
+
 /**
  * Apply ast-grep rewrite rules to matching files; honors `dryRun` and returns
  * a promise.
@@ -179,6 +209,8 @@ export interface AstFindMatch {
 export interface AstFindOptions {
   /** ast-grep patterns to search for (OR across patterns). */
   patterns?: Array<string>
+  /** ast-grep YAML rule configuration to search with. */
+  rule?: string
   /** Language override; otherwise inferred from file extension per candidate. */
   lang?: string
   /** Single file or directory to scan (combined with `glob` when set). */

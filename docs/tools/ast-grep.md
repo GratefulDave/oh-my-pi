@@ -18,7 +18,8 @@
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `pat` | `string` | Yes | Single AST pattern. The wrapper trims it and rejects empty strings. |
+| `pat` | `string` | Conditionally | Single AST pattern. Mutually exclusive with `rule`; the wrapper trims it and rejects empty strings. |
+| `rule` | `string` | Conditionally | Single ast-grep YAML rule. Mutually exclusive with `pat`; supports relational/composite rule operators such as `inside`, `has`, `follows`, `precedes`, `all`, `any`, and `not`. |
 | `paths` | `string[]` | Yes | One or more files, directories, globs, or internal URLs with backing files. Empty entries are rejected. Globs are forbidden for internal URLs. |
 | `skip` | `number` | No | Match offset. Defaults to `0`, then `Math.floor(...)`; negatives and non-finite values fail. |
 
@@ -47,7 +48,7 @@ Pattern grammar and language support exposed to the model:
 - Native ranges (`byteStart`, `byteEnd`, `startLine`, `startColumn`, `endLine`, `endColumn`) exist only inside the native result; the wrapper does not emit them directly to the model.
 
 ## Flow
-1. `AstGrepTool.execute()` validates `pat`, normalizes `skip`, and normalizes each `paths` entry in `packages/coding-agent/src/tools/ast-grep.ts`.
+1. `AstGrepTool.execute()` validates exactly one of `pat` or `rule`, normalizes `skip`, and normalizes each `paths` entry in `packages/coding-agent/src/tools/ast-grep.ts`.
 2. Internal URLs are resolved through `session.internalRouter`; entries without `sourcePath` fail, and internal-URL globs fail early.
 3. For multiple path inputs, `partitionExistingPaths()` drops missing bases only when at least one surviving base remains; if all bases are missing the call fails.
 4. `parseSearchPath()` splits a single path into `basePath` plus optional `glob`. `resolveExplicitSearchPaths()` collapses multiple inputs into a common base plus a brace-union glob, or separate `targets` when the only common base is a filesystem root.
@@ -56,11 +57,11 @@ Pattern grammar and language support exposed to the model:
    - one native `astGrep(...)` call for a single resolved base, or
    - `runMultiTargetAstGrep(...)`, which calls the native binding once per target, rebases paths back to the common root, sorts globally, then applies `skip` and the wrapper limit.
 7. Native `ast_grep` in `crates/pi-natives/src/ast.rs`:
-   - normalizes and deduplicates patterns,
-   - resolves a `MatchStrictness` (`smart` by default),
+   - chooses pattern mode or YAML rule mode,
+   - pattern mode normalizes and deduplicates patterns, resolves `MatchStrictness` (`smart` by default), and compiles the pattern separately for each language present,
+   - rule mode parses exactly one YAML rule with `ast-grep-config`, uses the rule's declared `language`, and runs the upstream relational/composite matcher directly,
    - collects candidate files from a file or gitignore-aware directory scan,
-   - infers language per candidate from extension unless `lang` was provided,
-   - compiles the pattern separately for each language present,
+   - infers language per candidate from extension unless `lang` or a rule language was provided,
    - reads each file, reports syntax-error trees as parse issues, runs `find_all`, and optionally captures metavariable bindings.
 8. Native results are sorted by path and source position, then paged by `offset`/`limit`.
 9. The TS wrapper normalizes parse-error strings, deduplicates them, groups matches by formatted path, renders anchor lines, appends limit/parse notices, and returns `toolResult(...).text(...).done()`.
@@ -93,7 +94,7 @@ Pattern grammar and language support exposed to the model:
 - Multi-path union deduplicates identical path inputs before resolution in `resolveExplicitSearchPaths()`.
 
 ## Errors
-- TS wrapper throws `ToolError` for empty patterns, invalid `skip`, empty path entries, unsupported internal-URL globs, internal URLs without `sourcePath`, and missing paths.
+- TS wrapper throws `ToolError` for missing/ambiguous `pat`/`rule`, invalid `skip`, empty path entries, unsupported internal-URL globs, internal URLs without `sourcePath`, and missing paths.
 - Native code returns hard errors for:
   - unsupported explicit `lang`,
   - inability to infer language for a candidate when `lang` is not supplied,
@@ -104,7 +105,7 @@ Pattern grammar and language support exposed to the model:
 - `no matches` is not an error, even when parse issues were recorded.
 
 ## Notes
-- `pat` is always wrapped into a one-element `patterns` array by the TS tool; the model cannot send multiple patterns through `ast_grep` even though the native binding supports it.
+- `pat` is wrapped into a one-element `patterns` array by the TS tool; `rule` is passed to the native binding as YAML and parsed once per native call.
 - `ast_grep` can search mixed-language trees because native compilation happens per discovered language, but the prompt still tells the model to keep calls single-language when possible to reduce parse noise.
 - Pattern compilation is per language present in the candidate set. One pattern can succeed for some languages and generate per-file parse errors for others in the same run.
 - A file with tree-sitter error nodes still gets searched; the syntax warning is additive, not a skip condition.

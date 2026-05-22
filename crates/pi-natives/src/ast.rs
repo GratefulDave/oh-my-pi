@@ -5,6 +5,7 @@ use std::{
 	path::{Path, PathBuf},
 };
 
+use ast_grep_config::{GlobalRules, RuleConfig, from_yaml_string};
 use ast_grep_core::{MatchStrictness, matcher::Pattern, source::Edit, tree_sitter::LanguageExt};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -63,6 +64,8 @@ fn resolve_strictness(value: Option<AstMatchStrictness>) -> MatchStrictness {
 pub struct AstFindOptions<'env> {
 	/// ast-grep patterns to search for (OR across patterns).
 	pub patterns:     Option<Vec<String>>,
+	/// ast-grep YAML rule configuration to search with.
+	pub rule:         Option<String>,
 	/// Language override; otherwise inferred from file extension per candidate.
 	pub lang:         Option<String>,
 	/// Single file or directory to scan (combined with `glob` when set).
@@ -126,6 +129,33 @@ pub struct AstFindResult {
 	pub limit_reached:      bool,
 	/// Non-fatal parse or pattern errors collected during the run.
 	pub parse_errors:       Option<Vec<String>>,
+}
+
+/// Options for `astDump`: source text or a single file plus language
+/// resolution.
+#[napi(object)]
+pub struct AstDumpOptions<'env> {
+	/// Source code to parse. Mutually exclusive with `path`.
+	pub code:       Option<String>,
+	/// Single file to parse. Mutually exclusive with `code`.
+	pub path:       Option<String>,
+	/// Language override; required when `code` is used without `path`.
+	pub lang:       Option<String>,
+	/// Optional cancellation handle (library-specific).
+	pub signal:     Option<Unknown<'env>>,
+	/// Wall-clock timeout for the worker task in milliseconds.
+	pub timeout_ms: Option<u32>,
+}
+
+/// Tree-sitter parse dump for a single source input.
+#[napi(object)]
+pub struct AstDumpResult {
+	/// Canonical parser language used for the dump.
+	pub language:   String,
+	/// Tree-sitter S-expression for the parsed syntax tree.
+	pub tree:       String,
+	/// True when the syntax tree contains error nodes.
+	pub has_errors: bool,
 }
 
 /// Options for `astEdit`: rewrite rules, scan scope, safety limits, and
@@ -426,6 +456,46 @@ fn normalize_pattern_list(patterns: Option<Vec<String>>) -> Result<Vec<String>> 
 	Ok(normalized)
 }
 
+enum FindQuery {
+	Patterns(Vec<String>),
+	Rule(RuleConfig<SupportLang>),
+}
+
+fn normalize_rule(value: Option<String>) -> Option<String> {
+	value
+		.map(|rule| rule.trim().to_string())
+		.filter(|rule| !rule.is_empty())
+}
+
+fn has_non_empty_pattern(patterns: &Option<Vec<String>>) -> bool {
+	patterns
+		.as_ref()
+		.is_some_and(|values| values.iter().any(|value| !value.trim().is_empty()))
+}
+
+fn resolve_find_query(patterns: Option<Vec<String>>, rule: Option<String>) -> Result<FindQuery> {
+	let has_patterns = has_non_empty_pattern(&patterns);
+	let normalized_rule = normalize_rule(rule);
+	if normalized_rule.is_some() && has_patterns {
+		return Err(Error::from_reason(
+			"`pat`/`patterns` and `rule` are mutually exclusive; provide exactly one search mode",
+		));
+	}
+	if let Some(rule_yaml) = normalized_rule {
+		let globals = GlobalRules::default();
+		let mut rules = from_yaml_string::<SupportLang>(&rule_yaml, &globals)
+			.map_err(|err| Error::from_reason(format!("invalid ast-grep YAML rule: {err}")))?;
+		if rules.len() != 1 {
+			return Err(Error::from_reason(format!(
+				"`rule` must contain exactly one ast-grep rule, found {}",
+				rules.len()
+			)));
+		}
+		return Ok(FindQuery::Rule(rules.remove(0)));
+	}
+	Ok(FindQuery::Patterns(normalize_pattern_list(patterns)?))
+}
+
 fn normalize_rewrite_map(
 	rewrites: Option<HashMap<String, String>>,
 ) -> Result<Vec<(String, String)>> {
@@ -533,6 +603,7 @@ fn compile_find_patterns(
 pub fn ast_grep(options: AstFindOptions<'_>) -> task::Promise<AstFindResult> {
 	let AstFindOptions {
 		patterns,
+		rule,
 		lang,
 		path,
 		glob,
@@ -551,19 +622,42 @@ pub fn ast_grep(options: AstFindOptions<'_>) -> task::Promise<AstFindResult> {
 	let normalized_offset = offset.unwrap_or(0);
 
 	task::blocking("ast_grep", ct, move |ct| {
-		let patterns = normalize_pattern_list(patterns)?;
+		let query = resolve_find_query(patterns, rule)?;
 		let strictness = resolve_strictness(strictness);
 		let include_meta = include_meta.unwrap_or(false);
-		let lang_str = lang.as_deref().map(str::trim).filter(|v| !v.is_empty());
+		let explicit_lang = lang.as_deref().map(str::trim).filter(|v| !v.is_empty());
+		let rule_lang = match &query {
+			FindQuery::Patterns(_) => None,
+			FindQuery::Rule(rule_config) => Some(rule_config.language),
+		};
+		let effective_lang = if let Some(rule_lang) = rule_lang {
+			if let Some(explicit_lang) = explicit_lang {
+				let explicit = resolve_supported_lang(explicit_lang)?;
+				if explicit != rule_lang {
+					return Err(Error::from_reason(format!(
+						"`lang` ({}) must match YAML rule language ({})",
+						explicit.canonical_name(),
+						rule_lang.canonical_name()
+					)));
+				}
+			}
+			Some(rule_lang.canonical_name())
+		} else {
+			explicit_lang
+		};
 		let candidates: Vec<_> = collect_candidates(path, glob.as_deref(), &ct)?
 			.into_iter()
-			.filter(|candidate| is_supported_file(&candidate.absolute_path, lang_str))
+			.filter(|candidate| is_supported_file(&candidate.absolute_path, effective_lang))
 			.collect();
 
 		let (resolved_candidates, languages) =
-			resolve_candidates_for_find(candidates, lang_str, &ct)?;
-		let compiled_patterns =
-			compile_find_patterns(&patterns, &languages, selector.as_deref(), &strictness, &ct)?;
+			resolve_candidates_for_find(candidates, effective_lang, &ct)?;
+		let compiled_patterns = match &query {
+			FindQuery::Patterns(patterns) => {
+				compile_find_patterns(patterns, &languages, selector.as_deref(), &strictness, &ct)?
+			},
+			FindQuery::Rule(_) => Vec::new(),
+		};
 		let files_searched = to_u32(resolved_candidates.len());
 
 		let mut all_matches = Vec::new();
@@ -575,9 +669,16 @@ pub fn ast_grep(options: AstFindOptions<'_>) -> task::Promise<AstFindResult> {
 			let ResolvedCandidate { candidate, language, language_error } = resolved;
 
 			if let Some(error) = language_error.as_deref() {
-				for compiled in &compiled_patterns {
-					parse_errors
-						.push(format!("{}: {}: {error}", compiled.pattern, candidate.display_path));
+				match &query {
+					FindQuery::Patterns(_) => {
+						for compiled in &compiled_patterns {
+							parse_errors
+								.push(format!("{}: {}: {error}", compiled.pattern, candidate.display_path));
+						}
+					},
+					FindQuery::Rule(_) => {
+						parse_errors.push(format!("rule: {}: {error}", candidate.display_path));
+					},
 				}
 				continue;
 			}
@@ -589,29 +690,22 @@ pub fn ast_grep(options: AstFindOptions<'_>) -> task::Promise<AstFindResult> {
 			let source = match std::fs::read_to_string(&candidate.absolute_path) {
 				Ok(source) => source,
 				Err(err) => {
-					for compiled in &compiled_patterns {
-						parse_errors
-							.push(format!("{}: {}: {err}", compiled.pattern, candidate.display_path));
+					match &query {
+						FindQuery::Patterns(_) => {
+							for compiled in &compiled_patterns {
+								parse_errors.push(format!(
+									"{}: {}: {err}",
+									compiled.pattern, candidate.display_path
+								));
+							}
+						},
+						FindQuery::Rule(_) => {
+							parse_errors.push(format!("rule: {}: {err}", candidate.display_path));
+						},
 					}
 					continue;
 				},
 			};
-
-			let mut runnable_patterns: Vec<(&str, &Pattern)> = Vec::new();
-			for compiled in &compiled_patterns {
-				ct.heartbeat()?;
-				if let Some(error) = compiled.compile_errors_by_lang.get(lang_key) {
-					parse_errors
-						.push(format!("{}: {}: {error}", compiled.pattern, candidate.display_path));
-					continue;
-				}
-				if let Some(pattern) = compiled.compiled_by_lang.get(lang_key) {
-					runnable_patterns.push((compiled.pattern.as_str(), pattern));
-				}
-			}
-			if runnable_patterns.is_empty() {
-				continue;
-			}
 
 			let ast = language.ast_grep(source);
 			if ast.root().dfs().any(|node| node.is_error()) {
@@ -621,32 +715,74 @@ pub fn ast_grep(options: AstFindOptions<'_>) -> task::Promise<AstFindResult> {
 				));
 			}
 
-			for (_, pattern) in runnable_patterns {
-				ct.heartbeat()?;
-				for matched in ast.root().find_all(pattern.clone()) {
-					ct.heartbeat()?;
-					total_matches = total_matches.saturating_add(1);
-					let range = matched.range();
-					let start = matched.start_pos();
-					let end = matched.end_pos();
-					let meta_variables = if include_meta {
-						Some(HashMap::<String, String>::from(matched.get_env().clone()))
-					} else {
-						None
-					};
-					all_matches.push(AstFindMatch {
-						path: candidate.display_path.clone(),
-						text: matched.text().into_owned(),
-						byte_start: to_u32(range.start),
-						byte_end: to_u32(range.end),
-						start_line: to_u32(start.line().saturating_add(1)),
-						start_column: to_u32(start.column(matched.get_node()).saturating_add(1)),
-						end_line: to_u32(end.line().saturating_add(1)),
-						end_column: to_u32(end.column(matched.get_node()).saturating_add(1)),
-						meta_variables,
-					});
-					files_with_matches.insert(candidate.display_path.clone());
-				}
+			match &query {
+				FindQuery::Patterns(_) => {
+					let mut runnable_patterns: Vec<(&str, &Pattern)> = Vec::new();
+					for compiled in &compiled_patterns {
+						ct.heartbeat()?;
+						if let Some(error) = compiled.compile_errors_by_lang.get(lang_key) {
+							parse_errors
+								.push(format!("{}: {}: {error}", compiled.pattern, candidate.display_path));
+							continue;
+						}
+						if let Some(pattern) = compiled.compiled_by_lang.get(lang_key) {
+							runnable_patterns.push((compiled.pattern.as_str(), pattern));
+						}
+					}
+					for (_, pattern) in runnable_patterns {
+						ct.heartbeat()?;
+						for matched in ast.root().find_all(pattern.clone()) {
+							ct.heartbeat()?;
+							total_matches = total_matches.saturating_add(1);
+							let range = matched.range();
+							let start = matched.start_pos();
+							let end = matched.end_pos();
+							let meta_variables = if include_meta {
+								Some(HashMap::<String, String>::from(matched.get_env().clone()))
+							} else {
+								None
+							};
+							all_matches.push(AstFindMatch {
+								path: candidate.display_path.clone(),
+								text: matched.text().into_owned(),
+								byte_start: to_u32(range.start),
+								byte_end: to_u32(range.end),
+								start_line: to_u32(start.line().saturating_add(1)),
+								start_column: to_u32(start.column(matched.get_node()).saturating_add(1)),
+								end_line: to_u32(end.line().saturating_add(1)),
+								end_column: to_u32(end.column(matched.get_node()).saturating_add(1)),
+								meta_variables,
+							});
+							files_with_matches.insert(candidate.display_path.clone());
+						}
+					}
+				},
+				FindQuery::Rule(rule_config) => {
+					for matched in ast.root().find_all(&rule_config.matcher) {
+						ct.heartbeat()?;
+						total_matches = total_matches.saturating_add(1);
+						let range = matched.range();
+						let start = matched.start_pos();
+						let end = matched.end_pos();
+						let meta_variables = if include_meta {
+							Some(HashMap::<String, String>::from(matched.get_env().clone()))
+						} else {
+							None
+						};
+						all_matches.push(AstFindMatch {
+							path: candidate.display_path.clone(),
+							text: matched.text().into_owned(),
+							byte_start: to_u32(range.start),
+							byte_end: to_u32(range.end),
+							start_line: to_u32(start.line().saturating_add(1)),
+							start_column: to_u32(start.column(matched.get_node()).saturating_add(1)),
+							end_line: to_u32(end.line().saturating_add(1)),
+							end_column: to_u32(end.column(matched.get_node()).saturating_add(1)),
+							meta_variables,
+						});
+						files_with_matches.insert(candidate.display_path.clone());
+					}
+				},
 			}
 		}
 
@@ -679,6 +815,49 @@ pub fn ast_grep(options: AstFindOptions<'_>) -> task::Promise<AstFindResult> {
 			files_searched,
 			limit_reached,
 			parse_errors: (!parse_errors.is_empty()).then_some(parse_errors),
+		})
+	})
+}
+
+/// Dump the tree-sitter syntax tree for a single source input.
+#[napi]
+pub fn ast_dump(options: AstDumpOptions<'_>) -> task::Promise<AstDumpResult> {
+	let AstDumpOptions { code, path, lang, signal, timeout_ms } = options;
+	let ct = task::CancelToken::new(timeout_ms, signal);
+
+	task::blocking("ast_dump", ct, move |ct| {
+		ct.heartbeat()?;
+		let has_code = code.as_ref().is_some_and(|value| !value.is_empty());
+		let has_path = path.as_ref().is_some_and(|value| !value.trim().is_empty());
+		if has_code == has_path {
+			return Err(Error::from_reason("`astDump` requires exactly one of `code` or `path`"));
+		}
+
+		let explicit_lang = lang
+			.as_deref()
+			.map(str::trim)
+			.filter(|value| !value.is_empty());
+		let (source, language) = if let Some(source) = code {
+			let Some(lang) = explicit_lang else {
+				return Err(Error::from_reason("`lang` is required when dumping inline `code`"));
+			};
+			(source, resolve_supported_lang(lang)?)
+		} else {
+			let raw_path = path.expect("path is present when code is absent");
+			let file_path = PathBuf::from(raw_path.trim());
+			let source = std::fs::read_to_string(&file_path)
+				.map_err(|err| Error::from_reason(format!("{}: {err}", file_path.display())))?;
+			(source, resolve_language(explicit_lang, &file_path)?)
+		};
+
+		ct.heartbeat()?;
+		let ast = language.ast_grep(source);
+		let root = ast.root();
+		let has_errors = root.dfs().any(|node| node.is_error());
+		Ok(AstDumpResult {
+			language: language.canonical_name().to_string(),
+			tree: root.get_inner_node().to_sexp(),
+			has_errors,
 		})
 	})
 }

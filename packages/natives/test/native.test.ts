@@ -3,6 +3,8 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	astDump,
+	astGrep,
 	executeShell,
 	FileType,
 	fuzzyFind,
@@ -146,6 +148,74 @@ describe("pi-natives", () => {
 			const code = "function small() {\n\treturn 1;\n}\n";
 			expect(summarizeCode({ path: "fixture.ts", code }).elided).toBe(false);
 			expect(summarizeCode({ path: "fixture.ts", code, minBodyLines: 3 }).elided).toBe(true);
+		});
+	});
+
+	describe("ast", () => {
+		it("dumps TypeScript syntax trees", async () => {
+			const result = await astDump({
+				code: "export function greet(name: string) { return name.trim(); }\n",
+				lang: "typescript",
+			});
+
+			expect(result.language).toBe("typescript");
+			expect(result.hasErrors).toBe(false);
+			expect(result.tree).toContain("program");
+			expect(result.tree).toContain("function_declaration");
+		});
+
+		it("reports parse errors in syntax tree dumps", async () => {
+			const result = await astDump({
+				code: "export function broken( {",
+				lang: "typescript",
+			});
+
+			expect(result.language).toBe("typescript");
+			expect(result.hasErrors).toBe(true);
+			expect(result.tree).toContain("ERROR");
+		});
+
+		it("finds relational YAML rule matches", async () => {
+			const scopedDir = await fs.mkdtemp(path.join(os.tmpdir(), "natives-ast-rule-"));
+			try {
+				await fs.writeFile(
+					path.join(scopedDir, "with-await.ts"),
+					"export const values = Promise.all([await loadOne(), loadTwo()]);\n",
+				);
+				await fs.writeFile(
+					path.join(scopedDir, "without-await.ts"),
+					"export const values = Promise.all([loadOne(), loadTwo()]);\n",
+				);
+
+				const result = await astGrep({
+					path: scopedDir,
+					rule: [
+						"id: await-in-promise-all",
+						"language: TypeScript",
+						"rule:",
+						"  pattern: Promise.all($A)",
+						"  has:",
+						"    pattern: await $_",
+						"    stopBy: end",
+					].join("\n"),
+				});
+
+				expect(result.totalMatches).toBe(1);
+				expect(result.matches.map(match => path.basename(match.path))).toEqual(["with-await.ts"]);
+			} finally {
+				await fs.rm(scopedDir, { recursive: true, force: true });
+			}
+		});
+
+		it("rejects ambiguous and missing ast-grep search modes", async () => {
+			await expect(
+				astGrep({
+					path: testDir,
+					patterns: ["return $_"],
+					rule: "id: x\nlanguage: TypeScript\nrule: { kind: identifier }",
+				}),
+			).rejects.toThrow("mutually exclusive");
+			await expect(astGrep({ path: testDir })).rejects.toThrow("`patterns` is required");
 		});
 	});
 	describe("grep", () => {

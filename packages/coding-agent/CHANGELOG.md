@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added native `ast_dump` syntax-tree diagnostics and YAML rule mode for `ast_grep`, enabling relational ast-grep queries such as `has`, `inside`, `follows`, and `precedes`.
+
 ## [15.1.9] - 2026-05-21
 
 ### Fixed

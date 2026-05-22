@@ -12,6 +12,7 @@ import type { Theme } from "../modes/theme/theme";
 import { taskToolRenderer } from "../task/render";
 import { webSearchToolRenderer } from "../web/search/render";
 import { askToolRenderer } from "./ask";
+import { astDumpToolRenderer } from "./ast-dump";
 import { astEditToolRenderer } from "./ast-edit";
 import { astGrepToolRenderer } from "./ast-grep";
 import { bashToolRenderer } from "./bash";
@@ -48,6 +49,7 @@ type ToolRenderer = {
 export const toolRenderers: Record<string, ToolRenderer> = {
 	ask: askToolRenderer as ToolRenderer,
 	ast_grep: astGrepToolRenderer as ToolRenderer,
+	ast_dump: astDumpToolRenderer as ToolRenderer,
 	ast_edit: astEditToolRenderer as ToolRenderer,
 	bash: bashToolRenderer as ToolRenderer,
 	browser: browserToolRenderer as ToolRenderer,

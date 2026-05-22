@@ -14,6 +14,7 @@ use ast_grep_core::{
 	tree_sitter::{LanguageExt, StrDoc, TSLanguage, TSRange},
 };
 use phf::phf_map;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeError};
 
 /// Implements a stub language (no expando / `pre_process_pattern` needed).
 /// Use when the language grammar accepts `$VAR` as valid identifiers.
@@ -417,6 +418,26 @@ impl SupportLang {
 
 	pub fn sorted_aliases() -> &'static [&'static str] {
 		&SORTED_ALIASES
+	}
+}
+
+impl Serialize for SupportLang {
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+	where
+		S: Serializer,
+	{
+		serializer.serialize_str(self.canonical_name())
+	}
+}
+
+impl<'de> Deserialize<'de> for SupportLang {
+	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+	where
+		D: Deserializer<'de>,
+	{
+		let value = String::deserialize(deserializer)?;
+		Self::from_alias(&value)
+			.ok_or_else(|| D::Error::custom(format!("unsupported ast-grep language `{value}`")))
 	}
 }
 

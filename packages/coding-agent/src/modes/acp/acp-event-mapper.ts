@@ -135,6 +135,7 @@ export function mapToolKind(toolName: string): ToolKind {
 		case "search":
 		case "find":
 		case "ast_grep":
+		case "ast_dump":
 			return "search";
 		case "web_search":
 			return "fetch";

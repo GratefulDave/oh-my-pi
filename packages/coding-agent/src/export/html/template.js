@@ -905,10 +905,30 @@
         if (args.glob) badges.push('glob=' + args.glob);
         if (args.sel) badges.push('sel=' + args.sel);
         let html = toolHead('ast_grep', pathHtml, badges);
-        if (Array.isArray(args.pat)) {
-          for (const pat of args.pat) {
-            html += '<div class="tool-cell">' + codeBlock(String(pat == null ? '' : pat), lang) + '</div>';
-          }
+        if (args.pat) {
+          html += '<div class="tool-cell">' + codeBlock(String(args.pat == null ? '' : args.pat), lang) + '</div>';
+        }
+        if (args.rule) {
+          html += '<div class="tool-cell">';
+          html += '<div class="tool-cell-title">YAML rule</div>';
+          html += codeBlock(String(args.rule == null ? '' : args.rule), 'yaml');
+          html += '</div>';
+        }
+        if (result) {
+          const output = ctx.getResultText();
+          if (output) html += formatExpandableOutput(output, 10);
+        }
+        return html;
+      }
+
+      function renderAstDump(name, args, result, ctx) {
+        const lang = args.lang || null;
+        const pathHtml = args.path ? escapeHtml(shortenPath(String(args.path))) : 'inline code';
+        const badges = [];
+        if (lang) badges.push(lang);
+        let html = toolHead('ast_dump', pathHtml, badges);
+        if (args.code) {
+          html += '<div class="tool-cell">' + codeBlock(String(args.code == null ? '' : args.code), lang) + '</div>';
         }
         if (result) {
           const output = ctx.getResultText();
@@ -1538,6 +1558,7 @@
         edit: renderEdit,
         ast_edit: renderAstEdit,
         ast_grep: renderAstGrep,
+        ast_dump: renderAstDump,
         grep: renderGrep,
         search: renderSearch,
         find: renderFind,

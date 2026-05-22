@@ -32,18 +32,33 @@ import {
 import { ToolError } from "./tool-errors";
 import { toolResult } from "./tool-result";
 
-const astGrepSchema = z.object({
-	pat: z.string().describe("ast pattern"),
-	paths: z
-		.array(z.string().describe("file, directory, glob, or internal URL to search"))
-		.min(1)
-		.describe("files, directories, globs, or internal URLs to search"),
-	skip: z.number().default(0).describe("matches to skip").optional(),
-});
+const astGrepSchema = z
+	.object({
+		pat: z.string().describe("ast pattern").optional(),
+		rule: z.string().describe("ast-grep YAML rule").optional(),
+		paths: z
+			.array(z.string().describe("file, directory, glob, or internal URL to search"))
+			.min(1)
+			.describe("files, directories, globs, or internal URLs to search"),
+		skip: z.number().default(0).describe("matches to skip").optional(),
+	})
+	.superRefine((params, ctx) => {
+		const hasPat = typeof params.pat === "string" && params.pat.trim().length > 0;
+		const hasRule = typeof params.rule === "string" && params.rule.trim().length > 0;
+		if (hasPat === hasRule) {
+			ctx.addIssue({
+				code: "custom",
+				message: "Provide exactly one of `pat` or `rule`",
+				path: hasPat ? ["rule"] : ["pat"],
+			});
+		}
+	});
+
+type AstGrepSearchMode = { patterns: string[]; rule?: never } | { patterns?: never; rule: string };
 
 async function runMultiTargetAstGrep(
 	targets: Array<{ basePath: string; glob?: string }>,
-	options: { patterns: string[]; commonBasePath: string; skip: number; limit: number; signal?: AbortSignal },
+	options: AstGrepSearchMode & { commonBasePath: string; skip: number; limit: number; signal?: AbortSignal },
 ): Promise<{
 	matches: AstFindMatch[];
 	totalMatches: number;
@@ -59,7 +74,7 @@ async function runMultiTargetAstGrep(
 	let limitReached = false;
 	for (const target of targets) {
 		const targetResult = await astGrep({
-			patterns: options.patterns,
+			...(options.patterns ? { patterns: options.patterns } : { rule: options.rule }),
 			path: target.basePath,
 			glob: target.glob,
 			offset: 0,
@@ -136,11 +151,14 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 		_context?: AgentToolContext,
 	): Promise<AgentToolResult<AstGrepToolDetails>> {
 		return untilAborted(signal, async () => {
-			const pattern = params.pat.trim();
-			if (pattern.length === 0) {
-				throw new ToolError("`pat` must be a non-empty pattern");
+			const hasPat = typeof params.pat === "string" && params.pat.trim().length > 0;
+			const hasRule = typeof params.rule === "string" && params.rule.trim().length > 0;
+			if (hasPat === hasRule) {
+				throw new ToolError("Provide exactly one of `pat` or `rule`");
 			}
-			const patterns = [pattern];
+			const searchMode: AstGrepSearchMode = hasPat
+				? { patterns: [params.pat!.trim()] }
+				: { rule: params.rule!.trim() };
 			const skip = params.skip === undefined ? 0 : Math.floor(params.skip);
 			if (!Number.isFinite(skip) || skip < 0) {
 				throw new ToolError("skip must be a non-negative number");
@@ -155,14 +173,14 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 			const DEFAULT_AST_LIMIT = 50;
 			const result = multiTargets
 				? await runMultiTargetAstGrep(multiTargets, {
-						patterns,
+						...searchMode,
 						commonBasePath: resolvedSearchPath,
 						skip,
 						limit: DEFAULT_AST_LIMIT,
 						signal,
 					})
 				: await astGrep({
-						patterns,
+						...searchMode,
 						path: resolvedSearchPath,
 						glob: globFilter,
 						offset: skip,
@@ -286,6 +304,7 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 
 interface AstGrepRenderArgs {
 	pat?: string;
+	rule?: string;
 	paths?: string[];
 	skip?: number;
 }
@@ -298,8 +317,9 @@ export const astGrepToolRenderer = {
 		const meta: string[] = [];
 		if (args.paths?.length) meta.push(`in ${args.paths.join(", ")}`);
 		if (args.skip !== undefined && args.skip > 0) meta.push(`skip:${args.skip}`);
+		if (args.rule) meta.push("rule");
 
-		const description = args.pat ?? "?";
+		const description = args.pat ?? (args.rule ? "YAML rule" : "?");
 		const text = renderStatusLine({ icon: "pending", title: "AST Grep", description, meta }, uiTheme);
 		return new Text(text, 0, 0);
 	},
@@ -323,7 +343,7 @@ export const astGrepToolRenderer = {
 		const limitReached = details?.limitReached ?? false;
 
 		if (matchCount === 0) {
-			const description = args?.pat;
+			const description = args?.pat ?? (args?.rule ? "YAML rule" : undefined);
 			const meta = ["0 matches"];
 			if (details?.scopePath) meta.push(`in ${details.scopePath}`);
 			if (filesSearched > 0) meta.push(`searched ${filesSearched}`);
@@ -341,7 +361,7 @@ export const astGrepToolRenderer = {
 		if (details?.scopePath) meta.push(`in ${details.scopePath}`);
 		meta.push(`searched ${filesSearched}`);
 		if (limitReached) meta.push(uiTheme.fg("warning", "limit reached"));
-		const description = args?.pat;
+		const description = args?.pat ?? (args?.rule ? "YAML rule" : undefined);
 		const header = renderStatusLine(
 			{ icon: limitReached ? "warning" : "success", title: "AST Grep", description, meta },
 			uiTheme,
