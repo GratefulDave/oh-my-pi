@@ -201,6 +201,11 @@ const builtInOAuthProviders: OAuthProviderInfo[] = [
 		available: true,
 	},
 	{
+		id: "omlx",
+		name: "OMLX (Local OpenAI-compatible)",
+		available: true,
+	},
+	{
 		id: "cloudflare-ai-gateway",
 		name: "Cloudflare AI Gateway",
 		available: true,
@@ -328,6 +333,7 @@ export async function refreshOAuthToken(
 		case "qwen-portal":
 		case "zenmux":
 		case "vllm":
+		case "omlx":
 			// API keys / static bearer tokens don't expire, return as-is
 			newCredentials = credentials;
 			break;

@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/utils/oauth";
-import { Snowflake, setProjectDir } from "@oh-my-pi/pi-utils";
+import { formatNumber, Snowflake, setProjectDir } from "@oh-my-pi/pi-utils";
 import { $ } from "bun";
 import type { SettingPath, SettingValue } from "../config/settings";
 import { settings } from "../config/settings";
@@ -19,8 +19,22 @@ import {
 	getPluginsCacheDir,
 	MarketplaceManager,
 } from "../extensibility/plugins/marketplace";
+import { loadSkills } from "../extensibility/skills";
+import type {
+	ExternalAgentBackend,
+	ExternalAgentEvent,
+	ExternalAgentMode,
+	ExternalAgentProvider,
+	ExternalAgentRequest,
+	ExternalAgentResult,
+} from "../external-agents";
+import { runExternalAgentsParallel } from "../external-agents";
 import { resolveMemoryBackend } from "../memory-backend";
+import { getMinimizerGainPath, readMinimizerGain, summarizeMinimizerGain } from "../minimizer-gain";
+import type { SkillsSkillToggle, SkillsSourceToggle } from "../modes/components/skills-overlay";
+import { SkillsOverlayComponent } from "../modes/components/skills-overlay";
 import type { InteractiveModeContext } from "../modes/types";
+import { shortenPath } from "../tools/render-utils";
 import { getChangelogPath, parseChangelog } from "../utils/changelog";
 import { buildContextReportText } from "./helpers/context-report";
 import { formatDuration } from "./helpers/format";
@@ -57,6 +71,236 @@ const shutdownHandlerTui = (_command: ParsedSlashCommand, runtime: TuiSlashComma
 	return commandConsumed();
 };
 
+type GainSlashRow = {
+	commands: number;
+	savedBytes: number;
+	estimatedTokensSaved: number;
+};
+
+async function buildGainSlashReport(input: { cwd: string; all: boolean; days?: number }): Promise<string> {
+	const days = input.days ?? 30;
+	const records = await readMinimizerGain({ sinceDays: days, cwd: input.all ? undefined : input.cwd });
+	const summary = summarizeMinimizerGain(records);
+	const lines = [
+		input.all
+			? `Minimizer savings across all repos (${days}d)`
+			: `Minimizer savings for ${shortenPath(input.cwd)} (${days}d)`,
+		`Commands: ${formatNumber(summary.commands)}`,
+		`Saved Bytes: ${formatNumber(summary.savedBytes)}`,
+		`Estimated Tokens Saved: ${formatNumber(summary.estimatedTokensSaved)}`,
+	];
+
+	if (summary.byFilter.length > 0) {
+		lines.push("", "Top filters:");
+		pushGainRows(lines, summary.byFilter, row => row.filter);
+	}
+
+	if (summary.byCommand.length > 0) {
+		lines.push("", "Top commands:");
+		pushGainRows(lines, summary.byCommand, row => row.command);
+	}
+
+	if (input.all && summary.byCwd.length > 0) {
+		lines.push("", "Repositories:");
+		pushGainRows(lines, summary.byCwd, row => shortenPath(row.cwd));
+	}
+
+	if (summary.commands === 0) {
+		lines.push("", "No positive native minimizer savings recorded for this scope yet.");
+	}
+	lines.push("", `Path: ${shortenPath(getMinimizerGainPath())}`);
+	return lines.join("\n");
+}
+
+function pushGainRows<T extends GainSlashRow>(lines: string[], rows: T[], label: (row: T) => string): void {
+	for (const row of rows.slice(0, 10)) {
+		lines.push(
+			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes, ${formatNumber(row.estimatedTokensSaved)} tokens`,
+		);
+	}
+}
+
+const ORCHESTRATE_USAGE =
+	"Usage: /orchestrate [--backend acpx|tmux|cmux] [--agents gemini,claude,codex] [--session <name>] [--mode exec|prompt] [--timeout <ms>] <prompt>";
+
+interface ParsedExternalOrchestrationArgs {
+	backend: ExternalAgentBackend;
+	providers: ExternalAgentProvider[];
+	session?: string;
+	mode: ExternalAgentMode;
+	timeoutMs?: number;
+	prompt: string;
+}
+
+type ExternalOrchestrationParseResult = { value: ParsedExternalOrchestrationArgs } | { error: string };
+
+interface ExternalOrchestrationReport {
+	backend: ExternalAgentBackend;
+	agents: ExternalAgentProvider[];
+	report: string;
+	successCount: number;
+}
+
+function isExternalAgentBackend(value: string): value is ExternalAgentBackend {
+	return value === "acpx" || value === "tmux" || value === "cmux";
+}
+
+function isExternalAgentProvider(value: string): value is ExternalAgentProvider {
+	return value === "gemini" || value === "claude" || value === "codex";
+}
+
+function isExternalAgentMode(value: string): value is ExternalAgentMode {
+	return value === "exec" || value === "prompt";
+}
+
+function stripWrappingQuotes(value: string): string {
+	if (value.length < 2) return value;
+	const first = value[0];
+	const last = value[value.length - 1];
+	if ((first === `"` && last === `"`) || (first === `'` && last === `'`)) return value.slice(1, -1);
+	return value;
+}
+
+function parsePositiveInteger(value: string): number | undefined {
+	if (!/^\d+$/.test(value)) return undefined;
+	const parsed = Number(value);
+	return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function parseExternalProviders(value: string): ExternalAgentProvider[] | undefined {
+	const providers: ExternalAgentProvider[] = [];
+	for (const item of value.split(",")) {
+		const provider = item.trim();
+		if (!isExternalAgentProvider(provider)) return undefined;
+		providers.push(provider);
+	}
+	return providers.length > 0 ? providers : undefined;
+}
+
+function parseExternalOrchestrationArgs(args: string): ExternalOrchestrationParseResult {
+	const tokens = args.split(/\s+/).filter(Boolean);
+	let backend: ExternalAgentBackend = "acpx";
+	let providers: ExternalAgentProvider[] = ["gemini"];
+	let session: string | undefined;
+	let mode: ExternalAgentMode = "exec";
+	let timeoutMs: number | undefined;
+	const promptParts: string[] = [];
+
+	for (let i = 0; i < tokens.length; i++) {
+		const token = tokens[i]!;
+		if (token === "--backend") {
+			const value = tokens[++i];
+			if (!value || !isExternalAgentBackend(value)) return { error: ORCHESTRATE_USAGE };
+			backend = value;
+		} else if (token === "--agents") {
+			const value = tokens[++i];
+			const parsedProviders = value ? parseExternalProviders(value) : undefined;
+			if (!parsedProviders) return { error: ORCHESTRATE_USAGE };
+			providers = parsedProviders;
+		} else if (token === "--session") {
+			const value = tokens[++i];
+			if (!value) return { error: ORCHESTRATE_USAGE };
+			session = value;
+		} else if (token === "--mode") {
+			const value = tokens[++i];
+			if (!value || !isExternalAgentMode(value)) return { error: ORCHESTRATE_USAGE };
+			mode = value;
+		} else if (token === "--timeout") {
+			const value = tokens[++i];
+			const parsedTimeout = value ? parsePositiveInteger(value) : undefined;
+			if (!parsedTimeout) return { error: ORCHESTRATE_USAGE };
+			timeoutMs = parsedTimeout;
+		} else if (token.startsWith("--")) {
+			return { error: ORCHESTRATE_USAGE };
+		} else {
+			promptParts.push(token);
+		}
+	}
+
+	const prompt = stripWrappingQuotes(promptParts.join(" ").trim());
+	if (!prompt) return { error: ORCHESTRATE_USAGE };
+	return { value: { backend, providers, session, mode, timeoutMs, prompt } };
+}
+
+function externalSessionName(
+	session: string | undefined,
+	provider: ExternalAgentProvider,
+	agentCount: number,
+): string | undefined {
+	if (!session) return undefined;
+	return agentCount > 1 ? `${session}-${provider}` : session;
+}
+
+function buildExternalAgentRequests(input: ParsedExternalOrchestrationArgs, cwd: string): ExternalAgentRequest[] {
+	return input.providers.map(provider => ({
+		provider,
+		backend: input.backend,
+		prompt: input.prompt,
+		cwd,
+		session: externalSessionName(input.session, provider, input.providers.length),
+		mode: input.mode,
+		timeoutMs: input.timeoutMs,
+	}));
+}
+
+function formatExternalEvent(event: ExternalAgentEvent): string | undefined {
+	if (event.type === "status") return `- status: ${event.message}`;
+	if (event.type === "error") return `- error: ${event.message}`;
+	if (event.type === "terminal") {
+		const session = event.session ? ` [${event.session}]` : "";
+		return `- terminal${session}: ${event.message} \`${event.command.join(" ")}\``;
+	}
+	return undefined;
+}
+
+function appendExternalAgentResult(lines: string[], result: ExternalAgentResult): void {
+	lines.push("", `## ${result.provider}`, `- Status: ${result.success ? "success" : "failure"}`);
+	if (result.session) lines.push(`- Session: \`${result.session}\``);
+	lines.push(`- Exit code: ${result.exitCode === null ? "null" : result.exitCode}`);
+
+	const text = result.text.trim();
+	if (text.length > 0) {
+		lines.push("", "```text", text, "```");
+		return;
+	}
+
+	const eventLines = result.events.map(formatExternalEvent).filter(line => line !== undefined);
+	if (eventLines.length > 0) {
+		lines.push("", ...eventLines);
+	} else {
+		lines.push("", "_No captured output._");
+	}
+}
+
+function buildExternalOrchestrationReport(
+	input: ParsedExternalOrchestrationArgs,
+	cwd: string,
+	results: ExternalAgentResult[],
+): string {
+	const lines = [
+		"# External Orchestration",
+		`- Backend: \`${input.backend}\``,
+		`- CWD: \`${cwd}\``,
+		`- Agent count: ${input.providers.length}`,
+	];
+	for (const result of results) appendExternalAgentResult(lines, result);
+	return lines.join("\n");
+}
+
+async function runExternalOrchestration(
+	input: ParsedExternalOrchestrationArgs,
+	cwd: string,
+): Promise<ExternalOrchestrationReport> {
+	const requests = buildExternalAgentRequests(input, cwd);
+	const results = await runExternalAgentsParallel(requests);
+	return {
+		backend: input.backend,
+		agents: input.providers,
+		report: buildExternalOrchestrationReport(input, cwd, results),
+		successCount: results.filter(result => result.success).length,
+	};
+}
+
 const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 	{
 		name: "settings",
@@ -64,6 +308,56 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		handleTui: (_command, runtime) => {
 			runtime.ctx.showSettingsSelector();
 			runtime.ctx.editor.setText("");
+		},
+	},
+	{
+		name: "gain",
+		description: "Show native minimizer savings for current repo",
+		handle: async (_command, runtime) => {
+			await runtime.output(await buildGainSlashReport({ cwd: runtime.cwd, all: false }));
+			return commandConsumed();
+		},
+	},
+	{
+		name: "gain-all",
+		description: "Show native minimizer savings across all repos",
+		handle: async (_command, runtime) => {
+			await runtime.output(await buildGainSlashReport({ cwd: runtime.cwd, all: true }));
+			return commandConsumed();
+		},
+	},
+	{
+		name: "orchestrate",
+		aliases: ["delegate"],
+		description: "Run parallel external agents via acpx/tmux/cmux",
+		inlineHint: "[--backend acpx|tmux|cmux] [--agents gemini,claude,codex] <prompt>",
+		allowArgs: true,
+		handle: async (command, runtime) => {
+			const parsed = parseExternalOrchestrationArgs(command.args);
+			if ("error" in parsed) return usage(parsed.error, runtime);
+			const result = await runExternalOrchestration(parsed.value, runtime.cwd);
+			await runtime.output(result.report);
+			return commandConsumed();
+		},
+		handleTui: async (command, runtime) => {
+			const parsed = parseExternalOrchestrationArgs(command.args);
+			if ("error" in parsed) {
+				runtime.ctx.showStatus(parsed.error);
+				runtime.ctx.editor.setText("");
+				return commandConsumed();
+			}
+			const result = await runExternalOrchestration(parsed.value, runtime.ctx.sessionManager.getCwd());
+			await runtime.ctx.session.sendCustomMessage({
+				customType: "external-orchestration",
+				content: result.report,
+				display: true,
+				details: { backend: result.backend, agents: result.agents },
+			});
+			runtime.ctx.showStatus(
+				`External orchestration completed: ${result.successCount}/${result.agents.length} succeeded.`,
+			);
+			runtime.ctx.editor.setText("");
+			return commandConsumed();
 		},
 	},
 	{
@@ -1489,6 +1783,150 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 			} catch (err) {
 				runtime.ctx.showStatus(`Plugin error: ${err}`);
 			}
+		},
+	},
+	{
+		name: "skills",
+		description: "Toggle skill sources and individual skills",
+		handle: async (_command, runtime) => {
+			// ACP path: list current state as readable text
+			const cwd = runtime.cwd;
+			const currentSettings = {
+				loadForeign: runtime.settings.get("compatibility.loadForeignConfig"),
+				enableClaudeUser: runtime.settings.get("skills.enableClaudeUser"),
+				enableClaudeProject: runtime.settings.get("skills.enableClaudeProject"),
+				enableCodexUser: runtime.settings.get("skills.enableCodexUser"),
+				enablePiUser: runtime.settings.get("skills.enablePiUser"),
+				enablePiProject: runtime.settings.get("skills.enablePiProject"),
+			};
+			const disabledExtensions = runtime.settings.get("disabledExtensions") ?? [];
+			const result = await loadSkills({
+				cwd,
+				...currentSettings,
+				disabledExtensions,
+			});
+			const disabledSkillNames = new Set(
+				disabledExtensions.filter((id: string) => id.startsWith("skill:")).map((id: string) => id.slice(6)),
+			);
+			const lines = ["# Skills", ``, `## Sources`];
+			lines.push(`Load Foreign Config: ${currentSettings.loadForeign ? "on" : "off"}`);
+			lines.push(`Claude (user): ${currentSettings.enableClaudeUser ? "on" : "off"}`);
+			lines.push(`Claude (project): ${currentSettings.enableClaudeProject ? "on" : "off"}`);
+			lines.push(`Codex (user): ${currentSettings.enableCodexUser ? "on" : "off"}`);
+			lines.push(`Pi (user): ${currentSettings.enablePiUser ? "on" : "off"}`);
+			lines.push(`Pi (project): ${currentSettings.enablePiProject ? "on" : "off"}`);
+			lines.push(``, `## Skills (${result.skills.length} loaded)`);
+			for (const skill of result.skills) {
+				const source = `${skill._source?.providerName ?? "unknown"} (${skill._source?.level ?? "unknown"})`;
+				const state = disabledSkillNames.has(skill.name) ? "off" : "on";
+				lines.push(`- [${state}] ${skill.name} — ${source}`);
+			}
+			await runtime.output(lines.join("\n"));
+			return commandConsumed();
+		},
+		handleTui: async (_command, runtime) => {
+			const ctx = runtime.ctx;
+			const cwd = ctx.sessionManager.getCwd();
+			const currentSettings = {
+				loadForeign: settings.get("compatibility.loadForeignConfig"),
+				enableClaudeUser: settings.get("skills.enableClaudeUser"),
+				enableClaudeProject: settings.get("skills.enableClaudeProject"),
+				enableCodexUser: settings.get("skills.enableCodexUser"),
+				enablePiUser: settings.get("skills.enablePiUser"),
+				enablePiProject: settings.get("skills.enablePiProject"),
+			};
+			const disabledExtensions: string[] = settings.get("disabledExtensions") ?? [];
+			const result = await loadSkills({
+				cwd,
+				...currentSettings,
+				disabledExtensions,
+			});
+
+			const buildToggles = (): { sources: SkillsSourceToggle[]; skills: SkillsSkillToggle[] } => {
+				const disabledSkillNames = new Set(
+					disabledExtensions.filter((id: string) => id.startsWith("skill:")).map((id: string) => id.slice(6)),
+				);
+				const sources: SkillsSourceToggle[] = [
+					{
+						id: "compatibility.loadForeignConfig",
+						label: "Load Foreign Config",
+						enabled: settings.get("compatibility.loadForeignConfig"),
+					},
+					{
+						id: "skills.enableClaudeUser",
+						label: "Claude (user)",
+						enabled: settings.get("skills.enableClaudeUser"),
+						provider: "claude",
+					},
+					{
+						id: "skills.enableClaudeProject",
+						label: "Claude (project)",
+						enabled: settings.get("skills.enableClaudeProject"),
+						provider: "claude",
+					},
+					{
+						id: "skills.enableCodexUser",
+						label: "Codex (user)",
+						enabled: settings.get("skills.enableCodexUser"),
+						provider: "codex",
+					},
+					{
+						id: "skills.enablePiUser",
+						label: "Pi (user)",
+						enabled: settings.get("skills.enablePiUser"),
+						provider: "native",
+					},
+					{
+						id: "skills.enablePiProject",
+						label: "Pi (project)",
+						enabled: settings.get("skills.enablePiProject"),
+						provider: "native",
+					},
+				];
+				const skills: SkillsSkillToggle[] = result.skills.map(skill => ({
+					name: skill.name,
+					source: `${skill._source?.providerName ?? "?"} (${skill._source?.level ?? "?"})`,
+					enabled: !disabledSkillNames.has(skill.name),
+				}));
+				return { sources, skills };
+			};
+
+			let toggles = buildToggles();
+			const changed = await new Promise<boolean>(resolve => {
+				const component = new SkillsOverlayComponent(toggles.sources, toggles.skills, {
+					onToggleSource: (id: string) => {
+						const current = settings.get(id as SettingPath);
+						settings.set(id as SettingPath, !current as SettingValue<SettingPath>);
+						// Rebuild list after source toggle since it may affect skill visibility
+						toggles = buildToggles();
+					},
+					onToggleSkill: (name: string) => {
+						const extId = `skill:${name}`;
+						const extIds: string[] = settings.get("disabledExtensions") ?? [];
+						const idx = extIds.indexOf(extId);
+						if (idx >= 0) extIds.splice(idx, 1);
+						else extIds.push(extId);
+						settings.set("disabledExtensions", extIds);
+						toggles = buildToggles();
+					},
+					onDone: () => {
+						handle.hide();
+						resolve(true);
+					},
+				});
+				const handle = ctx.ui.showOverlay(component, {
+					anchor: "center",
+					col: "20%",
+					width: "60%",
+					row: "10%",
+					maxHeight: "80%",
+				});
+			});
+			ctx.editor.setText("");
+			if (changed) {
+				ctx.showStatus("Skills updated.");
+			}
+			return commandConsumed();
 		},
 	},
 	{

@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir, getProjectDir, isEnoent, logger } from "@oh-my-pi/pi-utils";
 import * as zod from "zod/v4";
+import { isProviderEnabled } from "../../capability";
 import { getConfigDirs } from "../../config";
 import { execCommand } from "../../exec/exec";
 import * as typebox from "../typebox";
@@ -21,6 +22,17 @@ import type {
 	CustomCommandsLoadResult,
 	LoadedCustomCommand,
 } from "./types";
+
+const SOURCE_PROVIDER_IDS: Record<string, string> = {
+	".claude": "claude",
+	".codex": "codex",
+	".gemini": "gemini",
+};
+
+function isConfigSourceEnabled(source: string): boolean {
+	const providerId = SOURCE_PROVIDER_IDS[source];
+	return providerId === undefined || isProviderEnabled(providerId);
+}
 
 /**
  * Load a single command module using native Bun import.
@@ -101,6 +113,7 @@ export async function discoverCustomCommands(
 	}
 
 	for (const entry of getConfigDirs("commands", { cwd, existingOnly: true })) {
+		if (!isConfigSourceEnabled(entry.source)) continue;
 		const source = entry.level === "user" ? "user" : "project";
 		if (!commandDirs.some(d => d.path === entry.path)) {
 			commandDirs.push({ path: entry.path, source });

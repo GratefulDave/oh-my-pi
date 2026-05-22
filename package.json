@@ -155,5 +155,8 @@
   },
   "lint-staged": {
     "*.{js,ts,jsx,tsx,json,jsonc,css}": "biome check --write --no-errors-on-unmatched"
+  },
+  "dependencies": {
+    "pi-cmux": "0.1.8"
   }
 }

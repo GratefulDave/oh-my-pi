@@ -33,6 +33,7 @@ import {
 } from "@oh-my-pi/pi-tui";
 import { isEnoent, prompt } from "@oh-my-pi/pi-utils";
 import { YAML } from "bun";
+import { isProviderEnabled } from "../../capability";
 import { getConfigDirs } from "../../config";
 import type { ModelRegistry } from "../../config/model-registry";
 import {
@@ -97,6 +98,17 @@ const SOURCE_LABEL: Record<AgentSource, string> = {
 };
 
 const IDENTIFIER_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+){1,5}$/;
+
+const SOURCE_PROVIDER_IDS: Record<string, string> = {
+	".claude": "claude",
+	".codex": "codex",
+	".gemini": "gemini",
+};
+
+function isConfigSourceEnabled(source: string): boolean {
+	const providerId = SOURCE_PROVIDER_IDS[source];
+	return providerId === undefined || isProviderEnabled(providerId);
+}
 
 function joinPatterns(patterns: string[]): string {
 	if (patterns.length === 0) return "(session model)";
@@ -678,7 +690,7 @@ export class AgentDashboard extends Container {
 			user: this.#createScope === "user",
 			project: this.#createScope === "project",
 			cwd: this.cwd,
-		});
+		}).filter(entry => isConfigSourceEnabled(entry.source));
 		const targetDir = dirs[0]?.path;
 		if (!targetDir) {
 			throw new Error(`Cannot resolve ${this.#createScope} agents directory.`);

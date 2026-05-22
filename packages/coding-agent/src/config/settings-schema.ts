@@ -233,6 +233,7 @@ export const SETTINGS_SCHEMA = {
 	// General settings (no UI)
 	// ────────────────────────────────────────────────────────────────────────
 	lastChangelogVersion: { type: "string", default: undefined },
+	"startup.lastShownUpdateVersion": { type: "string", default: undefined },
 
 	// Auth broker — credentials proxied through a remote `omp auth-broker serve`
 	// host. Hidden from the UI; populate via env vars or hand-edited config.yml.
@@ -311,6 +312,16 @@ export const SETTINGS_SCHEMA = {
 	enabledModels: { type: "array", default: EMPTY_STRING_ARRAY },
 
 	disabledProviders: { type: "array", default: EMPTY_STRING_ARRAY },
+
+	"compatibility.loadForeignConfig": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "providers",
+			label: "Load Claude/Codex/Gemini Config",
+			description: "Load foreign Claude, Codex, Gemini, and Claude marketplace plugin configuration sources",
+		},
+	},
 
 	disabledExtensions: { type: "array", default: EMPTY_STRING_ARRAY },
 
@@ -587,6 +598,22 @@ export const SETTINGS_SCHEMA = {
 	"display.tabWidth": {
 		type: "number",
 		default: 3,
+	},
+
+	"display.shimmer": {
+		type: "enum",
+		values: ["classic", "kitt", "disabled"] as const,
+		default: "classic",
+		ui: {
+			tab: "appearance",
+			label: "Shimmer",
+			description: "Animation style for working/loading messages",
+			options: [
+				{ value: "classic", label: "Classic", description: "Soft cosine wave sweeping across the text" },
+				{ value: "kitt", label: "KITT Scanner", description: "Knight Rider 1982 red light bouncing left-right" },
+				{ value: "disabled", label: "Disabled", description: "No animation; static muted text" },
+			],
+		},
 	},
 
 	"display.showTokenUsage": {
@@ -2908,6 +2935,10 @@ export interface SttSettings {
 	modelPath: string | undefined;
 }
 
+export interface CompatibilitySettings {
+	loadForeignConfig: boolean;
+}
+
 export interface BashInterceptorRule {
 	pattern: string;
 	flags?: string;
@@ -2927,6 +2958,7 @@ export interface ShellMinimizerSettings {
 /** Map group prefix -> typed settings interface */
 export interface GroupTypeMap {
 	compaction: CompactionSettings;
+	compatibility: CompatibilitySettings;
 	contextPromotion: ContextPromotionSettings;
 	retry: RetrySettings;
 	memories: MemoriesSettings;

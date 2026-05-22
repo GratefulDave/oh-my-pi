@@ -260,6 +260,8 @@ interface DiscoveryProviderConfig {
 	compat?: Model<Api>["compat"];
 	discovery: ProviderDiscovery;
 	optional?: boolean;
+	/** When true, discovered models are marked as reasoning-capable. */
+	reasoning?: boolean;
 }
 
 export type ProviderDiscoveryStatus = "idle" | "ok" | "empty" | "cached" | "unavailable" | "unauthenticated";
@@ -1051,6 +1053,17 @@ export class ModelRegistry {
 			});
 			this.#keylessProviders.add("lm-studio");
 		}
+		if (!configuredProviders.has("omlx") && !disabledProviders.has("omlx")) {
+			this.#discoverableProviders.push({
+				provider: "omlx",
+				api: "openai-completions",
+				baseUrl: Bun.env.OMLX_BASE_URL || "http://127.0.0.1:18790/v1",
+				discovery: { type: "omlx" },
+				optional: true,
+				reasoning: true,
+			});
+			this.#keylessProviders.add("omlx");
+		}
 	}
 
 	#loadCustomModels(): CustomModelsResult {
@@ -1295,6 +1308,7 @@ export class ModelRegistry {
 			case "llama.cpp":
 				return this.#discoverLlamaCppModels(providerConfig);
 			case "lm-studio":
+			case "omlx":
 			case "openai-models-list":
 				return this.#discoverOpenAIModelsList(providerConfig);
 		}
@@ -1618,6 +1632,7 @@ export class ModelRegistry {
 		const payload = (await response.json()) as { data?: Array<{ id: string }> };
 		const models = payload.data ?? [];
 		const discovered: Model<Api>[] = [];
+		const supportsReasoning = providerConfig.reasoning === true;
 		for (const item of models) {
 			const id = item.id;
 			if (!id) continue;
@@ -1628,7 +1643,7 @@ export class ModelRegistry {
 					api: providerConfig.api,
 					provider: providerConfig.provider,
 					baseUrl,
-					reasoning: false,
+					reasoning: supportsReasoning,
 					input: ["text"],
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 					contextWindow: 128000,
@@ -1637,7 +1652,7 @@ export class ModelRegistry {
 					compat: {
 						supportsStore: false,
 						supportsDeveloperRole: false,
-						supportsReasoningEffort: false,
+						supportsReasoningEffort: supportsReasoning,
 					},
 				}),
 			);

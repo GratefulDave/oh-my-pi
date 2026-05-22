@@ -27,8 +27,6 @@ const emptyWorkspaceTree = (cwd: string): WorkspaceTree => ({
 	totalLines: 1,
 	agentsMdFiles: [],
 });
-
-
 describe("createAgentSession skills option", () => {
 	let tempDir: string;
 	let skillsDir: string;
@@ -96,8 +94,6 @@ Loaded via symbolic link.
 			...overrides,
 		};
 	}
-
-
 	it("should discover skills by default and expose them on session.skills", async () => {
 		const { session } = await createAgentSession(createSessionOptions());
 

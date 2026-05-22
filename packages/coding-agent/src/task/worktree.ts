@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as natives from "@oh-my-pi/pi-natives";
-import { getWorktreeDir, logger, Snowflake } from "@oh-my-pi/pi-utils";
+import { getWorktreeDir, hashPath, logger, Snowflake } from "@oh-my-pi/pi-utils";
 import * as git from "../utils/git";
 
 const { IsoBackendKind } = natives;
@@ -316,8 +316,7 @@ export async function ensureIsolation(
 	preferred?: IsoBackendKind,
 ): Promise<IsolationHandle> {
 	const repoRoot = await getRepoRoot(baseCwd);
-	const encodedProject = getEncodedProjectName(repoRoot);
-	const baseDir = getWorktreeDir(encodedProject, id);
+	const baseDir = getWorktreeDir(`${id}-${hashPath(repoRoot)}`);
 	const mergedDir = path.join(baseDir, "merged");
 
 	const resolution = natives.isoResolve(preferred ?? null);

@@ -1,5 +1,10 @@
 import { describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { getAgentDir, setAgentDir } from "@oh-my-pi/pi-utils";
 import { Settings } from "../src/config/settings";
+import { recordMinimizerGain } from "../src/minimizer-gain";
 import type { AgentSession } from "../src/session/agent-session";
 import type { SessionManager } from "../src/session/session-manager";
 import { executeAcpBuiltinSlashCommand } from "../src/slash-commands/acp-builtins";
@@ -159,6 +164,58 @@ describe("ACP builtin slash commands", () => {
 
 		expect(result).toEqual({ consumed: true });
 		expect(output).toEqual(["Fast mode is off."]);
+	});
+
+	it("renders minimizer gain for current cwd and all repos without a model call", async () => {
+		const previousAgentDir = getAgentDir();
+		const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-acp-gain-"));
+		try {
+			setAgentDir(agentDir);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/project",
+					command: "git diff",
+					filter: "git",
+					inputBytes: 1000,
+					outputBytes: 250,
+					savedBytes: 750,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/other",
+					command: "bun test",
+					filter: "bun",
+					inputBytes: 1200,
+					outputBytes: 400,
+					savedBytes: 800,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+
+			const current = createRuntime();
+			expect(await executeAcpBuiltinSlashCommand("/gain", current.runtime)).toEqual({ consumed: true });
+			expect(current.output[0]).toContain("Minimizer savings for /tmp/project");
+			expect(current.output[0]).toContain("Saved Bytes: 750");
+			expect(current.output[0]).not.toContain("/tmp/other");
+
+			const all = createRuntime();
+			expect(await executeAcpBuiltinSlashCommand("/gain-all", all.runtime)).toEqual({ consumed: true });
+			expect(all.output[0]).toContain("Minimizer savings across all repos");
+			expect(all.output[0]).toContain("Saved Bytes: 1.6K");
+			expect(all.output[0]).toContain("/tmp/project");
+			expect(all.output[0]).toContain("/tmp/other");
+		} finally {
+			setAgentDir(previousAgentDir);
+			await fs.rm(agentDir, { recursive: true, force: true });
+		}
 	});
 
 	it("forces a tool and returns remaining prompt text", async () => {

@@ -11,7 +11,7 @@ import {
 	parseSearchDateBound,
 } from "@oh-my-pi/pi-coding-agent/tools/gh";
 import * as git from "@oh-my-pi/pi-coding-agent/utils/git";
-import { getAgentDir, setAgentDir } from "@oh-my-pi/pi-utils";
+import { getAgentDir, hashPath, setAgentDir } from "@oh-my-pi/pi-utils";
 import * as z from "zod/v4";
 
 // Isolate every `git` invocation in this file from the developer's host
@@ -157,11 +157,9 @@ async function setupTempHome(): Promise<{ home: string; cleanup: () => Promise<v
  * the value rendered into the tool result.
  */
 async function expectedWorktreePath(home: string, primaryRoot: string, localBranch: string): Promise<string> {
-	const encoded = path
-		.resolve(primaryRoot)
-		.replace(/^[/\\]/, "")
-		.replace(/[/\\:]/g, "-");
-	return fs.realpath(path.join(home, ".omp", "wt", encoded, localBranch));
+	const prNumber = localBranch.replace(/^pr-/, "");
+	const segment = `${prNumber}-${hashPath(primaryRoot)}`;
+	return fs.realpath(path.join(home, ".omp", "wt", segment));
 }
 
 describe("parsePrUnifiedDiff", () => {
@@ -741,6 +739,53 @@ describe("github tool", () => {
 			);
 			expect(runGit(fixture.repoRoot, ["worktree", "list", "--porcelain"])).toContain(`worktree ${worktreePath}`);
 			expect(runGit(worktreePath, ["branch", "--show-current"])).toBe("pr-123");
+		} finally {
+			await tempHome.cleanup();
+			await fs.rm(fixture.baseDir, { recursive: true, force: true });
+		}
+	});
+
+	it("retries a suffixed worktree path when the default hashed path is occupied", async () => {
+		const fixture = await createPrFixture();
+		const tempHome = await setupTempHome();
+		try {
+			vi.spyOn(git.github, "json")
+				.mockResolvedValueOnce({
+					number: 321,
+					title: "Contributor fix",
+					url: "https://github.com/base/repo/pull/321",
+					baseRefName: "main",
+					headRefName: fixture.headRefName,
+					headRefOid: fixture.headRefOid,
+					headRepository: { nameWithOwner: "contrib/repo" },
+					headRepositoryOwner: { login: "contrib" },
+					isCrossRepository: true,
+					maintainerCanModify: true,
+				})
+				.mockResolvedValueOnce({
+					nameWithOwner: "contrib/repo",
+					sshUrl: fixture.forkBare,
+					url: fixture.forkBare,
+				});
+
+			const primaryRoot = (await git.repo.primaryRoot(fixture.repoRoot)) ?? fixture.repoRoot;
+			const defaultPath = path.join(tempHome.home, ".omp", "wt", `321-${hashPath(primaryRoot)}`);
+			await fs.mkdir(defaultPath, { recursive: true });
+			const expectedRetryPath = path.join(
+				await fs.realpath(path.dirname(defaultPath)),
+				`${path.basename(defaultPath)}-2`,
+			);
+
+			const tool = new GithubTool(createSession(fixture.repoRoot));
+			const result = await tool.execute("pr-checkout", { op: "pr_checkout", pr: "321" });
+			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+
+			expect(text).toContain("Checked Out Pull Request #321");
+			expect(text).toContain(`Worktree: ${expectedRetryPath}`);
+			expect(runGit(fixture.repoRoot, ["worktree", "list", "--porcelain"])).toContain(
+				`worktree ${expectedRetryPath}`,
+			);
+			expect(runGit(expectedRetryPath, ["branch", "--show-current"])).toBe("pr-321");
 		} finally {
 			await tempHome.cleanup();
 			await fs.rm(fixture.baseDir, { recursive: true, force: true });

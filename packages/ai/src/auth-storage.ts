@@ -1440,6 +1440,12 @@ export class AuthStorage {
 				await saveApiKeyCredential(apiKey);
 				return;
 			}
+			case "omlx": {
+				const { loginOmlx } = await import("./utils/oauth/omlx");
+				const apiKey = await loginOmlx(ctrl);
+				await saveApiKeyCredential(apiKey);
+				return;
+			}
 			case "parallel": {
 				const { loginParallel } = await import("./utils/oauth/parallel");
 				const apiKey = await loginParallel(ctrl);

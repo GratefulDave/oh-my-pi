@@ -38,9 +38,22 @@ const providerMeta = new Map<string, { displayName: string; description: string 
 
 /** Disabled providers (by ID) */
 const disabledProviders = new Set<string>();
+const FOREIGN_PROVIDER_IDS = new Set<string>(["claude", "claude-plugins", "codex", "gemini"]);
 
 /** Settings manager for persistence (if set) */
 let settings: Settings | null = null;
+function loadForeignConfig(): boolean {
+	if (!settings) return true;
+	try {
+		return settings.get("compatibility.loadForeignConfig");
+	} catch {
+		return true;
+	}
+}
+
+function isImplicitlyDisabledProvider(providerId: string): boolean {
+	return FOREIGN_PROVIDER_IDS.has(providerId) && !loadForeignConfig();
+}
 
 // =============================================================================
 // Registration API
@@ -208,7 +221,7 @@ async function loadImpl<T>(
  * Filter providers based on options and disabled state.
  */
 function filterProviders<T>(capability: Capability<T>, options: LoadOptions): Provider<T>[] {
-	let providers = (capability.providers as Provider<T>[]).filter(p => !disabledProviders.has(p.id));
+	let providers = (capability.providers as Provider<T>[]).filter(p => isProviderEnabled(p.id));
 
 	if (options.providers) {
 		const allowed = new Set(options.providers);
@@ -287,7 +300,7 @@ export function enableProvider(providerId: string): void {
  * Check if a provider is enabled.
  */
 export function isProviderEnabled(providerId: string): boolean {
-	return !disabledProviders.has(providerId);
+	return !disabledProviders.has(providerId) && !isImplicitlyDisabledProvider(providerId);
 }
 
 /**
@@ -342,7 +355,7 @@ export function getCapabilityInfo(capabilityId: string): CapabilityInfo | undefi
 			displayName: p.displayName,
 			description: p.description,
 			priority: p.priority,
-			enabled: !disabledProviders.has(p.id),
+			enabled: isProviderEnabled(p.id),
 		})),
 	};
 }
@@ -379,7 +392,7 @@ export function getProviderInfo(providerId: string): ProviderInfo | undefined {
 		description: meta.description,
 		priority,
 		capabilities: Array.from(caps),
-		enabled: !disabledProviders.has(providerId),
+		enabled: isProviderEnabled(providerId),
 	};
 }
 

@@ -204,6 +204,7 @@ import type {
 } from "./session-manager";
 import { getLatestCompactionEntry } from "./session-manager";
 import { ToolChoiceQueue } from "./tool-choice-queue";
+import { YieldQueue } from "./yield-queue";
 
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
@@ -740,6 +741,8 @@ export class AgentSession {
 	readonly sessionManager: SessionManager;
 	readonly settings: Settings;
 
+	readonly yieldQueue: YieldQueue;
+
 	#powerAssertion: MacOSPowerAssertion | undefined;
 
 	readonly configWarnings: string[] = [];
@@ -1036,6 +1039,24 @@ export class AgentSession {
 				};
 		this.agent.setProviderResponseInterceptor(this.#onResponse);
 		this.agent.setRawSseEventInterceptor(this.#onSseEvent);
+		this.yieldQueue = new YieldQueue({
+			isStreaming: () => this.isStreaming,
+			injectStreaming: message => this.agent.followUp(message),
+			injectIdle: async messages => {
+				const first = messages[0];
+				if (!first) return;
+				await this.agent.prompt(messages.length === 1 ? first : messages);
+			},
+			scheduleIdleFlush: run => {
+				this.#schedulePostPromptTask(
+					async () => {
+						await run();
+					},
+					{ delayMs: 1 },
+				);
+			},
+		});
+		this.agent.setOnBeforeYield(() => this.yieldQueue.flush("streaming"));
 		this.#convertToLlm = config.convertToLlm ?? convertToLlm;
 		this.#rebuildSystemPrompt = config.rebuildSystemPrompt;
 		this.#getMcpServerInstructions = config.getMcpServerInstructions;
@@ -2725,6 +2746,8 @@ export class AgentSession {
 	async dispose(): Promise<void> {
 		this.#isDisposed = true;
 		this.#pendingBackgroundExchanges = [];
+		this.yieldQueue.clear();
+		this.agent.setOnBeforeYield(undefined);
 		this.#evalExecutionDisposing = true;
 		try {
 			if (this.#extensionRunner?.hasHandlers("session_shutdown")) {

@@ -4,10 +4,10 @@
  * Discovers agent definitions from:
  *   - ~/.omp/agent/agents/*.md (user-level, primary)
  *   - ~/.pi/agent/agents/*.md (user-level, legacy)
- *   - ~/.claude/agents/*.md (user-level, legacy)
+ *   - ~/.claude/agents/*.md, ~/.codex/agents/*.md, ~/.gemini/agents/*.md when enabled
  *   - .omp/agents/*.md (project-level, primary)
  *   - .pi/agents/*.md (project-level, legacy)
- *   - .claude/agents/*.md (project-level, legacy)
+ *   - .claude/agents/*.md, .codex/agents/*.md, .gemini/agents/*.md when enabled
  *
  * Agent files use markdown with YAML frontmatter.
  */
@@ -20,6 +20,21 @@ import { findAllNearestProjectConfigDirs, getConfigDirs } from "../config";
 import { listClaudePluginRoots } from "../discovery/helpers";
 import { loadBundledAgents, parseAgent } from "./agents";
 import type { AgentDefinition, AgentSource } from "./types";
+
+const SOURCE_PROVIDER_IDS: Record<string, string> = {
+	".claude": "claude",
+	".codex": "codex",
+	".gemini": "gemini",
+};
+
+function sourceProviderId(source: string): string | undefined {
+	return SOURCE_PROVIDER_IDS[source];
+}
+
+function isAgentSourceEnabled(source: string): boolean {
+	const providerId = sourceProviderId(source);
+	return providerId === undefined || isProviderEnabled(providerId);
+}
 
 /** Result of agent discovery */
 export interface DiscoveryResult {
@@ -52,15 +67,17 @@ async function loadAgentsFromDir(dir: string, source: AgentSource): Promise<Agen
 /**
  * Discover agents from filesystem and merge with bundled agents.
  *
- * Precedence (highest wins): .omp > .pi > .claude (project before user), then bundled
+ * Precedence (highest wins): .omp > .pi > foreign sources when enabled (project before user), then bundled
  *
  * @param cwd - Current working directory for project agent discovery
  */
 export async function discoverAgents(cwd: string, home: string = os.homedir()): Promise<DiscoveryResult> {
 	const resolvedCwd = path.resolve(cwd);
-	const agentSources = Array.from(new Set(getConfigDirs("", { project: false }).map(entry => entry.source)));
+	const agentSources = Array.from(new Set(getConfigDirs("", { project: false }).map(entry => entry.source))).filter(
+		source => isAgentSourceEnabled(source),
+	);
 
-	// Get user directories (priority order: .omp, .pi, .claude, ...)
+	// Get user directories (priority order: .omp, .pi, then enabled foreign sources)
 	const userDirs = getConfigDirs("agents", { project: false })
 		.filter(entry => agentSources.includes(entry.source))
 		.map(entry => ({
@@ -88,7 +105,7 @@ export async function discoverAgents(cwd: string, home: string = os.homedir()): 
 		if (user) orderedDirs.push({ dir: user.path, source: "user" });
 	}
 
-	// Load agents from Claude Code marketplace plugins (respects disabledProviders)
+	// Load agents from Claude Code marketplace plugins (respects provider filtering)
 	const { roots: pluginRoots } = isProviderEnabled("claude-plugins")
 		? await listClaudePluginRoots(home, resolvedCwd)
 		: { roots: [] };

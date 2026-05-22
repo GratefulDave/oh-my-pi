@@ -84,6 +84,23 @@ async function checkForNewVersion(currentVersion: string): Promise<string | unde
 	}
 }
 
+export function shouldShowNewVersionNotification(
+	newVersion: string,
+	settingsInstance: Pick<Settings, "get"> = settings,
+): boolean {
+	return (
+		settingsInstance.get("startup.checkUpdate") &&
+		settingsInstance.get("startup.lastShownUpdateVersion") !== newVersion
+	);
+}
+
+export function recordShownUpdateNotification(
+	newVersion: string,
+	settingsInstance: Pick<Settings, "set"> = settings,
+): void {
+	settingsInstance.set("startup.lastShownUpdateVersion", newVersion);
+}
+
 const RPC_DEFAULTED_SETTING_PATHS: SettingPath[] = [
 	"todo.enabled",
 	"todo.reminders",
@@ -272,11 +289,9 @@ async function runInteractiveMode(
 
 	versionCheckPromise
 		.then(newVersion => {
-			if (!settings.get("startup.checkUpdate")) {
-				return;
-			}
-			if (newVersion) {
+			if (newVersion && shouldShowNewVersionNotification(newVersion)) {
 				mode.showNewVersionNotification(newVersion);
+				recordShownUpdateNotification(newVersion);
 			}
 		})
 		.catch(() => {});

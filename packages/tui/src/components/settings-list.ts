@@ -59,6 +59,18 @@ export class SettingsList implements Component {
 		}
 	}
 
+	/**
+	 * Replace the entire items array. Selection is preserved when the prior
+	 * index is still valid, otherwise clamped to the last item (or 0 if the
+	 * list is now empty). An open submenu is left untouched — its lifetime
+	 * is bounded by its own done callback, and `#closeSubmenu` re-clamps the
+	 * restored index against the new list on the way out.
+	 */
+	setItems(items: SettingItem[]): void {
+		this.#items = items;
+		this.#clampSelectedIndex();
+	}
+
 	invalidate(): void {
 		this.#submenuComponent?.invalidate?.();
 	}
@@ -190,6 +202,17 @@ export class SettingsList implements Component {
 		if (this.#submenuItemIndex !== null) {
 			this.#selectedIndex = this.#submenuItemIndex;
 			this.#submenuItemIndex = null;
+		}
+		this.#clampSelectedIndex();
+	}
+
+	#clampSelectedIndex(): void {
+		if (this.#items.length === 0) {
+			this.#selectedIndex = 0;
+		} else if (this.#selectedIndex < 0) {
+			this.#selectedIndex = 0;
+		} else if (this.#selectedIndex >= this.#items.length) {
+			this.#selectedIndex = this.#items.length - 1;
 		}
 	}
 }

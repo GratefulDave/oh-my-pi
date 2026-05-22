@@ -28,6 +28,7 @@ import {
 	nanoGptModelManagerOptions,
 	nvidiaModelManagerOptions,
 	ollamaModelManagerOptions,
+	omlxModelManagerOptions,
 	openaiModelManagerOptions,
 	opencodeGoModelManagerOptions,
 	opencodeZenModelManagerOptions,
@@ -250,6 +251,9 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
 		config => vllmModelManagerOptions(config),
 		catalog("vLLM", ["VLLM_API_KEY"], { allowUnauthenticated: true }),
 	),
+	descriptor("omlx", "Qwen3-Coder-Next-MLX-4bit", config => omlxModelManagerOptions(config), {
+		allowUnauthenticated: true,
+	}),
 	catalogDescriptor(
 		"moonshot",
 		"kimi-k2.5",
