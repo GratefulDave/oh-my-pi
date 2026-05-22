@@ -3,10 +3,9 @@
  *
  * Registers:
  * - /swarm run <file.yaml>   — Execute a swarm pipeline
- * - /swarm status             — Show current pipeline status
- *
- * Usage: Add this extension's directory to your extensions config,
- * then use /swarm in any oh-my-pi session.
+ * - /swarm status <name>     — Show current pipeline status
+ * - /swarm tasks <name>      — Show DAG-backed task board
+ * - /swarm feed <name>       — Show durable event feed
  */
 
 import * as fs from "node:fs/promises";
@@ -14,50 +13,60 @@ import * as path from "node:path";
 import type { AuthStorage, ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { formatDuration } from "@oh-my-pi/pi-utils";
 import { buildDependencyGraph, buildExecutionWaves, detectCycles } from "./swarm/dag";
+import { renderSwarmEvents } from "./swarm/events";
+import { loadSwarmInspection } from "./swarm/inspect";
 import { PipelineController } from "./swarm/pipeline";
-import { renderSwarmProgress } from "./swarm/render";
+import { renderSwarmMeshSummary, renderSwarmProgress } from "./swarm/render";
+import { claimReservation, readReservations, releaseReservation } from "./swarm/reservations";
+import { initializeSwarmState, renderAgentStatusLines, resolveSwarmWorkspace } from "./swarm/runtime";
 import { parseSwarmYaml, type SwarmDefinition, validateSwarmDefinition } from "./swarm/schema";
-import { StateTracker } from "./swarm/state";
+import type { StateTracker } from "./swarm/state";
+import { renderSwarmTaskDetail, renderSwarmTasks } from "./swarm/tasks";
 
 export default function swarmExtension(pi: ExtensionAPI): void {
 	pi.setLabel("Swarm Orchestrator");
 
 	pi.registerCommand("swarm", {
-		description: "Run a multi-agent swarm pipeline from YAML",
+		description: "Run and inspect multi-agent swarm pipelines",
 		getArgumentCompletions: prefix => {
-			const subcommands = ["run", "status", "help"];
+			const subcommands = ["run", "status", "tasks", "task", "feed", "agents", "send", "reserve", "release", "help"];
 			if (!prefix) return subcommands.map(s => ({ label: s, value: s }));
 			return subcommands.filter(s => s.startsWith(prefix)).map(s => ({ label: s, value: s }));
 		},
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
-			const parts = args.trim().split(/\s+/);
+			const parts = args.trim().split(/\s+/).filter(Boolean);
 			const subcommand = parts[0] ?? "help";
 
 			switch (subcommand) {
-				case "run": {
-					const yamlPath = parts[1];
-					if (!yamlPath) {
-						ctx.ui.notify("Usage: /swarm run <path/to/pipeline.yaml>", "error");
-						return;
-					}
-					await handleRun(yamlPath, ctx, pi);
+				case "run":
+					await handleRun(parts[1], ctx, pi);
 					return;
-				}
-				case "status": {
+				case "status":
 					await handleStatus(parts[1], ctx);
 					return;
-				}
+				case "tasks":
+					await handleTasks(parts[1], ctx);
+					return;
+				case "task":
+					await handleTask(parts[1], parts[2], ctx);
+					return;
+				case "feed":
+					await handleFeed(parts.slice(1), ctx);
+					return;
+				case "agents":
+					await handleAgents(parts[1], ctx);
+					return;
+				case "send":
+					await handleSend(parts.slice(1), ctx);
+					return;
+				case "reserve":
+					await handleReserve(parts.slice(1), ctx);
+					return;
+				case "release":
+					await handleRelease(parts.slice(1), ctx);
+					return;
 				default:
-					ctx.ui.notify(
-						[
-							"Swarm — multi-agent pipeline orchestrator",
-							"",
-							"  /swarm run <file.yaml>     Run a pipeline",
-							"  /swarm status [name]       Show pipeline status",
-							"  /swarm help                Show this help",
-						].join("\n"),
-						"info",
-					);
+					ctx.ui.notify(helpText(), "info");
 					return;
 			}
 		},
@@ -68,8 +77,12 @@ export default function swarmExtension(pi: ExtensionAPI): void {
 // /swarm run
 // ============================================================================
 
-async function handleRun(yamlPath: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
-	// 1. Resolve and read YAML
+async function handleRun(yamlPath: string | undefined, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
+	if (!yamlPath) {
+		ctx.ui.notify("Usage: /swarm run <path/to/pipeline.yaml>", "error");
+		return;
+	}
+
 	const resolvedPath = path.isAbsolute(yamlPath) ? yamlPath : path.resolve(ctx.cwd, yamlPath);
 
 	let content: string;
@@ -80,7 +93,6 @@ async function handleRun(yamlPath: string, ctx: ExtensionCommandContext, pi: Ext
 		return;
 	}
 
-	// 2. Parse YAML
 	let def: SwarmDefinition;
 	try {
 		def = parseSwarmYaml(content);
@@ -89,14 +101,12 @@ async function handleRun(yamlPath: string, ctx: ExtensionCommandContext, pi: Ext
 		return;
 	}
 
-	// 3. Validate
 	const validationErrors = validateSwarmDefinition(def);
 	if (validationErrors.length > 0) {
 		ctx.ui.notify(`Validation errors:\n${validationErrors.map(e => `  - ${e}`).join("\n")}`, "error");
 		return;
 	}
 
-	// 4. Build DAG
 	const deps = buildDependencyGraph(def);
 	const cycleNodes = detectCycles(deps);
 	if (cycleNodes) {
@@ -105,19 +115,12 @@ async function handleRun(yamlPath: string, ctx: ExtensionCommandContext, pi: Ext
 	}
 	const waves = buildExecutionWaves(deps);
 
-	// 5. Resolve workspace (relative to YAML file location)
-	const workspace = path.isAbsolute(def.workspace)
-		? def.workspace
-		: path.resolve(path.dirname(resolvedPath), def.workspace);
+	const workspace = resolveSwarmWorkspace(def, resolvedPath);
 
-	// Ensure workspace exists
 	await fs.mkdir(workspace, { recursive: true });
 
-	// 6. Initialize state tracker
-	const stateTracker = new StateTracker(workspace, def.name);
-	await stateTracker.init([...def.agents.keys()], def.targetCount, def.mode);
+	const stateTracker = await initializeSwarmState(workspace, def);
 
-	// 7. Log start
 	const agentList = [...def.agents.keys()].join(", ");
 	const waveDesc = waves.map((w, i) => `wave ${i + 1}: [${w.join(", ")}]`).join("; ");
 	pi.logger.debug("Swarm starting", {
@@ -133,7 +136,6 @@ async function handleRun(yamlPath: string, ctx: ExtensionCommandContext, pi: Ext
 		"info",
 	);
 
-	// 8. Set up progress widget
 	const widgetKey = `swarm-${def.name}`;
 	const updateWidget = () => {
 		const lines = renderSwarmProgress(stateTracker.state);
@@ -141,15 +143,13 @@ async function handleRun(yamlPath: string, ctx: ExtensionCommandContext, pi: Ext
 	};
 	updateWidget();
 
-	// 9. Resolve infrastructure for agent execution
 	let authStorage: AuthStorage | undefined;
 	try {
 		authStorage = await pi.pi.discoverAuthStorage();
 	} catch {
-		// Let runSubprocess discover auth per-agent as fallback
+		// Let runSubprocess discover auth per-agent as fallback.
 	}
 
-	// 10. Run pipeline
 	const controller = new PipelineController(def, waves, stateTracker);
 
 	const result = await controller.run({
@@ -160,7 +160,6 @@ async function handleRun(yamlPath: string, ctx: ExtensionCommandContext, pi: Ext
 		settings: pi.pi.settings,
 	});
 
-	// 11. Clear widget and show summary
 	ctx.ui.setWidget(widgetKey, undefined);
 
 	const elapsed = stateTracker.state.completedAt
@@ -180,12 +179,10 @@ async function handleRun(yamlPath: string, ctx: ExtensionCommandContext, pi: Ext
 	const summaryType = result.status === "completed" ? "info" : "error";
 	ctx.ui.notify(summaryParts.join(" | "), summaryType);
 
-	// Log errors
 	if (result.errors.length > 0) {
 		pi.logger.warn("Swarm completed with errors", { errors: result.errors });
 	}
 
-	// 12. Send summary to the conversation so the LLM knows what happened
 	const summaryMessage = buildSummaryMessage(def, result, stateTracker, workspace);
 	pi.sendMessage(
 		{
@@ -204,7 +201,7 @@ async function handleRun(yamlPath: string, ctx: ExtensionCommandContext, pi: Ext
 }
 
 // ============================================================================
-// /swarm status
+// Inspection commands
 // ============================================================================
 
 async function handleStatus(name: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
@@ -212,16 +209,155 @@ async function handleStatus(name: string | undefined, ctx: ExtensionCommandConte
 		ctx.ui.notify("Usage: /swarm status <name>  (reads .swarm_<name>/state/pipeline.json from cwd)", "info");
 		return;
 	}
+	try {
+		const inspection = await loadSwarmInspection(name, ctx.cwd);
+		const events = await inspection.stateTracker.readEvents({ limit: 8 });
+		const reservations = await readReservations(inspection.stateTracker.swarmDir);
+		ctx.ui.notify(renderSwarmMeshSummary(inspection.state, { events, reservations }).join("\n"), "info");
+	} catch (err) {
+		ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
+	}
+}
 
-	const stateTracker = new StateTracker(ctx.cwd, name);
-	const state = await stateTracker.load();
-	if (!state) {
-		ctx.ui.notify(`No state found for swarm '${name}' in ${ctx.cwd}`, "error");
+async function handleTasks(name: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
+	if (!name) {
+		ctx.ui.notify("Usage: /swarm tasks <name>", "info");
 		return;
 	}
+	try {
+		const inspection = await loadSwarmInspection(name, ctx.cwd);
+		ctx.ui.notify(renderSwarmTasks(inspection.tasks).join("\n"), "info");
+	} catch (err) {
+		ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
+	}
+}
 
-	const lines = renderSwarmProgress(state);
-	ctx.ui.notify(lines.join("\n"), "info");
+async function handleTask(
+	name: string | undefined,
+	agentName: string | undefined,
+	ctx: ExtensionCommandContext,
+): Promise<void> {
+	if (!name || !agentName) {
+		ctx.ui.notify("Usage: /swarm task <name> <agent>", "info");
+		return;
+	}
+	try {
+		const inspection = await loadSwarmInspection(name, ctx.cwd);
+		const task = inspection.tasks.find(t => t.name === agentName);
+		if (!task) {
+			ctx.ui.notify(`No agent '${agentName}' in swarm '${name}'`, "error");
+			return;
+		}
+		ctx.ui.notify(renderSwarmTaskDetail(task).join("\n"), "info");
+	} catch (err) {
+		ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
+	}
+}
+
+async function handleFeed(args: string[], ctx: ExtensionCommandContext): Promise<void> {
+	const name = args[0];
+	if (!name) {
+		ctx.ui.notify("Usage: /swarm feed <name> [--channel memory|pipeline]", "info");
+		return;
+	}
+	const channel = parseChannelArg(args.slice(1));
+	try {
+		const inspection = await loadSwarmInspection(name, ctx.cwd);
+		const events = await inspection.stateTracker.readEvents({ channel, limit: 30 });
+		ctx.ui.notify(renderSwarmEvents(events).join("\n"), "info");
+	} catch (err) {
+		ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
+	}
+}
+
+async function handleAgents(name: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
+	if (!name) {
+		ctx.ui.notify("Usage: /swarm agents <name>", "info");
+		return;
+	}
+	try {
+		const inspection = await loadSwarmInspection(name, ctx.cwd);
+		const lines = renderAgentStatusLines(inspection.state);
+		ctx.ui.notify(lines.length > 0 ? lines.join("\n") : "No agents.", "info");
+	} catch (err) {
+		ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
+	}
+}
+
+async function handleSend(args: string[], ctx: ExtensionCommandContext): Promise<void> {
+	const [name, to, ...messageParts] = args;
+	const message = messageParts.join(" ").trim();
+	if (!name || !to || !message) {
+		ctx.ui.notify("Usage: /swarm send <name> <to> <message>", "info");
+		return;
+	}
+	try {
+		const inspection = await loadSwarmInspection(name, ctx.cwd);
+		await inspection.stateTracker.appendEvent({
+			type: "message",
+			channel: "memory",
+			from: "user",
+			to,
+			message,
+		});
+		ctx.ui.notify(`Message recorded for '${to}' in swarm '${name}'`, "info");
+	} catch (err) {
+		ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
+	}
+}
+
+async function handleReserve(args: string[], ctx: ExtensionCommandContext): Promise<void> {
+	const [name, resource, ...reasonParts] = args;
+	const reason = reasonParts.join(" ").trim() || undefined;
+	if (!name || !resource) {
+		ctx.ui.notify("Usage: /swarm reserve <name> <resource> [reason]", "info");
+		return;
+	}
+	try {
+		const inspection = await loadSwarmInspection(name, ctx.cwd);
+		const result = await claimReservation(inspection.stateTracker.swarmDir, resource, "user", reason);
+		if (!result.ok && result.conflict) {
+			ctx.ui.notify(`Reservation conflict: ${resource} is held by ${result.conflict.holder}`, "error");
+			return;
+		}
+		await inspection.stateTracker.appendEvent({
+			type: "reservation.claim",
+			channel: "pipeline",
+			resource,
+			from: "user",
+			reason,
+			message: `Reserved ${resource}`,
+		});
+		ctx.ui.notify(`Reserved ${resource}`, "info");
+	} catch (err) {
+		ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
+	}
+}
+
+async function handleRelease(args: string[], ctx: ExtensionCommandContext): Promise<void> {
+	const [name, resource] = args;
+	if (!name || !resource) {
+		ctx.ui.notify("Usage: /swarm release <name> <resource>", "info");
+		return;
+	}
+	try {
+		const inspection = await loadSwarmInspection(name, ctx.cwd);
+		const released = await releaseReservation(inspection.stateTracker.swarmDir, resource);
+		if (!released) {
+			ctx.ui.notify(`No reservation for ${resource}`, "info");
+			return;
+		}
+		await inspection.stateTracker.appendEvent({
+			type: "reservation.release",
+			channel: "pipeline",
+			resource,
+			from: "user",
+			message: `Released ${resource}`,
+		});
+		ctx.ui.notify(`Released ${resource}`, "info");
+	} catch (err) {
+		ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
+	}
 }
 
 // ============================================================================
@@ -261,5 +397,36 @@ function buildSummaryMessage(
 		}
 	}
 
+	lines.push("");
+	lines.push("### Mesh commands");
+	lines.push("");
+	lines.push(`- /swarm status ${def.name}`);
+	lines.push(`- /swarm tasks ${def.name}`);
+	lines.push(`- /swarm feed ${def.name}`);
+	lines.push(`- /swarm agents ${def.name}`);
+
 	return lines.join("\n");
+}
+
+function parseChannelArg(args: string[]): string | undefined {
+	const channelIndex = args.indexOf("--channel");
+	if (channelIndex >= 0) return args[channelIndex + 1];
+	return undefined;
+}
+
+function helpText(): string {
+	return [
+		"Swarm — multi-agent pipeline orchestrator",
+		"",
+		"  /swarm run <file.yaml>                  Run a pipeline",
+		"  /swarm status <name>                   Show pipeline status + mesh summary",
+		"  /swarm tasks <name>                    Show DAG task board",
+		"  /swarm task <name> <agent>             Show one DAG task",
+		"  /swarm feed <name> [--channel <name>]  Show event feed",
+		"  /swarm agents <name>                   Show agent presence/status",
+		"  /swarm send <name> <to> <message>      Record a mesh message",
+		"  /swarm reserve <name> <resource> [why] Reserve a resource",
+		"  /swarm release <name> <resource>       Release a resource",
+		"  /swarm help                            Show this help",
+	].join("\n");
 }

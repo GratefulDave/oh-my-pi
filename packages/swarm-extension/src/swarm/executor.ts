@@ -72,6 +72,14 @@ export async function executeSwarmAgent(
 		iteration,
 		startedAt: Date.now(),
 	});
+	await stateTracker.appendEvent({
+		type: "agent.start",
+		channel: "pipeline",
+		agent: agent.name,
+		iteration,
+		status: "running",
+		message: `Starting iteration ${iteration + 1}`,
+	});
 	await stateTracker.appendLog(agent.name, `Starting iteration ${iteration}`);
 
 	try {
@@ -101,6 +109,15 @@ export async function executeSwarmAgent(
 			agent.name,
 			`Iteration ${iteration} ${status}${result.error ? `: ${result.error}` : ""}`,
 		);
+		await stateTracker.appendEvent({
+			type: status === "completed" ? "agent.done" : "agent.failed",
+			channel: "pipeline",
+			agent: agent.name,
+			iteration,
+			status,
+			error: result.error,
+			message: `Iteration ${iteration + 1} ${status}`,
+		});
 
 		return result;
 	} catch (err) {
@@ -111,6 +128,15 @@ export async function executeSwarmAgent(
 			error,
 		});
 		await stateTracker.appendLog(agent.name, `Iteration ${iteration} error: ${error}`);
+		await stateTracker.appendEvent({
+			type: "agent.failed",
+			channel: "pipeline",
+			agent: agent.name,
+			iteration,
+			status: "failed",
+			error,
+			message: `Iteration ${iteration + 1} error`,
+		});
 		throw err;
 	}
 }

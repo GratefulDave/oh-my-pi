@@ -6,6 +6,8 @@
  */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { appendSwarmEvent, type NewSwarmEvent, readSwarmEvents, type SwarmEvent } from "./events";
+import type { SwarmDefinition } from "./schema";
 
 // ============================================================================
 // State types
@@ -33,6 +35,10 @@ export interface SwarmState {
 	agents: Record<string, AgentState>;
 	startedAt: number;
 	completedAt?: number;
+}
+
+interface AgentRegistryEntry extends AgentState {
+	updatedAt: number;
 }
 
 // ============================================================================
@@ -68,6 +74,8 @@ export class StateTracker {
 		await fs.mkdir(path.join(this.#swarmDir, "state"), { recursive: true });
 		await fs.mkdir(path.join(this.#swarmDir, "logs"), { recursive: true });
 		await fs.mkdir(path.join(this.#swarmDir, "context"), { recursive: true });
+		await fs.mkdir(path.join(this.#swarmDir, "events", "channels"), { recursive: true });
+		await fs.mkdir(path.join(this.#swarmDir, "registry"), { recursive: true });
 
 		this.#state.targetCount = targetCount;
 		this.#state.mode = mode;
@@ -84,6 +92,7 @@ export class StateTracker {
 		}
 
 		await this.#persist();
+		await this.#persistRegistry();
 	}
 
 	async updateAgent(name: string, update: Partial<AgentState>): Promise<void> {
@@ -91,6 +100,7 @@ export class StateTracker {
 		if (!agent) return;
 		Object.assign(agent, update);
 		await this.#persist();
+		await this.#persistRegistry();
 	}
 
 	async updatePipeline(update: Partial<SwarmState>): Promise<void> {
@@ -110,6 +120,42 @@ export class StateTracker {
 		await fs.appendFile(logPath, `[${timestamp}] ${message}\n`);
 	}
 
+	async appendEvent(event: Omit<NewSwarmEvent, "swarm">): Promise<SwarmEvent> {
+		return appendSwarmEvent(this.#swarmDir, { ...event, swarm: this.#state.name });
+	}
+
+	async readEvents(options: { channel?: string; limit?: number } = {}): Promise<SwarmEvent[]> {
+		return readSwarmEvents(this.#swarmDir, options);
+	}
+
+	async saveDefinition(def: SwarmDefinition): Promise<void> {
+		const serializable = {
+			name: def.name,
+			workspace: def.workspace,
+			mode: def.mode,
+			targetCount: def.targetCount,
+			model: def.model,
+			agentOrder: def.agentOrder,
+			agents: Object.fromEntries(def.agents),
+		};
+		await Bun.write(path.join(this.#swarmDir, "state", "definition.json"), JSON.stringify(serializable, null, 2));
+	}
+
+	async loadDefinition(): Promise<SwarmDefinition | null> {
+		try {
+			const content = await Bun.file(path.join(this.#swarmDir, "state", "definition.json")).text();
+			const parsed = JSON.parse(content) as Omit<SwarmDefinition, "agents"> & {
+				agents: Record<string, SwarmDefinition["agents"] extends Map<string, infer Agent> ? Agent : never>;
+			};
+			return {
+				...parsed,
+				agents: new Map(Object.entries(parsed.agents)),
+			};
+		} catch {
+			return null;
+		}
+	}
+
 	async load(): Promise<SwarmState | null> {
 		const statePath = path.join(this.#swarmDir, "state", "pipeline.json");
 		try {
@@ -123,5 +169,14 @@ export class StateTracker {
 
 	async #persist(): Promise<void> {
 		await Bun.write(path.join(this.#swarmDir, "state", "pipeline.json"), JSON.stringify(this.#state, null, 2));
+	}
+
+	async #persistRegistry(): Promise<void> {
+		const now = Date.now();
+		const entries: Record<string, AgentRegistryEntry> = {};
+		for (const [name, agent] of Object.entries(this.#state.agents)) {
+			entries[name] = { ...agent, updatedAt: now };
+		}
+		await Bun.write(path.join(this.#swarmDir, "registry", "agents.json"), JSON.stringify(entries, null, 2));
 	}
 }

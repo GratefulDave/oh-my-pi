@@ -2,6 +2,8 @@
  * TUI progress rendering for swarm pipeline status.
  */
 import { formatDuration, truncate } from "@oh-my-pi/pi-utils";
+import { renderSwarmEvents, type SwarmEvent } from "./events";
+import { type ReservationRecord, renderReservations } from "./reservations";
 import type { AgentState, SwarmState } from "./state";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -49,6 +51,25 @@ export function renderSwarmProgress(state: SwarmState): string[] {
 	}
 	lines.push(`  ${parts.join(" | ")}`);
 
+	return lines;
+}
+
+export function renderSwarmMeshSummary(
+	state: SwarmState,
+	options: {
+		events?: readonly SwarmEvent[];
+		reservations?: Record<string, ReservationRecord>;
+	} = {},
+): string[] {
+	const lines = renderSwarmProgress(state);
+	if (options.reservations) {
+		lines.push("", "Reservations:");
+		lines.push(...renderReservations(options.reservations).map(line => `  ${line}`));
+	}
+	if (options.events) {
+		lines.push("", "Recent events:");
+		lines.push(...renderSwarmEvents(options.events).map(line => `  ${line}`));
+	}
 	return lines;
 }
 

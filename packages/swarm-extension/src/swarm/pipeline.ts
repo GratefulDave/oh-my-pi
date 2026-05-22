@@ -68,6 +68,12 @@ export class PipelineController {
 		await this.#stateTracker.appendOrchestratorLog(
 			`Pipeline '${this.#def.name}' starting: mode=${this.#def.mode} iterations=${targetCount} waves=${this.#waves.length} agents=${this.#def.agents.size}`,
 		);
+		await this.#stateTracker.appendEvent({
+			type: "pipeline.start",
+			channel: "pipeline",
+			message: `mode=${this.#def.mode} iterations=${targetCount} waves=${this.#waves.length} agents=${this.#def.agents.size}`,
+			metadata: { mode: this.#def.mode, targetCount, waves: this.#waves.length, agents: this.#def.agents.size },
+		});
 
 		try {
 			for (let iteration = 0; iteration < targetCount; iteration++) {
@@ -78,6 +84,12 @@ export class PipelineController {
 
 				await this.#stateTracker.updatePipeline({ iteration });
 				await this.#stateTracker.appendOrchestratorLog(`--- Iteration ${iteration + 1}/${targetCount} ---`);
+				await this.#stateTracker.appendEvent({
+					type: "pipeline.iteration",
+					channel: "pipeline",
+					iteration,
+					message: `Iteration ${iteration + 1}/${targetCount}`,
+				});
 
 				const emitProgress = (currentWave: number) => {
 					onProgress?.({
@@ -143,6 +155,14 @@ export class PipelineController {
 			await this.#stateTracker.appendOrchestratorLog(
 				`Wave ${waveIdx + 1}/${this.#waves.length}: [${wave.join(", ")}]`,
 			);
+			await this.#stateTracker.appendEvent({
+				type: "wave.start",
+				channel: "pipeline",
+				iteration,
+				wave: waveIdx,
+				message: `Wave ${waveIdx + 1}/${this.#waves.length}: [${wave.join(", ")}]`,
+				metadata: { agents: wave },
+			});
 
 			// Mark agents in this wave as waiting
 			for (const agentName of wave) {
@@ -150,6 +170,14 @@ export class PipelineController {
 					status: "waiting",
 					iteration,
 					wave: waveIdx,
+				});
+				await this.#stateTracker.appendEvent({
+					type: "agent.waiting",
+					channel: "pipeline",
+					agent: agentName,
+					iteration,
+					wave: waveIdx,
+					status: "waiting",
 				});
 			}
 			options.emitProgress(waveIdx);
@@ -166,7 +194,19 @@ export class PipelineController {
 							iteration,
 							modelOverride: agent.model ?? this.#def.model,
 							signal: options.signal,
-							onProgress: (_name, _progress) => {
+							onProgress: (_name, progress) => {
+								void this.#stateTracker
+									.appendEvent({
+										type: "agent.progress",
+										channel: "pipeline",
+										agent: agentName,
+										iteration,
+										wave: waveIdx,
+										message: progress.lastIntent ?? progress.currentTool,
+										status: progress.status,
+										metadata: { progress },
+									})
+									.catch(() => {});
 								options.emitProgress(waveIdx);
 							},
 							authStorage: options.authStorage,
