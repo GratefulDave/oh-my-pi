@@ -395,6 +395,14 @@
 			"types": "./src/hindsight/*.ts",
 			"import": "./src/hindsight/*.ts"
 		},
+		"./icm": {
+			"types": "./src/icm/index.ts",
+			"import": "./src/icm/index.ts"
+		},
+		"./icm/*": {
+			"types": "./src/icm/*.ts",
+			"import": "./src/icm/*.ts"
+		},
 		"./modes": {
 			"types": "./src/modes/index.ts",
 			"import": "./src/modes/index.ts"

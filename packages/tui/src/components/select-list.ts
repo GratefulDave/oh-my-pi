@@ -139,8 +139,8 @@ export class SelectList implements Component {
 			this.#selectedIndex = Math.min(this.#filteredItems.length - 1, this.#selectedIndex + this.maxVisible);
 			this.#notifySelectionChange();
 		}
-		// Enter
-		else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n") {
+		// Enter. Most terminals send CR for Enter; tests and some PTYs send LF.
+		else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\r" || keyData === "\n") {
 			const selectedItem = this.#filteredItems[this.#selectedIndex];
 			if (selectedItem && this.onSelect) {
 				this.onSelect(selectedItem);

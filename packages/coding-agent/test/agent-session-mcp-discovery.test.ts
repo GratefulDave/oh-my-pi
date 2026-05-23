@@ -1,13 +1,15 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Agent, type AgentTool, ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { Effort, type Model } from "@oh-my-pi/pi-ai";
 import * as z from "zod/v4";
+import { ModelRegistry } from "../src/config/model-registry";
 import { Settings } from "../src/config/settings";
 import type { CustomTool } from "../src/extensibility/custom-tools/types";
 import { AgentSession } from "../src/session/agent-session";
+import { AuthStorage } from "../src/session/auth-storage";
 import { SessionManager } from "../src/session/session-manager";
 
 function createModel(): Model<"openai-responses"> {
@@ -85,8 +87,16 @@ function createMcpCustomTool(
 describe("AgentSession MCP discovery", () => {
 	const sessions: AgentSession[] = [];
 	const tempDirs: string[] = [];
+	let authStorage: AuthStorage;
+	let modelRegistry: ModelRegistry;
+
+	beforeEach(async () => {
+		authStorage = await AuthStorage.create(path.join(os.tmpdir(), `mcp-discovery-${Date.now()}.db`));
+		modelRegistry = new ModelRegistry(authStorage);
+	});
 
 	afterEach(async () => {
+		authStorage?.close();
 		for (const session of sessions.splice(0)) {
 			await session.dispose();
 		}
@@ -114,7 +124,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager: SessionManager.inMemory(),
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			rebuildSystemPrompt: async toolNames => ({
@@ -161,7 +171,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager: SessionManager.inMemory(),
 			settings: Settings.isolated({ "mcp.discoveryMode": false }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: false,
 			rebuildSystemPrompt: async toolNames => ({
@@ -203,7 +213,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager: SessionManager.inMemory(),
 			settings: Settings.isolated({ "mcp.discoveryMode": false }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: false,
 			rebuildSystemPrompt: async toolNames => ({
@@ -252,7 +262,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager: SessionManager.inMemory(),
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			rebuildSystemPrompt: async toolNames => ({
@@ -300,7 +310,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager: SessionManager.inMemory(),
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			rebuildSystemPrompt: async toolNames => ({
@@ -345,7 +355,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager,
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			defaultSelectedMCPServerNames: ["slack"],
@@ -392,7 +402,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager,
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			rebuildSystemPrompt: async toolNames => ({
@@ -427,7 +437,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager,
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry: new Map([[readTool.name, readTool]]),
 			mcpDiscoveryEnabled: true,
 			rebuildSystemPrompt: async toolNames => ({
@@ -465,7 +475,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager,
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			rebuildSystemPrompt: async toolNames => ({
@@ -510,7 +520,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager,
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			rebuildSystemPrompt: async toolNames => ({
@@ -555,7 +565,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager,
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			initialSelectedMCPToolNames: ["mcp__docs_search"],
@@ -604,7 +614,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager,
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			initialSelectedMCPToolNames: ["mcp__docs_search"],
@@ -672,7 +682,7 @@ describe("AgentSession MCP discovery", () => {
 				defaultThinkingLevel: "high",
 				serviceTier: "priority",
 			}),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			initialSelectedMCPToolNames: ["mcp__docs_search"],
@@ -737,7 +747,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager,
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			initialSelectedMCPToolNames: ["mcp__docs_search", "mcp__slack_send_message"],
@@ -797,7 +807,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager: SessionManager.inMemory(),
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			rebuildSystemPrompt: async toolNames => ({
@@ -832,7 +842,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager: SessionManager.inMemory(),
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			rebuildSystemPrompt: async toolNames => ({ systemPrompt: [`tools:${toolNames.join(",")}`] }),
@@ -862,7 +872,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager: SessionManager.inMemory(),
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			rebuildSystemPrompt: async toolNames => ({ systemPrompt: [`tools:${toolNames.join(",")}`] }),
@@ -891,7 +901,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager: SessionManager.inMemory(),
 			settings: Settings.isolated({ "mcp.discoveryMode": true }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: true,
 			rebuildSystemPrompt: async toolNames => ({ systemPrompt: [`tools:${toolNames.join(",")}`] }),
@@ -934,7 +944,7 @@ describe("AgentSession MCP discovery", () => {
 			agent,
 			sessionManager: SessionManager.inMemory(),
 			settings: Settings.isolated({ "tools.discoveryMode": "all" }),
-			modelRegistry: {} as never,
+			modelRegistry,
 			toolRegistry,
 			mcpDiscoveryEnabled: false,
 			rebuildSystemPrompt: async toolNames => ({ systemPrompt: [`tools:${toolNames.join(",")}`] }),

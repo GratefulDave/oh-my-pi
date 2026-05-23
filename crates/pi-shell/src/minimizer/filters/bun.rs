@@ -66,7 +66,17 @@ fn is_test_invocation(program: &str, subcommand: Option<&str>, command: &str) ->
 		(program, subcommand),
 		("bun", Some("test")) | ("bunx", Some("jest" | "vitest" | "playwright"))
 	) || is_exec_package_subcommand(program, subcommand)
-		&& command_contains_tool(command, &["jest", "vitest", "playwright"])
+		&& (command_contains_tool(command, &["jest", "vitest", "playwright"])
+			|| command_contains_test_script(command))
+}
+fn command_contains_test_script(command: &str) -> bool {
+	command
+		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
+		.any(is_test_script_token)
+}
+fn is_test_script_token(token: &str) -> bool {
+	let token = token.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'));
+	matches!(token, "test" | "t" | "e2e" | "spec") || token.starts_with("test:")
 }
 
 fn is_exec_package_subcommand(program: &str, subcommand: Option<&str>) -> bool {
@@ -245,5 +255,51 @@ mod tests {
 		);
 		assert!(!out.text.contains("Bundled 12 modules"));
 		assert!(out.text.contains("error: missing export"));
+	}
+
+	#[test]
+	fn bun_run_test_routes_to_node_tests() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("bun", Some("run"), "bun run test", &cfg);
+		let out = filter(&ctx, "✓ pass 1\n✓ pass 2\nFAIL app.test.ts\nTests 1 failed, 2 passed\n", 1);
+		assert!(!out.text.contains("✓ pass 1"));
+		assert!(out.text.contains("FAIL app.test.ts"));
+		assert!(out.text.contains("Tests 1 failed, 2 passed"));
+	}
+
+	#[test]
+	fn quoted_bun_run_test_routes_to_node_tests() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("bun", Some("run"), "bun run 'test'", &cfg);
+		let out = filter(&ctx, "✓ pass 1\nFAIL app.test.ts\nTests 1 failed, 1 passed\n", 1);
+		assert!(!out.text.contains("✓ pass 1"));
+		assert!(out.text.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn bun_run_test_colon_routes_to_node_tests() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("bun", Some("run"), "bun run test:unit", &cfg);
+		let out = filter(&ctx, "✓ passes\nFAIL src/example.test.ts\nTests 1 failed, 1 passed\n", 1);
+		assert!(!out.text.contains("✓ passes"));
+		assert!(out.text.contains("FAIL src/example.test.ts"));
+	}
+
+	#[test]
+	fn bun_run_e2e_routes_to_node_tests() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("bun", Some("run"), "bun run e2e", &cfg);
+		let out = filter(&ctx, "✓ passes\nFAIL e2e/spec.ts\nTests 1 failed, 1 passed\n", 1);
+		assert!(!out.text.contains("✓ passes"));
+		assert!(out.text.contains("FAIL e2e/spec.ts"));
+	}
+
+	#[test]
+	fn bun_run_build_still_uses_pkg_filter() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("bun", Some("run"), "bun run build", &cfg);
+		let out = filter(&ctx, "Resolving dependencies\nDownloaded foo\nerror: failed\n", 1);
+		assert!(!out.text.contains("Resolving dependencies"));
+		assert!(out.text.contains("error: failed"));
 	}
 }

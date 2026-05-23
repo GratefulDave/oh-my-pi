@@ -121,7 +121,7 @@ export function ollamaCloudModelManagerOptions(
 						metadata = undefined;
 					}
 					const capabilities = metadata?.capabilities;
-					const contextWindow = getContextWindow(metadata?.model_info) ?? reference?.contextWindow ?? 128000;
+					const contextWindow = getContextWindow(metadata?.model_info) ?? reference?.contextWindow ?? 262144;
 					const reasoning = capabilities ? capabilities.includes("thinking") : (reference?.reasoning ?? false);
 					const thinking = capabilities ? getThinkingConfig(capabilities) : reference?.thinking;
 					const input = capabilities

@@ -27,7 +27,7 @@ pub fn supports(subcommand: Option<&str>) -> bool {
 	)
 }
 
-pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, _exit_code: i32) -> MinimizerOutput {
+pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	if is_show_path_content(ctx.command) || is_stash_patch(ctx.command) {
 		return MinimizerOutput::passthrough(input);
 	}
@@ -40,9 +40,10 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, _exit_code: i32) -> Minimizer
 		Some("log") => condense_log(&cleaned, 32, 16),
 		Some("branch" | "stash" | "tag") => primitives::compact_listing(&cleaned, 40),
 		Some("worktree") => cleaned,
+		Some("push") => condense_push(&cleaned, exit_code),
 		Some(
-			"push" | "pull" | "fetch" | "merge" | "rebase" | "checkout" | "switch" | "restore"
-			| "clean" | "reset" | "add" | "commit",
+			"pull" | "fetch" | "merge" | "rebase" | "checkout" | "switch" | "restore" | "clean"
+			| "reset" | "add" | "commit",
 		) => condense_noisy_output(&cleaned),
 		_ => cleaned,
 	};
@@ -90,13 +91,13 @@ fn has_token(command: &str, token: &str) -> bool {
 
 #[derive(Default)]
 struct StatusSummary {
-	branch:    Option<String>,
-	clean:     bool,
-	staged:    usize,
-	unstaged:  usize,
+	branch: Option<String>,
+	clean: bool,
+	staged: usize,
+	unstaged: usize,
 	untracked: usize,
 	conflicts: usize,
-	paths:     Vec<String>,
+	paths: Vec<String>,
 }
 
 fn condense_status(input: &str) -> String {
@@ -300,7 +301,7 @@ fn condense_log(input: &str, head: usize, tail: usize) -> String {
 }
 
 struct LogEntry {
-	hash:    String,
+	hash: String,
 	subject: String,
 }
 
@@ -361,15 +362,15 @@ fn short_hash(hash: &str) -> String {
 }
 
 struct DiffFile {
-	path:    String,
-	added:   usize,
+	path: String,
+	added: usize,
 	removed: usize,
-	hunks:   Vec<DiffHunk>,
+	hunks: Vec<DiffHunk>,
 }
 
 struct DiffHunk {
 	header: String,
-	lines:  Vec<String>,
+	lines: Vec<String>,
 }
 
 fn condense_diff(input: &str) -> String {
@@ -536,6 +537,108 @@ fn format_file_count(files: usize) -> String {
 fn condense_noisy_output(input: &str) -> String {
 	let deduped = primitives::dedup_consecutive_lines(input);
 	primitives::head_tail_lines(&deduped, 80, 40)
+}
+
+fn is_push_progress(line: &str) -> bool {
+	let t = line.trim_start();
+	t.starts_with("Enumerating objects:")
+		|| t.starts_with("Counting objects:")
+		|| t.starts_with("Delta compression")
+		|| t.starts_with("Compressing objects:")
+		|| t.starts_with("Writing objects:")
+		|| t.starts_with("Total ")
+}
+
+fn is_remote_progress(line: &str) -> bool {
+	let Some(rest) = line
+		.trim()
+		.strip_prefix("remote:")
+		.or_else(|| line.trim().strip_prefix("remote: "))
+	else {
+		return false;
+	};
+	let rest = rest.trim();
+	rest.starts_with("Resolving deltas:")
+		|| rest.starts_with("Enumerating objects:")
+		|| rest.starts_with("Counting objects:")
+		|| rest.starts_with("Compressing objects:")
+		|| rest.starts_with("Writing objects:")
+		|| rest.starts_with("Total ")
+}
+
+fn extract_pushed_ref(line: &str) -> Option<&str> {
+	let (_before, after_arrow) = line.split_once(" -> ")?;
+	after_arrow.split_whitespace().next()
+}
+
+fn condense_push(input: &str, exit_code: i32) -> String {
+	let cleaned = primitives::strip_ansi(input);
+	let stripped = primitives::strip_lines(&cleaned, &[is_push_progress]);
+
+	if exit_code == 0 {
+		let mut out = String::new();
+		let mut pushed_ref = None;
+
+		for line in stripped.lines() {
+			let trimmed = line.trim();
+			if trimmed.is_empty() {
+				continue;
+			}
+			if is_remote_progress(trimmed) {
+				continue;
+			}
+			// Keep remote warnings / notes (non-progress remote lines)
+			if trimmed.starts_with("remote:") {
+				out.push_str(line);
+				out.push('\n');
+				continue;
+			}
+			// Keep destination lines
+			if trimmed.starts_with("To ") {
+				out.push_str(line);
+				out.push('\n');
+				continue;
+			}
+			// Keep ref update lines: "* [new ...]", branch setup, or "hash..hash ref -> ref"
+			if trimmed.starts_with("* [new")
+				|| trimmed.starts_with("Branch ")
+				|| trimmed.contains(" -> ")
+			{
+				if pushed_ref.is_none() {
+					pushed_ref = extract_pushed_ref(trimmed);
+				}
+				out.push_str(line);
+				out.push('\n');
+				continue;
+			}
+		}
+
+		if out.is_empty() {
+			out.push_str("ok (up-to-date)\n");
+		} else if let Some(dest) = pushed_ref {
+			out.push_str("ok ");
+			out.push_str(dest);
+			out.push('\n');
+		} else {
+			out.push_str("ok\n");
+		}
+		out
+	} else {
+		// Failure: keep diagnostics, strip only progress noise
+		let mut out = String::new();
+		for line in stripped.lines() {
+			let trimmed = line.trim();
+			if trimmed.is_empty() {
+				continue;
+			}
+			if is_remote_progress(trimmed) {
+				continue;
+			}
+			out.push_str(line);
+			out.push('\n');
+		}
+		out
+	}
 }
 
 #[cfg(test)]
@@ -708,5 +811,89 @@ mod tests {
 		assert!(out.contains("message 0"));
 		assert!(!out.contains("Author:"));
 		assert!(!out.contains("Date:"));
+	}
+
+	#[test]
+	fn push_noisy_success_is_compacted() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("push"), "git push", &cfg);
+		let input = "\
+Enumerating objects: 5, done.
+Counting objects: 100% (5/5), done.
+Delta compression using up to 8 threads
+Compressing objects: 100% (3/3), done.
+Writing objects: 100% (3/3), 1.23 KiB | 1.23 MiB/s, done.
+Total 3 (delta 2), reused 0 (delta 0), pack-reused 0
+remote: Resolving deltas: 100% (2/2), completed with 2 local objects.
+To github.com:user/repo.git
+   abc1234..def5678  main -> main
+";
+		let out = filter(&ctx, input, 0);
+
+		assert!(out.changed);
+		assert!(out.text.contains("To github.com:user/repo.git"));
+		assert!(out.text.contains("main -> main"));
+		assert!(out.text.contains("ok main\n"));
+		assert!(!out.text.contains("Enumerating objects"));
+		assert!(!out.text.contains("Counting objects"));
+		assert!(!out.text.contains("Delta compression"));
+		assert!(!out.text.contains("Compressing objects"));
+		assert!(!out.text.contains("Writing objects"));
+		assert!(!out.text.contains("Total "));
+		assert!(!out.text.contains("remote: Resolving deltas"));
+	}
+
+	#[test]
+	fn push_up_to_date_is_compacted() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("push"), "git push", &cfg);
+		let input = "Everything up-to-date\n";
+		let out = filter(&ctx, input, 0);
+
+		assert!(out.changed);
+		assert_eq!(out.text, "ok (up-to-date)\n");
+	}
+
+	#[test]
+	fn push_remote_warning_is_kept() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("push"), "git push", &cfg);
+		let input = "\
+Enumerating objects: 3, done.
+Counting objects: 100% (3/3), done.
+Writing objects: 100% (3/3), done.
+Total 3 (delta 0), reused 0 (delta 0), pack-reused 0
+remote: warning: Large object detected, consider using Git LFS
+To github.com:user/repo.git
+   def5678..abc1234  main -> main
+";
+		let out = filter(&ctx, input, 0);
+
+		assert!(out.changed);
+		assert!(out.text.contains("remote: warning: Large object detected"));
+		assert!(out.text.contains("ok main\n"));
+		assert!(!out.text.contains("Enumerating objects"));
+	}
+
+	#[test]
+	fn push_rejected_failure_keeps_diagnostics() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("push"), "git push", &cfg);
+		let input = "\
+To github.com:user/repo.git
+ ! [rejected]        main -> main (non-fast-forward)
+error: failed to push some refs to 'github.com:user/repo.git'
+hint: Updates were rejected because the tip of your current branch is behind
+hint: its remote counterpart. Integrate the remote changes (e.g.
+hint: 'git pull ...') before pushing again.
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+";
+		let out = filter(&ctx, input, 1);
+
+		assert!(!out.text.contains("ok\n"));
+		assert!(!out.text.contains("ok (up-to-date)"));
+		assert!(out.text.contains("rejected"));
+		assert!(out.text.contains("error: failed to push"));
+		assert!(out.text.contains("hint:"));
 	}
 }

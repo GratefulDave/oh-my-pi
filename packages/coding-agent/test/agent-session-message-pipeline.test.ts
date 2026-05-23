@@ -51,7 +51,7 @@ describe("AgentSession message pipeline", () => {
 			agent: createAgent(),
 			sessionManager: SessionManager.inMemory(),
 			settings: Settings.isolated({ "compaction.enabled": false }),
-			modelRegistry: {} as never,
+			modelRegistry: { onModelUpdate: () => {} } as never,
 			transformContext,
 			convertToLlm,
 		});
@@ -74,7 +74,7 @@ describe("AgentSession message pipeline", () => {
 			agent: createAgent(),
 			sessionManager: SessionManager.inMemory(),
 			settings: Settings.isolated({ "compaction.enabled": false }),
-			modelRegistry: {} as never,
+			modelRegistry: { onModelUpdate: () => {} } as never,
 			onPayload: sessionOnPayload,
 		});
 		sessions.push(session);
@@ -97,7 +97,7 @@ describe("AgentSession message pipeline", () => {
 			agent: createAgent(),
 			sessionManager: SessionManager.inMemory(),
 			settings: Settings.isolated({ "compaction.enabled": false }),
-			modelRegistry: {} as never,
+			modelRegistry: { onModelUpdate: () => {} } as never,
 			onSseEvent: requestOnSseEvent,
 		});
 		sessions.push(session);
@@ -123,7 +123,7 @@ describe("AgentSession message pipeline", () => {
 			agent: createAgent(),
 			sessionManager: SessionManager.inMemory(),
 			settings: Settings.isolated({ "compaction.enabled": false }),
-			modelRegistry: {} as never,
+			modelRegistry: { onModelUpdate: () => {} } as never,
 			extensionRunner: {
 				emit: extensionEmit,
 			} as never,

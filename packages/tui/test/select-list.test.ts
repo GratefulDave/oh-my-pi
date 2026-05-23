@@ -156,7 +156,10 @@ describe("SelectList", () => {
 		expect(visibleIndexOf(rendered[0], "first")).toBe(visibleIndexOf(rendered[1], "second"));
 	});
 
-	it("confirms the selected item when Enter arrives as LF", () => {
+	it.each([
+		["CR", "\r"],
+		["LF", "\n"],
+	])("confirms the selected item when Enter arrives as %s", (_name, input) => {
 		const items = [{ value: "run", label: "run" }];
 		const list = new SelectList(items, 5, testTheme);
 		let selectedValue: string | undefined;
@@ -164,7 +167,7 @@ describe("SelectList", () => {
 			selectedValue = item.value;
 		};
 
-		list.handleInput("\n");
+		list.handleInput(input);
 
 		expect(selectedValue).toBe("run");
 	});

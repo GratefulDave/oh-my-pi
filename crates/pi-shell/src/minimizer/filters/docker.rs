@@ -286,10 +286,10 @@ mod tests {
 	fn docker_compose_logs_uses_log_filter() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let compose_ctx = MinimizerCtx {
-			program:    "docker",
+			program: "docker",
 			subcommand: Some("compose"),
-			command:    "docker compose logs api",
-			config:     &cfg,
+			command: "docker compose logs api",
+			config: &cfg,
 		};
 		let input = "api-1  | ready\napi-2  | ready\napi | ready\n";
 		let out = filter(&compose_ctx, input, 0).text;
@@ -300,10 +300,10 @@ mod tests {
 	fn docker_compose_ps_uses_table_filter() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let compose_ctx = MinimizerCtx {
-			program:    "docker",
+			program: "docker",
 			subcommand: Some("compose"),
-			command:    "docker compose ps",
-			config:     &cfg,
+			command: "docker compose ps",
+			config: &cfg,
 		};
 		let mut input = String::from("NAME IMAGE COMMAND SERVICE CREATED STATUS PORTS\n");
 		for idx in 0..20 {

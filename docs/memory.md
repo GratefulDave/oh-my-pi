@@ -41,7 +41,7 @@ The agent can read memory files directly using `memory://` URLs with the `read` 
 
 Memories are built by a background pipeline that runs at startup or when manually triggered via slash command.
 
-**Phase 1 — per-session extraction:** For each past session that has changed since it was last processed, a model reads the session history and extracts durable signal: technical decisions, constraints, resolved failures, recurring workflows. Sessions that are too recent, too old, or currently active are skipped. Each extraction produces a raw memory block and a short synopsis for that session.
+**Phase 1 — per-session extraction:** For each past session that has changed since it was last processed, a model reads the session history and extracts durable signal. The extractor keeps only architectural/design decisions, resolved bugs/errors with root cause and fix, and repo purpose/development context. It discards routine command output, transcript chatter, progress/status updates, local-command caveats, generic summaries, guesses, TODOs, and ephemeral debugging attempts. Sessions that are too recent, too old, or currently active are skipped. Each extraction produces a raw memory block and a short synopsis for that session.
 
 **Phase 2 — consolidation:** After extraction, a second model pass reads all per-session extractions and produces three outputs written to disk:
 

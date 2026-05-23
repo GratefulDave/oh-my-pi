@@ -2,9 +2,9 @@
  * Skills overlay component.
  *
  * Renders a toggle list for skill sources and individual skills.
- * Enter toggles a source or skill. Esc calls onDone.
+ * Enter or Space toggles a source or skill. Esc calls onDone.
  */
-import { Container, type SelectItem, SelectList } from "@oh-my-pi/pi-tui";
+import { Container, matchesKey, type SelectItem, SelectList } from "@oh-my-pi/pi-tui";
 import { getSelectListTheme, theme } from "../theme/theme";
 import { DynamicBorder } from "./dynamic-border";
 
@@ -44,6 +44,10 @@ export class SkillsOverlayComponent extends Container {
 		this.#skills = skills;
 		this.#callbacks = callbacks;
 		this.#buildLayout();
+	}
+
+	handleInput(data: string): void {
+		this.#selectList?.handleInput(matchesKey(data, "space") ? "\n" : data);
 	}
 
 	#buildLayout(): void {

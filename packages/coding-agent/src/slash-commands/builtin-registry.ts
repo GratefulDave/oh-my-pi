@@ -19,7 +19,7 @@ import {
 	getPluginsCacheDir,
 	MarketplaceManager,
 } from "../extensibility/plugins/marketplace";
-import { loadSkills } from "../extensibility/skills";
+import { loadSkills, type Skill } from "../extensibility/skills";
 import type {
 	ExternalAgentBackend,
 	ExternalAgentEvent,
@@ -36,6 +36,7 @@ import { SkillsOverlayComponent } from "../modes/components/skills-overlay";
 import type { InteractiveModeContext } from "../modes/types";
 import { shortenPath } from "../tools/render-utils";
 import { getChangelogPath, parseChangelog } from "../utils/changelog";
+import { getEditorCommand, openInEditor } from "../utils/external-editor";
 import { buildContextReportText } from "./helpers/context-report";
 import { formatDuration } from "./helpers/format";
 import { createMarketplaceManager } from "./helpers/marketplace-manager";
@@ -70,6 +71,74 @@ const shutdownHandlerTui = (_command: ParsedSlashCommand, runtime: TuiSlashComma
 	void runtime.ctx.shutdown();
 	return commandConsumed();
 };
+
+type SkillsSettingsSnapshot = {
+	loadForeign: boolean;
+	enableClaudeUser: boolean;
+	enableClaudeProject: boolean;
+	enableCodexUser: boolean;
+	enablePiUser: boolean;
+	enablePiProject: boolean;
+};
+
+function readSkillsSettingsSnapshot(sm: { get(path: SettingPath): unknown }): SkillsSettingsSnapshot {
+	return {
+		loadForeign: sm.get("compatibility.loadForeignConfig" as SettingPath) as boolean,
+		enableClaudeUser: sm.get("skills.enableClaudeUser" as SettingPath) as boolean,
+		enableClaudeProject: sm.get("skills.enableClaudeProject" as SettingPath) as boolean,
+		enableCodexUser: sm.get("skills.enableCodexUser" as SettingPath) as boolean,
+		enablePiUser: sm.get("skills.enablePiUser" as SettingPath) as boolean,
+		enablePiProject: sm.get("skills.enablePiProject" as SettingPath) as boolean,
+	};
+}
+
+function getDisabledSkillNames(disabledExtensions: readonly string[]): Set<string> {
+	return new Set(disabledExtensions.filter(id => id.startsWith("skill:")).map(id => id.slice(6)));
+}
+
+function setSkillDisabled(
+	sm: { get(path: SettingPath): unknown; set(path: SettingPath, value: SettingValue<SettingPath>): void },
+	name: string,
+	disabled: boolean,
+): void {
+	const extId = `skill:${name}`;
+	const disabledExtensions = ((sm.get("disabledExtensions" as SettingPath) as string[] | undefined) ?? []).slice();
+	const index = disabledExtensions.indexOf(extId);
+	if (disabled && index === -1) {
+		disabledExtensions.push(extId);
+	} else if (!disabled && index !== -1) {
+		disabledExtensions.splice(index, 1);
+	}
+	sm.set("disabledExtensions" as SettingPath, disabledExtensions as SettingValue<SettingPath>);
+}
+
+async function loadManageableSkills(
+	cwd: string,
+	sm: { get(path: SettingPath): unknown },
+): Promise<{
+	skills: Skill[];
+	disabledExtensions: string[];
+	disabledSkillNames: Set<string>;
+	settings: SkillsSettingsSnapshot;
+}> {
+	const settingsSnapshot = readSkillsSettingsSnapshot(sm);
+	const disabledExtensions = ((sm.get("disabledExtensions" as SettingPath) as string[] | undefined) ?? []).slice();
+	const result = await loadSkills({
+		cwd,
+		...settingsSnapshot,
+		disabledExtensions: [],
+	});
+	return {
+		skills: result.skills,
+		disabledExtensions,
+		disabledSkillNames: getDisabledSkillNames(disabledExtensions),
+		settings: settingsSnapshot,
+	};
+}
+
+function findManageableSkill(skills: readonly Skill[], name: string): Skill | undefined {
+	return skills.find(skill => skill.name === name);
+}
 
 type GainSlashRow = {
 	commands: number;
@@ -1787,103 +1856,174 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 	},
 	{
 		name: "skills",
-		description: "Toggle skill sources and individual skills",
-		handle: async (_command, runtime) => {
-			// ACP path: list current state as readable text
-			const cwd = runtime.cwd;
-			const currentSettings = {
-				loadForeign: runtime.settings.get("compatibility.loadForeignConfig"),
-				enableClaudeUser: runtime.settings.get("skills.enableClaudeUser"),
-				enableClaudeProject: runtime.settings.get("skills.enableClaudeProject"),
-				enableCodexUser: runtime.settings.get("skills.enableCodexUser"),
-				enablePiUser: runtime.settings.get("skills.enablePiUser"),
-				enablePiProject: runtime.settings.get("skills.enablePiProject"),
-			};
-			const disabledExtensions = runtime.settings.get("disabledExtensions") ?? [];
-			const result = await loadSkills({
-				cwd,
-				...currentSettings,
-				disabledExtensions,
-			});
-			const disabledSkillNames = new Set(
-				disabledExtensions.filter((id: string) => id.startsWith("skill:")).map((id: string) => id.slice(6)),
-			);
-			const lines = ["# Skills", ``, `## Sources`];
-			lines.push(`Load Foreign Config: ${currentSettings.loadForeign ? "on" : "off"}`);
-			lines.push(`Claude (user): ${currentSettings.enableClaudeUser ? "on" : "off"}`);
-			lines.push(`Claude (project): ${currentSettings.enableClaudeProject ? "on" : "off"}`);
-			lines.push(`Codex (user): ${currentSettings.enableCodexUser ? "on" : "off"}`);
-			lines.push(`Pi (user): ${currentSettings.enablePiUser ? "on" : "off"}`);
-			lines.push(`Pi (project): ${currentSettings.enablePiProject ? "on" : "off"}`);
-			lines.push(``, `## Skills (${result.skills.length} loaded)`);
-			for (const skill of result.skills) {
+		description: "Edit, enable, disable, or list skill sources and skills",
+		subcommands: [
+			{ name: "enable", description: "Enable a skill", usage: "<name>" },
+			{ name: "disable", description: "Disable a skill", usage: "<name>" },
+			{ name: "edit", description: "Open a skill file in $VISUAL/$EDITOR", usage: "<name>" },
+		],
+		allowArgs: true,
+		acpInputHint: "[enable|disable|edit] <name>",
+		handle: async (command, runtime) => {
+			const { verb, rest } = parseSubcommand(command.args);
+			const state = await loadManageableSkills(runtime.cwd, runtime.settings);
+
+			if (verb === "enable" || verb === "disable") {
+				const name = rest.split(/\s+/)[0] ?? "";
+				if (!name) return usage(`Usage: /skills ${verb} <name>`, runtime);
+				const skill = findManageableSkill(state.skills, name);
+				if (!skill) return usage(`Skill "${name}" not found.`, runtime);
+				setSkillDisabled(runtime.settings, skill.name, verb === "disable");
+				await runtime.refreshCommands();
+				await runtime.output(`Skill "${skill.name}" ${verb === "disable" ? "disabled" : "enabled"}.`);
+				return commandConsumed();
+			}
+
+			if (verb === "edit") {
+				const name = rest.split(/\s+/)[0] ?? "";
+				if (!name) return usage("Usage: /skills edit <name>", runtime);
+				const skill = findManageableSkill(state.skills, name);
+				if (!skill) return usage(`Skill "${name}" not found.`, runtime);
+				await runtime.output(`Skill "${skill.name}" file: ${shortenPath(skill.filePath)}`);
+				return commandConsumed();
+			}
+
+			if (verb) return usage("Usage: /skills [enable|disable|edit] <name>", runtime);
+
+			const lines = ["# Skills", "", "## Sources"];
+			lines.push(`Load Foreign Config: ${state.settings.loadForeign ? "on" : "off"}`);
+			lines.push(`Claude (user): ${state.settings.enableClaudeUser ? "on" : "off"}`);
+			lines.push(`Claude (project): ${state.settings.enableClaudeProject ? "on" : "off"}`);
+			lines.push(`Codex (user): ${state.settings.enableCodexUser ? "on" : "off"}`);
+			lines.push(`Pi (user): ${state.settings.enablePiUser ? "on" : "off"}`);
+			lines.push(`Pi (project): ${state.settings.enablePiProject ? "on" : "off"}`);
+			lines.push("", `## Skills (${state.skills.length} discovered)`);
+			for (const skill of state.skills) {
 				const source = `${skill._source?.providerName ?? "unknown"} (${skill._source?.level ?? "unknown"})`;
-				const state = disabledSkillNames.has(skill.name) ? "off" : "on";
-				lines.push(`- [${state}] ${skill.name} — ${source}`);
+				const skillState = state.disabledSkillNames.has(skill.name) ? "off" : "on";
+				lines.push(`- [${skillState}] ${skill.name} — ${source}`);
 			}
 			await runtime.output(lines.join("\n"));
 			return commandConsumed();
 		},
-		handleTui: async (_command, runtime) => {
+		handleTui: async (command, runtime) => {
 			const ctx = runtime.ctx;
 			const cwd = ctx.sessionManager.getCwd();
-			const currentSettings = {
-				loadForeign: settings.get("compatibility.loadForeignConfig"),
-				enableClaudeUser: settings.get("skills.enableClaudeUser"),
-				enableClaudeProject: settings.get("skills.enableClaudeProject"),
-				enableCodexUser: settings.get("skills.enableCodexUser"),
-				enablePiUser: settings.get("skills.enablePiUser"),
-				enablePiProject: settings.get("skills.enablePiProject"),
-			};
-			const disabledExtensions: string[] = settings.get("disabledExtensions") ?? [];
-			const result = await loadSkills({
-				cwd,
-				...currentSettings,
-				disabledExtensions,
-			});
+			const { verb, rest } = parseSubcommand(command.args);
+
+			if (verb === "enable" || verb === "disable") {
+				const name = rest.split(/\s+/)[0] ?? "";
+				if (!name) {
+					ctx.showStatus(`Usage: /skills ${verb} <name>`);
+					ctx.editor.setText("");
+					return commandConsumed();
+				}
+				const state = await loadManageableSkills(cwd, ctx.settings);
+				const skill = findManageableSkill(state.skills, name);
+				if (!skill) {
+					ctx.showStatus(`Skill "${name}" not found.`);
+					ctx.editor.setText("");
+					return commandConsumed();
+				}
+				setSkillDisabled(ctx.settings, skill.name, verb === "disable");
+				await ctx.refreshSlashCommandState(cwd);
+				ctx.showStatus(`Skill "${skill.name}" ${verb === "disable" ? "disabled" : "enabled"}.`);
+				ctx.editor.setText("");
+				return commandConsumed();
+			}
+
+			if (verb === "edit") {
+				const name = rest.split(/\s+/)[0] ?? "";
+				if (!name) {
+					ctx.showStatus("Usage: /skills edit <name>");
+					ctx.editor.setText("");
+					return commandConsumed();
+				}
+				const state = await loadManageableSkills(cwd, ctx.settings);
+				const skill = findManageableSkill(state.skills, name);
+				if (!skill) {
+					ctx.showStatus(`Skill "${name}" not found.`);
+					ctx.editor.setText("");
+					return commandConsumed();
+				}
+				const editorCmd = getEditorCommand();
+				if (!editorCmd) {
+					ctx.showWarning("No editor configured. Set $VISUAL or $EDITOR environment variable.");
+					ctx.editor.setText("");
+					return commandConsumed();
+				}
+
+				try {
+					const currentText = await Bun.file(skill.filePath).text();
+					ctx.ui.stop();
+					const result = await openInEditor(editorCmd, currentText, {
+						extension: ".skill.md",
+						trimTrailingNewline: false,
+					});
+					if (result !== null && result !== currentText) {
+						await Bun.write(skill.filePath, result);
+						ctx.showStatus(`Skill "${skill.name}" updated.`);
+					}
+				} catch (err) {
+					ctx.showWarning(`Failed to edit skill: ${err instanceof Error ? err.message : String(err)}`);
+				} finally {
+					ctx.ui.start();
+					ctx.ui.requestRender();
+					ctx.editor.setText("");
+				}
+				return commandConsumed();
+			}
+
+			if (verb) {
+				ctx.showStatus("Usage: /skills [enable|disable|edit] <name>");
+				ctx.editor.setText("");
+				return commandConsumed();
+			}
+
+			const state = await loadManageableSkills(cwd, ctx.settings);
 
 			const buildToggles = (): { sources: SkillsSourceToggle[]; skills: SkillsSkillToggle[] } => {
-				const disabledSkillNames = new Set(
-					disabledExtensions.filter((id: string) => id.startsWith("skill:")).map((id: string) => id.slice(6)),
+				const disabledSkillNames = getDisabledSkillNames(
+					(ctx.settings.get("disabledExtensions" as SettingPath) as string[] | undefined) ?? [],
 				);
 				const sources: SkillsSourceToggle[] = [
 					{
 						id: "compatibility.loadForeignConfig",
 						label: "Load Foreign Config",
-						enabled: settings.get("compatibility.loadForeignConfig"),
+						enabled: ctx.settings.get("compatibility.loadForeignConfig" as SettingPath) as boolean,
 					},
 					{
 						id: "skills.enableClaudeUser",
 						label: "Claude (user)",
-						enabled: settings.get("skills.enableClaudeUser"),
+						enabled: ctx.settings.get("skills.enableClaudeUser" as SettingPath) as boolean,
 						provider: "claude",
 					},
 					{
 						id: "skills.enableClaudeProject",
 						label: "Claude (project)",
-						enabled: settings.get("skills.enableClaudeProject"),
+						enabled: ctx.settings.get("skills.enableClaudeProject" as SettingPath) as boolean,
 						provider: "claude",
 					},
 					{
 						id: "skills.enableCodexUser",
 						label: "Codex (user)",
-						enabled: settings.get("skills.enableCodexUser"),
+						enabled: ctx.settings.get("skills.enableCodexUser" as SettingPath) as boolean,
 						provider: "codex",
 					},
 					{
 						id: "skills.enablePiUser",
 						label: "Pi (user)",
-						enabled: settings.get("skills.enablePiUser"),
+						enabled: ctx.settings.get("skills.enablePiUser" as SettingPath) as boolean,
 						provider: "native",
 					},
 					{
 						id: "skills.enablePiProject",
 						label: "Pi (project)",
-						enabled: settings.get("skills.enablePiProject"),
+						enabled: ctx.settings.get("skills.enablePiProject" as SettingPath) as boolean,
 						provider: "native",
 					},
 				];
-				const skills: SkillsSkillToggle[] = result.skills.map(skill => ({
+				const skills: SkillsSkillToggle[] = state.skills.map(skill => ({
 					name: skill.name,
 					source: `${skill._source?.providerName ?? "?"} (${skill._source?.level ?? "?"})`,
 					enabled: !disabledSkillNames.has(skill.name),
@@ -1895,18 +2035,15 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 			const changed = await new Promise<boolean>(resolve => {
 				const component = new SkillsOverlayComponent(toggles.sources, toggles.skills, {
 					onToggleSource: (id: string) => {
-						const current = settings.get(id as SettingPath);
-						settings.set(id as SettingPath, !current as SettingValue<SettingPath>);
-						// Rebuild list after source toggle since it may affect skill visibility
+						const current = ctx.settings.get(id as SettingPath);
+						ctx.settings.set(id as SettingPath, !current as SettingValue<SettingPath>);
 						toggles = buildToggles();
 					},
 					onToggleSkill: (name: string) => {
-						const extId = `skill:${name}`;
-						const extIds: string[] = settings.get("disabledExtensions") ?? [];
-						const idx = extIds.indexOf(extId);
-						if (idx >= 0) extIds.splice(idx, 1);
-						else extIds.push(extId);
-						settings.set("disabledExtensions", extIds);
+						const disabled = getDisabledSkillNames(
+							(ctx.settings.get("disabledExtensions" as SettingPath) as string[] | undefined) ?? [],
+						);
+						setSkillDisabled(ctx.settings, name, !disabled.has(name));
 						toggles = buildToggles();
 					},
 					onDone: () => {
@@ -1924,6 +2061,7 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 			});
 			ctx.editor.setText("");
 			if (changed) {
+				await ctx.refreshSlashCommandState(cwd);
 				ctx.showStatus("Skills updated.");
 			}
 			return commandConsumed();

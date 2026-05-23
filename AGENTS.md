@@ -19,6 +19,17 @@ This repo contains multiple packages, but **`packages/coding-agent/`** is the pr
 | `packages/utils`        | Shared utilities (logger, streams, temp files)       |
 | `crates/pi-natives`     | Rust crate for performance-critical text/grep ops    |
 
+## ICM Memory Policy
+
+Use ICM memory only for durable high-signal facts, and scope every memory to the relevant repository/project topic:
+- Architectural/design decisions: chosen design, API/data contract, invariant, tradeoff, rejected alternative, migration boundary.
+- Resolved bugs/errors: symptom, root cause, fix, verification, affected package/component.
+- Repo purpose/development context: purpose, important commands/workflows, non-obvious conventions, sharp edges.
+- User preferences: explicit durable preferences/corrections.
+
+Never store command output, transcript chatter, progress/status updates, local-command caveats, generic summaries, guesses, TODOs, conversational checkpoints, or ephemeral debugging attempts.
+If a fact does not clearly fit one of the keep categories, do not store it.
+
 ## Code Quality
 
 - No `any` unless absolutely necessary.

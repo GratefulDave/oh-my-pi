@@ -72,6 +72,22 @@ pub fn supports(program: &str, subcommand: Option<&str>) -> bool {
 	}
 }
 
+fn is_test_script_token(token: &str) -> bool {
+	let token = token.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'));
+	matches!(token, "test" | "t" | "e2e" | "spec") || token.starts_with("test:")
+}
+
+fn command_contains_test_script(command: &str) -> bool {
+	command
+		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
+		.any(is_test_script_token)
+}
+
+fn is_pkg_test_invocation(ctx: &MinimizerCtx<'_>) -> bool {
+	matches!(ctx.subcommand, Some("test" | "t"))
+		|| matches!(ctx.subcommand, Some("run")) && command_contains_test_script(ctx.command)
+}
+
 /// Apply the matching built-in filter.
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	let _ = ctx.command;
@@ -103,8 +119,16 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		"npx" => filter_js_wrapper(ctx, input, exit_code),
 		"pnpm" if matches!(ctx.subcommand, Some("dlx")) => filter_js_wrapper(ctx, input, exit_code),
 		"uv" if matches!(ctx.subcommand, Some("run")) => filter_uv_wrapper(ctx, input, exit_code),
-		"npm" | "pnpm" | "yarn" | "pip" | "pip3" | "bundle" | "brew" | "composer" | "uv"
-		| "poetry" => pkg::filter(ctx, input, exit_code),
+		"npm" | "pnpm" | "yarn" => {
+			if is_pkg_test_invocation(ctx) {
+				node_tests::filter(ctx, input, exit_code)
+			} else {
+				pkg::filter(ctx, input, exit_code)
+			}
+		},
+		"pip" | "pip3" | "bundle" | "brew" | "composer" | "uv" | "poetry" => {
+			pkg::filter(ctx, input, exit_code)
+		},
 		"env" | "log" | "deps" | "summary" | "err" | "test" | "diff" | "format" | "pipe" | "ps"
 		| "ping" | "ssh" | "sops" => system::filter(ctx, input, exit_code),
 		_ => generic::filter(ctx, input, exit_code),
@@ -127,10 +151,10 @@ fn filter_uv_wrapper(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> Min
 	match uv_wrapper_tool(ctx) {
 		Some("pytest") => {
 			let routed = MinimizerCtx {
-				program:    "pytest",
+				program: "pytest",
 				subcommand: Some("pytest"),
-				command:    ctx.command,
-				config:     ctx.config,
+				command: ctx.command,
+				config: ctx.config,
 			};
 			python::filter(&routed, input, exit_code)
 		},
@@ -146,19 +170,19 @@ fn filter_uv_wrapper(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> Min
 		},
 		Some("mypy") => {
 			let routed = MinimizerCtx {
-				program:    "mypy",
+				program: "mypy",
 				subcommand: Some("mypy"),
-				command:    ctx.command,
-				config:     ctx.config,
+				command: ctx.command,
+				config: ctx.config,
 			};
 			python::filter(&routed, input, exit_code)
 		},
 		Some(tool @ ("tsc" | "eslint" | "biome" | "pyright" | "basedpyright" | "oxlint")) => {
 			let routed = MinimizerCtx {
-				program:    tool,
+				program: tool,
 				subcommand: Some(tool),
-				command:    ctx.command,
-				config:     ctx.config,
+				command: ctx.command,
+				config: ctx.config,
 			};
 			lint::filter(&routed, input, exit_code)
 		},
@@ -168,20 +192,23 @@ fn filter_uv_wrapper(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> Min
 }
 
 fn uv_wrapper_tool<'a>(ctx: &'a MinimizerCtx<'_>) -> Option<&'a str> {
-	wrapper_invoked_tool(ctx, &[
-		"pytest",
-		"ruff",
-		"mypy",
-		"tsc",
-		"eslint",
-		"biome",
-		"pyright",
-		"basedpyright",
-		"oxlint",
-		"jest",
-		"vitest",
-		"playwright",
-	])
+	wrapper_invoked_tool(
+		ctx,
+		&[
+			"pytest",
+			"ruff",
+			"mypy",
+			"tsc",
+			"eslint",
+			"biome",
+			"pyright",
+			"basedpyright",
+			"oxlint",
+			"jest",
+			"vitest",
+			"playwright",
+		],
+	)
 }
 
 fn wrapper_invokes(ctx: &MinimizerCtx<'_>, tools: &[&str]) -> bool {
@@ -237,7 +264,7 @@ mod tests {
 	#[test]
 	fn uv_run_pytest_routes_to_python_filter() {
 		let config = MinimizerConfig::default();
-		let context = ctx("uv", Some("run"), "uv run -m pytest", &config);
+		let context = ctx("uv", Some("run"), "uv run pytest", &config);
 		let input = "============================= test session starts \
 		             ==============================\ncollected 2 items\n\na.py .\nb.py \
 		             F\n\n=================================== FAILURES \
@@ -249,6 +276,7 @@ mod tests {
 		let out = filter(&context, input, 1).text;
 		assert!(out.contains("FAILED b.py::test_fail"));
 		assert!(!out.contains("collected 2 items"));
+		assert!(out.contains("pytest: 1 failed, 1 passed"));
 	}
 
 	#[test]
@@ -303,6 +331,87 @@ mod tests {
 		let out = filter(&context, input, 0);
 		assert_eq!(out.text, input);
 		assert!(!out.changed);
+	}
+
+	#[test]
+	fn npm_test_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("npm", Some("test"), "npm test", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn npm_run_test_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("npm", Some("run"), "npm run test", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn npm_run_quoted_test_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("npm", Some("run"), "npm run \"test\"", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn pnpm_test_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("pnpm", Some("test"), "pnpm test", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn pnpm_run_test_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("pnpm", Some("run"), "pnpm run test", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn yarn_test_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("yarn", Some("test"), "yarn test", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn yarn_run_test_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("yarn", Some("run"), "yarn run test", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn npm_run_build_still_uses_pkg_filter() {
+		let config = MinimizerConfig::default();
+		let context = ctx("npm", Some("run"), "npm run build", &config);
+		let out = filter(&context, "Resolving dependencies\nDownloaded foo\nerror: failed\n", 1).text;
+		assert!(!out.contains("Resolving dependencies"));
+		assert!(out.contains("error: failed"));
+	}
+
+	#[test]
+	fn npm_t_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("npm", Some("t"), "npm t", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
 	}
 
 	#[test]

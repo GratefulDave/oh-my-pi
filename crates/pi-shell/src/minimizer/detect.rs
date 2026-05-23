@@ -3,7 +3,7 @@
 /// Parsed command identity used for filter dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandIdentity {
-	pub program:    String,
+	pub program: String,
 	pub subcommand: Option<String>,
 }
 

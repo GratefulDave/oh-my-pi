@@ -1009,6 +1009,7 @@ export class AgentSession {
 		this.#customCommands = config.customCommands ?? [];
 		this.#skillsSettings = config.skillsSettings;
 		this.#modelRegistry = config.modelRegistry;
+		this.#modelRegistry.onModelUpdate(() => this.#updateCurrentModelFromRegistry());
 		this.#validateRetryFallbackChains();
 		this.#toolRegistry = config.toolRegistry ?? new Map();
 		this.#requestedToolNames = config.requestedToolNames;
@@ -6016,6 +6017,15 @@ export class AgentSession {
 			this.#closeProviderSessionsForModelSwitch(currentModel, model);
 		}
 		this.agent.setModel(model);
+	}
+	#updateCurrentModelFromRegistry(): void {
+		const currentModel = this.model;
+		if (currentModel) {
+			const newModel = this.#modelRegistry.find(currentModel.provider, currentModel.id);
+			if (newModel) {
+				this.agent.setModel(newModel);
+			}
+		}
 	}
 
 	#closeCodexProviderSessionsForHistoryRewrite(): void {

@@ -6,6 +6,7 @@ import { Settings } from "../src/config/settings";
 import type { AgentSession } from "../src/session/agent-session";
 import type { SessionManager } from "../src/session/session-manager";
 import { executeAcpBuiltinSlashCommand } from "../src/slash-commands/acp-builtins";
+import { lookupBuiltinSlashCommand } from "../src/slash-commands/builtin-registry";
 import type { AcpBuiltinCommandRuntime } from "../src/slash-commands/types";
 
 function createRuntime(
@@ -47,6 +48,10 @@ describe("/skills slash command", () => {
 		);
 	}
 
+	it("accepts arguments in TUI dispatch", () => {
+		expect(lookupBuiltinSlashCommand("skills")?.allowArgs).toBe(true);
+	});
+
 	it("renders source toggles and skill counts in ACP output", async () => {
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-skills-cmd-"));
 		await createProjectWithSkill(tempDir);
@@ -71,5 +76,35 @@ describe("/skills slash command", () => {
 		const result = await executeAcpBuiltinSlashCommand("/skills", runtime);
 
 		expect(result).toEqual({ consumed: true });
+	});
+
+	it("can disable and re-enable a skill by name", async () => {
+		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-skills-cmd-"));
+		await createProjectWithSkill(tempDir);
+
+		const { output, runtime } = createRuntime(tempDir);
+
+		const disableResult = await executeAcpBuiltinSlashCommand("/skills disable test-skill", runtime);
+		expect(disableResult).toEqual({ consumed: true });
+		expect(runtime.settings.get("disabledExtensions")).toContain("skill:test-skill");
+
+		await executeAcpBuiltinSlashCommand("/skills", runtime);
+		expect(output.join("\n")).toContain("- [off] test-skill");
+
+		const enableResult = await executeAcpBuiltinSlashCommand("/skills enable test-skill", runtime);
+		expect(enableResult).toEqual({ consumed: true });
+		expect(runtime.settings.get("disabledExtensions")).not.toContain("skill:test-skill");
+	});
+
+	it("reports editable skill file path", async () => {
+		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-skills-cmd-"));
+		await createProjectWithSkill(tempDir);
+
+		const { output, runtime } = createRuntime(tempDir);
+
+		const result = await executeAcpBuiltinSlashCommand("/skills edit test-skill", runtime);
+
+		expect(result).toEqual({ consumed: true });
+		expect(output.join("\n")).toContain(path.join(".omp", "skills", "test-skill", "SKILL.md"));
 	});
 });

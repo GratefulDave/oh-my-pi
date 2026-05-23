@@ -69,7 +69,7 @@ describe("AgentSession SSH tool refresh", () => {
 			agent,
 			sessionManager,
 			settings,
-			modelRegistry: {} as never,
+			modelRegistry: { onModelUpdate: () => {} } as never,
 			toolRegistry,
 			reloadSshTool:
 				options?.reloadSshTool ?? (async () => (await loadSshTool(toolSession)) as unknown as AgentTool | null),

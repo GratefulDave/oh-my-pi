@@ -224,6 +224,7 @@ describe("system Handlebars prompt templates", () => {
 
 			expect(systemPrompt).toHaveLength(2);
 			expect(systemPrompt[0]).toContain("[CONTRACT]");
+			expect(systemPrompt[0]).toContain("Default communication style is caveman mode");
 			expect(systemPrompt[0]).not.toContain("current working directory");
 			expect(systemPrompt[1]).toContain("<workstation>");
 			expect(systemPrompt[1]).toContain("<workspace-tree>");

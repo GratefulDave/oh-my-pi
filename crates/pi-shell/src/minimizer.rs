@@ -23,30 +23,30 @@ pub use config::{MinimizerConfig, MinimizerOptions};
 #[derive(Debug, Clone)]
 pub struct MinimizerCtx<'a> {
 	/// Resolved program name (lowercased, e.g. `"git"`).
-	pub program:    &'a str,
+	pub program: &'a str,
 	/// Detected subcommand (lowercased, e.g. `"status"`), if any.
 	pub subcommand: Option<&'a str>,
 	/// Raw command string as the caller supplied it.
-	pub command:    &'a str,
+	pub command: &'a str,
 	/// Effective configuration.
-	pub config:     &'a MinimizerConfig,
+	pub config: &'a MinimizerConfig,
 }
 
 /// Output produced by a filter.
 #[derive(Debug, Clone)]
 pub struct MinimizerOutput {
 	/// Rewritten output.
-	pub text:          String,
+	pub text: String,
 	/// Whether the filter modified the input at all.
-	pub changed:       bool,
+	pub changed: bool,
 	/// Byte length of the captured buffer before minimization.
-	pub input_bytes:   usize,
+	pub input_bytes: usize,
 	/// Byte length of `text` after minimization.
 	#[allow(dead_code, reason = "test-only API surface")]
-	pub output_bytes:  usize,
+	pub output_bytes: usize,
 	/// Name of the dispatch path that produced this output (e.g. `"git"`,
 	/// `"pipeline:gradle"`, or `"passthrough"`). Useful for telemetry.
-	pub filter:        &'static str,
+	pub filter: &'static str,
 	/// Original (un-minimized) capture, surfaced only when the filter
 	/// actually rewrote the output. The caller (JS session layer) is expected
 	/// to persist this via its session-scoped `ArtifactManager` and splice an
