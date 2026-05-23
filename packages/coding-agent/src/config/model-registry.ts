@@ -31,6 +31,7 @@ import { registerOAuthProvider, unregisterOAuthProviders } from "@oh-my-pi/pi-ai
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@oh-my-pi/pi-ai/utils/oauth/types";
 import { isRecord, logger } from "@oh-my-pi/pi-utils";
 import { parseModelString, resolveProviderModelReference } from "../config/model-resolver";
+
 import { isValidThemeColor, type ThemeColor } from "../modes/theme/theme";
 import type { AuthStorage, OAuthCredential } from "../session/auth-storage";
 import { type ConfigError, ConfigFile } from "./config-file";
@@ -303,6 +304,11 @@ type OllamaDiscoveredModelMetadata = {
 type LlamaCppDiscoveredServerMetadata = {
 	contextWindow?: number;
 	input?: ("text" | "image")[];
+};
+
+type ModelLimitMetadata = {
+	contextWindow?: number;
+	maxTokens?: number;
 };
 
 /**
@@ -651,8 +657,13 @@ function finalizeCustomModel(model: CustomModelOverlay, options: CustomModelBuil
 		input: input as ("text" | "image")[],
 		cost,
 		contextWindow:
-			resolvedModel.contextWindow ?? reference?.contextWindow ?? (options.useDefaults ? 128000 : undefined),
-		maxTokens: resolvedModel.maxTokens ?? reference?.maxTokens ?? (options.useDefaults ? 16384 : undefined),
+			resolvedModel.contextWindow ??
+			reference?.contextWindow ??
+			(options.useDefaults ? (isQwenModel(resolvedModel.id) ? 262144 : 128000) : undefined),
+		maxTokens:
+			resolvedModel.maxTokens ??
+			reference?.maxTokens ??
+			(options.useDefaults ? (isQwenModel(resolvedModel.id) ? 65536 : 8192) : undefined),
 		headers: resolvedModel.headers,
 		compat: mergeCompat(reference?.compat, resolvedModel.compat),
 		contextPromotionTarget: resolvedModel.contextPromotionTarget,
@@ -660,7 +671,23 @@ function finalizeCustomModel(model: CustomModelOverlay, options: CustomModelBuil
 		isOAuth: resolvedModel.isOAuth,
 	} as Model<Api>);
 }
-
+function isQwenModel(id: string): boolean {
+	// Only match known hosted Qwen selectors. Local llama.cpp filenames may start with
+	// "qwen" without supporting the hosted Qwen output-token defaults.
+	const qwenModelIds = [
+		"qwen3-coder-next",
+		"qwen3-coder-plus",
+		"qwen3-max-2026-01-23",
+		"qwen3.5-plus",
+		"qwen3.6-plus",
+		"qwen-portal",
+		"qwen2.5",
+		"qwen2.5-instruct",
+		"qwen2.5-7b",
+		"qwen2.5-72b",
+	];
+	return qwenModelIds.includes(id.toLowerCase());
+}
 function normalizeSuppressedSelector(selector: string): string {
 	const trimmed = selector.trim();
 	if (!trimmed) return trimmed;
@@ -668,7 +695,6 @@ function normalizeSuppressedSelector(selector: string): string {
 	if (!parsed) return trimmed;
 	return `${parsed.provider}/${parsed.id}`;
 }
-
 function getDisabledProviderIdsFromSettings(): Set<string> {
 	try {
 		return new Set(settings.get("disabledProviders"));
@@ -676,7 +702,6 @@ function getDisabledProviderIdsFromSettings(): Set<string> {
 		return new Set();
 	}
 }
-
 function getConfiguredProviderOrderFromSettings(): string[] {
 	try {
 		return settings.get("modelProviderOrder");
@@ -684,10 +709,6 @@ function getConfiguredProviderOrderFromSettings(): string[] {
 		return [];
 	}
 }
-
-/**
- * Model registry - loads and manages models, resolves API keys via AuthStorage.
- */
 export class ModelRegistry {
 	#models: Model<Api>[] = [];
 	#canonicalIndex: CanonicalModelIndex = { records: [], byId: new Map(), bySelector: new Map() };
@@ -717,6 +738,14 @@ export class ModelRegistry {
 	#rebuildPending: boolean = false;
 	#rebuildSuspended: number = 0;
 
+	#modelUpdateCallbacks: Array<() => void> = [];
+	/**
+	 * Register a callback invoked whenever the canonical model index is rebuilt.
+	 * Use this to react to model list changes (e.g., refresh current model pointer).
+	 */
+	public onModelUpdate(callback: () => void): void {
+		this.#modelUpdateCallbacks.push(callback);
+	}
 	/**
 	 * @param authStorage - Auth storage for API key resolution
 	 */
@@ -1528,8 +1557,11 @@ export class ModelRegistry {
 				reasoning: metadata?.reasoning ?? false,
 				input: metadata?.input ?? ["text"],
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				contextWindow: metadata?.contextWindow ?? 128000,
-				maxTokens: Math.min(metadata?.contextWindow ?? Number.POSITIVE_INFINITY, 8192),
+				contextWindow: metadata?.contextWindow ?? (isQwenModel(entry.id) ? 262144 : 128000),
+				maxTokens: Math.min(
+					metadata?.contextWindow ?? Number.POSITIVE_INFINITY,
+					isQwenModel(entry.id) ? 65536 : 8192,
+				),
 				headers: providerConfig.headers,
 			});
 		});
@@ -1562,6 +1594,39 @@ export class ModelRegistry {
 		}
 	}
 
+	async #discoverOmlxStatusMetadata(
+		baseUrl: string,
+		headers: Record<string, string> | undefined,
+	): Promise<Map<string, ModelLimitMetadata>> {
+		const statusUrl = `${baseUrl}/models/status`;
+		try {
+			const response = await fetch(statusUrl, {
+				headers,
+				signal: AbortSignal.timeout(150),
+			});
+			if (!response.ok) {
+				return new Map();
+			}
+			const payload = (await response.json()) as unknown;
+			if (!isRecord(payload) || !Array.isArray(payload.models)) {
+				return new Map();
+			}
+			const metadata = new Map<string, ModelLimitMetadata>();
+			for (const entry of payload.models) {
+				if (!isRecord(entry) || typeof entry.id !== "string") {
+					continue;
+				}
+				metadata.set(entry.id, {
+					contextWindow: toPositiveNumberOrUndefined(entry.max_context_window),
+					maxTokens: toPositiveNumberOrUndefined(entry.max_tokens),
+				});
+			}
+			return metadata;
+		} catch {
+			return new Map();
+		}
+	}
+
 	async #discoverLlamaCppModels(providerConfig: DiscoveryProviderConfig): Promise<Model<Api>[]> {
 		const baseUrl = this.#normalizeLlamaCppBaseUrl(providerConfig.baseUrl);
 		const modelsUrl = `${baseUrl}/models`;
@@ -1582,7 +1647,9 @@ export class ModelRegistry {
 		if (!response.ok) {
 			throw new Error(`HTTP ${response.status} from ${modelsUrl}`);
 		}
-		const payload = (await response.json()) as { data?: Array<{ id: string }> };
+		const payload = (await response.json()) as {
+			data?: Array<{ id: string; context_window?: number; max_tokens?: number }>;
+		};
 		const models = payload.data ?? [];
 		const discovered: Model<Api>[] = [];
 		for (const item of models) {
@@ -1598,8 +1665,11 @@ export class ModelRegistry {
 					reasoning: false,
 					input: serverMetadata?.input ?? ["text"],
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-					contextWindow: serverMetadata?.contextWindow ?? 128000,
-					maxTokens: Math.min(serverMetadata?.contextWindow ?? Number.POSITIVE_INFINITY, 8192),
+					contextWindow: serverMetadata?.contextWindow ?? (isQwenModel(id) ? 262144 : 128000),
+					maxTokens: Math.min(
+						serverMetadata?.contextWindow ?? Number.POSITIVE_INFINITY,
+						isQwenModel(id) ? 65536 : 8192,
+					),
 					headers,
 					compat: {
 						supportsStore: false,
@@ -1622,14 +1692,31 @@ export class ModelRegistry {
 			headers.Authorization = `Bearer ${apiKey}`;
 		}
 
-		const response = await fetch(modelsUrl, {
-			headers,
-			signal: AbortSignal.timeout(250),
-		});
+		const statusMetadataPromise =
+			providerConfig.provider === "omlx"
+				? this.#discoverOmlxStatusMetadata(baseUrl, headers)
+				: Promise.resolve(new Map<string, ModelLimitMetadata>());
+
+		const [response, statusMetadata] = await Promise.all([
+			fetch(modelsUrl, {
+				headers,
+				signal: AbortSignal.timeout(250),
+			}),
+			statusMetadataPromise,
+		]);
 		if (!response.ok) {
 			throw new Error(`HTTP ${response.status} from ${modelsUrl}`);
 		}
-		const payload = (await response.json()) as { data?: Array<{ id: string }> };
+		const payload = (await response.json()) as {
+			data?: Array<{
+				id: string;
+				context_length?: unknown;
+				context_window?: unknown;
+				max_model_len?: unknown;
+				max_completion_tokens?: unknown;
+				max_tokens?: unknown;
+			}>;
+		};
 		const models = payload.data ?? [];
 		const discovered: Model<Api>[] = [];
 		const supportsReasoning = providerConfig.reasoning === true;
@@ -1638,6 +1725,7 @@ export class ModelRegistry {
 			if (!id) continue;
 			discovered.push(
 				enrichModelThinking({
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 					id,
 					name: id,
 					api: providerConfig.api,
@@ -1645,9 +1733,17 @@ export class ModelRegistry {
 					baseUrl,
 					reasoning: supportsReasoning,
 					input: ["text"],
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-					contextWindow: 128000,
-					maxTokens: 8192,
+					contextWindow:
+						statusMetadata.get(id)?.contextWindow ??
+						toPositiveNumberOrUndefined(item.context_length) ??
+						toPositiveNumberOrUndefined(item.context_window) ??
+						toPositiveNumberOrUndefined(item.max_model_len) ??
+						(isQwenModel(id) ? 262144 : 128000),
+					maxTokens:
+						statusMetadata.get(id)?.maxTokens ??
+						toPositiveNumberOrUndefined(item.max_completion_tokens) ??
+						toPositiveNumberOrUndefined(item.max_tokens) ??
+						(isQwenModel(id) ? 65536 : 8192),
 					headers,
 					compat: {
 						supportsStore: false,
@@ -1784,6 +1880,9 @@ export class ModelRegistry {
 			return;
 		}
 		this.#canonicalIndex = buildCanonicalModelIndex(this.#models, this.#equivalenceConfig);
+		for (const cb of this.#modelUpdateCallbacks) {
+			cb();
+		}
 		this.#rebuildPending = false;
 	}
 
@@ -1798,6 +1897,9 @@ export class ModelRegistry {
 		if (this.#rebuildSuspended === 0 && this.#rebuildPending) {
 			this.#rebuildPending = false;
 			this.#canonicalIndex = buildCanonicalModelIndex(this.#models, this.#equivalenceConfig);
+			for (const cb of this.#modelUpdateCallbacks) {
+				cb();
+			}
 		}
 	}
 

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed OMLX discovery to use local `/v1/models/status` token limits and generic OpenAI-compatible `context_window`/`max_model_len` metadata instead of stale bundled defaults for local models.
+
 ## [15.1.9] - 2026-05-21
 
 ### Fixed

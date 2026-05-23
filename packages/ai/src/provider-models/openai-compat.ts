@@ -46,7 +46,53 @@ function toModelName(value: unknown, fallback: string): string {
 	const trimmed = value.trim();
 	return trimmed.length > 0 ? trimmed : fallback;
 }
+function firstPositiveNumber(fallback: number, ...values: unknown[]): number {
+	for (const value of values) {
+		const parsed = toNumber(value);
+		if (parsed !== undefined && parsed > 0) {
+			return parsed;
+		}
+	}
+	return fallback;
+}
 
+function positiveNumberOrUndefined(value: unknown): number | undefined {
+	const parsed = toNumber(value);
+	return parsed !== undefined && parsed > 0 ? parsed : undefined;
+}
+
+async function fetchOmlxStatusMetadata(
+	baseUrl: string,
+	apiKey: string | undefined,
+): Promise<Map<string, { contextWindow?: number; maxTokens?: number }>> {
+	try {
+		const headers: Record<string, string> = { Accept: "application/json" };
+		if (apiKey) {
+			headers.Authorization = `Bearer ${apiKey}`;
+		}
+		const response = await fetch(`${baseUrl.replace(/\/+$/g, "")}/models/status`, { headers, method: "GET" });
+		if (!response.ok) {
+			return new Map();
+		}
+		const payload = (await response.json()) as unknown;
+		if (!isRecord(payload) || !Array.isArray(payload.models)) {
+			return new Map();
+		}
+		const metadata = new Map<string, { contextWindow?: number; maxTokens?: number }>();
+		for (const entry of payload.models) {
+			if (!isRecord(entry) || typeof entry.id !== "string") {
+				continue;
+			}
+			metadata.set(entry.id, {
+				contextWindow: positiveNumberOrUndefined(entry.max_context_window),
+				maxTokens: positiveNumberOrUndefined(entry.max_tokens),
+			});
+		}
+		return metadata;
+	} catch {
+		return new Map();
+	}
+}
 function toInputCapabilities(value: unknown): ("text" | "image")[] {
 	if (!Array.isArray(value)) {
 		return ["text"];
@@ -154,6 +200,13 @@ function mapWithBundledReference<TApi extends Api>(
 		return {
 			...defaults,
 			name,
+			contextWindow: firstPositiveNumber(
+				defaults.contextWindow,
+				entry.context_length,
+				entry.context_window,
+				entry.max_model_len,
+			),
+			maxTokens: firstPositiveNumber(defaults.maxTokens, entry.max_completion_tokens, entry.max_tokens),
 		};
 	}
 	return {
@@ -161,8 +214,13 @@ function mapWithBundledReference<TApi extends Api>(
 		id: defaults.id,
 		name,
 		baseUrl: defaults.baseUrl,
-		contextWindow: toPositiveNumber(entry.context_length, reference.contextWindow),
-		maxTokens: toPositiveNumber(entry.max_completion_tokens, reference.maxTokens),
+		contextWindow: firstPositiveNumber(
+			reference.contextWindow,
+			entry.context_length,
+			entry.context_window,
+			entry.max_model_len,
+		),
+		maxTokens: firstPositiveNumber(reference.maxTokens, entry.max_completion_tokens, entry.max_tokens),
 	};
 }
 
@@ -1524,17 +1582,25 @@ export function omlxModelManagerOptions(config?: OmlxModelManagerConfig): ModelM
 	const references = createBundledReferenceMap<"openai-completions">("omlx" as Parameters<typeof getBundledModels>[0]);
 	return {
 		providerId: "omlx",
-		fetchDynamicModels: () =>
-			fetchOpenAICompatibleModels({
+		fetchDynamicModels: async () => {
+			const statusMetadata = await fetchOmlxStatusMetadata(baseUrl, apiKey);
+			return fetchOpenAICompatibleModels({
 				api: "openai-completions",
 				provider: "omlx",
 				baseUrl,
 				apiKey,
 				mapModel: (entry, defaults) => {
 					const reference = references.get(defaults.id);
-					return mapWithBundledReference(entry, defaults, reference);
+					const model = mapWithBundledReference(entry, defaults, reference);
+					const metadata = statusMetadata.get(model.id);
+					return {
+						...model,
+						contextWindow: metadata?.contextWindow ?? model.contextWindow,
+						maxTokens: metadata?.maxTokens ?? model.maxTokens,
+					};
 				},
-			}),
+			});
+		},
 	};
 }
 

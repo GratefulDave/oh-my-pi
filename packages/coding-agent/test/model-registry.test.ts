@@ -921,6 +921,39 @@ describe("ModelRegistry", () => {
 			expect(model?.baseUrl).toBe("https://my-proxy.example.com/v1");
 		});
 
+		test("implicit OMLX discovery uses server token limits from status metadata", async () => {
+			const registry = new ModelRegistry(authStorage, modelsJsonPath);
+			using _hook = hookFetch(input => {
+				const requestUrl = String(input);
+				if (requestUrl === "http://127.0.0.1:18790/v1/models/status") {
+					return new Response(
+						JSON.stringify({
+							models: [
+								{
+									id: "Local-Model-32B-MLX",
+									max_context_window: 196_608,
+									max_tokens: 24_576,
+								},
+							],
+						}),
+						{ status: 200, headers: { "Content-Type": "application/json" } },
+					);
+				}
+				if (requestUrl === "http://127.0.0.1:18790/v1/models") {
+					return new Response(JSON.stringify({ data: [{ id: "Local-Model-32B-MLX" }] }), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				}
+				throw new Error(`Unexpected URL: ${requestUrl}`);
+			});
+
+			await registry.refreshProvider("omlx", "online");
+
+			const model = registry.find("omlx", "Local-Model-32B-MLX");
+			expect(model?.contextWindow).toBe(196_608);
+			expect(model?.maxTokens).toBe(24_576);
+		});
 		test("discoverable custom-only gpt-5.4 survives refresh", async () => {
 			writeRawModelsJson({
 				"custom-local": {
@@ -2233,5 +2266,18 @@ describe("ModelRegistry", () => {
 		const registry = new ModelRegistry(authStorage, modelsJsonPath);
 
 		expect(registry.find("ollama-cloud", "deepseek-v4-pro")?.maxTokens).toBe(384_000);
+	});
+
+	test("model update callback fires after refresh", async () => {
+		const registry = new ModelRegistry(authStorage, modelsJsonPath);
+
+		let callbackFired = false;
+		registry.onModelUpdate(() => {
+			callbackFired = true;
+		});
+
+		await registry.refresh("offline");
+
+		expect(callbackFired).toBe(true);
 	});
 });
