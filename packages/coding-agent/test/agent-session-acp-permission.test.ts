@@ -95,7 +95,7 @@ async function createSession(tools: AgentTool[], bridge?: ClientBridge): Promise
 		agent,
 		sessionManager,
 		settings,
-		modelRegistry: {} as never,
+		modelRegistry: { onModelUpdate: () => {} } as never,
 		toolRegistry: new Map(tools.map(t => [t.name, t])),
 	});
 
@@ -127,7 +127,7 @@ async function createSessionWithMockModel(
 		agent,
 		sessionManager,
 		settings,
-		modelRegistry: { getApiKey: () => "test-key" } as never,
+		modelRegistry: { getApiKey: () => "test-key", onModelUpdate: () => {} } as never,
 		toolRegistry: new Map(tools.map(t => [t.name, t])),
 	});
 	sess.setClientBridge(bridge);

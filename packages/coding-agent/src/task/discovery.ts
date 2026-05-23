@@ -64,6 +64,10 @@ async function loadAgentsFromDir(dir: string, source: AgentSource): Promise<Agen
 	return (await Promise.all(files)).filter(Boolean) as AgentDefinition[];
 }
 
+export interface DiscoverAgentsOptions {
+	includeDisabledProviders?: boolean;
+}
+
 /**
  * Discover agents from filesystem and merge with bundled agents.
  *
@@ -71,7 +75,12 @@ async function loadAgentsFromDir(dir: string, source: AgentSource): Promise<Agen
  *
  * @param cwd - Current working directory for project agent discovery
  */
-export async function discoverAgents(cwd: string, home: string = os.homedir()): Promise<DiscoveryResult> {
+
+export async function discoverAgents(
+	cwd: string,
+	home: string = os.homedir(),
+	options: DiscoverAgentsOptions = {},
+): Promise<DiscoveryResult> {
 	const resolvedCwd = path.resolve(cwd);
 	const agentSources = Array.from(new Set(getConfigDirs("", { project: false }).map(entry => entry.source))).filter(
 		source => isAgentSourceEnabled(source),
@@ -106,9 +115,10 @@ export async function discoverAgents(cwd: string, home: string = os.homedir()): 
 	}
 
 	// Load agents from Claude Code marketplace plugins (respects provider filtering)
-	const { roots: pluginRoots } = isProviderEnabled("claude-plugins")
-		? await listClaudePluginRoots(home, resolvedCwd)
-		: { roots: [] };
+	const { roots: pluginRoots } =
+		options.includeDisabledProviders || isProviderEnabled("claude-plugins")
+			? await listClaudePluginRoots(home, resolvedCwd)
+			: { roots: [] };
 	const sortedPluginRoots = [...pluginRoots].sort((a, b) => {
 		if (a.scope === b.scope) return 0;
 		return a.scope === "project" ? -1 : 1;

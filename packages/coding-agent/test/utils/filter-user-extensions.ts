@@ -17,6 +17,9 @@ import { getAgentDir, getConfigRootDir, getPluginsDir } from "@oh-my-pi/pi-utils
 // 3. `getPluginsDir()` (XDG-aware: `$XDG_DATA_HOME/omp/plugins` or legacy)
 //    Handles installed plugin extensions that live outside `~/.omp` when
 //    XDG_DATA_HOME resolves the plugins dir somewhere else.
+// 4. The repo-local `.omp` dir
+//    Handles user settings that point at extension modules inside the checked-out
+//    repo's `.omp/` tree while tests run with a temp `cwd`.
 //
 // We deliberately do NOT use `pathIsWithin` from pi-utils here: that helper
 // resolves symlinks via `fs.realpathSync` on both sides, so a contributor who
@@ -31,7 +34,9 @@ function lexicalIsWithin(root: string, candidate: string): boolean {
 	return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+const REPO_LOCAL_CONFIG_DIR = path.resolve(import.meta.dir, "../../../..", ".omp");
+
 export function filterUserScoped<T extends { path: string }>(items: T[]): T[] {
-	const prefixes = [getConfigRootDir(), getAgentDir(), getPluginsDir()];
+	const prefixes = [getConfigRootDir(), getAgentDir(), getPluginsDir(), REPO_LOCAL_CONFIG_DIR];
 	return items.filter(it => !prefixes.some(prefix => lexicalIsWithin(prefix, it.path)));
 }

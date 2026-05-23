@@ -441,14 +441,14 @@ describe("openai-responses encodeStream", () => {
 		const reasoningDelta = frames[idxReasoningDelta]!.data as Record<string, unknown>;
 		expect(reasoningDelta.item_id).toBe("rs_s1");
 		expect(reasoningDelta.output_index).toBe(0);
-		expect(reasoningDelta.delta).toBe("step ");
+		expect(reasoningDelta.delta).toBe("step 1");
 
 		// output_text.delta's item_id is a new msg_*, output_index moved on past the reasoning item.
 		const textDelta = frames[idxTextDelta]!.data as Record<string, unknown>;
 		expect(typeof textDelta.item_id).toBe("string");
 		expect((textDelta.item_id as string).startsWith("msg_")).toBe(true);
 		expect(textDelta.output_index).toBe(1);
-		expect(textDelta.delta).toBe("Hi");
+		expect(textDelta.delta).toBe("Hi!");
 		expect(textDelta.logprobs).toEqual([]);
 
 		const textDone = frames[idxTextDone]!.data as Record<string, unknown>;
@@ -467,7 +467,7 @@ describe("openai-responses encodeStream", () => {
 		const argsDelta = frames[idxArgsDelta]!.data as Record<string, unknown>;
 		expect(argsDelta.item_id).toBe("fc_x");
 		expect(argsDelta.output_index).toBe(2);
-		expect(argsDelta.delta).toBe('{"a":');
+		expect(argsDelta.delta).toBe('{"a":1}');
 
 		const argsDone = frames[idxArgsDone]!.data as Record<string, unknown>;
 		expect(argsDone.item_id).toBe("fc_x");

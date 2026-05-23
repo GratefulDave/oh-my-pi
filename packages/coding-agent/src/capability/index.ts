@@ -221,8 +221,11 @@ async function loadImpl<T>(
  * Filter providers based on options and disabled state.
  */
 function filterProviders<T>(capability: Capability<T>, options: LoadOptions): Provider<T>[] {
-	let providers = (capability.providers as Provider<T>[]).filter(p => isProviderEnabled(p.id));
+	let providers = capability.providers as Provider<T>[];
 
+	if (!options.includeDisabled) {
+		providers = providers.filter(p => isProviderEnabled(p.id));
+	}
 	if (options.providers) {
 		const allowed = new Set(options.providers);
 		providers = providers.filter(p => allowed.has(p.id));
@@ -245,7 +248,7 @@ export async function loadCapability<T>(capabilityId: string, options: LoadOptio
 	}
 
 	const cwd = options.cwd ?? getProjectDir();
-	const home = os.homedir();
+	const home = options.home ?? os.homedir();
 	const repoRoot = await findRepoRoot(cwd);
 	const ctx: LoadContext = { cwd, home, repoRoot };
 	const providers = filterProviders(capability, options);
