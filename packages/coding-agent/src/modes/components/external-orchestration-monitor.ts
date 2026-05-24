@@ -164,40 +164,61 @@ export class ExternalOrchestrationMonitorComponent implements Component {
 			return;
 		}
 
-		if (matchesKey(data, "up") || data === "k") {
+		this.#normalizeScroll();
+
+		if (matchesKey(data, "up") || data === "k" || data === "up") {
 			this.#followTail = false;
 			this.#scrollOffset = Math.max(0, this.#scrollOffset - 1);
 			this.#requestRender();
 			return;
 		}
-		if (matchesKey(data, "down") || data === "j") {
+		if (matchesKey(data, "down") || data === "j" || data === "down") {
 			this.#scrollOffset += 1;
 			this.#requestRender();
 			return;
 		}
-		if (matchesKey(data, "pageUp")) {
+		if (matchesKey(data, "pageUp") || data === "pageUp" || data === "page_up") {
 			this.#followTail = false;
 			this.#scrollOffset = Math.max(0, this.#scrollOffset - 10);
 			this.#requestRender();
 			return;
 		}
-		if (matchesKey(data, "pageDown")) {
+		if (matchesKey(data, "pageDown") || data === "pageDown" || data === "page_down") {
 			this.#scrollOffset += 10;
 			this.#requestRender();
 			return;
 		}
-		if (matchesKey(data, "home")) {
+		if (matchesKey(data, "home") || data === "home") {
 			this.#followTail = false;
 			this.#scrollOffset = 0;
 			this.#requestRender();
 			return;
 		}
-		if (matchesKey(data, "end")) {
+		if (matchesKey(data, "end") || data === "end") {
 			this.#followTail = true;
 			this.#scrollOffset = Number.MAX_SAFE_INTEGER;
 			this.#requestRender();
 			return;
 		}
+	}
+
+	#normalizeScroll(): void {
+		const rows = this.#getRows();
+		const headerLines = 1;
+		const footerLines = this.#done ? 2 : 0;
+		const available = Math.max(3, rows - headerLines - footerLines);
+
+		let eventLineCount = 0;
+		for (const group of this.#providers) {
+			eventLineCount += 1;
+			eventLineCount += group.events.length === 0 ? 1 : group.events.length;
+		}
+
+		const maxScroll = Math.max(0, eventLineCount - available);
+		if (this.#followTail || this.#scrollOffset > maxScroll) {
+			this.#scrollOffset = maxScroll;
+		}
+		this.#scrollOffset = Math.max(0, Math.min(this.#scrollOffset, maxScroll));
 	}
 
 	render(width: number): string[] {
