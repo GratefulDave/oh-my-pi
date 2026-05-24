@@ -31,6 +31,7 @@ import type {
 import { buildContextSummary, buildExternalOrchestrationReport, runExternalAgentsParallel } from "../external-agents";
 import { resolveMemoryBackend } from "../memory-backend";
 import { getMinimizerGainPath, readMinimizerGain, summarizeMinimizerGain } from "../minimizer-gain";
+import { ExternalOrchestrationMonitorComponent } from "../modes/components/external-orchestration-monitor";
 import type { SkillsSkillToggle, SkillsSourceToggle } from "../modes/components/skills-overlay";
 import { SkillsOverlayComponent } from "../modes/components/skills-overlay";
 import type { InteractiveModeContext } from "../modes/types";
@@ -383,12 +384,47 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 				runtime.ctx.editor.setText("");
 				return commandConsumed();
 			}
-			const result = await runExternalOrchestration(parsed.value, runtime.ctx.sessionManager.getCwd());
+			const cwd = runtime.ctx.sessionManager.getCwd();
+			const result = await runtime.ctx.showHookCustom<ExternalOrchestrationResult>(
+				(tui, uiTheme, _keybindings, done) => {
+					let report: ExternalOrchestrationResult | null = null;
+					const monitor = new ExternalOrchestrationMonitorComponent(
+						uiTheme,
+						parsed.value.backend,
+						parsed.value.providers,
+						() => tui.terminal.rows,
+						() => tui.requestRender(),
+						() => {
+							if (report) done(report);
+						},
+					);
+					void runExternalOrchestration(parsed.value, cwd, (event, index, request) => {
+						monitor.append(event, index, request);
+					}).then(async r => {
+						report = r;
+						let artifactId: string | undefined;
+						try {
+							artifactId = await runtime.ctx.sessionManager.saveArtifact(r.fullReport, "external-orchestration");
+						} catch {
+							// best-effort
+						}
+						if (artifactId) report.artifactId = artifactId;
+						monitor.complete(r.successCount, artifactId);
+					});
+					return monitor;
+				},
+				{ overlay: true },
+			);
 			await runtime.ctx.session.sendCustomMessage({
 				customType: "external-orchestration",
-				content: result.fullReport,
+				content: result.contextSummary,
 				display: true,
-				details: { backend: result.backend, agents: result.agents, contextSummary: result.contextSummary },
+				details: {
+					backend: result.backend,
+					agents: result.agents,
+					successCount: result.successCount,
+					artifactId: result.artifactId,
+				},
 			});
 			runtime.ctx.showStatus(
 				`External orchestration completed: ${result.successCount}/${result.agents.length} succeeded.`,
