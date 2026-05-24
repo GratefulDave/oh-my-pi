@@ -113,6 +113,15 @@ pub struct ShellExecuteOptions<'env> {
 	pub signal:        Option<Unknown<'env>>,
 }
 
+#[napi(object)]
+pub struct ShellMinimizerApplyOptions {
+	pub command:   String,
+	pub captured:  String,
+	pub exit_code: Option<i32>,
+	pub minimizer: Option<MinimizerOptions>,
+}
+
+
 /// Telemetry for a single minimization.
 ///
 /// Surfaced when the minimizer actually rewrote the command's output. The
@@ -269,6 +278,31 @@ pub fn execute_shell<'env>(
 			let _ = handle.await;
 		}
 		result
+	})
+}
+
+#[napi]
+pub fn apply_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<MinimizerResult> {
+	let minimizer = options.minimizer?;
+	let minimizer_options: minimizer::MinimizerOptions = minimizer.into();
+	let config = minimizer::MinimizerConfig::from_options(&minimizer_options);
+	let output = minimizer::apply(
+		&options.command,
+		&options.captured,
+		options.exit_code.unwrap_or(1),
+		&config,
+	);
+	if !output.changed {
+		return None;
+	}
+	let original_text = output.original_text?;
+	let output_bytes = u32::try_from(output.text.len()).unwrap_or(u32::MAX);
+	Some(MinimizerResult {
+		filter:        output.filter.to_string(),
+		text:          output.text,
+		original_text,
+		input_bytes:   u32::try_from(output.input_bytes).unwrap_or(u32::MAX),
+		output_bytes,
 	})
 }
 
