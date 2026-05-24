@@ -147,6 +147,8 @@ export declare function __piNativesV15_1_9(): void
  */
 export declare function applyBashFixups(command: string): BashFixupResult
 
+export declare function applyShellMinimizer(options: ShellMinimizerApplyOptions): MinimizerResult | null
+
 /** Dump the tree-sitter syntax tree for a single source input. */
 export declare function astDump(options: AstDumpOptions): Promise<AstDumpResult>
 
@@ -1253,6 +1255,13 @@ export interface ShellExecuteOptions {
   minimizer?: MinimizerOptions
   /** Abort signal for cancelling the operation. */
   signal?: unknown
+}
+
+export interface ShellMinimizerApplyOptions {
+  command: string
+  captured: string
+  exitCode?: number
+  minimizer?: MinimizerOptions
 }
 
 /** Options for configuring a persistent shell session. */

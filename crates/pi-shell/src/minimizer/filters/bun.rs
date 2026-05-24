@@ -36,6 +36,9 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 	{
 		return pkg::filter(ctx, input, exit_code);
 	}
+	if is_check_invocation(ctx.program, subcommand, ctx.command) {
+		return filter_bun_check(ctx, input, exit_code);
+	}
 	if is_test_invocation(ctx.program, subcommand, ctx.command) {
 		return node_tests::filter(ctx, input, exit_code);
 	}
@@ -83,6 +86,21 @@ fn is_exec_package_subcommand(program: &str, subcommand: Option<&str>) -> bool {
 	matches!((program, subcommand), ("bun", Some("run" | "exec")))
 }
 
+fn is_check_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
+	is_exec_package_subcommand(program, subcommand) && command_contains_check_script(command)
+}
+
+fn command_contains_check_script(command: &str) -> bool {
+	command
+		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
+		.any(is_check_script_token)
+}
+
+fn is_check_script_token(token: &str) -> bool {
+	let token = token.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'));
+	matches!(token, "check" | "typecheck" | "type-check") || token.starts_with("check:")
+}
+
 fn is_lint_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
 	matches!((program, subcommand), ("bun" | "bunx", Some("tsc" | "eslint" | "biome")))
 		|| is_exec_package_subcommand(program, subcommand)
@@ -103,6 +121,138 @@ fn command_contains_tool(command: &str, tools: &[&str]) -> bool {
 	command
 		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
 		.any(|token| tools.contains(&token))
+}
+
+fn filter_bun_check(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
+	let cleaned = primitives::strip_ansi(input);
+	let text = compact_bun_check_output(ctx, &cleaned, exit_code)
+		.unwrap_or_else(|| lint::condense_lint_output(ctx.program, &cleaned, exit_code));
+	if text == input {
+		MinimizerOutput::passthrough(input)
+	} else {
+		MinimizerOutput::transformed(text, input.len())
+	}
+}
+
+fn compact_bun_check_output(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> Option<String> {
+	let mut root_checked = false;
+	let mut packages: Vec<&str> = Vec::new();
+	let mut diagnostics: Vec<&str> = Vec::new();
+	let mut nonzero_exits: Vec<&str> = Vec::new();
+	let mut timeout: Option<&str> = None;
+
+	for line in input.lines() {
+		let trimmed = line.trim();
+		if trimmed.is_empty() {
+			continue;
+		}
+		let lower = trimmed.to_ascii_lowercase();
+		if lower.contains("timeout") || lower.contains("timed out") {
+			timeout = Some(trimmed);
+			continue;
+		}
+		if trimmed.starts_with("$ ") || lower.contains(" check: $ ") {
+			continue;
+		}
+		if let Some(package) = parse_checked_package(trimmed) {
+			if !packages.contains(&package) {
+				packages.push(package);
+			}
+			continue;
+		}
+		if lower.starts_with("checked ") && lower.contains("no fixes applied") {
+			root_checked = true;
+			continue;
+		}
+		if let Some(code) = parse_exited_code(trimmed) {
+			if code != "0" {
+				nonzero_exits.push(trimmed);
+			}
+			continue;
+		}
+		if is_bun_check_noise(trimmed, &lower) {
+			continue;
+		}
+		if exit_code != 0 && is_important(trimmed) {
+			diagnostics.push(trimmed);
+		}
+	}
+
+	if !root_checked && packages.is_empty() && diagnostics.is_empty() && nonzero_exits.is_empty() {
+		return None;
+	}
+
+	let mut out = String::new();
+	out.push_str(command_summary(ctx.command));
+	out.push_str(": ");
+	if !nonzero_exits.is_empty() || !diagnostics.is_empty() {
+		out.push_str("failed\n");
+	} else if timeout.is_some() {
+		out.push_str("visible checks passed; wrapper timed out\n");
+	} else if exit_code == 0 {
+		out.push_str("passed\n");
+	} else {
+		out.push_str("incomplete\n");
+	}
+	if root_checked {
+		out.push_str("root biome: ok\n");
+	}
+	if !packages.is_empty() {
+		out.push_str("packages checked: ");
+		out.push_str(&packages.join(", "));
+		out.push('\n');
+	}
+	if let Some(timeout) = timeout {
+		out.push_str("timeout: ");
+		out.push_str(trim_notice_brackets(timeout));
+		out.push('\n');
+	}
+	for line in nonzero_exits.iter().chain(diagnostics.iter()).take(40) {
+		out.push_str(line);
+		out.push('\n');
+	}
+	let omitted = nonzero_exits.len() + diagnostics.len();
+	if omitted > 40 {
+		out.push_str("… ");
+		out.push_str(&(omitted - 40).to_string());
+		out.push_str(" diagnostic lines omitted\n");
+	}
+	Some(out)
+}
+
+fn command_summary(command: &str) -> &str {
+	let mut parts = command.split_whitespace();
+	match (parts.next(), parts.next(), parts.next()) {
+		(Some("bun"), Some("run"), Some(script)) => {
+			script.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'))
+		},
+		_ => "bun check",
+	}
+}
+
+fn parse_checked_package(line: &str) -> Option<&str> {
+	let (package, rest) = line.split_once(" check: Checked ")?;
+	if rest.contains("No fixes applied") {
+		Some(package)
+	} else {
+		None
+	}
+}
+
+fn parse_exited_code(line: &str) -> Option<&str> {
+	let (_, code) = line.rsplit_once("Exited with code ")?;
+	Some(code.trim())
+}
+
+fn is_bun_check_noise(line: &str, lower: &str) -> bool {
+	line.starts_with("$ ")
+		|| lower.contains(" check: $ ")
+		|| lower.starts_with("checked ")
+		|| lower.ends_with("no fixes applied.")
+}
+
+fn trim_notice_brackets(line: &str) -> &str {
+	line.trim_matches(|ch| matches!(ch, '[' | ']' | '⟦' | '⟧'))
 }
 
 fn filter_bun_build(input: &str, exit_code: i32) -> MinimizerOutput {
@@ -292,6 +442,46 @@ mod tests {
 		let out = filter(&ctx, "✓ passes\nFAIL e2e/spec.ts\nTests 1 failed, 1 passed\n", 1);
 		assert!(!out.text.contains("✓ passes"));
 		assert!(out.text.contains("FAIL e2e/spec.ts"));
+	}
+
+	#[test]
+	fn bun_run_check_colon_compacts_workspace_success_noise() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("bun", Some("run"), "bun run 'check:ts'", &cfg);
+		let out = filter(
+			&ctx,
+			"$ bun run check:tools && bun run --workspaces --if-present check\n$ biome check . --no-errors-on-unmatched\nChecked 1690 files in 371ms. No fixes applied.\n@oh-my-pi/pi-utils check: Checked 40 files in 11ms. No fixes applied.\n@oh-my-pi/pi-utils check: $ tsgo -p tsconfig.json --noEmit\n@oh-my-pi/pi-utils check: Exited with code 0\n@oh-my-pi/pi-coding-agent check: Checked 1178 files in 287ms. No fixes applied.\n@oh-my-pi/pi-coding-agent check: $ tsgo -p tsconfig.json --noEmit\n@oh-my-pi/pi-coding-agent check: Exited with code 0\n",
+			0,
+		);
+
+		assert!(out.text.contains("check:ts: passed"));
+		assert!(out.text.contains("root biome: ok"));
+		assert!(out.text.contains("@oh-my-pi/pi-utils"));
+		assert!(out.text.contains("@oh-my-pi/pi-coding-agent"));
+		assert!(!out.text.contains("No fixes applied"));
+		assert!(!out.text.contains("tsgo -p"));
+		assert!(!out.text.contains("Exited with code 0"));
+	}
+
+	#[test]
+	fn bun_run_check_timeout_preserves_ambiguous_success() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("bun", Some("run"), "bun run check:ts", &cfg);
+		let out = filter(
+			&ctx,
+			"@oh-my-pi/pi-utils check: Checked 40 files in 11ms. No fixes applied.\n@oh-my-pi/pi-utils check: Exited with code 0\n[Command timed out after 300 seconds]\n",
+			1,
+		);
+
+		assert!(
+			out.text
+				.contains("visible checks passed; wrapper timed out")
+		);
+		assert!(
+			out.text
+				.contains("timeout: Command timed out after 300 seconds")
+		);
+		assert!(!out.text.contains("failed"));
 	}
 
 	#[test]

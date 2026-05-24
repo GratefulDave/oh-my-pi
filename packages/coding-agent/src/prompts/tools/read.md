@@ -73,7 +73,9 @@ For `.sqlite`, `.sqlite3`, `.db`, `.db3`:
 `skill://<name>`, `agent://<id>`, `artifact://<id>`, `memory://root`, `rule://<name>`, `local://<name>.md`, `mcp://<uri>` resolve transparently and accept the same line selectors as filesystem paths. Use `artifact://<id>` to recover full output that a previous bash/eval/tool result spilled or truncated.
 
 <critical>
-- You MUST use `read` for every file, directory, archive, and URL inspection. `cat`, `head`, `tail`, `less`, `more`, `ls`, `tar`, `unzip`, `curl`, `wget` are FORBIDDEN — any such bash call is a bug, regardless of how short or convenient it looks.
+- Exact file inspection or editing? You MUST use `read`: selectors, anchors, internal URIs, archives, SQLite, documents, images, and URLs.
+- File analysis/exploration/summarization/counting/filtering/comparison where exact bytes or edit anchors are unnecessary? If context-mode tools are available, use `ctx_execute_file`, `ctx_execute`, `ctx_batch_execute`, or `ctx_fetch_and_index`.
+- NEVER use shell file/web tools (`cat`, `head`, `tail`, `less`, `more`, `ls`, `tar`, `unzip`, `grep`, `curl`, `wget`) when `read` or a context-mode sandbox applies.
 - You MUST prefer `read` over a browser/puppeteer tool for URL content; only reach for a browser when `read` cannot deliver reasonable content.
 - You MUST always include `path`. NEVER call `read` with `{}`.
 - For line ranges, append the selector to `path` (`path="src/foo.ts:50-200"`, `path="src/foo.ts:50+150"`). NEVER substitute `sed -n`, `awk NR`, or `head`/`tail` pipelines.

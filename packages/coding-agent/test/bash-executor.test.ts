@@ -137,6 +137,30 @@ describe("executeBash", () => {
 		expect(result.output).toContain("timed out");
 	});
 
+	it("compresses check output before timeout annotations", async () => {
+		if (process.platform === "win32") {
+			return;
+		}
+		fs.writeFileSync(
+			path.join(tempDir, "package.json"),
+			JSON.stringify({
+				scripts: {
+					"check:ts":
+						"printf '%s\\n' '@oh-my-pi/pi-utils check: Checked 40 files in 11ms. No fixes applied.' '@oh-my-pi/pi-utils check: Exited with code 0'; sleep 10",
+				},
+			}),
+		);
+
+		const result = await executeBash("bun run 'check:ts'", { cwd: tempDir, timeout: 50 });
+
+		expect(result.cancelled).toBe(true);
+		expect(result.output).toContain("check:ts: visible checks passed; wrapper timed out");
+		expect(result.output).toContain("packages checked: @oh-my-pi/pi-utils");
+		expect(result.output).toContain("timeout: Command timed out");
+		expect(result.output).not.toContain("No fixes applied");
+		expect(result.output).not.toContain("Exited with code 0");
+	});
+
 	it("times out before follow-up output", async () => {
 		if (process.platform === "win32") {
 			return;

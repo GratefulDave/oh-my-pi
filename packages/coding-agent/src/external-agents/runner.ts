@@ -1,6 +1,7 @@
 import { readLines } from "@oh-my-pi/pi-utils";
 
 import type {
+	DelegationSummary,
 	ExternalAgentBackend,
 	ExternalAgentEvent,
 	ExternalAgentEventHandler,
@@ -385,4 +386,100 @@ export async function runExternalAgentsParallel(
 	return await Promise.all(
 		requests.map((request, index) => runExternalAgent(request, event => onEvent?.(event, index, request))),
 	);
+}
+
+const DELEGATION_SUMMARY_MARKER = "DELEGATION_SUMMARY:";
+const MAX_SUMMARY_LINES = 20;
+const MAX_SUMMARY_CHARS = 2000;
+
+/** Extract bounded summary from agent output via DELEGATION_SUMMARY: marker. */
+export function extractDelegationSummary(text: string): DelegationSummary {
+	const idx = text.lastIndexOf(DELEGATION_SUMMARY_MARKER);
+	if (idx === -1) return { lines: 0 };
+	const raw = text.slice(idx + DELEGATION_SUMMARY_MARKER.length).trim();
+	const allLines = raw.split("\n");
+	const cappedLines = allLines.slice(0, MAX_SUMMARY_LINES);
+	let result = cappedLines.join("\n");
+	if (result.length > MAX_SUMMARY_CHARS) {
+		result = result.slice(0, MAX_SUMMARY_CHARS);
+		const lastSpace = result.lastIndexOf(" ");
+		if (lastSpace > 0) result = result.slice(0, lastSpace).trimEnd();
+	}
+	return { text: result, lines: Math.min(allLines.length, MAX_SUMMARY_LINES) };
+}
+
+/**
+ * Build a concise context summary from results.
+ * If any result carries a DELEGATION_SUMMARY: marker, its extracted text is used.
+ * Otherwise, a single-line status summary is produced per agent.
+ */
+export function buildContextSummary(results: ExternalAgentResult[]): string {
+	const lines: string[] = [];
+	for (const r of results) {
+		const delegation = extractDelegationSummary(r.text);
+		if (delegation.text) {
+			lines.push(`## ${r.provider}`, delegation.text);
+			continue;
+		}
+		const statusIcon = r.success ? "✓" : "✗";
+		let line = `${statusIcon} ${r.provider} (${r.backend})`;
+		if (r.exitCode !== null && r.exitCode !== 0) line += ` exit=${r.exitCode}`;
+		const errors = r.events.filter(e => e.type === "error");
+		if (errors.length > 0) {
+			const brief = errors
+				.slice(0, 3)
+				.map(e => e.message)
+				.join("; ");
+			line += ` errors: ${brief}`;
+			if (errors.length > 3) line += ` [+${errors.length - 3} more]`;
+		}
+		const toolCount = r.events.filter(e => e.type === "tool_start").length;
+		if (toolCount > 0) line += ` tools: ${toolCount}`;
+		lines.push(line);
+	}
+	return lines.join("\n");
+}
+
+/**
+ * Build the full orchestration markdown report from agent results.
+ * Produces a `# External Orchestration` heading with per-provider sections.
+ */
+export function buildExternalOrchestrationReport(
+	results: ExternalAgentResult[],
+	metadata: { backend: ExternalAgentBackend; cwd: string; agentCount: number },
+): string {
+	const reportLines = [
+		"# External Orchestration",
+		`- Backend: \`${metadata.backend}\``,
+		`- CWD: \`${metadata.cwd}\``,
+		`- Agent count: ${metadata.agentCount}`,
+	];
+	for (const result of results) {
+		reportLines.push("", `## ${result.provider}`, `- Status: ${result.success ? "success" : "failure"}`);
+		if (result.session) reportLines.push(`- Session: \`${result.session}\``);
+		reportLines.push(`- Exit code: ${result.exitCode === null ? "null" : result.exitCode}`);
+
+		const text = result.text.trim();
+		if (text.length > 0) {
+			reportLines.push("", "```text", text, "```");
+		} else {
+			const eventLines = result.events
+				.map(e => {
+					if (e.type === "status") return `- status: ${e.message}`;
+					if (e.type === "error") return `- error: ${e.message}`;
+					if (e.type === "terminal") {
+						const sess = e.session ? ` [${e.session}]` : "";
+						return `- terminal${sess}: ${e.message} \`${e.command.join(" ")}\``;
+					}
+					return undefined;
+				})
+				.filter((l): l is string => l !== undefined);
+			if (eventLines.length > 0) {
+				reportLines.push("", ...eventLines);
+			} else {
+				reportLines.push("", "_No captured output._");
+			}
+		}
+	}
+	return reportLines.join("\n");
 }

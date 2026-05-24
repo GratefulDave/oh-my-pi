@@ -3,8 +3,18 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { runExternalAgent, runExternalAgentsParallel } from "../src/external-agents/runner";
-import type { ExternalAgentEvent } from "../src/external-agents/types";
+import {
+	buildContextSummary,
+	extractDelegationSummary,
+	runExternalAgent,
+	runExternalAgentsParallel,
+} from "../src/external-agents/runner";
+import type {
+	DelegationSummary,
+	ExternalAgentEvent,
+	ExternalAgentProvider,
+	ExternalAgentResult,
+} from "../src/external-agents/types";
 
 const tempDirs: string[] = [];
 let originalPath: string | undefined;
@@ -249,5 +259,132 @@ describe("external agent runner", () => {
 			.map(entry => entry.argv.find(arg => arg === "claude" || arg === "gemini" || arg === "codex"))
 			.sort();
 		expect(providers).toEqual(["claude", "gemini"]);
+	});
+});
+
+describe("extractDelegationSummary", () => {
+	it("uses only last DELEGATION_SUMMARY: marker when multiple are present", () => {
+		const text = [
+			"Raw output before first marker",
+			"more raw output",
+			"DELEGATION_SUMMARY:",
+			"First summary line.",
+			"First summary second line.",
+			"More raw output between markers",
+			"DELEGATION_SUMMARY:",
+			"Final summary line.",
+			"Final summary second line.",
+		].join("\n");
+
+		const result: DelegationSummary = extractDelegationSummary(text);
+
+		expect(result.text).toBe("Final summary line.\nFinal summary second line.");
+		expect(result.lines).toBe(2);
+		// Earlier marker content must not leak
+		expect(result.text).not.toContain("First summary");
+	});
+
+	it("returns { lines: 0 } with no text when marker is absent", () => {
+		const text = "Some raw agent output\nwith multiple lines\nbut no summary marker.";
+
+		const result: DelegationSummary = extractDelegationSummary(text);
+
+		expect(result.lines).toBe(0);
+		expect(result.text).toBeUndefined();
+	});
+
+	it("caps line count at MAX_SUMMARY_LINES (20)", () => {
+		const lines = Array.from({ length: 25 }, (_, i) => `Line ${i + 1}`);
+		const text = `DELEGATION_SUMMARY:\n${lines.join("\n")}`;
+
+		const result: DelegationSummary = extractDelegationSummary(text);
+
+		expect(result.lines).toBe(20);
+		expect(result.text!.split("\n")).toHaveLength(20);
+		expect(result.text!).toContain("Line 1");
+		expect(result.text!).toContain("Line 20");
+		expect(result.text!).not.toContain("Line 21");
+	});
+});
+
+describe("buildContextSummary", () => {
+	function makeResult(
+		provider: ExternalAgentProvider,
+		overrides: Partial<ExternalAgentResult> = {},
+	): ExternalAgentResult {
+		return {
+			provider,
+			backend: "acpx",
+			session: undefined,
+			cwd: "/tmp",
+			events: [],
+			text: "",
+			exitCode: 0,
+			success: true,
+			...overrides,
+		};
+	}
+
+	it("produces deterministic status line without dumping raw result.text when no marker present", () => {
+		const results: ExternalAgentResult[] = [
+			makeResult("gemini", {
+				success: true,
+				text: "Very long raw output that should not appear in context summary.",
+				exitCode: 0,
+				events: [
+					{ type: "tool_start", name: "read", id: "t1", value: {} },
+					{ type: "tool_start", name: "bash", id: "t2", value: {} },
+				],
+			}),
+			makeResult("claude", {
+				success: false,
+				text: "Another long raw output that must not leak.",
+				exitCode: 1,
+				events: [
+					{ type: "error", message: "connection refused" },
+					{ type: "error", message: "timeout" },
+					{ type: "error", message: "retry failed" },
+					{ type: "error", message: "final error" },
+					{ type: "tool_start", name: "read", id: "t3", value: {} },
+				],
+			}),
+		];
+
+		const summary = buildContextSummary(results);
+
+		// Must not contain raw text from either result
+		expect(summary).not.toContain("Very long raw output");
+		expect(summary).not.toContain("Another long raw output");
+		// Must contain deterministic status icons and providers
+		expect(summary).toContain("✓ gemini");
+		expect(summary).toContain("✗ claude");
+		expect(summary).toContain("tools: 2");
+		expect(summary).toContain("exit=1");
+		// Must cap error count at 3 in summary
+		expect(summary).toContain("errors:");
+		expect(summary).toContain("[+1 more]");
+	});
+
+	it("uses extracted delegation summary text when marker is present", () => {
+		const results: ExternalAgentResult[] = [
+			makeResult("gemini", {
+				success: true,
+				text: "Raw preamble\nDELEGATION_SUMMARY:\nTask completed: refactored auth module.",
+			}),
+			makeResult("claude", {
+				success: false,
+				text: "No marker here.",
+				exitCode: 2,
+				events: [{ type: "error", message: "auth failed" }],
+			}),
+		];
+
+		const summary = buildContextSummary(results);
+
+		// gemini uses delegated summary
+		expect(summary).toContain("Task completed: refactored auth module.");
+		// claude has no marker → fallback status line
+		expect(summary).toContain("✗ claude");
+		expect(summary).toContain("exit=2");
 	});
 });

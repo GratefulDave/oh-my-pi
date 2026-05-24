@@ -4,10 +4,16 @@
  * Uses brush-core via native bindings for shell execution.
  */
 import * as fs from "node:fs/promises";
-import { executeShell, type MinimizerOptions, Shell } from "@oh-my-pi/pi-natives";
+import {
+	applyShellMinimizer,
+	executeShell,
+	type MinimizerOptions,
+	type MinimizerResult,
+	Shell,
+} from "@oh-my-pi/pi-natives";
 import { Settings, type ShellMinimizerSettings } from "../config/settings";
 import { buildMinimizerMissedRecord, recordMinimizerGain } from "../minimizer-gain";
-import { OutputSink } from "../session/streaming-output";
+import { OutputSink, type OutputSummary } from "../session/streaming-output";
 import { resolveOutputMaxColumns, resolveOutputSinkHeadBytes } from "../tools/output-meta";
 import { getOrCreateSnapshot } from "../utils/shell-snapshot";
 import { NON_INTERACTIVE_ENV } from "./non-interactive-env";
@@ -223,11 +229,14 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 				// a persistent session has stopped responding to cancellation.
 				brokenShellSessions.add(sessionKey);
 			}
-			return {
-				exitCode: undefined,
-				cancelled: true,
-				...(await sink.dump(`Command exceeded hard timeout after ${Math.round(hardTimeoutMs / 1000)} seconds`)),
-			};
+			return await dumpCancelledOutput({
+				sink,
+				command: finalCommand,
+				commandCwd,
+				notice: `Command exceeded hard timeout after ${Math.round(hardTimeoutMs / 1000)} seconds`,
+				minimizer,
+				options,
+			});
 		}
 
 		// Handle timeout
@@ -236,11 +245,14 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 				? `Command timed out after ${Math.round(options.timeout / 1000)} seconds`
 				: "Command timed out";
 			resetSession = true;
-			return {
-				exitCode: undefined,
-				cancelled: true,
-				...(await sink.dump(annotation)),
-			};
+			return await dumpCancelledOutput({
+				sink,
+				command: finalCommand,
+				commandCwd,
+				notice: annotation,
+				minimizer,
+				options,
+			});
 		}
 
 		// Handle cancellation
@@ -321,6 +333,77 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 			shellSessions.delete(sessionKey);
 		}
 	}
+}
+
+interface CancelledDumpInput {
+	sink: OutputSink;
+	command: string;
+	commandCwd?: string;
+	notice: string;
+	minimizer?: MinimizerOptions;
+	options?: BashExecutorOptions;
+}
+
+async function dumpCancelledOutput(input: CancelledDumpInput): Promise<BashResult> {
+	const summary = await input.sink.dump(input.notice);
+	const minimized = applyMinimizer(input.command, summary.output, 1, input.minimizer);
+	if (!minimized || minimized.text === minimized.originalText) {
+		return { exitCode: undefined, cancelled: true, ...summary };
+	}
+
+	let output = minimized.text;
+	if (input.options?.onMinimizedSave) {
+		const artifactId = await input.options.onMinimizedSave(minimized.originalText, {
+			filter: minimized.filter,
+			inputBytes: minimized.inputBytes,
+			outputBytes: minimized.outputBytes,
+		});
+		if (artifactId) {
+			const sep = output.endsWith("\n") ? "" : "\n";
+			output = `${output}${sep}[raw output: artifact://${artifactId}]\n`;
+			const hint = buildArtifactRecoveryHint(minimized.text, artifactId);
+			if (hint) {
+				output += hint;
+			}
+		}
+	}
+	await recordMinimizerGain({
+		timestamp: new Date().toISOString(),
+		...(input.commandCwd === undefined ? {} : { cwd: input.commandCwd }),
+		command: input.command,
+		filter: minimized.filter,
+		inputBytes: minimized.inputBytes,
+		outputBytes: minimized.outputBytes,
+		savedBytes: Math.max(0, minimized.inputBytes - minimized.outputBytes),
+		exitCode: null,
+		kind: "saved",
+	});
+
+	return {
+		exitCode: undefined,
+		cancelled: true,
+		...rewriteSummaryOutput(summary, output),
+	};
+}
+
+function applyMinimizer(
+	command: string,
+	output: string,
+	exitCode: number,
+	minimizer: MinimizerOptions | undefined,
+): MinimizerResult | null {
+	if (!minimizer) return null;
+	return applyShellMinimizer({ command, captured: output, exitCode, minimizer });
+}
+
+function rewriteSummaryOutput(summary: OutputSummary, output: string): OutputSummary {
+	return {
+		...summary,
+		output,
+		outputLines: output.length === 0 ? 0 : (output.match(/\n/g) || []).length + 1,
+		outputBytes: Buffer.byteLength(output, "utf-8"),
+		truncated: false,
+	};
 }
 
 function buildSessionKey(

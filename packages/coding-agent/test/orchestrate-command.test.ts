@@ -7,13 +7,22 @@ import type { SessionManager } from "../src/session/session-manager";
 import { executeAcpBuiltinSlashCommand } from "../src/slash-commands/acp-builtins";
 import type { AcpBuiltinCommandRuntime } from "../src/slash-commands/types";
 
-function createRuntime(cwd: string): { output: string[]; runtime: AcpBuiltinCommandRuntime } {
+function createRuntime(
+	cwd: string,
+	artifactSaveResult?: string,
+): {
+	output: string[];
+	runtime: AcpBuiltinCommandRuntime;
+} {
 	const output: string[] = [];
 	return {
 		output,
 		runtime: {
 			session: {} as AgentSession,
-			sessionManager: { getCwd: () => cwd } as unknown as SessionManager,
+			sessionManager: {
+				getCwd: () => cwd,
+				saveArtifact: async () => artifactSaveResult,
+			} as unknown as SessionManager,
 			settings: Settings.isolated(),
 			cwd,
 			output: (text: string) => {
@@ -83,6 +92,36 @@ describe("post-split orchestrate/delegate slash command contract", () => {
 			expect(output).toHaveLength(1);
 			expect(output[0]).toContain("# External Orchestration");
 			expect(output[0]).toContain("## gemini");
+		} finally {
+			runSpy.mockRestore();
+		}
+	});
+
+	it("persists orchestration artifact and reports the returned artifact id", async () => {
+		const result: ExternalAgentResult = {
+			provider: "gemini",
+			backend: "acpx",
+			session: undefined,
+			cwd: "/tmp/fake-cwd",
+			events: [],
+			text: "fake output",
+			exitCode: 0,
+			success: true,
+		};
+		const runSpy = spyOn(externalAgents, "runExternalAgentsParallel").mockResolvedValue([result]);
+
+		try {
+			const { output, runtime } = createRuntime("/tmp/fake-cwd", "artifact-test-123");
+
+			const commandResult = await executeAcpBuiltinSlashCommand(
+				'/delegate --backend acpx --agents gemini "review diff"',
+				runtime,
+			);
+
+			expect(commandResult).toEqual({ consumed: true });
+			expect(output).toHaveLength(2);
+			expect(output[0]).toContain("# External Orchestration");
+			expect(output[1]).toContain("Artifact persisted: artifact-test-123");
 		} finally {
 			runSpy.mockRestore();
 		}
