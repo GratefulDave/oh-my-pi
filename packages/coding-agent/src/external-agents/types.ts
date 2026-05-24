@@ -77,6 +77,25 @@ export interface ExternalAgentResult {
 	success: boolean;
 }
 
+/** Bounded summary extracted from a delegated agent's output via DELEGATION_SUMMARY: marker. */
+export interface DelegationSummary {
+	/** Extracted text, trimmed and capped; undefined if no marker was present. */
+	text?: string;
+	/** Line count of the raw extracted text (before capping). */
+	lines: number;
+}
+
+/** Full result of a parallel external-agent orchestration run. */
+export interface ExternalOrchestrationResult {
+	backend: ExternalAgentBackend;
+	agents: ExternalAgentProvider[];
+	results: ExternalAgentResult[];
+	fullReport: string;
+	contextSummary: string;
+	artifactId?: string;
+	successCount: number;
+}
+
 export type ExternalAgentEventHandler = (event: ExternalAgentEvent, request: ExternalAgentRequest) => void;
 
 export type ExternalAgentParallelEventHandler = (

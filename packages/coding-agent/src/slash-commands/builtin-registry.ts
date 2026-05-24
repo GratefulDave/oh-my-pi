@@ -22,13 +22,13 @@ import {
 import { loadSkills, type Skill } from "../extensibility/skills";
 import type {
 	ExternalAgentBackend,
-	ExternalAgentEvent,
 	ExternalAgentMode,
+	ExternalAgentParallelEventHandler,
 	ExternalAgentProvider,
 	ExternalAgentRequest,
-	ExternalAgentResult,
+	ExternalOrchestrationResult,
 } from "../external-agents";
-import { runExternalAgentsParallel } from "../external-agents";
+import { buildContextSummary, buildExternalOrchestrationReport, runExternalAgentsParallel } from "../external-agents";
 import { resolveMemoryBackend } from "../memory-backend";
 import { getMinimizerGainPath, readMinimizerGain, summarizeMinimizerGain } from "../minimizer-gain";
 import type { SkillsSkillToggle, SkillsSourceToggle } from "../modes/components/skills-overlay";
@@ -203,12 +203,7 @@ interface ParsedExternalOrchestrationArgs {
 
 type ExternalOrchestrationParseResult = { value: ParsedExternalOrchestrationArgs } | { error: string };
 
-interface ExternalOrchestrationReport {
-	backend: ExternalAgentBackend;
-	agents: ExternalAgentProvider[];
-	report: string;
-	successCount: number;
-}
+type ExternalOrchestrationReport = ExternalOrchestrationResult;
 
 function isExternalAgentBackend(value: string): value is ExternalAgentBackend {
 	return value === "acpx" || value === "tmux" || value === "cmux";
@@ -312,60 +307,25 @@ function buildExternalAgentRequests(input: ParsedExternalOrchestrationArgs, cwd:
 	}));
 }
 
-function formatExternalEvent(event: ExternalAgentEvent): string | undefined {
-	if (event.type === "status") return `- status: ${event.message}`;
-	if (event.type === "error") return `- error: ${event.message}`;
-	if (event.type === "terminal") {
-		const session = event.session ? ` [${event.session}]` : "";
-		return `- terminal${session}: ${event.message} \`${event.command.join(" ")}\``;
-	}
-	return undefined;
-}
-
-function appendExternalAgentResult(lines: string[], result: ExternalAgentResult): void {
-	lines.push("", `## ${result.provider}`, `- Status: ${result.success ? "success" : "failure"}`);
-	if (result.session) lines.push(`- Session: \`${result.session}\``);
-	lines.push(`- Exit code: ${result.exitCode === null ? "null" : result.exitCode}`);
-
-	const text = result.text.trim();
-	if (text.length > 0) {
-		lines.push("", "```text", text, "```");
-		return;
-	}
-
-	const eventLines = result.events.map(formatExternalEvent).filter(line => line !== undefined);
-	if (eventLines.length > 0) {
-		lines.push("", ...eventLines);
-	} else {
-		lines.push("", "_No captured output._");
-	}
-}
-
-function buildExternalOrchestrationReport(
-	input: ParsedExternalOrchestrationArgs,
-	cwd: string,
-	results: ExternalAgentResult[],
-): string {
-	const lines = [
-		"# External Orchestration",
-		`- Backend: \`${input.backend}\``,
-		`- CWD: \`${cwd}\``,
-		`- Agent count: ${input.providers.length}`,
-	];
-	for (const result of results) appendExternalAgentResult(lines, result);
-	return lines.join("\n");
-}
-
 async function runExternalOrchestration(
 	input: ParsedExternalOrchestrationArgs,
 	cwd: string,
+	onEvent?: ExternalAgentParallelEventHandler,
 ): Promise<ExternalOrchestrationReport> {
 	const requests = buildExternalAgentRequests(input, cwd);
-	const results = await runExternalAgentsParallel(requests);
+	const results = await runExternalAgentsParallel(requests, onEvent);
+	const fullReport = buildExternalOrchestrationReport(results, {
+		backend: input.backend,
+		cwd,
+		agentCount: input.providers.length,
+	});
+	const contextSummary = buildContextSummary(results);
 	return {
 		backend: input.backend,
 		agents: input.providers,
-		report: buildExternalOrchestrationReport(input, cwd, results),
+		results,
+		fullReport,
+		contextSummary,
 		successCount: results.filter(result => result.success).length,
 	};
 }
@@ -404,7 +364,16 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 			const parsed = parseExternalOrchestrationArgs(command.args);
 			if ("error" in parsed) return usage(parsed.error, runtime);
 			const result = await runExternalOrchestration(parsed.value, runtime.cwd);
-			await runtime.output(result.report);
+			await runtime.output(result.fullReport);
+			// Persist full report to artifact (best-effort)
+			try {
+				const artifactId = await runtime.sessionManager.saveArtifact(result.fullReport, "external-orchestration");
+				if (artifactId) {
+					await runtime.output(`\nArtifact persisted: ${artifactId}`);
+				}
+			} catch {
+				// Artifact save failure is non-fatal
+			}
 			return commandConsumed();
 		},
 		handleTui: async (command, runtime) => {
@@ -417,9 +386,9 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 			const result = await runExternalOrchestration(parsed.value, runtime.ctx.sessionManager.getCwd());
 			await runtime.ctx.session.sendCustomMessage({
 				customType: "external-orchestration",
-				content: result.report,
+				content: result.fullReport,
 				display: true,
-				details: { backend: result.backend, agents: result.agents },
+				details: { backend: result.backend, agents: result.agents, contextSummary: result.contextSummary },
 			});
 			runtime.ctx.showStatus(
 				`External orchestration completed: ${result.successCount}/${result.agents.length} succeeded.`,
