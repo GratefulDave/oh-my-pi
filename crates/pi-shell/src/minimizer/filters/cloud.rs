@@ -1,7 +1,10 @@
 //! Cloud and data command output filters.
 
-use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
+use std::fmt::Write as _;
+
 use serde_json::Value;
+
+use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
 
 const MAX_PSQL_ROWS: usize = 30;
 const MAX_LINE_CHARS: usize = 500;
@@ -55,6 +58,11 @@ fn try_compact_aws_json(input: &str) -> Option<String> {
 	// CloudWatch logs / filtered log events: {"events":[...]}
 	if let Some(events) = extract_aws_cloudwatch_events(&root) {
 		return Some(compact_aws_cloudwatch_events(&events));
+	}
+
+	// DynamoDB get-item/query/scan: {"Item":{...}} or {"Items":[{...}]}
+	if let Some(items) = extract_aws_dynamodb_items(&root) {
+		return Some(compact_aws_dynamodb_items(&items));
 	}
 
 	None
@@ -112,12 +120,12 @@ fn compact_aws_ec2_instances(instances: &[&Value]) -> String {
 				})
 			})
 			.unwrap_or("-");
-		out.push_str(&format!("{id}\t{typ}\t{state}\t{ip}\t{name}\n"));
+		let _ = writeln!(out, "{id}\t{typ}\t{state}\t{ip}\t{name}");
 	}
 	if instances.len() > 1 {
 		out.push('\n');
 	}
-	out.push_str(&format!("{} instance(s)\n", instances.len()));
+	let _ = writeln!(out, "{} instance(s)", instances.len());
 	out
 }
 
@@ -137,15 +145,15 @@ fn epoch_ms_to_iso(ms: i64) -> String {
 	let sub_ms = (ms % 1000) as u32;
 	let days_since_epoch = secs / 86400;
 	let secs_of_day = secs % 86400;
-	let h = secs_of_day / 3600;
-	let m = (secs_of_day % 3600) / 60;
-	let s = secs_of_day % 60;
+	let hour = secs_of_day / 3600;
+	let minute = (secs_of_day % 3600) / 60;
+	let second = secs_of_day % 60;
 	let total_days = days_since_epoch as i32;
-	let (y, mo, d) = civil_from_days(total_days + 719468);
-	format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}.{sub_ms:03}Z")
+	let (year, month, day) = civil_from_days(total_days + 719468);
+	format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{sub_ms:03}Z")
 }
 
-fn civil_from_days(z: i32) -> (i32, u32, u32) {
+const fn civil_from_days(z: i32) -> (i32, u32, u32) {
 	let z = z as i64;
 	let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
 	let doe = (z - era * 146097) as u32;
@@ -166,8 +174,7 @@ fn compact_aws_cloudwatch_events(events: &[&Value]) -> String {
 		let ts = event
 			.get("timestamp")
 			.and_then(|v| v.as_i64())
-			.map(epoch_ms_to_iso)
-			.unwrap_or_else(|| "?".to_string());
+			.map_or_else(|| "?".to_string(), epoch_ms_to_iso);
 		let msg = event.get("message").and_then(|v| v.as_str()).unwrap_or("?");
 		// Truncate long messages
 		let msg = primitives::truncate_line(msg, MAX_LINE_CHARS);
@@ -180,8 +187,130 @@ fn compact_aws_cloudwatch_events(events: &[&Value]) -> String {
 	if count > 1 {
 		out.push('\n');
 	}
-	out.push_str(&format!("{} event(s)\n", count));
+	let _ = writeln!(out, "{count} event(s)");
 	out
+}
+
+// ── AWS DynamoDB
+// ──────────────────────────────────────────────────────────────
+
+fn extract_aws_dynamodb_items(root: &Value) -> Option<Vec<&serde_json::Map<String, Value>>> {
+	if let Some(item) = root.get("Item").and_then(Value::as_object) {
+		return Some(vec![item]);
+	}
+	let items = root.get("Items")?.as_array()?;
+	let mut out = Vec::new();
+	for item in items {
+		if let Some(map) = item.as_object() {
+			out.push(map);
+		}
+	}
+	if out.is_empty() { None } else { Some(out) }
+}
+
+fn compact_aws_dynamodb_items(items: &[&serde_json::Map<String, Value>]) -> String {
+	let mut out = String::new();
+	for item in items.iter().take(40) {
+		let mut first = true;
+		for (key, value) in *item {
+			if !first {
+				out.push('\t');
+			}
+			first = false;
+			out.push_str(key);
+			out.push('=');
+			push_dynamodb_value(&mut out, value);
+		}
+		out.push('\n');
+	}
+	if items.len() > 40 {
+		out.push_str("… ");
+		out.push_str(&(items.len() - 40).to_string());
+		out.push_str(" item(s) omitted …\n");
+	}
+	let _ = writeln!(out, "{} item(s)", items.len());
+	out
+}
+
+fn push_dynamodb_value(out: &mut String, value: &Value) {
+	let Some(map) = value.as_object() else {
+		push_json_scalar(out, value);
+		return;
+	};
+	if map.len() == 1 {
+		if let Some(value) = map.get("S").and_then(Value::as_str) {
+			out.push_str(value);
+			return;
+		}
+		if let Some(value) = map.get("N").and_then(Value::as_str) {
+			out.push_str(value);
+			return;
+		}
+		if let Some(value) = map.get("BOOL").and_then(Value::as_bool) {
+			out.push_str(if value { "true" } else { "false" });
+			return;
+		}
+		if map.get("NULL").and_then(Value::as_bool) == Some(true) {
+			out.push_str("null");
+			return;
+		}
+		if let Some(values) = map.get("SS").and_then(Value::as_array) {
+			push_json_array(out, values);
+			return;
+		}
+		if let Some(values) = map.get("NS").and_then(Value::as_array) {
+			push_json_array(out, values);
+			return;
+		}
+		if let Some(values) = map.get("L").and_then(Value::as_array) {
+			out.push('[');
+			for (idx, value) in values.iter().enumerate() {
+				if idx > 0 {
+					out.push(',');
+				}
+				push_dynamodb_value(out, value);
+			}
+			out.push(']');
+			return;
+		}
+		if let Some(values) = map.get("M").and_then(Value::as_object) {
+			push_dynamodb_map(out, values);
+			return;
+		}
+	}
+	push_dynamodb_map(out, map);
+}
+
+fn push_dynamodb_map(out: &mut String, values: &serde_json::Map<String, Value>) {
+	out.push('{');
+	for (idx, (key, value)) in values.iter().enumerate() {
+		if idx > 0 {
+			out.push(',');
+		}
+		out.push_str(key);
+		out.push(':');
+		push_dynamodb_value(out, value);
+	}
+	out.push('}');
+}
+
+fn push_json_array(out: &mut String, values: &[Value]) {
+	out.push('[');
+	for (idx, value) in values.iter().enumerate() {
+		if idx > 0 {
+			out.push(',');
+		}
+		push_json_scalar(out, value);
+	}
+	out.push(']');
+}
+
+fn push_json_scalar(out: &mut String, value: &Value) {
+	if let Some(value) = value.as_str() {
+		out.push_str(value);
+	} else {
+		out.push_str(&value.to_string());
+	}
 }
 
 fn filter_http_transfer(input: &str, _exit_code: i32) -> String {
@@ -709,6 +838,31 @@ mod tests {
 		);
 		assert!(out.text.contains("END RequestId: abc123"));
 		assert!(out.text.contains("2 event(s)"));
+	}
+
+	#[test]
+	fn compacts_dynamodb_typed_json() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("aws", &cfg);
+		let input = r#"{
+    "Items": [
+        {
+            "pk": { "S": "user#1" },
+            "age": { "N": "42" },
+            "active": { "BOOL": true },
+            "tags": { "SS": ["a", "b"] },
+            "meta": { "M": { "city": { "S": "Paris" } } }
+        }
+    ],
+    "Count": 1
+}"#;
+		let out = filter(&ctx, input, 0);
+		assert!(out.text.contains("pk=user#1"));
+		assert!(out.text.contains("age=42"));
+		assert!(out.text.contains("active=true"));
+		assert!(out.text.contains("tags=[a,b]"));
+		assert!(out.text.contains("meta={city:Paris}"));
+		assert!(out.text.contains("1 item(s)"));
 	}
 
 	#[test]

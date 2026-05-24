@@ -1,8 +1,8 @@
 //! Cargo build/test output filters.
 
-use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
+use std::{collections::BTreeMap, fmt::Write as _};
 
-use std::collections::BTreeMap;
+use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
 
 pub fn supports(subcommand: Option<&str>) -> bool {
 	matches!(
@@ -95,10 +95,10 @@ fn failures_only(input: &str, exit_code: i32) -> String {
 
 #[derive(Default)]
 struct CargoTestTotals {
-	suites: usize,
-	passed: u64,
-	failed: u64,
-	ignored: u64,
+	suites:   usize,
+	passed:   u64,
+	failed:   u64,
+	ignored:  u64,
 	measured: u64,
 	filtered: u64,
 	warnings: u64,
@@ -315,8 +315,7 @@ fn filter_install(input: &str, exit_code: i32) -> String {
 		let deduped = primitives::dedup_consecutive_lines(&stripped);
 		primitives::head_tail_lines(&deduped, 60, 20)
 	} else {
-		let deduped = primitives::dedup_consecutive_lines(&summaries);
-		deduped
+		primitives::dedup_consecutive_lines(&summaries)
 	}
 }
 
@@ -329,8 +328,8 @@ fn is_install_summary(line: &str) -> bool {
 
 #[derive(Debug)]
 struct ClippyWarning {
-	location: String,
-	message: String,
+	location:  String,
+	message:   String,
 	lint_rule: Option<String>,
 }
 
@@ -447,17 +446,17 @@ fn format_clippy_grouped(warnings: &[ClippyWarning], exit_code: i32) -> String {
 			} else {
 				format!("{}  ", warns[0].location)
 			};
-			out.push_str(&format!("clippy: {} — {}{}\n", rule, loc, warns[0].message));
+			let _ = writeln!(out, "clippy: {} — {}{}", rule, loc, warns[0].message);
 		} else {
-			out.push_str(&format!("clippy: {} ({} warnings)\n", rule, warns.len()));
+			let _ = writeln!(out, "clippy: {} ({} warnings)", rule, warns.len());
 			for w in warns {
-				out.push_str(&format!("  {}  {}\n", w.location, w.message));
+				let _ = writeln!(out, "  {}  {}", w.location, w.message);
 			}
 		}
 	}
 
 	for w in &ungrouped {
-		out.push_str(&format!("clippy warning: {}  {}\n", w.location, w.message));
+		let _ = writeln!(out, "clippy warning: {}  {}", w.location, w.message);
 	}
 
 	if exit_code != 0 {
@@ -480,10 +479,10 @@ mod tests {
 	fn strips_compiling_noise() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = MinimizerCtx {
-			program: "cargo",
+			program:    "cargo",
 			subcommand: Some("build"),
-			command: "cargo build",
-			config: &cfg,
+			command:    "cargo build",
+			config:     &cfg,
 		};
 		let out = filter(&ctx, "   Compiling foo v0.1.0\nerror: nope\nsrc/lib.rs:1:1 bad\n", 1);
 		assert!(!out.text.contains("Compiling"));
@@ -688,10 +687,10 @@ mod tests {
 	fn metadata_is_passthrough() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = MinimizerCtx {
-			program: "cargo",
+			program:    "cargo",
 			subcommand: Some("metadata"),
-			command: "cargo metadata --format-version 1",
-			config: &cfg,
+			command:    "cargo metadata --format-version 1",
+			config:     &cfg,
 		};
 		let input = r#"{"packages":[{"name":"app","targets":[{"kind":["bin"]}]}],"resolve":null}"#;
 		let out = filter(&ctx, input, 0);

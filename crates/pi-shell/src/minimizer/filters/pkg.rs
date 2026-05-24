@@ -51,7 +51,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		} else if exit_code == 0 && (is_package_tree_command(ctx) || is_package_export_command(ctx)) {
 			compact_package_tree_output(&deduped)
 		} else {
-			primitives::head_tail_lines(&deduped, 120, 80)
+			primitives::head_tail_cap(&deduped, primitives::CapClass::Errors)
 		}
 	};
 
@@ -264,14 +264,24 @@ fn push_unique_row(rows: &mut Vec<String>, seen: &mut HashSet<String>, row: Stri
 }
 
 fn is_noise_line(ctx: &MinimizerCtx<'_>, line: &str, exit_code: i32) -> bool {
-	if is_audit_or_security_summary(line) {
+	let lower = line.to_ascii_lowercase();
+
+	// Strip: "found 0 vulnerabilities" (non-actionable success noise)
+	if lower.contains("found 0 vulnerabilities") {
+		return true;
+	}
+	// Strip: "audited X packages" timing summaries (non-actionable)
+	if lower.contains("audited") && lower.contains("package") {
+		return true;
+	}
+	// Keep: vulnerability mentions (actionable — real findings)
+	if lower.contains("vulnerab") {
 		return false;
 	}
 	if exit_code != 0 && is_error_or_summary(line) {
 		return false;
 	}
 
-	let lower = line.to_ascii_lowercase();
 	if is_package_lock_command(ctx) && is_lock_summary_line(&lower) {
 		return false;
 	}
@@ -304,9 +314,9 @@ fn compact_package_lock_output(ctx: &MinimizerCtx<'_>, input: &str) -> String {
 		out.push('\n');
 	}
 	if out.trim().is_empty() {
-		primitives::head_tail_lines(input, 40, 20)
+		primitives::head_tail_cap(input, primitives::CapClass::Inventory)
 	} else {
-		primitives::head_tail_lines(&out, 40, 20)
+		primitives::head_tail_cap(&out, primitives::CapClass::Inventory)
 	}
 }
 
@@ -339,7 +349,6 @@ fn is_js_package_noise(program: &str, line: &str, lower: &str) -> bool {
 	}
 	line.starts_with('>') && line.contains('@')
 		|| lower.starts_with("npm notice")
-		|| lower.starts_with("npm warn deprecated")
 		|| lower.starts_with("npm http fetch")
 		|| lower.starts_with("pnpm: progress")
 		|| lower.starts_with("packages:")
@@ -348,6 +357,7 @@ fn is_js_package_noise(program: &str, line: &str, lower: &str) -> bool {
 		|| lower.starts_with("added ") && lower.contains("packages")
 		|| lower.starts_with("done in ")
 		|| lower.contains("already up-to-date")
+		|| lower.contains("up to date")
 }
 
 fn is_python_package_noise(program: &str, _line: &str, lower: &str) -> bool {
@@ -433,16 +443,26 @@ mod tests {
 	}
 
 	#[test]
-	fn preserves_successful_install_audit_and_security_summaries() {
+	fn strips_success_noise_audited_and_zero_vulnerabilities() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = ctx("npm", Some("install"), "npm install", &cfg);
 		let input = "Resolving: total 10\nadded 3 packages, and audited 4 packages in 1s\n2 \
 		             packages are looking for funding\nfound 0 vulnerabilities\n";
 		let out = strip_package_noise(&ctx, input, 0);
 		assert!(!out.contains("Resolving:"));
-		assert!(out.contains("added 3 packages, and audited 4 packages in 1s"));
-		assert!(out.contains("2 packages are looking for funding"));
-		assert!(out.contains("found 0 vulnerabilities"));
+		assert!(!out.contains("audited 4 packages"));
+		assert!(!out.contains("found 0 vulnerabilities"));
+	}
+
+	#[test]
+	fn preserves_deprecation_warnings() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("npm", Some("install"), "npm install", &cfg);
+		let input = "npm warn deprecated left-pad@1.0.0: Please upgrade to left-pad@2.0.0\nnpm warn \
+		             deprecated old-lib@2.0.0: Use new-lib instead\n";
+		let out = strip_package_noise(&ctx, input, 0);
+		assert!(out.contains("npm warn deprecated left-pad@1.0.0: Please upgrade to left-pad@2.0.0"));
+		assert!(out.contains("npm warn deprecated old-lib@2.0.0: Use new-lib instead"));
 	}
 
 	#[test]

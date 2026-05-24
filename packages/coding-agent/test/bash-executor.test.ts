@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { executeBash } from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
+import { buildArtifactRecoveryHint, executeBash } from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
 import { DEFAULT_MAX_BYTES } from "@oh-my-pi/pi-coding-agent/session/streaming-output";
 import * as shellSnapshot from "@oh-my-pi/pi-coding-agent/utils/shell-snapshot";
 
@@ -488,5 +488,48 @@ describe("executeBash", () => {
 
 		// If process was killed (not orphaned), marker should NOT exist
 		expect(fs.existsSync(marker)).toBe(false);
+	});
+	describe("buildArtifactRecoveryHint", () => {
+		it("returns null when no omission marker is present", () => {
+			const text = "line1\nline2\nline3\n";
+			const hint = buildArtifactRecoveryHint(text, "abc123");
+			expect(hint).toBeNull();
+		});
+
+		it("returns hint when lines-omitted marker is present", () => {
+			const text = "head1\nhead2\n… 500 lines omitted …\ntail1\ntail2\n";
+			const hint = buildArtifactRecoveryHint(text, "abc123");
+			expect(hint).toBe("[see remaining: read artifact://abc123:3]\n");
+		});
+
+		it("returns hint for commits-omitted marker", () => {
+			const text =
+				"abcdef1 message 0\nabcdef1 message 1\n… 22 commits omitted …\nabcdef1 message 69\nabcdef1 message 70\n";
+			const hint = buildArtifactRecoveryHint(text, "x");
+			expect(hint).toBe("[see remaining: read artifact://x:3]\n");
+		});
+
+		it("returns hint for entries-omitted marker", () => {
+			const text = "… 10 entries omitted …\nremaining1\n";
+			const hint = buildArtifactRecoveryHint(text, "y");
+			expect(hint).toBe("[see remaining: read artifact://y:1]\n");
+		});
+
+		it("returns hint for package-entries omitted", () => {
+			const text = "dep000 1.0.0\ndep001 1.0.1\n… 11 package entries omitted …\n";
+			const hint = buildArtifactRecoveryHint(text, "pkgs");
+			expect(hint).toBe("[see remaining: read artifact://pkgs:3]\n");
+		});
+		it("returns hint for files-omitted-from-changes marker", () => {
+			const text = "src/a.rs | 2 +-\nsrc/b.rs | 1 +\n… 3 files omitted from changes\n";
+			const hint = buildArtifactRecoveryHint(text, "diff");
+			expect(hint).toBe("[see remaining: read artifact://diff:3]\n");
+		});
+
+		it("points to line 1 when omission marker is at the start", () => {
+			const text = "… 999 lines omitted …\ntail only\n";
+			const hint = buildArtifactRecoveryHint(text, "z");
+			expect(hint).toBe("[see remaining: read artifact://z:1]\n");
+		});
 	});
 });

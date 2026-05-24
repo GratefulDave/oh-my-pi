@@ -1,5 +1,7 @@
 //! Git output filters.
 
+use std::fmt::Write as _;
+
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
 
 pub fn supports(subcommand: Option<&str>) -> bool {
@@ -34,11 +36,14 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 
 	let cleaned = primitives::strip_ansi(input);
 	let text = match ctx.subcommand {
+		Some("status") if is_status_machine_format(ctx.command) => cleaned,
 		Some("status") => condense_status(&cleaned),
+		Some("diff") if is_stat_format(ctx.command) => condense_diff_stat(&cleaned),
 		Some("diff") => condense_diff(&cleaned),
-		Some("show") => primitives::head_tail_lines(&cleaned, 80, 40),
+		Some("show") => condense_show(&cleaned),
 		Some("log") => condense_log(&cleaned, 32, 16),
-		Some("branch" | "tag") => primitives::compact_listing(&cleaned, 40),
+		Some("branch") => condense_branch(&cleaned),
+		Some("tag") => primitives::compact_listing(&cleaned, 40),
 		Some("stash") => condense_stash(ctx.command, &cleaned, exit_code),
 		Some("worktree") => cleaned,
 		Some("push") => condense_push(&cleaned, exit_code),
@@ -92,15 +97,27 @@ fn has_token(command: &str, token: &str) -> bool {
 	command.split_whitespace().any(|part| part == token)
 }
 
+fn is_status_machine_format(command: &str) -> bool {
+	command.split_whitespace().any(|part| {
+		matches!(part, "-s" | "--short" | "--porcelain" | "--porcelain=v1" | "--porcelain=v2")
+	})
+}
+
+fn is_stat_format(command: &str) -> bool {
+	command
+		.split_whitespace()
+		.any(|part| part == "--stat" || part.starts_with("--stat="))
+}
+
 #[derive(Default)]
 struct StatusSummary {
-	branch: Option<String>,
-	clean: bool,
-	staged: usize,
-	unstaged: usize,
+	branch:    Option<String>,
+	clean:     bool,
+	staged:    usize,
+	unstaged:  usize,
 	untracked: usize,
 	conflicts: usize,
-	paths: Vec<String>,
+	paths:     Vec<String>,
 }
 
 fn condense_status(input: &str) -> String {
@@ -344,8 +361,9 @@ fn condense_log(input: &str, head: usize, tail: usize) -> String {
 }
 
 struct LogEntry {
-	hash: String,
+	hash:    String,
 	subject: String,
+	body:    Vec<String>,
 }
 
 fn push_log_entry(out: &mut String, entry: &LogEntry) {
@@ -355,6 +373,11 @@ fn push_log_entry(out: &mut String, entry: &LogEntry) {
 		out.push_str(&entry.subject);
 	}
 	out.push('\n');
+	for line in &entry.body {
+		out.push_str("  ");
+		out.push_str(line);
+		out.push('\n');
+	}
 }
 
 fn parse_log_entries(input: &str) -> Vec<LogEntry> {
@@ -370,28 +393,26 @@ fn parse_log_entries(input: &str) -> Vec<LogEntry> {
 			let (hash, subject) = trimmed
 				.split_once(' ')
 				.map_or((trimmed, ""), |(hash, subject)| (hash, subject.trim()));
-			current = Some(LogEntry { hash: short_hash(hash), subject: subject.to_string() });
+			current = Some(LogEntry {
+				hash:    short_hash(hash),
+				subject: subject.to_string(),
+				body:    Vec::new(),
+			});
 			continue;
 		}
 
 		let Some(entry) = current.as_mut() else {
 			continue;
 		};
-		if !entry.subject.is_empty() {
-			continue;
-		}
 		let trimmed = line.trim();
-		if trimmed.is_empty()
-			|| trimmed.starts_with("Author:")
-			|| trimmed.starts_with("Date:")
-			|| trimmed.starts_with("Merge:")
-			|| trimmed.contains('|')
-			|| trimmed.contains("files changed")
-			|| trimmed.contains("file changed")
-		{
+		if skip_log_line(trimmed) {
 			continue;
 		}
-		entry.subject = trimmed.to_string();
+		if entry.subject.is_empty() {
+			entry.subject = trimmed.to_string();
+		} else if entry.body.len() < 3 && !is_git_trailer(trimmed) {
+			entry.body.push(trimmed.to_string());
+		}
 	}
 
 	if let Some(entry) = current {
@@ -404,16 +425,162 @@ fn short_hash(hash: &str) -> String {
 	hash.chars().take(7).collect()
 }
 
+fn skip_log_line(trimmed: &str) -> bool {
+	trimmed.is_empty()
+		|| trimmed.starts_with("Author:")
+		|| trimmed.starts_with("Date:")
+		|| trimmed.starts_with("Merge:")
+		|| trimmed.contains('|')
+		|| trimmed.contains("files changed")
+		|| trimmed.contains("file changed")
+}
+
+fn is_git_trailer(trimmed: &str) -> bool {
+	const TRAILERS: &[&str] = &[
+		"Signed-off-by:",
+		"Co-authored-by:",
+		"Acked-by:",
+		"Reviewed-by:",
+		"Tested-by:",
+		"Reported-by:",
+		"Helped-by:",
+		"Suggested-by:",
+		"Change-Id:",
+		"Refs:",
+	];
+	TRAILERS.iter().any(|prefix| trimmed.starts_with(prefix))
+}
+
+fn condense_show(input: &str) -> String {
+	let Some(diff_start) = input.find("\ndiff --git ") else {
+		return primitives::head_tail_lines(input, 80, 40);
+	};
+	let prelude = &input[..diff_start];
+	let diff = &input[diff_start + 1..];
+	let diff_summary = condense_diff(diff);
+	if diff_summary == diff {
+		return primitives::head_tail_lines(input, 80, 40);
+	}
+
+	let mut out = String::new();
+	push_show_commit_summary(&mut out, prelude);
+	if !out.is_empty() {
+		out.push('\n');
+	}
+	out.push_str(&diff_summary);
+	out
+}
+
+fn push_show_commit_summary(out: &mut String, prelude: &str) {
+	let mut body_lines = 0usize;
+	for line in prelude.lines() {
+		let trimmed = line.trim();
+		if let Some(rest) = trimmed.strip_prefix("commit ") {
+			out.push_str("commit ");
+			out.push_str(&short_hash(rest));
+			out.push('\n');
+			continue;
+		}
+		if skip_log_line(trimmed) || is_git_trailer(trimmed) {
+			continue;
+		}
+		if trimmed.starts_with("diff --git") {
+			break;
+		}
+		if body_lines >= 4 {
+			continue;
+		}
+		out.push_str(trimmed);
+		out.push('\n');
+		body_lines += 1;
+	}
+}
+
+fn condense_branch(input: &str) -> String {
+	let mut current: Option<String> = None;
+	let mut local = Vec::new();
+	let mut remote_only = Vec::new();
+
+	for line in input.lines() {
+		let trimmed = line.trim();
+		if trimmed.is_empty() || trimmed.contains(" -> ") {
+			continue;
+		}
+		let (is_current, name) = trimmed
+			.strip_prefix('*')
+			.map_or((false, trimmed), |rest| (true, rest.trim()));
+		if name.is_empty() {
+			continue;
+		}
+		if is_current {
+			current = Some(name.to_string());
+		} else if name.starts_with("remotes/") {
+			remote_only.push(name.trim_start_matches("remotes/").to_string());
+		} else {
+			local.push(name.to_string());
+		}
+	}
+
+	if current.is_none() && local.is_empty() && remote_only.is_empty() {
+		return input.to_string();
+	}
+
+	let mut out = String::new();
+	if let Some(current) = current.as_deref() {
+		out.push_str("* ");
+		out.push_str(current);
+		out.push('\n');
+	}
+	if !local.is_empty() {
+		out.push_str("local:");
+		for branch in local.iter().take(24) {
+			out.push(' ');
+			out.push_str(branch);
+		}
+		if local.len() > 24 {
+			out.push_str(" … +");
+			out.push_str(&(local.len() - 24).to_string());
+		}
+		out.push('\n');
+	}
+	let remote_only = remote_only
+		.into_iter()
+		.filter(|branch| !has_local_tracking_branch(branch, current.as_deref(), &local))
+		.collect::<Vec<_>>();
+	if !remote_only.is_empty() {
+		out.push_str("remote-only (");
+		out.push_str(&remote_only.len().to_string());
+		out.push_str("):");
+		for branch in remote_only.iter().take(24) {
+			out.push(' ');
+			out.push_str(branch);
+		}
+		if remote_only.len() > 24 {
+			out.push_str(" … +");
+			out.push_str(&(remote_only.len() - 24).to_string());
+		}
+		out.push('\n');
+	}
+	out
+}
+
+fn has_local_tracking_branch(remote: &str, current: Option<&str>, local: &[String]) -> bool {
+	let branch = remote
+		.rsplit_once('/')
+		.map_or(remote, |(_remote, branch)| branch);
+	current == Some(branch) || local.iter().any(|local| local == branch)
+}
+
 struct DiffFile {
-	path: String,
-	added: usize,
+	path:    String,
+	added:   usize,
 	removed: usize,
-	hunks: Vec<DiffHunk>,
+	hunks:   Vec<DiffHunk>,
 }
 
 struct DiffHunk {
 	header: String,
-	lines: Vec<String>,
+	lines:  Vec<String>,
 }
 
 fn condense_diff(input: &str) -> String {
@@ -579,7 +746,7 @@ fn format_file_count(files: usize) -> String {
 
 fn condense_noisy_output(input: &str) -> String {
 	let deduped = primitives::dedup_consecutive_lines(input);
-	primitives::head_tail_lines(&deduped, 80, 40)
+	primitives::head_tail_cap(&deduped, primitives::CapClass::Errors)
 }
 
 fn condense_commit(input: &str, exit_code: i32) -> String {
@@ -642,8 +809,8 @@ fn condense_push(input: &str, exit_code: i32) -> String {
 	let cleaned = primitives::strip_ansi(input);
 	let stripped = primitives::strip_lines(&cleaned, &[is_push_progress]);
 
+	let mut out = String::new();
 	if exit_code == 0 {
-		let mut out = String::new();
 		let mut pushed_ref = None;
 
 		for line in stripped.lines() {
@@ -666,7 +833,8 @@ fn condense_push(input: &str, exit_code: i32) -> String {
 				out.push('\n');
 				continue;
 			}
-			// Keep ref update lines: "* [new ...]", branch setup, or "hash..hash ref -> ref"
+			// Keep ref update lines: "* [new ...]", branch setup, or "hash..hash ref ->
+			// ref"
 			if trimmed.starts_with("* [new")
 				|| trimmed.starts_with("Branch ")
 				|| trimmed.contains(" -> ")
@@ -676,7 +844,6 @@ fn condense_push(input: &str, exit_code: i32) -> String {
 				}
 				out.push_str(line);
 				out.push('\n');
-				continue;
 			}
 		}
 
@@ -689,10 +856,8 @@ fn condense_push(input: &str, exit_code: i32) -> String {
 		} else {
 			out.push_str("ok\n");
 		}
-		out
 	} else {
 		// Failure: keep diagnostics, strip only progress noise
-		let mut out = String::new();
 		for line in stripped.lines() {
 			let trimmed = line.trim();
 			if trimmed.is_empty() {
@@ -704,8 +869,8 @@ fn condense_push(input: &str, exit_code: i32) -> String {
 			out.push_str(line);
 			out.push('\n');
 		}
-		out
 	}
+	out
 }
 fn condense_pull(input: &str, exit_code: i32) -> String {
 	if exit_code == 0 {
@@ -721,6 +886,39 @@ fn condense_pull(input: &str, exit_code: i32) -> String {
 		return "ok\n".to_string();
 	}
 	condense_noisy_output(input)
+}
+
+fn condense_diff_stat(input: &str) -> String {
+	let mut entries = Vec::new();
+	let mut summary = None;
+	for line in input.lines() {
+		let trimmed = line.trim();
+		if trimmed.is_empty() {
+			continue;
+		}
+		if let Some((files, added, deleted)) = parse_stat_summary(trimmed) {
+			summary = Some((files, added, deleted));
+			continue;
+		}
+		if trimmed.contains('|') {
+			entries.push(primitives::truncate_line(trimmed, 140));
+		}
+	}
+
+	let Some((files, added, deleted)) = summary else {
+		return primitives::head_tail_cap(input, primitives::CapClass::List);
+	};
+
+	let mut out = String::new();
+	let _ = writeln!(out, "git diff --stat: {files} files +{added} -{deleted}");
+	for entry in entries.iter().take(20) {
+		out.push_str(entry);
+		out.push('\n');
+	}
+	if entries.len() > 20 {
+		let _ = writeln!(out, "… {} files omitted …", entries.len() - 20);
+	}
+	out
 }
 
 fn parse_stat_summary(line: &str) -> Option<(&str, &str, &str)> {
@@ -771,7 +969,8 @@ fn condense_fetch(input: &str, exit_code: i32) -> String {
 				kept.push(trimmed.to_string());
 				continue;
 			}
-			// Branch fetch lines: " * branch       name -> FETCH_HEAD" or "   hash..hash  name -> name"
+			// Branch fetch lines: " * branch       name -> FETCH_HEAD" or "   hash..hash
+			// name -> name"
 			if trimmed.starts_with('*') || trimmed.starts_with(" *") {
 				if trimmed.contains("..") {
 					updates += 1;
@@ -784,7 +983,6 @@ fn condense_fetch(input: &str, exit_code: i32) -> String {
 					updates += 1;
 				}
 				kept.push(trimmed.to_string());
-				continue;
 			}
 			// Keep error/warning lines
 			if trimmed.starts_with("error:")
@@ -792,7 +990,6 @@ fn condense_fetch(input: &str, exit_code: i32) -> String {
 				|| trimmed.starts_with("warning:")
 			{
 				kept.push(trimmed.to_string());
-				continue;
 			}
 		}
 
@@ -872,28 +1069,27 @@ fn condense_stash_list(input: &str) -> String {
 		count += 1;
 		// Format: "stash@{N}: WIP on <branch>: <hash> <message>"
 		// or    : "stash@{N}: On <branch>: <hash> <message>"
-		let after_stash = if let Some(rest) = trimmed.split_once(": ") {
-			// Skip "stash@{N}" prefix and following ": "
-			rest.1
+		let (stash_ref, after_stash) = if let Some((stash_ref, rest)) = trimmed.split_once(": ") {
+			(stash_ref, rest)
 		} else {
-			trimmed
+			("", trimmed)
 		};
-		// Now strip "WIP on <branch>: " or "On <branch>: " noise
+		// Strip "WIP on <branch>: " or "On <branch>: " noise, keep stash ref.
 		let compact = if let Some(rest) = after_stash.strip_prefix("WIP on ") {
-			if let Some((_branch, msg)) = rest.split_once(": ") {
-				msg.trim()
-			} else {
-				after_stash
-			}
+			rest
+				.split_once(": ")
+				.map_or(after_stash, |(_branch, msg)| msg.trim())
 		} else if let Some(rest) = after_stash.strip_prefix("On ") {
-			if let Some((_branch, msg)) = rest.split_once(": ") {
-				msg.trim()
-			} else {
-				after_stash
-			}
+			rest
+				.split_once(": ")
+				.map_or(after_stash, |(_branch, msg)| msg.trim())
 		} else {
 			after_stash
 		};
+		if !stash_ref.is_empty() {
+			out.push_str(stash_ref);
+			out.push_str(": ");
+		}
 		out.push_str(compact);
 		out.push('\n');
 	}
@@ -910,12 +1106,8 @@ fn stash_subcommand(command: &str) -> &str {
 	for part in command.split_whitespace() {
 		match part {
 			"push" | "save" | "apply" | "pop" | "drop" | "branch" | "clear" | "create" | "show"
-			| "list" => {
-				if part != "stash" && part != "git" {
-					return part;
-				}
-			},
-			_ => continue,
+			| "list" => return part,
+			_ => {},
 		}
 	}
 	""
@@ -940,21 +1132,14 @@ mod tests {
 	}
 
 	#[test]
-	fn short_status_is_compacted() {
+	fn short_status_is_passthrough() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("status"), "git status --short", &cfg);
 		let input = " M src/main.rs\nM  Cargo.toml\n?? scratch.txt\nUU conflicted.rs\n";
 		let out = filter(&ctx, input, 0);
 
-		assert!(out.changed);
-		assert!(
-			out.text
-				.contains("staged 1, unstaged 1, untracked 1, conflicts 1")
-		);
-		assert!(out.text.contains("M src/main.rs"));
-		assert!(out.text.contains("M Cargo.toml"));
-		assert!(out.text.contains("?? scratch.txt"));
-		assert!(out.text.contains("UU conflicted.rs"));
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
 	}
 
 	#[test]
@@ -980,17 +1165,17 @@ mod tests {
 	fn branch_listing_is_compacted() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("branch"), "git branch -a", &cfg);
-		let mut input = String::new();
-		for idx in 0..60 {
-			input.push_str("  feature/");
-			input.push_str(&idx.to_string());
-			input.push('\n');
-		}
-		let out = filter(&ctx, &input, 0);
-		assert!(out.text.starts_with("60 entries\n"));
-		assert!(out.text.contains("feature/0"));
-		assert!(out.text.contains("feature/59"));
-		assert!(out.text.contains("…"));
+		let input = "\
+* main
+  feat/a
+  fix/b
+  remotes/origin/main
+  remotes/origin/x
+  remotes/upstream/y
+  remotes/origin/HEAD -> origin/main
+";
+		let out = filter(&ctx, input, 0);
+		assert_eq!(out.text, "* main\nlocal: feat/a fix/b\nremote-only (2): origin/x upstream/y\n");
 	}
 
 	#[test]
@@ -1015,6 +1200,26 @@ mod tests {
 
 		assert!(!out.changed);
 		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn show_condenses_commit_stat_and_diff_samples() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("show"), "git show HEAD", &cfg);
+		let input = "commit abcdef1234567890\nAuthor: Somebody\nDate: today\n\n    fix: update \
+		             thing\n\n    Keep useful body line.\n    Signed-off-by: Somebody \
+		             <s@example.com>\n\ndiff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ \
+		             b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new\n";
+		let out = filter(&ctx, input, 0);
+		assert!(out.changed);
+		assert!(out.text.contains("commit abcdef1"));
+		assert!(out.text.contains("fix: update thing"));
+		assert!(out.text.contains("Keep useful body line."));
+		assert!(!out.text.contains("Signed-off-by"));
+		assert!(out.text.contains("src/lib.rs | 2"));
+		assert!(out.text.contains("--- Changes ---"));
+		assert!(out.text.contains("-old"));
+		assert!(out.text.contains("+new"));
 	}
 
 	#[test]
@@ -1063,6 +1268,22 @@ mod tests {
 	}
 
 	#[test]
+	fn log_keeps_useful_body_lines_and_strips_trailers() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("log"), "git log", &cfg);
+		let input = "commit abcdef1234567890\nAuthor: Somebody\nDate: today\n\n    feat: add \
+		             API\n\n    BREAKING CHANGE: response shape changed\n    Fixes #123\n    \
+		             Signed-off-by: Somebody <s@example.com>\n    Co-authored-by: Other \
+		             <o@example.com>\n";
+		let out = filter(&ctx, input, 0);
+		assert!(out.text.contains("abcdef1 feat: add API"));
+		assert!(out.text.contains("BREAKING CHANGE: response shape changed"));
+		assert!(out.text.contains("Fixes #123"));
+		assert!(!out.text.contains("Signed-off-by"));
+		assert!(!out.text.contains("Co-authored-by"));
+	}
+
+	#[test]
 	fn diff_condenses_unified_patch_to_stat_and_hunk_samples() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("diff"), "git diff HEAD~1", &cfg);
@@ -1082,6 +1303,30 @@ mod tests {
 		assert!(out.text.contains("@@ -629,7 +629,7 @@"));
 		assert!(out.text.contains("-      min-width: 800px;"));
 		assert!(out.text.contains("+      min-width: 1050px;"));
+	}
+
+	#[test]
+	fn diff_stat_is_summarized() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("diff"), "git diff --stat", &cfg);
+		let input = "\
+ crates/pi-shell/src/minimizer/filters/git.rs     | 385 +++++++++++++++++------
+ packages/coding-agent/src/exec/bash-executor.ts  |  18 ++
+ packages/coding-agent/test/bash-executor.test.ts |  45 ++-
+ 3 files changed, 448 insertions(+), 100 deletions(-)
+";
+		let out = filter(&ctx, input, 0);
+		assert!(out.changed);
+		assert!(out.text.starts_with("git diff --stat: 3 files +448 -100\n"));
+		assert!(
+			out.text
+				.contains("crates/pi-shell/src/minimizer/filters/git.rs")
+		);
+		assert!(
+			out.text
+				.contains("packages/coding-agent/test/bash-executor.test.ts")
+		);
+		assert!(!out.text.contains("3 files changed"));
 	}
 
 	#[test]
@@ -1210,7 +1455,9 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	fn status_detects_rebasing() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("status"), "git status", &cfg);
-		let input = "On branch feature\nYou are currently rebasing.\n  (fix conflicts and then run \"git rebase --continue\")\n\nChanges not staged for commit:\n  modified:   src/main.rs\n\nno changes added to commit (use \"git add\")\n";
+		let input = "On branch feature\nYou are currently rebasing.\n  (fix conflicts and then run \
+		             \"git rebase --continue\")\n\nChanges not staged for commit:\n  modified:   \
+		             src/main.rs\n\nno changes added to commit (use \"git add\")\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.changed);
 		assert!(out.text.starts_with("state: rebasing\n"));
@@ -1222,7 +1469,9 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	fn status_detects_cherry_pick() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("status"), "git status", &cfg);
-		let input = "On branch main\nYou are currently cherry-picking commit abc1234.\n  (fix conflicts and run \"git cherry-pick --continue\")\n\nnothing to commit, working tree clean\n";
+		let input = "On branch main\nYou are currently cherry-picking commit abc1234.\n  (fix \
+		             conflicts and run \"git cherry-pick --continue\")\n\nnothing to commit, \
+		             working tree clean\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.changed);
 		assert!(out.text.starts_with("state: cherry-pick\n"));
@@ -1232,7 +1481,8 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	fn status_detects_revert() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("status"), "git status", &cfg);
-		let input = "On branch main\nYou are currently reverting commit abc1234.\n\nnothing to commit, working tree clean\n";
+		let input = "On branch main\nYou are currently reverting commit abc1234.\n\nnothing to \
+		             commit, working tree clean\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.changed);
 		assert!(out.text.starts_with("state: revert\n"));
@@ -1242,7 +1492,9 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	fn status_detects_bisect() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("status"), "git status", &cfg);
-		let input = "On branch main\nYou are currently bisecting, started from branch 'feature'.\n  (use \"git bisect reset\" to get back to the original branch)\n\nnothing to commit, working tree clean\n";
+		let input = "On branch main\nYou are currently bisecting, started from branch 'feature'.\n  \
+		             (use \"git bisect reset\" to get back to the original branch)\n\nnothing to \
+		             commit, working tree clean\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.changed);
 		assert!(out.text.starts_with("state: bisect\n"));
@@ -1252,7 +1504,8 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	fn status_detects_am_session() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("status"), "git status", &cfg);
-		let input = "On branch main\nYou are in the middle of an am session.\n  (fix conflicts and then run \"git am --continue\")\n\nnothing to commit, working tree clean\n";
+		let input = "On branch main\nYou are in the middle of an am session.\n  (fix conflicts and \
+		             then run \"git am --continue\")\n\nnothing to commit, working tree clean\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.changed);
 		assert!(out.text.starts_with("state: am\n"));
@@ -1262,7 +1515,8 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	fn status_detects_sparse_checkout() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("status"), "git status", &cfg);
-		let input = "On branch main\nYou are in a sparse checkout with 42% of tracked files present.\n\nnothing to commit, working tree clean\n";
+		let input = "On branch main\nYou are in a sparse checkout with 42% of tracked files \
+		             present.\n\nnothing to commit, working tree clean\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.changed);
 		assert!(out.text.starts_with("state: sparse-checkout\n"));
@@ -1272,7 +1526,9 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	fn status_detects_unmerged_paths() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("status"), "git status", &cfg);
-		let input = "On branch main\nYou have unmerged paths.\n  (fix conflicts and run \"git commit\")\n\nUnmerged paths:\n  both modified:   conflicted.rs\n\nno changes added to commit (use \"git add\")\n";
+		let input = "On branch main\nYou have unmerged paths.\n  (fix conflicts and run \"git \
+		             commit\")\n\nUnmerged paths:\n  both modified:   conflicted.rs\n\nno changes \
+		             added to commit (use \"git add\")\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.changed);
 		assert!(out.text.starts_with("state: merge-conflict\n"));
@@ -1283,7 +1539,8 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	fn status_state_not_emitted_when_no_state() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("status"), "git status", &cfg);
-		let input = "On branch main\nYour branch is up to date with 'origin/main'.\n\nnothing to commit, working tree clean\n";
+		let input = "On branch main\nYour branch is up to date with 'origin/main'.\n\nnothing to \
+		             commit, working tree clean\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.changed);
 		assert!(!out.text.contains("state:"));
@@ -1314,7 +1571,8 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	fn pull_with_stat_compacted() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("pull"), "git pull", &cfg);
-		let input = "Updating abc1234..def5678\nFast-forward\n src/lib.rs | 12 ++++++++++++\n 1 file changed, 12 insertions(+)\n";
+		let input = "Updating abc1234..def5678\nFast-forward\n src/lib.rs | 12 ++++++++++++\n 1 \
+		             file changed, 12 insertions(+)\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.changed);
 		assert_eq!(out.text, "ok 1 files +12 -0\n");
@@ -1335,7 +1593,8 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	fn pull_conflict_keeps_diagnostics() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("pull"), "git pull", &cfg);
-		let input = "Auto-merging src/lib.rs\nCONFLICT (content): Merge conflict in src/lib.rs\nAutomatic merge failed; fix conflicts and then commit the result.\n";
+		let input = "Auto-merging src/lib.rs\nCONFLICT (content): Merge conflict in \
+		             src/lib.rs\nAutomatic merge failed; fix conflicts and then commit the result.\n";
 		let out = filter(&ctx, input, 1);
 		assert!(out.text.contains("CONFLICT"));
 		assert!(!out.text.contains("ok"));
@@ -1358,7 +1617,8 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	fn fetch_with_updates() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("fetch"), "git fetch", &cfg);
-		let input = "From github.com:user/repo\n   abc1234..def5678  main       -> origin/main\n   aabbccd..eeff001  feature    -> origin/feature\n";
+		let input = "From github.com:user/repo\n   abc1234..def5678  main       -> origin/main\n   \
+		             aabbccd..eeff001  feature    -> origin/feature\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.changed);
 		assert!(out.text.contains("ok fetched, 2 updates"));
@@ -1378,7 +1638,8 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	fn fetch_preserves_remote_warnings() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("fetch"), "git fetch origin", &cfg);
-		let input = "From github.com:user/repo\nremote: warning: this is a test warning\n   abc1234..def5678  main       -> origin/main\n";
+		let input = "From github.com:user/repo\nremote: warning: this is a test warning\n   \
+		             abc1234..def5678  main       -> origin/main\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.text.contains("remote: warning:"));
 		assert!(out.text.contains("ok fetched, 1 update"));
@@ -1388,7 +1649,8 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	fn fetch_failure_keeps_diagnostics() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("fetch"), "git fetch origin", &cfg);
-		let input = "fatal: 'origin' does not appear to be a git repository\nfatal: Could not read from remote repository.\n";
+		let input = "fatal: 'origin' does not appear to be a git repository\nfatal: Could not read \
+		             from remote repository.\n";
 		let out = filter(&ctx, input, 128);
 		assert!(out.text.contains("fatal:"));
 		assert!(!out.text.contains("ok"));
@@ -1481,12 +1743,13 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	fn stash_list_compacts_wip_prefix() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("stash"), "git stash list", &cfg);
-		let input = "stash@{0}: WIP on feature-x: abc1234 fix: something\nstash@{1}: On main: def5678 chore: clean up\nstash@{2}: WIP on dev: ghi9012 feat: add widget\n";
+		let input = "stash@{0}: WIP on feature-x: abc1234 fix: something\nstash@{1}: On main: \
+		             def5678 chore: clean up\nstash@{2}: WIP on dev: ghi9012 feat: add widget\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.changed);
-		assert!(out.text.contains("abc1234 fix: something"));
-		assert!(out.text.contains("def5678 chore: clean up"));
-		assert!(out.text.contains("ghi9012 feat: add widget"));
+		assert!(out.text.contains("stash@{0}: abc1234 fix: something"));
+		assert!(out.text.contains("stash@{1}: def5678 chore: clean up"));
+		assert!(out.text.contains("stash@{2}: ghi9012 feat: add widget"));
 		assert!(!out.text.contains("WIP on "));
 		assert!(!out.text.contains("On main:"));
 	}

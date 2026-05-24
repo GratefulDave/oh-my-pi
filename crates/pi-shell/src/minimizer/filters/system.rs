@@ -209,23 +209,19 @@ fn compact_log(input: &str) -> String {
 
 struct LogLine {
 	original: String,
-	count: usize,
+	count:    usize,
 }
 
 fn normalize_log_line(line: &str) -> String {
 	let without_timestamp = strip_leading_timestamp(line.trim());
 	let mut out = String::new();
-	let mut digits = String::new();
-	for ch in without_timestamp.chars() {
-		if ch.is_ascii_digit() {
-			digits.push(ch);
-			continue;
+	for token in without_timestamp.split_whitespace() {
+		if !out.is_empty() {
+			out.push(' ');
 		}
-		flush_digits(&mut out, &mut digits);
-		out.push(ch);
+		push_normalized_token(&mut out, token);
 	}
-	flush_digits(&mut out, &mut digits);
-	out.split_whitespace().collect::<Vec<_>>().join(" ")
+	out
 }
 
 fn strip_leading_timestamp(line: &str) -> &str {
@@ -241,6 +237,54 @@ fn strip_leading_timestamp(line: &str) -> &str {
 		return "";
 	}
 	line
+}
+
+fn push_normalized_token(out: &mut String, token: &str) {
+	let core = token.trim_matches(|ch: char| ch.is_ascii_punctuation() && ch != '/' && ch != '.');
+	if is_uuid_like(core) {
+		out.push_str("<uuid>");
+		return;
+	}
+	if is_hex_like(core) {
+		out.push_str("<hex>");
+		return;
+	}
+	if is_path_like(core) {
+		out.push_str("<path>");
+		return;
+	}
+
+	let mut digits = String::new();
+	for ch in token.chars() {
+		if ch.is_ascii_digit() {
+			digits.push(ch);
+			continue;
+		}
+		flush_digits(out, &mut digits);
+		out.push(ch);
+	}
+	flush_digits(out, &mut digits);
+}
+
+fn is_uuid_like(token: &str) -> bool {
+	token.len() == 36
+		&& token.bytes().enumerate().all(|(idx, byte)| {
+			if matches!(idx, 8 | 13 | 18 | 23) {
+				byte == b'-'
+			} else {
+				byte.is_ascii_hexdigit()
+			}
+		})
+}
+
+fn is_hex_like(token: &str) -> bool {
+	let token = token.strip_prefix("0x").unwrap_or(token);
+	token.len() >= 8 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn is_path_like(token: &str) -> bool {
+	(token.starts_with('/') || token.starts_with("./") || token.starts_with("../"))
+		&& token.len() > 1
 }
 
 fn flush_digits(out: &mut String, digits: &mut String) {
@@ -610,6 +654,18 @@ mod tests {
 		             worker 67890 failed\nINFO ready\n";
 		let out = filter(&ctx, input, 1);
 		assert!(out.text.contains("3 lines, 2 unique"));
+		assert!(out.text.contains("(×2)"));
+	}
+
+	#[test]
+	fn log_dedups_normalized_uuid_hex_and_paths() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("log", &cfg);
+		let input = "2026-01-01T10:00:00 ERROR request 550e8400-e29b-41d4-a716-446655440000 file \
+		             /tmp/a.rs hash deadbeef failed\n2026-01-01T10:00:01 ERROR request \
+		             123e4567-e89b-12d3-a456-426614174000 file /tmp/b.rs hash cafebabe failed\n";
+		let out = filter(&ctx, input, 1);
+		assert!(out.text.contains("2 lines, 1 unique"));
 		assert!(out.text.contains("(×2)"));
 	}
 

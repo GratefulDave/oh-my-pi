@@ -216,7 +216,9 @@ fn is_pytest_progress_line(trimmed: &str) -> bool {
 	let Some((path, statuses)) = trimmed.split_once(char::is_whitespace) else {
 		return false;
 	};
-	path.ends_with(".py")
+	std::path::Path::new(path)
+		.extension()
+		.is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
 		&& statuses
 			.trim()
 			.chars()
@@ -312,10 +314,10 @@ mod tests {
 	fn ruff_check_routes_to_lint_grouping() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = MinimizerCtx {
-			program: "ruff",
+			program:    "ruff",
 			subcommand: Some("check"),
-			command: "ruff check",
-			config: &cfg,
+			command:    "ruff check",
+			config:     &cfg,
 		};
 		let out = filter(
 			&context,
@@ -351,11 +353,16 @@ mod tests {
 	#[test]
 	fn direct_pytest_success_routes_to_compact_summary() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
-		let context =
-			MinimizerCtx { program: "pytest", subcommand: None, command: "pytest", config: &cfg };
+		let context = MinimizerCtx {
+			program:    "pytest",
+			subcommand: None,
+			command:    "pytest",
+			config:     &cfg,
+		};
 		let out = filter(
 			&context,
-			"===== test session starts =====\ncollected 2 items\n\ntests/test_a.py ..\n===== 2 passed in 0.01s =====\n",
+			"===== test session starts =====\ncollected 2 items\n\ntests/test_a.py ..\n===== 2 \
+			 passed in 0.01s =====\n",
 			0,
 		);
 
@@ -366,10 +373,10 @@ mod tests {
 	fn ruff_format_preserves_changed_files_and_summaries() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = MinimizerCtx {
-			program: "ruff",
+			program:    "ruff",
 			subcommand: Some("format"),
-			command: "ruff format --check .",
-			config: &cfg,
+			command:    "ruff format --check .",
+			config:     &cfg,
 		};
 		let out = filter(
 			&context,
@@ -391,10 +398,10 @@ mod tests {
 	fn ruff_format_preserves_all_formatted_summary() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = MinimizerCtx {
-			program: "ruff",
+			program:    "ruff",
 			subcommand: Some("format"),
-			command: "ruff format .",
-			config: &cfg,
+			command:    "ruff format .",
+			config:     &cfg,
 		};
 		let out = filter(&context, "3 files left unchanged\n", 0);
 

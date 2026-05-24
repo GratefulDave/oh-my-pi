@@ -77,6 +77,20 @@ export function buildMinimizerOptions(group: ShellMinimizerSettings): MinimizerO
 		maxCaptureBytes: group.maxCaptureBytes,
 	};
 }
+/** Regex matching minimizer omission markers like "… 500 lines omitted …". */
+const OMISSION_MARKER_RE = /… (\d+) ([\w ]+?) omitted.*$/m;
+
+/** Scan minimized text for an omission marker and return a recovery hint
+ *  pointing at the hidden tail/list continuation in the artifact.
+ *  Exported for testing. */
+export function buildArtifactRecoveryHint(minimizedText: string, artifactId: string): string | null {
+	const match = OMISSION_MARKER_RE.exec(minimizedText);
+	if (!match) return null;
+	const beforeMatch = minimizedText.substring(0, match.index);
+	const headLines = (beforeMatch.match(/\n/g) || []).length;
+	const hiddenStart = headLines + 1;
+	return `[see remaining: read artifact://${artifactId}:${hiddenStart}]\n`;
+}
 
 export async function executeBash(command: string, options?: BashExecutorOptions): Promise<BashResult> {
 	const settings = await Settings.init();
@@ -255,6 +269,10 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 				if (artifactId) {
 					const sep = minimized.text.endsWith("\n") ? "" : "\n";
 					sink.push(`${sep}[raw output: artifact://${artifactId}]\n`);
+					const hint = buildArtifactRecoveryHint(minimized.text, artifactId);
+					if (hint) {
+						sink.push(hint);
+					}
 				}
 			}
 			await recordMinimizerGain({

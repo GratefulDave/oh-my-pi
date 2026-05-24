@@ -1,7 +1,10 @@
 //! Container and cloud command output filters.
 
-use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
+use std::fmt::Write as _;
+
 use serde_json::Value;
+
+use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
 
 pub fn supports(subcommand: Option<&str>) -> bool {
 	matches!(
@@ -135,27 +138,24 @@ fn compact_kubectl_pods(items: &[Value]) -> String {
 		// Simple age extraction (just show startTime if available)
 		let age = start_time;
 
-		let display = if namespace != "default" {
-			format!("{}/{}", namespace, name)
-		} else {
+		let display = if namespace == "default" {
 			name.to_string()
+		} else {
+			format!("{namespace}/{name}")
 		};
 
-		out.push_str(&format!(
-			"{}\t{}/{}\t{}\t{}\t{}\t{}\t{}\n",
-			display, ready, total, phase, restarts, age, pod_ip, node
-		));
+		let _ =
+			writeln!(out, "{display}\t{ready}/{total}\t{phase}\t{restarts}\t{age}\t{pod_ip}\t{node}");
 		count += 1;
 	}
 	out.push('\n');
-	out.push_str(&format!("{} pod(s)\n", count));
+	let _ = writeln!(out, "{count} pod(s)");
 	out
 }
 
 fn compute_pod_container_stats(status: &Value) -> (usize, usize, i32) {
-	let container_statuses = match status.get("containerStatuses").and_then(|v| v.as_array()) {
-		Some(cs) => cs,
-		None => return (0, 0, 0),
+	let Some(container_statuses) = status.get("containerStatuses").and_then(|v| v.as_array()) else {
+		return (0, 0, 0);
 	};
 	let total = container_statuses.len();
 	let mut ready = 0usize;
@@ -204,20 +204,17 @@ fn compact_kubectl_services(items: &[Value]) -> String {
 		// Ports
 		let ports = format_k8s_ports(spec.get("ports").and_then(|v| v.as_array()));
 
-		let display = if namespace != "default" {
-			format!("{}/{}", namespace, name)
-		} else {
+		let display = if namespace == "default" {
 			name.to_string()
+		} else {
+			format!("{namespace}/{name}")
 		};
 
-		out.push_str(&format!(
-			"{}\t{}\t{}\t{}\t{}\n",
-			display, svc_type, cluster_ip, external_ip, ports
-		));
+		let _ = writeln!(out, "{display}\t{svc_type}\t{cluster_ip}\t{external_ip}\t{ports}");
 		count += 1;
 	}
 	out.push('\n');
-	out.push_str(&format!("{} service(s)\n", count));
+	let _ = writeln!(out, "{count} service(s)");
 	out
 }
 
@@ -234,8 +231,7 @@ fn format_k8s_ports(ports: Option<&Vec<Value>>) -> String {
 			let port = p
 				.get("port")
 				.and_then(|v| v.as_i64())
-				.map(|v| v.to_string())
-				.unwrap_or_else(|| "?".to_string());
+				.map_or_else(|| "?".to_string(), |v| v.to_string());
 			let proto = p.get("protocol").and_then(|v| v.as_str()).unwrap_or("TCP");
 			let node_port = p.get("nodePort").and_then(|v| v.as_i64());
 			let target_port = p.get("targetPort");
@@ -244,10 +240,10 @@ fn format_k8s_ports(ports: Option<&Vec<Value>>) -> String {
 				.map(|v| v.to_string())
 				.or_else(|| target_port.and_then(|v| v.as_str()).map(|s| s.to_string()));
 			match (target, node_port) {
-				(Some(t), Some(np)) => format!("{}/{}:{}->{}/{}", port, t, np, port, proto),
-				(Some(t), None) => format!("{}/{}:{}/{}", port, t, port, proto),
-				(None, Some(np)) => format!("{}:{}->{}/{}", np, port, port, proto),
-				(None, None) => format!("{}/{}", port, proto),
+				(Some(t), Some(np)) => format!("{port}/{t}:{np}->{port}/{proto}"),
+				(Some(t), None) => format!("{port}/{t}:{port}/{proto}"),
+				(None, Some(np)) => format!("{np}:{port}->{port}/{proto}"),
+				(None, None) => format!("{port}/{proto}"),
 			}
 		})
 		.collect();
@@ -475,10 +471,10 @@ mod tests {
 	fn docker_compose_logs_uses_log_filter() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let compose_ctx = MinimizerCtx {
-			program: "docker",
+			program:    "docker",
 			subcommand: Some("compose"),
-			command: "docker compose logs api",
-			config: &cfg,
+			command:    "docker compose logs api",
+			config:     &cfg,
 		};
 		let input = "api-1  | ready\napi-2  | ready\napi | ready\n";
 		let out = filter(&compose_ctx, input, 0).text;
@@ -489,10 +485,10 @@ mod tests {
 	fn docker_compose_ps_uses_table_filter() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let compose_ctx = MinimizerCtx {
-			program: "docker",
+			program:    "docker",
 			subcommand: Some("compose"),
-			command: "docker compose ps",
-			config: &cfg,
+			command:    "docker compose ps",
+			config:     &cfg,
 		};
 		let mut input = String::from("NAME IMAGE COMMAND SERVICE CREATED STATUS PORTS\n");
 		for idx in 0..20 {
