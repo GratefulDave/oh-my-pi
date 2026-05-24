@@ -189,8 +189,8 @@ function pushGainRows<T extends GainSlashRow>(lines: string[], rows: T[], label:
 	}
 }
 
-const ORCHESTRATE_USAGE =
-	"Usage: /orchestrate [--backend acpx|tmux|cmux] [--agents gemini,claude,codex] [--session <name>] [--mode exec|prompt] [--timeout <ms>] <prompt>";
+const DELEGATE_USAGE =
+	"Usage: /delegate [--backend acpx|tmux|cmux] [--agents gemini,claude,codex] [--session <name>] [--mode exec|prompt] [--timeout <ms>] <prompt>";
 
 interface ParsedExternalOrchestrationArgs {
 	backend: ExternalAgentBackend;
@@ -259,35 +259,35 @@ function parseExternalOrchestrationArgs(args: string): ExternalOrchestrationPars
 		const token = tokens[i]!;
 		if (token === "--backend") {
 			const value = tokens[++i];
-			if (!value || !isExternalAgentBackend(value)) return { error: ORCHESTRATE_USAGE };
+			if (!value || !isExternalAgentBackend(value)) return { error: DELEGATE_USAGE };
 			backend = value;
 		} else if (token === "--agents") {
 			const value = tokens[++i];
 			const parsedProviders = value ? parseExternalProviders(value) : undefined;
-			if (!parsedProviders) return { error: ORCHESTRATE_USAGE };
+			if (!parsedProviders) return { error: DELEGATE_USAGE };
 			providers = parsedProviders;
 		} else if (token === "--session") {
 			const value = tokens[++i];
-			if (!value) return { error: ORCHESTRATE_USAGE };
+			if (!value) return { error: DELEGATE_USAGE };
 			session = value;
 		} else if (token === "--mode") {
 			const value = tokens[++i];
-			if (!value || !isExternalAgentMode(value)) return { error: ORCHESTRATE_USAGE };
+			if (!value || !isExternalAgentMode(value)) return { error: DELEGATE_USAGE };
 			mode = value;
 		} else if (token === "--timeout") {
 			const value = tokens[++i];
 			const parsedTimeout = value ? parsePositiveInteger(value) : undefined;
-			if (!parsedTimeout) return { error: ORCHESTRATE_USAGE };
+			if (!parsedTimeout) return { error: DELEGATE_USAGE };
 			timeoutMs = parsedTimeout;
 		} else if (token.startsWith("--")) {
-			return { error: ORCHESTRATE_USAGE };
+			return { error: DELEGATE_USAGE };
 		} else {
 			promptParts.push(token);
 		}
 	}
 
 	const prompt = stripWrappingQuotes(promptParts.join(" ").trim());
-	if (!prompt) return { error: ORCHESTRATE_USAGE };
+	if (!prompt) return { error: DELEGATE_USAGE };
 	return { value: { backend, providers, session, mode, timeoutMs, prompt } };
 }
 
@@ -396,8 +396,7 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		},
 	},
 	{
-		name: "orchestrate",
-		aliases: ["delegate"],
+		name: "delegate",
 		description: "Run parallel external agents via acpx/tmux/cmux",
 		inlineHint: "[--backend acpx|tmux|cmux] [--agents gemini,claude,codex] <prompt>",
 		allowArgs: true,

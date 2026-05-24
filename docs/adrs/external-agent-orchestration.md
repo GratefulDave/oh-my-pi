@@ -2,7 +2,7 @@
 
 ## Decision
 
-This fork can spawn real external agent sessions as processes. `/orchestrate` and `/delegate` are the current entrypoints.
+This fork can spawn real external agent sessions as processes. `/delegate` is the current entrypoint. `/orchestrate` is reserved for in-process subagent orchestration workflows.
 
 Supported backends:
 
@@ -44,10 +44,10 @@ Backend behavior today:
 - `tmux` creates a detached session with `tmux new-session -d -s <session> <provider>` and sends the prompt with `tmux send-keys`. If no session is supplied, a generated `external-<provider>-<timestamp>` session name is used.
 - `cmux` creates a split with `cmux new-split right` and sends `<provider> <prompt>` through `cmux send`.
 
-`builtin-registry.ts` registers `/orchestrate` with `/delegate` as an alias. Arguments are selected with flags:
+`builtin-registry.ts` registers `/delegate` as the primary command for external agents. Arguments are selected with flags:
 
 ```text
-/orchestrate [--backend acpx|tmux|cmux] [--agents gemini,claude,codex] [--session <name>] [--mode exec|prompt] [--timeout <ms>] <prompt>
+/delegate [--backend acpx|tmux|cmux] [--agents gemini,claude,codex] [--session <name>] [--mode exec|prompt] [--timeout <ms>] <prompt>
 ```
 
 Defaults:

@@ -7,6 +7,10 @@
 - Added native `ast_dump` syntax-tree diagnostics and YAML rule mode for `ast_grep`, enabling relational ast-grep queries such as `has`, `inside`, `follows`, and `precedes`.
 - Added ICM as a selectable memory backend, using the local `icm` CLI for recall and retention while keeping Hindsight and local memory as separate options.
 
+### Changed
+
+- Split ambiguous orchestration slash commands: `/delegate` now owns external CLI agent spawning (acpx/tmux/cmux); `/orchestrate` is reserved for in-process subagent workflow orchestration.
+
 ## [15.1.9] - 2026-05-21
 
 ### Fixed

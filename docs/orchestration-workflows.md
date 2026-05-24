@@ -1,6 +1,6 @@
 # Orchestration workflows
 
-This document describes how to use `/orchestrate` and `/delegate` to run external Claude, Codex, or Gemini agent sessions from this fork.
+This document describes how to use `/delegate` to run external Claude, Codex, or Gemini agent sessions from this fork. `/orchestrate` is reserved for in-process subagent orchestration.
 
 Use these commands when you need another real agent runtime, not just a different in-process model. External agents run as separate CLI processes with their own auth, session state, tools, terminal behavior, and output format.
 
@@ -19,11 +19,10 @@ Use spawned external agents when:
 - you want the external CLI's own session state, auth, or tool surface
 - you want a visible terminal session for inspection or manual follow-up
 
-The current entrypoints are aliases:
+The current entrypoint:
 
 ```text
-/orchestrate [--backend acpx|tmux|cmux] [--agents gemini,claude,codex] [--session <name>] [--mode exec|prompt] [--timeout <ms>] <prompt>
-/delegate    [--backend acpx|tmux|cmux] [--agents gemini,claude,codex] [--session <name>] [--mode exec|prompt] [--timeout <ms>] <prompt>
+/delegate [--backend acpx|tmux|cmux] [--agents gemini,claude,codex] [--session <name>] [--mode exec|prompt] [--timeout <ms>] <prompt>
 ```
 
 Defaults:
@@ -83,8 +82,7 @@ This is the default shape for a quick external check. The command returns an Ext
 Run Gemini, Claude, and Codex in parallel against the current branch:
 
 ```text
-/orchestrate --backend acpx --agents gemini,claude,codex "review current branch"
-```
+/delegate --backend acpx --agents gemini,claude,codex "review current branch"
 
 Each provider receives the same prompt. The report includes one section per provider with status, session if present, exit code, and captured output or terminal/status events.
 
@@ -119,8 +117,7 @@ Pass `--session` to give the external session a stable name:
 For a single agent, the session is used as provided. For multiple agents, the provider name is appended so each process gets a distinct session name:
 
 ```text
-/orchestrate --backend acpx --agents gemini,claude,codex --session review "review current branch"
-```
+/delegate --backend acpx --agents gemini,claude,codex --session review "review current branch"
 
 That produces per-provider session names such as `review-gemini`, `review-claude`, and `review-codex`.
 
