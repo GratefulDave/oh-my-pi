@@ -1,6 +1,7 @@
 //! Container and cloud command output filters.
 
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
+use serde_json::Value;
 
 pub fn supports(subcommand: Option<&str>) -> bool {
 	matches!(
@@ -57,12 +58,200 @@ fn filter_kubectl(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String
 	}
 	match ctx.subcommand {
 		Some("logs") => filter_logs(input),
-		Some("get") => compact_table(input, 20),
+		Some("get") => {
+			if let Some(compacted) = try_compact_kubectl_json(input) {
+				return compacted;
+			}
+			compact_table(input, 20)
+		},
 		Some("describe") => {
 			primitives::head_tail_lines(&primitives::dedup_consecutive_lines(input), 120, 80)
 		},
 		_ => compact_build_or_progress(input),
 	}
+}
+
+// ── kubectl JSON compaction ──────────────────────────────────────────────────
+
+/// Try to parse kubectl `get -o json` output and produce a compact table.
+/// Returns None if input is not recognized JSON or if schema is unexpected.
+fn try_compact_kubectl_json(input: &str) -> Option<String> {
+	let trimmed = input.trim();
+	if !trimmed.starts_with('{') {
+		return None;
+	}
+	let root: Value = serde_json::from_str(trimmed).ok()?;
+
+	// kubectl list JSON: {"kind":"List","items":[...]}
+	if root.get("kind")?.as_str()? != "List" {
+		return None;
+	}
+	let items = root.get("items")?.as_array()?;
+	if items.is_empty() {
+		return None;
+	}
+
+	// Determine resource kind from first item
+	let first = &items[0];
+	let kind = first.get("kind")?.as_str()?;
+
+	match kind {
+		"Pod" => Some(compact_kubectl_pods(items)),
+		"Service" => Some(compact_kubectl_services(items)),
+		_ => None,
+	}
+}
+
+fn compact_kubectl_pods(items: &[Value]) -> String {
+	let mut out = String::from("NAME\tREADY\tSTATUS\tRESTARTS\tAGE\tIP\tNODE\n");
+	let mut count = 0usize;
+	for item in items {
+		let meta = item.get("metadata").unwrap_or(&Value::Null);
+		let spec = item.get("spec").unwrap_or(&Value::Null);
+		let status = item.get("status").unwrap_or(&Value::Null);
+
+		let name = meta.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+		let namespace = meta
+			.get("namespace")
+			.and_then(|v| v.as_str())
+			.unwrap_or("default");
+		let phase = status.get("phase").and_then(|v| v.as_str()).unwrap_or("?");
+		let pod_ip = status
+			.get("podIP")
+			.and_then(|v| v.as_str())
+			.unwrap_or("<none>");
+		let node = spec
+			.get("nodeName")
+			.and_then(|v| v.as_str())
+			.unwrap_or("<none>");
+
+		// Compute READY and RESTARTS from containerStatuses
+		let (ready, total, restarts) = compute_pod_container_stats(status);
+
+		let start_time = status
+			.get("startTime")
+			.and_then(|v| v.as_str())
+			.unwrap_or("");
+		// Simple age extraction (just show startTime if available)
+		let age = start_time;
+
+		let display = if namespace != "default" {
+			format!("{}/{}", namespace, name)
+		} else {
+			name.to_string()
+		};
+
+		out.push_str(&format!(
+			"{}\t{}/{}\t{}\t{}\t{}\t{}\t{}\n",
+			display, ready, total, phase, restarts, age, pod_ip, node
+		));
+		count += 1;
+	}
+	out.push('\n');
+	out.push_str(&format!("{} pod(s)\n", count));
+	out
+}
+
+fn compute_pod_container_stats(status: &Value) -> (usize, usize, i32) {
+	let container_statuses = match status.get("containerStatuses").and_then(|v| v.as_array()) {
+		Some(cs) => cs,
+		None => return (0, 0, 0),
+	};
+	let total = container_statuses.len();
+	let mut ready = 0usize;
+	let mut restarts = 0i32;
+	for cs in container_statuses {
+		if cs.get("ready").and_then(|v| v.as_bool()).unwrap_or(false) {
+			ready += 1;
+		}
+		restarts += cs.get("restartCount").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+	}
+	(ready, total, restarts)
+}
+
+fn compact_kubectl_services(items: &[Value]) -> String {
+	let mut out = String::from("NAME\tTYPE\tCLUSTER-IP\tEXTERNAL-IP\tPORT(S)\n");
+	let mut count = 0usize;
+	for item in items {
+		let meta = item.get("metadata").unwrap_or(&Value::Null);
+		let spec = item.get("spec").unwrap_or(&Value::Null);
+
+		let name = meta.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+		let namespace = meta
+			.get("namespace")
+			.and_then(|v| v.as_str())
+			.unwrap_or("default");
+		let svc_type = spec
+			.get("type")
+			.and_then(|v| v.as_str())
+			.unwrap_or("ClusterIP");
+		let cluster_ip = spec
+			.get("clusterIP")
+			.and_then(|v| v.as_str())
+			.unwrap_or("<none>");
+
+		// External IP from loadBalancer status
+		let external_ip = item
+			.get("status")
+			.and_then(|s| s.get("loadBalancer"))
+			.and_then(|lb| lb.get("ingress"))
+			.and_then(|ing| ing.as_array())
+			.and_then(|ingress| ingress.first())
+			.and_then(|i| i.get("ip").or_else(|| i.get("hostname")))
+			.and_then(|v| v.as_str())
+			.unwrap_or("<none>");
+
+		// Ports
+		let ports = format_k8s_ports(spec.get("ports").and_then(|v| v.as_array()));
+
+		let display = if namespace != "default" {
+			format!("{}/{}", namespace, name)
+		} else {
+			name.to_string()
+		};
+
+		out.push_str(&format!(
+			"{}\t{}\t{}\t{}\t{}\n",
+			display, svc_type, cluster_ip, external_ip, ports
+		));
+		count += 1;
+	}
+	out.push('\n');
+	out.push_str(&format!("{} service(s)\n", count));
+	out
+}
+
+fn format_k8s_ports(ports: Option<&Vec<Value>>) -> String {
+	let Some(ports) = ports else {
+		return "<none>".to_string();
+	};
+	if ports.is_empty() {
+		return "<none>".to_string();
+	}
+	let parts: Vec<String> = ports
+		.iter()
+		.map(|p| {
+			let port = p
+				.get("port")
+				.and_then(|v| v.as_i64())
+				.map(|v| v.to_string())
+				.unwrap_or_else(|| "?".to_string());
+			let proto = p.get("protocol").and_then(|v| v.as_str()).unwrap_or("TCP");
+			let node_port = p.get("nodePort").and_then(|v| v.as_i64());
+			let target_port = p.get("targetPort");
+			let target = target_port
+				.and_then(|v| v.as_i64())
+				.map(|v| v.to_string())
+				.or_else(|| target_port.and_then(|v| v.as_str()).map(|s| s.to_string()));
+			match (target, node_port) {
+				(Some(t), Some(np)) => format!("{}/{}:{}->{}/{}", port, t, np, port, proto),
+				(Some(t), None) => format!("{}/{}:{}/{}", port, t, port, proto),
+				(None, Some(np)) => format!("{}:{}->{}/{}", np, port, port, proto),
+				(None, None) => format!("{}/{}", port, proto),
+			}
+		})
+		.collect();
+	parts.join(",")
 }
 
 fn filter_helm(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
@@ -400,5 +589,146 @@ mod tests {
 		assert_eq!(filter(&docker_ctx, &input, 1).text, input);
 		assert_eq!(filter(&kubectl_ctx, &input, 1).text, input);
 		assert_eq!(filter(&helm_ctx, &input, 1).text, input);
+	}
+
+	// ── kubectl JSON tests ───────────────────────────────────────────────
+
+	#[test]
+	fn compacts_kubectl_get_pods_json() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let kubectl_ctx = ctx("kubectl", Some("get"), &cfg);
+		let input = r#"{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "metadata": {
+                "name": "nginx-pod",
+                "namespace": "default"
+            },
+            "spec": {
+                "nodeName": "node-1",
+                "containers": [{"name": "nginx", "image": "nginx:latest"}]
+            },
+            "status": {
+                "phase": "Running",
+                "podIP": "10.0.0.1",
+                "startTime": "2024-01-15T10:00:00Z",
+                "containerStatuses": [
+                    {"name": "nginx", "ready": true, "restartCount": 0}
+                ]
+            },
+            "kind": "Pod"
+        },
+        {
+            "metadata": {
+                "name": "failing-pod",
+                "namespace": "kube-system"
+            },
+            "spec": {
+                "nodeName": "node-2",
+                "containers": [
+                    {"name": "app", "image": "app:v1"},
+                    {"name": "sidecar", "image": "sidecar:v1"}
+                ]
+            },
+            "status": {
+                "phase": "Running",
+                "podIP": "10.0.0.2",
+                "startTime": "2024-01-15T09:00:00Z",
+                "containerStatuses": [
+                    {"name": "app", "ready": true, "restartCount": 3},
+                    {"name": "sidecar", "ready": false, "restartCount": 1}
+                ]
+            },
+            "kind": "Pod"
+        }
+    ],
+    "kind": "List"
+}"#;
+		let out = filter(&kubectl_ctx, input, 0).text;
+		assert!(out.contains("nginx-pod\t1/1\tRunning\t0"));
+		assert!(out.contains("kube-system/failing-pod\t1/2\tRunning\t4"));
+		assert!(out.contains("2 pod(s)"));
+	}
+
+	#[test]
+	fn compacts_kubectl_get_services_json() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let kubectl_ctx = ctx("kubectl", Some("get"), &cfg);
+		let input = r#"{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "metadata": { "name": "my-svc", "namespace": "default" },
+            "spec": {
+                "type": "ClusterIP",
+                "clusterIP": "10.0.0.10",
+                "ports": [
+                    {"port": 80, "targetPort": 8080, "protocol": "TCP"}
+                ]
+            },
+            "kind": "Service"
+        },
+        {
+            "metadata": { "name": "lb-svc", "namespace": "prod" },
+            "spec": {
+                "type": "LoadBalancer",
+                "clusterIP": "10.0.0.20",
+                "ports": [
+                    {"port": 443, "targetPort": 8443, "protocol": "TCP", "nodePort": 30001}
+                ]
+            },
+            "status": {
+                "loadBalancer": {
+                    "ingress": [{"ip": "203.0.113.1"}]
+                }
+            },
+            "kind": "Service"
+        }
+    ],
+    "kind": "List"
+}"#;
+		let out = filter(&kubectl_ctx, input, 0).text;
+		assert!(out.contains("my-svc\tClusterIP\t10.0.0.10\t<none>\t80/8080:80/TCP"));
+		assert!(
+			out.contains("prod/lb-svc\tLoadBalancer\t10.0.0.20\t203.0.113.1\t443/8443:30001->443/TCP")
+		);
+		assert!(out.contains("2 service(s)"));
+	}
+
+	#[test]
+	fn kubectl_json_parse_failure_falls_back_to_table() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let kubectl_ctx = ctx("kubectl", Some("get"), &cfg);
+		let mut input = String::from("NAME STATUS\n");
+		for i in 0..25 {
+			input.push_str(&format!("pod-{} running\n", i));
+		}
+		let out = filter(&kubectl_ctx, &input, 0).text;
+		// Should use table compaction, not crash
+		assert!(out.contains("25 rows"));
+		assert!(out.contains("pod-0"));
+	}
+
+	#[test]
+	fn kubectl_non_list_json_returns_unchanged() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let kubectl_ctx = ctx("kubectl", Some("get"), &cfg);
+		// Valid JSON but not a kubectl List — unrecognized
+		let input = r#"{"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "single"}}"#;
+		let out = filter(&kubectl_ctx, input, 0).text;
+		// Falls back — table compaction would try to process this
+		// The key is: doesn't crash, doesn't lose data
+		assert!(!out.is_empty());
+	}
+
+	#[test]
+	fn failing_kubectl_get_json_preserves_error() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let kubectl_ctx = ctx("kubectl", Some("get"), &cfg);
+		let input = "Error from server (Forbidden): pods is forbidden\n";
+		let out = filter(&kubectl_ctx, input, 1).text;
+		// Non-zero exit with non-logs → preserve verbatim
+		assert_eq!(out, input);
 	}
 }

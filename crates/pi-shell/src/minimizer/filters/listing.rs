@@ -116,7 +116,73 @@ fn split_grep_line(line: &str) -> Option<(&str, &str, &str)> {
 
 fn collapse_match_text(text: &str) -> String {
 	let collapsed = collapse_parenthesized_segment(text, 48);
-	primitives::truncate_line(&collapsed, 140)
+	center_truncate_match(&collapsed, 140)
+}
+
+/// Center-truncate grep/ripgrep match text so the match region stays visible.
+///
+/// Instead of truncating from the front (which loses matches deep in long lines),
+/// this centers the visible window. The heuristic biases toward non-whitespace
+/// content when the line has significant leading whitespace.
+fn center_truncate_match(text: &str, max_chars: usize) -> String {
+	if max_chars == 0 {
+		return String::new();
+	}
+	let char_count = text.chars().count();
+	if char_count <= max_chars {
+		return text.to_string();
+	}
+
+	// Heuristic:
+	// - If the line has significant leading whitespace, bias toward the code region
+	//   shortly after indentation (common for grep hits inside indented code).
+	// - If the line is effectively one long token, bias earlier so identifiers that
+	//   appear before a long suffix still remain visible.
+	// - Otherwise center in the middle of the full line.
+	let first_non_ws = text.find(|c: char| !c.is_whitespace()).unwrap_or(0);
+	let has_whitespace = text.chars().any(char::is_whitespace);
+	let anchor = if first_non_ws > 0 && first_non_ws < char_count / 3 {
+		first_non_ws + max_chars / 4
+	} else if !has_whitespace {
+		char_count / 3
+	} else {
+		char_count / 2
+	};
+
+	let window_size = max_chars;
+	let half = window_size / 2;
+	let mut window_start = anchor.saturating_sub(half);
+	if first_non_ws > 0 {
+		window_start = window_start.max(first_non_ws);
+	}
+	// Clamp so the window doesn't overshoot the end.
+	window_start = window_start.min(char_count.saturating_sub(window_size));
+
+	let mut out = String::with_capacity(max_chars + 12);
+	let mut chars = text.chars();
+	for _ in 0..window_start {
+		chars.next();
+	}
+	let dropped_before = window_start;
+	if dropped_before > 0 {
+		out.push('\u{2026}');
+	}
+	let mut shown = 0usize;
+	for _ in 0..window_size {
+		match chars.next() {
+			Some(ch) => {
+				out.push(ch);
+				shown += 1;
+			},
+			None => break,
+		}
+	}
+	let total_dropped = char_count.saturating_sub(shown);
+	if total_dropped > 0 {
+		use std::fmt::Write as _;
+		let _ = write!(out, "\u{2026}[+{total_dropped}]");
+	}
+	out
 }
 
 fn collapse_parenthesized_segment(text: &str, min_len: usize) -> String {
@@ -762,6 +828,84 @@ mod tests {
 		assert!(out.text.starts_with("grep: 20 matches in 20 files"));
 		assert!(out.text.contains("17: pub fn run(...) -> Result<()> {"));
 		assert!(out.text.contains("matches in 8 files omitted"));
+	}
+
+	#[test]
+	fn center_truncate_short_line_passes_through() {
+		assert_eq!(center_truncate_match("fn foo() {}", 140), "fn foo() {}");
+	}
+
+	#[test]
+	fn center_truncate_long_line_with_leading_whitespace_centers_in_code() {
+		// Match is in the code region after significant indentation.
+		let indent = "                              ";
+		let body = "let result = deeply_nested_function(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, extra, more, stuff, padding, fill, end);";
+		let line = format!("{indent}{body}");
+		assert!(line.chars().count() > 140, "test line must exceed max_chars");
+		let out = center_truncate_match(&line, 140);
+		// Should show leading … (indentation was skipped), centered code, and …[+N] tally.
+		assert!(out.starts_with('\u{2026}'), "should start with …: {out}");
+		assert!(out.ends_with(']'), "should end with tally: {out}");
+		assert!(out.contains("result"), "match region 'result' should be visible: {out}");
+		assert!(out.contains("arg5"), "middle args should be visible: {out}");
+		// Should NOT show the raw "let result" from the very front (since indentation was dropped).
+		// But it might appear inside the window. The key assertion: leading indent chars are dropped.
+		let after_ellipsis = &out['\u{2026}'.len_utf8()..];
+		assert!(
+			!after_ellipsis.starts_with(' '),
+			"window should not start with leading spaces: {out}"
+		);
+	}
+
+	#[test]
+	fn center_truncate_long_line_no_whitespace_centers_in_middle() {
+		let mut line = String::from("use std::collections::{");
+		for i in 0..30 {
+			line.push_str("Module");
+			line.push_str(&i.to_string());
+			line.push_str(", ");
+		}
+		line.push_str("ExtraLongModuleName};");
+		assert!(line.chars().count() > 140, "test line must exceed max_chars");
+		let out = center_truncate_match(&line, 140);
+		assert!(out.starts_with('\u{2026}'), "should start with …: {out}");
+		assert!(out.ends_with(']'), "should end with tally: {out}");
+		// Middle modules like Module14, Module15 should be visible.
+		assert!(out.contains("Module14"), "middle modules should be visible: {out}");
+		assert!(!out.starts_with("use std"), "front content should be dropped: {out}");
+	}
+
+	#[test]
+	fn center_truncate_match_near_end_visible() {
+		let prefix = "x".repeat(40);
+		let marker = "MATCH_NEAR_END_HERE";
+		let suffix = "y".repeat(200);
+		let line = format!("{prefix}{marker}{suffix}");
+		assert!(line.chars().count() > 140, "test line must exceed max_chars");
+		let out = center_truncate_match(&line, 140);
+		// marker starts at char 40, window is centered, should include the marker.
+		assert!(out.contains(marker), "match should be visible: {out}");
+	}
+
+	#[test]
+	fn center_truncate_max_zero_returns_empty() {
+		assert_eq!(center_truncate_match("anything", 0), "");
+	}
+
+	#[test]
+	fn center_truncate_exact_length_returns_unchanged() {
+		let line = "a".repeat(140);
+		assert_eq!(center_truncate_match(&line, 140), line);
+	}
+
+	#[test]
+	fn center_truncate_one_over_shows_tally() {
+		let line = "a".repeat(141);
+		let out = center_truncate_match(&line, 140);
+		assert!(out.contains("\u{2026}[+"), "should have tally: {out}");
+		// With 141 chars, centering produces window_start=0, shows 140 a's, drops 1.
+		let content_chars: String = out.chars().filter(|c| *c == 'a').collect();
+		assert_eq!(content_chars.len(), 140);
 	}
 
 	#[test]

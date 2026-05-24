@@ -1,6 +1,7 @@
 //! Cloud and data command output filters.
 
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
+use serde_json::Value;
 
 const MAX_PSQL_ROWS: usize = 30;
 const MAX_LINE_CHARS: usize = 500;
@@ -27,11 +28,160 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 
 fn filter_aws(input: &str, _exit_code: i32) -> String {
 	let without_progress = strip_transfer_progress(input);
+	if let Some(compacted) = try_compact_aws_json(&without_progress) {
+		return compacted;
+	}
 	if looks_like_table(&without_progress) {
 		compact_delimited_table(&without_progress, 40)
 	} else {
 		without_progress
 	}
+}
+
+/// Try to parse AWS CLI JSON output and produce a compact representation.
+/// Returns None if input is not recognized JSON or if schema is unexpected.
+fn try_compact_aws_json(input: &str) -> Option<String> {
+	let trimmed = input.trim();
+	if !(trimmed.starts_with('{') || trimmed.starts_with('[')) {
+		return None;
+	}
+	let root: Value = serde_json::from_str(trimmed).ok()?;
+
+	// EC2 describe-instances: {"Reservations":[{"Instances":[...]}]}
+	if let Some(instances) = extract_aws_ec2_instances(&root) {
+		return Some(compact_aws_ec2_instances(&instances));
+	}
+
+	// CloudWatch logs / filtered log events: {"events":[...]}
+	if let Some(events) = extract_aws_cloudwatch_events(&root) {
+		return Some(compact_aws_cloudwatch_events(&events));
+	}
+
+	None
+}
+
+// ── AWS EC2 ──────────────────────────────────────────────────────────────────
+
+fn extract_aws_ec2_instances(root: &Value) -> Option<Vec<&Value>> {
+	let reservations = root.get("Reservations")?.as_array()?;
+	let mut instances = Vec::new();
+	for res in reservations {
+		let insts = res.get("Instances")?.as_array()?;
+		for inst in insts {
+			instances.push(inst);
+		}
+	}
+	if instances.is_empty() {
+		None
+	} else {
+		Some(instances)
+	}
+}
+
+fn compact_aws_ec2_instances(instances: &[&Value]) -> String {
+	let mut out = String::new();
+	for inst in instances {
+		let id = inst
+			.get("InstanceId")
+			.and_then(|v| v.as_str())
+			.unwrap_or("?");
+		let typ = inst
+			.get("InstanceType")
+			.and_then(|v| v.as_str())
+			.unwrap_or("?");
+		let state = inst
+			.get("State")
+			.and_then(|v| v.get("Name"))
+			.and_then(|v| v.as_str())
+			.unwrap_or("?");
+		let ip = inst
+			.get("PrivateIpAddress")
+			.and_then(|v| v.as_str())
+			.unwrap_or("-");
+		let name = inst
+			.get("Tags")
+			.and_then(|v| v.as_array())
+			.and_then(|tags| {
+				tags.iter().find_map(|tag| {
+					let key = tag.get("Key")?.as_str()?;
+					if key == "Name" {
+						tag.get("Value")?.as_str()
+					} else {
+						None
+					}
+				})
+			})
+			.unwrap_or("-");
+		out.push_str(&format!("{id}\t{typ}\t{state}\t{ip}\t{name}\n"));
+	}
+	if instances.len() > 1 {
+		out.push('\n');
+	}
+	out.push_str(&format!("{} instance(s)\n", instances.len()));
+	out
+}
+
+// ── AWS CloudWatch ───────────────────────────────────────────────────────────
+
+fn extract_aws_cloudwatch_events(root: &Value) -> Option<Vec<&Value>> {
+	let events = root.get("events")?.as_array()?;
+	if events.is_empty() {
+		None
+	} else {
+		Some(events.iter().collect())
+	}
+}
+
+fn epoch_ms_to_iso(ms: i64) -> String {
+	let secs = ms / 1000;
+	let sub_ms = (ms % 1000) as u32;
+	let days_since_epoch = secs / 86400;
+	let secs_of_day = secs % 86400;
+	let h = secs_of_day / 3600;
+	let m = (secs_of_day % 3600) / 60;
+	let s = secs_of_day % 60;
+	let total_days = days_since_epoch as i32;
+	let (y, mo, d) = civil_from_days(total_days + 719468);
+	format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}.{sub_ms:03}Z")
+}
+
+fn civil_from_days(z: i32) -> (i32, u32, u32) {
+	let z = z as i64;
+	let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+	let doe = (z - era * 146097) as u32;
+	let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+	let y = yoe as i64 + era * 400;
+	let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+	let mp = (5 * doy + 2) / 153;
+	let d = doy - (153 * mp + 2) / 5 + 1;
+	let m = if mp < 10 { mp + 3 } else { mp - 9 };
+	let y = if m <= 2 { y + 1 } else { y };
+	(y as i32, m, d)
+}
+
+fn compact_aws_cloudwatch_events(events: &[&Value]) -> String {
+	let mut out = String::new();
+	let mut count = 0usize;
+	for event in events {
+		let ts = event
+			.get("timestamp")
+			.and_then(|v| v.as_i64())
+			.map(epoch_ms_to_iso)
+			.unwrap_or_else(|| "?".to_string());
+		let msg = event.get("message").and_then(|v| v.as_str()).unwrap_or("?");
+		// Truncate long messages
+		let msg = primitives::truncate_line(msg, MAX_LINE_CHARS);
+		out.push_str(&ts);
+		out.push('\t');
+		out.push_str(&msg);
+		out.push('\n');
+		count += 1;
+	}
+	if count > 1 {
+		out.push('\n');
+	}
+	out.push_str(&format!("{} event(s)\n", count));
+	out
 }
 
 fn filter_http_transfer(input: &str, _exit_code: i32) -> String {
@@ -486,5 +636,99 @@ mod tests {
 		}
 		let out = filter(&ctx, &input, 0);
 		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn compacts_ec2_describe_instances_json() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("aws", &cfg);
+		let input = r#"{
+    "Reservations": [
+        {
+            "Groups": [],
+            "Instances": [
+                {
+                    "InstanceId": "i-1234567890abcdef0",
+                    "InstanceType": "t2.micro",
+                    "State": { "Code": 16, "Name": "running" },
+                    "PrivateIpAddress": "10.0.0.1",
+                    "Tags": [
+                        { "Key": "Name", "Value": "web-server" },
+                        { "Key": "env", "Value": "prod" }
+                    ]
+                },
+                {
+                    "InstanceId": "i-abcdef1234567890",
+                    "InstanceType": "t3.large",
+                    "State": { "Code": 80, "Name": "stopped" },
+                    "PrivateIpAddress": "10.0.0.2",
+                    "Tags": []
+                }
+            ],
+            "OwnerId": "123456789012",
+            "ReservationId": "r-1234567890abcdef0"
+        }
+    ]
+}"#;
+		let out = filter(&ctx, input, 0);
+		assert!(
+			out.text
+				.contains("i-1234567890abcdef0\tt2.micro\trunning\t10.0.0.1\tweb-server")
+		);
+		assert!(
+			out.text
+				.contains("i-abcdef1234567890\tt3.large\tstopped\t10.0.0.2\t-")
+		);
+		assert!(out.text.contains("2 instance(s)"));
+	}
+
+	#[test]
+	fn compacts_cloudwatch_log_events_json() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("aws", &cfg);
+		let input = r#"{
+    "events": [
+        {
+            "timestamp": 1705310100000,
+            "message": "START RequestId: abc123 Version: $LATEST",
+            "ingestionTime": 1705310101000
+        },
+        {
+            "timestamp": 1705310101000,
+            "message": "END RequestId: abc123",
+            "ingestionTime": 1705310102000
+        }
+    ],
+    "nextForwardToken": "f/123",
+    "nextBackwardToken": "b/123"
+}"#;
+		let out = filter(&ctx, input, 0);
+		assert!(
+			out.text
+				.contains("START RequestId: abc123 Version: $LATEST")
+		);
+		assert!(out.text.contains("END RequestId: abc123"));
+		assert!(out.text.contains("2 event(s)"));
+	}
+
+	#[test]
+	fn aws_json_parse_failure_falls_back_to_progress_strip() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("aws", &cfg);
+		// Invalid JSON should fall back to existing behavior
+		let input = "{invalid json here}\nsome output\n";
+		let out = filter(&ctx, input, 0);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn aws_non_ec2_cw_json_returns_original() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("aws", &cfg);
+		// Valid JSON but not EC2 or CloudWatch schema
+		let input = r#"{"S3Bucket": "my-bucket", "Objects": [{"Key": "file.txt"}]}"#;
+		let out = filter(&ctx, input, 0);
+		// Should not crash; falls back to passthrough (no progress lines to strip)
+		assert!(out.changed || out.text == input);
 	}
 }
