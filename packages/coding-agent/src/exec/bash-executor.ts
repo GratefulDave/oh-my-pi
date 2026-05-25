@@ -132,10 +132,19 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 	};
 
 	if (options?.signal?.aborted) {
+		const dumpResult = await sink.dump("Command cancelled");
+		const missed = buildMinimizerMissedRecord({
+			timestamp: new Date().toISOString(),
+			...(commandCwd === undefined ? {} : { cwd: commandCwd }),
+			command: finalCommand,
+			totalBytes: dumpResult.totalBytes,
+			exitCode: null,
+		});
+		if (missed) await recordMinimizerGain(missed);
 		return {
 			exitCode: undefined,
 			cancelled: true,
-			...(await sink.dump("Command cancelled")),
+			...dumpResult,
 		};
 	}
 
@@ -258,10 +267,19 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		// Handle cancellation
 		if (winner.result.cancelled) {
 			resetSession = true;
+			const dumpResult = await sink.dump("Command cancelled");
+			const missed = buildMinimizerMissedRecord({
+				timestamp: new Date().toISOString(),
+				...(commandCwd === undefined ? {} : { cwd: commandCwd }),
+				command,
+				totalBytes: dumpResult.totalBytes,
+				exitCode: null,
+			});
+			if (missed) await recordMinimizerGain(missed);
 			return {
 				exitCode: undefined,
 				cancelled: true,
-				...(await sink.dump("Command cancelled")),
+				...dumpResult,
 			};
 		}
 
@@ -287,6 +305,13 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 					}
 				}
 			}
+		}
+
+		// Normal completion
+		const summary = await sink.dump();
+		const exitCode = winner.result.exitCode ?? null;
+		if (minimized) {
+			const savedBytes = Math.max(0, minimized.inputBytes - minimized.outputBytes);
 			await recordMinimizerGain({
 				timestamp: new Date().toISOString(),
 				...(commandCwd === undefined ? {} : { cwd: commandCwd }),
@@ -294,21 +319,17 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 				filter: minimized.filter,
 				inputBytes: minimized.inputBytes,
 				outputBytes: minimized.outputBytes,
-				savedBytes: Math.max(0, minimized.inputBytes - minimized.outputBytes),
-				exitCode: winner.result.exitCode ?? null,
-				kind: "saved",
+				savedBytes,
+				exitCode,
+				kind: savedBytes > 0 ? "saved" : "missed",
 			});
-		}
-
-		// Normal completion
-		const summary = await sink.dump();
-		if (!minimized) {
+		} else {
 			const missed = buildMinimizerMissedRecord({
 				timestamp: new Date().toISOString(),
 				...(commandCwd === undefined ? {} : { cwd: commandCwd }),
 				command,
 				totalBytes: summary.totalBytes,
-				exitCode: winner.result.exitCode ?? null,
+				exitCode,
 			});
 			if (missed) {
 				await recordMinimizerGain(missed);
@@ -348,6 +369,14 @@ async function dumpCancelledOutput(input: CancelledDumpInput): Promise<BashResul
 	const summary = await input.sink.dump(input.notice);
 	const minimized = applyMinimizer(input.command, summary.output, 1, input.minimizer);
 	if (!minimized || minimized.text === minimized.originalText) {
+		const missed = buildMinimizerMissedRecord({
+			timestamp: new Date().toISOString(),
+			...(input.commandCwd === undefined ? {} : { cwd: input.commandCwd }),
+			command: input.command,
+			totalBytes: summary.totalBytes,
+			exitCode: null,
+		});
+		if (missed) await recordMinimizerGain(missed);
 		return { exitCode: undefined, cancelled: true, ...summary };
 	}
 
@@ -367,16 +396,18 @@ async function dumpCancelledOutput(input: CancelledDumpInput): Promise<BashResul
 			}
 		}
 	}
+	const effectiveInputBytes = summary.totalBytes - (summary.columnDroppedBytes ?? 0);
+	const savedBytes = Math.max(0, effectiveInputBytes - minimized.outputBytes);
 	await recordMinimizerGain({
 		timestamp: new Date().toISOString(),
 		...(input.commandCwd === undefined ? {} : { cwd: input.commandCwd }),
 		command: input.command,
 		filter: minimized.filter,
-		inputBytes: minimized.inputBytes,
+		inputBytes: effectiveInputBytes,
 		outputBytes: minimized.outputBytes,
-		savedBytes: Math.max(0, minimized.inputBytes - minimized.outputBytes),
+		savedBytes,
 		exitCode: null,
-		kind: "saved",
+		kind: savedBytes > 0 ? "saved" : "missed",
 	});
 
 	return {

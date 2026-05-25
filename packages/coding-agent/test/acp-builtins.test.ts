@@ -2,6 +2,7 @@ import { describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { Effort } from "@oh-my-pi/pi-ai";
 import { getAgentDir, setAgentDir } from "@oh-my-pi/pi-utils";
 import { Settings } from "../src/config/settings";
 import { recordMinimizerGain } from "../src/minimizer-gain";
@@ -42,7 +43,7 @@ interface FakeAcpBuiltinSession {
 	setModel(model: unknown): Promise<void>;
 }
 
-function createRuntime() {
+function createRuntime(cwd = "/tmp/project") {
 	const output: string[] = [];
 	const session: FakeAcpBuiltinSession = {
 		fastMode: false,
@@ -144,7 +145,7 @@ function createRuntime() {
 			session: typedSession,
 			sessionManager: fakeSessionManager as unknown as SessionManager,
 			settings: Settings.isolated(),
-			cwd: "/tmp/project",
+			cwd,
 			output: (text: string) => {
 				output.push(text);
 			},
@@ -212,6 +213,39 @@ describe("ACP builtin slash commands", () => {
 			expect(all.output[0]).toContain("Saved Bytes: 1.6K");
 			expect(all.output[0]).toContain("/tmp/project");
 			expect(all.output[0]).toContain("/tmp/other");
+		} finally {
+			setAgentDir(previousAgentDir);
+			await fs.rm(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("reports missed-only gain scopes with no savings and a missed hint", async () => {
+		const previousAgentDir = getAgentDir();
+		const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-acp-gain-missed-"));
+		try {
+			setAgentDir(agentDir);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/project",
+					command: "cargo test",
+					filter: "missed",
+					inputBytes: 4096,
+					outputBytes: 4096,
+					savedBytes: 0,
+					exitCode: 1,
+					kind: "missed",
+				},
+				{ agentDir },
+			);
+
+			const current = createRuntime();
+			const result = await executeAcpBuiltinSlashCommand("/gain", current.runtime);
+			expect(result).toEqual({ consumed: true });
+			expect(current.output[0]).toContain("Minimizer savings for /tmp/project");
+			expect(current.output[0]).toContain("Commands: 0");
+			expect(current.output[0]).toContain("No positive native minimizer savings recorded for this scope yet.");
+			expect(current.output[0]).toContain("Missed runs: 1 (use `omp gain --missed`.)");
 		} finally {
 			setAgentDir(previousAgentDir);
 			await fs.rm(agentDir, { recursive: true, force: true });
@@ -868,6 +902,26 @@ describe("wave 5 — adapters and polish", () => {
 		expect(result).toEqual({ consumed: true });
 		expect(output[0]).toContain("Model set to anthropic/claude-sonnet-test.");
 		expect(titleChanged).toBe(true);
+	});
+
+	it("/profile creates and lists named model profiles", async () => {
+		const { output, runtime } = createRuntime();
+
+		const createResult = await executeAcpBuiltinSlashCommand("/profile create fast --no-activate", runtime);
+		const listResult = await executeAcpBuiltinSlashCommand("/profile list", runtime);
+
+		expect(createResult).toEqual({ consumed: true });
+		expect(listResult).toEqual({ consumed: true });
+		expect(output[0]).toContain("Created profile fast.");
+		expect(output[1]).toContain("default");
+		expect(output[1]).toContain("fast");
+		expect(runtime.settings.getModelProfile("fast")).toEqual({
+			modelRoles: {},
+			defaultThinkingLevel: Effort.High,
+			enabledModels: [],
+			cycleOrder: ["smol", "default", "slow"],
+			modelProviderOrder: [],
+		});
 	});
 
 	// /usage bar character

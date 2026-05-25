@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { installH2Fetch } from "@oh-my-pi/pi-ai";
-import { APP_NAME, MIN_BUN_VERSION, procmgr, VERSION } from "@oh-my-pi/pi-utils";
+import { COMMAND_NAME, MIN_BUN_VERSION, procmgr, VERSION } from "@oh-my-pi/pi-utils";
 
 // Activate HTTP/2 for all `fetch()` calls (provider streams, OAuth, model
 // discovery, web tools). Bun's HTTP/2 client is gated on a startup flag we
@@ -27,7 +27,7 @@ if (Bun.semver.order(Bun.version, MIN_BUN_VERSION) < 0) {
 	process.exit(1);
 }
 
-process.title = APP_NAME;
+process.title = COMMAND_NAME;
 
 const commands: CommandEntry[] = [
 	{ name: "launch", load: () => import("./commands/launch").then(m => m.default) },
@@ -41,6 +41,7 @@ const commands: CommandEntry[] = [
 	{ name: "gain", load: () => import("./commands/gain").then(m => m.default) },
 	{ name: "grievances", load: () => import("./commands/grievances").then(m => m.default) },
 	{ name: "plugin", load: () => import("./commands/plugin").then(m => m.default) },
+	{ name: "profile", load: () => import("./commands/profile").then(m => m.default) },
 	{ name: "setup", load: () => import("./commands/setup").then(m => m.default) },
 	{ name: "shell", load: () => import("./commands/shell").then(m => m.default) },
 	{ name: "read", load: () => import("./commands/read").then(m => m.default) },
@@ -103,7 +104,7 @@ export async function runCli(argv: string[]): Promise<void> {
 			: isSubcommand(first)
 				? argv
 				: ["launch", ...argv];
-	return run({ bin: APP_NAME, version: VERSION, argv: runArgv, commands, help: showHelp });
+	return run({ bin: COMMAND_NAME, version: VERSION, argv: runArgv, commands, help: showHelp });
 }
 
 await runCli(process.argv.slice(2));

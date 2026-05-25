@@ -1,10 +1,10 @@
 /**
  * Web search CLI command handlers.
  *
- * Handles `omp q`/`omp web-search` subcommands for testing web search providers.
+ * Handles `lex q`/`lex web-search` subcommands for testing web search providers.
  */
 
-import { APP_NAME } from "@oh-my-pi/pi-utils";
+import { COMMAND_NAME } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
 import { initTheme, theme } from "../modes/theme/theme";
 import { runSearchQuery, type SearchQueryParams } from "../web/search/index";
@@ -110,11 +110,11 @@ export async function runSearchCommand(cmd: SearchCommandArgs): Promise<void> {
 }
 
 export function printSearchHelp(): void {
-	process.stdout.write(`${chalk.bold(`${APP_NAME} q`)} - Test web search providers
+	process.stdout.write(`${chalk.bold(`${COMMAND_NAME} q`)} - Test web search providers
 
 ${chalk.bold("Usage:")}
-  ${APP_NAME} q [options] <query>
-  ${APP_NAME} web-search [options] <query>
+  ${COMMAND_NAME} q [options] <query>
+  ${COMMAND_NAME} web-search [options] <query>
 
 ${chalk.bold("Arguments:")}
   query      Search query text
@@ -127,7 +127,7 @@ ${chalk.bold("Options:")}
   -h, --help          Show this help
 
 ${chalk.bold("Examples:")}
-  ${APP_NAME} q --provider=exa "what's the color of the sky"
-  ${APP_NAME} q --provider=brave --recency=week "latest TypeScript 5.7 changes"
+  ${COMMAND_NAME} q --provider=exa "what's the color of the sky"
+  ${COMMAND_NAME} q --provider=brave --recency=week "latest TypeScript 5.7 changes"
 `);
 }

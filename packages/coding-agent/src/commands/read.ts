@@ -4,7 +4,6 @@
 import { Args, Command } from "@oh-my-pi/pi-utils/cli";
 import { type ReadCommandArgs, runReadCommand } from "../cli/read-cli";
 import { initTheme } from "../modes/theme/theme";
-
 export default class Read extends Command {
 	static description = "Show what the read tool will return for a path or URL";
 
@@ -16,12 +15,12 @@ export default class Read extends Command {
 	};
 
 	static examples = [
-		"omp read src/foo.ts",
-		"omp read src/foo.ts:50-100",
-		"omp read src/foo.ts:raw",
-		"omp read https://example.com",
-		"omp read path/to/archive.zip:dir/file.ts",
-		"omp read path/to/db.sqlite:users:42",
+		"lex read src/foo.ts",
+		"lex read src/foo.ts:50-100",
+		"lex read src/foo.ts:raw",
+		"lex read https://example.com",
+		"lex read path/to/archive.zip:dir/file.ts",
+		"lex read path/to/db.sqlite:users:42",
 	];
 
 	async run(): Promise<void> {

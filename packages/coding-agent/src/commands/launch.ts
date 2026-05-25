@@ -3,11 +3,12 @@
  */
 
 import { THINKING_EFFORTS } from "@oh-my-pi/pi-ai";
-import { APP_NAME } from "@oh-my-pi/pi-utils";
 import { Args, Command, Flags } from "@oh-my-pi/pi-utils/cli";
 import { parseArgs } from "../cli/args";
 import { runRootCommand } from "../main";
 import { prepareAcpTerminalAuthArgs } from "../modes/acp/terminal-auth";
+
+const CLI_NAME = "lex";
 
 export default class Index extends Command {
 	static description = "AI coding assistant";
@@ -24,6 +25,9 @@ export default class Index extends Command {
 	static flags = {
 		model: Flags.string({
 			description: 'Model to use (fuzzy match: "opus", "gpt-5.2", or "openai/gpt-5.2")',
+		}),
+		profile: Flags.string({
+			description: "Named model profile to use for this launch",
 		}),
 		smol: Flags.string({
 			description: "Smol/fast model for lightweight tasks (or PI_SMOL_MODEL env)",
@@ -123,14 +127,24 @@ export default class Index extends Command {
 	};
 
 	static examples = [
-		`# Interactive mode\n  ${APP_NAME}`,
-		`# Interactive mode with initial prompt\n  ${APP_NAME} "List all .ts files in src/"`,
-		`# Include files in initial message\n  ${APP_NAME} @prompt.md @image.png "What color is the sky?"`,
-		`# Non-interactive mode (process and exit)\n  ${APP_NAME} -p "List all .ts files in src/"`,
-		`# Continue previous session\n  ${APP_NAME} --continue "What did we discuss?"`,
-		`# Use different model (fuzzy matching)\n  ${APP_NAME} --model opus "Help me refactor this code"`,
-		`# Limit model cycling to specific models\n  ${APP_NAME} --models claude-sonnet,claude-haiku,gpt-4o`,
-		`# Export a session file to HTML\n  ${APP_NAME} --export ~/.omp/agent/sessions/--path--/session.jsonl`,
+		`# Interactive mode
+  ${CLI_NAME}`,
+		`# Interactive mode with initial prompt
+  ${CLI_NAME} "List all .ts files in src/"`,
+		`# Include files in initial message
+  ${CLI_NAME} @prompt.md @image.png "What color is the sky?"`,
+		`# Non-interactive mode (process and exit)
+  ${CLI_NAME} -p "List all .ts files in src/"`,
+		`# Continue previous session
+  ${CLI_NAME} --continue "What did we discuss?"`,
+		`# Use different model (fuzzy matching)
+  ${CLI_NAME} --model opus "Help me refactor this code"`,
+		`# Use a named model profile for one launch
+  ${CLI_NAME} --profile fast`,
+		`# Limit model cycling to specific models
+  ${CLI_NAME} --models claude-sonnet,claude-haiku,gpt-4o`,
+		`# Export a session file to HTML
+  ${CLI_NAME} --export ~/.omp/agent/sessions/--path--/session.jsonl`,
 	];
 
 	static strict = false;

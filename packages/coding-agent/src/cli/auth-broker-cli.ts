@@ -1,5 +1,5 @@
 /**
- * `omp auth-broker` command handlers.
+ * `lex auth-broker` command handlers.
  *
  * Sub-verbs:
  *   - `serve [--bind=…]` — boots the broker against the local SQLite store.
@@ -17,6 +17,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+
 import {
 	AuthBrokerClient,
 	type AuthCredential,
@@ -31,10 +32,13 @@ import {
 	SqliteAuthCredentialStore,
 	startAuthBroker,
 } from "@oh-my-pi/pi-ai";
-import { $which, APP_NAME, getAgentDbPath, getConfigRootDir, isEnoent, logger, VERSION } from "@oh-my-pi/pi-utils";
+import { $which, getAgentDbPath, getConfigRootDir, isEnoent, logger, VERSION } from "@oh-my-pi/pi-utils";
 import { $ } from "bun";
 import chalk from "chalk";
+
 import { resolveAuthBrokerConfig } from "../session/auth-broker-config";
+
+const CLI_COMMAND = "lex";
 
 export type AuthBrokerAction = "serve" | "token" | "login" | "logout" | "status" | "import" | "migrate";
 
@@ -170,7 +174,7 @@ async function runToken(flags: AuthBrokerCommandArgs["flags"]): Promise<void> {
 async function runLogin(flags: AuthBrokerCommandArgs["flags"]): Promise<void> {
 	const providerArg = flags.provider;
 	if (!providerArg) {
-		throw new Error("Usage: omp auth-broker login <provider> [--via=user@host]");
+		throw new Error("Usage: lex auth-broker login <provider> [--via=user@host]");
 	}
 	const oauthProviders = new Set<string>(getOAuthProviders().map(p => p.id));
 	if (!oauthProviders.has(providerArg)) {
@@ -212,7 +216,7 @@ async function runRemoteLogin(provider: string, via: string, dryRun: boolean): P
 		"-o",
 		"ExitOnForwardFailure=yes",
 		via,
-		`${APP_NAME} auth-broker login ${provider}`,
+		`${CLI_COMMAND} auth-broker login ${provider}`,
 	];
 	if (dryRun) {
 		process.stdout.write(`ssh ${sshArgs.map(a => (a.includes(" ") ? `'${a}'` : a)).join(" ")}\n`);
@@ -237,7 +241,7 @@ async function runRemoteLogin(provider: string, via: string, dryRun: boolean): P
 async function runLogout(flags: AuthBrokerCommandArgs["flags"]): Promise<void> {
 	const providerArg = flags.provider;
 	if (!providerArg) {
-		throw new Error("Usage: omp auth-broker logout <provider>");
+		throw new Error("Usage: lex auth-broker logout <provider>");
 	}
 	const store = await SqliteAuthCredentialStore.open(getAgentDbPath());
 	try {
@@ -393,7 +397,7 @@ function describeImportEntry(entry: ImportPlanEntry): string {
 async function runImport(flags: AuthBrokerCommandArgs["flags"]): Promise<void> {
 	const target = flags.source;
 	if (!target) {
-		throw new Error("Usage: omp auth-broker import <file|dir> [--provider=<id>] [--include-disabled] [--dry-run]");
+		throw new Error("Usage: lex auth-broker import <file|dir> [--provider=<id>] [--include-disabled] [--dry-run]");
 	}
 	const resolvedTarget = path.resolve(target.startsWith("~") ? target.replace(/^~/, os.homedir()) : target);
 	const { entries, skipped } = await loadImportPlan(resolvedTarget, flags.provider, flags.includeDisabled === true);
@@ -537,7 +541,7 @@ async function runMigrate(flags: AuthBrokerCommandArgs["flags"]): Promise<void> 
 	}
 	if (flags.fromLocal !== true) {
 		throw new Error(
-			"`omp auth-broker migrate` requires an explicit source. Pass `--from-local` to migrate from the local SQLite store and env vars.",
+			"`lex auth-broker migrate` requires an explicit source. Pass `--from-local` to migrate from the local SQLite store and env vars.",
 		);
 	}
 

@@ -1,11 +1,12 @@
 /**
  * Plugin CLI command handlers.
  *
- * Handles `omp plugin <command>` subcommands for plugin lifecycle management.
+ * Handles `lex plugin <command>` subcommands for plugin lifecycle management.
  */
 
-import { APP_NAME, getProjectDir } from "@oh-my-pi/pi-utils";
+import { getProjectDir } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
+
 import { resolveOrDefaultProjectRegistryPath } from "../discovery/helpers";
 import { PluginManager, parseSettingValue, validateSetting } from "../extensibility/plugins";
 import {
@@ -16,6 +17,8 @@ import {
 	MarketplaceManager,
 } from "../extensibility/plugins/marketplace/index.js";
 import { theme } from "../modes/theme/theme";
+
+const CLI_COMMAND = "lex";
 
 // =============================================================================
 // Types
@@ -211,7 +214,7 @@ async function handleMarketplace(args: string[], _flags: PluginCommandArgs["flag
 		case "add": {
 			const source = args[1];
 			if (!source) {
-				console.error(chalk.red(`Usage: ${APP_NAME} plugin marketplace add <source>`));
+				console.error(chalk.red(`Usage: ${CLI_COMMAND} plugin marketplace add <source>`));
 				process.exit(1);
 			}
 			try {
@@ -227,7 +230,7 @@ async function handleMarketplace(args: string[], _flags: PluginCommandArgs["flag
 		case "rm": {
 			const name = args[1];
 			if (!name) {
-				console.error(chalk.red(`Usage: ${APP_NAME} plugin marketplace remove <name>`));
+				console.error(chalk.red(`Usage: ${CLI_COMMAND} plugin marketplace remove <name>`));
 				process.exit(1);
 			}
 			try {
@@ -265,7 +268,7 @@ async function handleMarketplace(args: string[], _flags: PluginCommandArgs["flag
 				const marketplaces = await manager.listMarketplaces();
 				if (marketplaces.length === 0) {
 					console.log(chalk.dim("No marketplaces configured"));
-					console.log(chalk.dim(`\nAdd one with: ${APP_NAME} plugin marketplace add <source>`));
+					console.log(chalk.dim(`\nAdd one with: ${CLI_COMMAND} plugin marketplace add <source>`));
 					return;
 				}
 				console.log(chalk.bold("Configured Marketplaces:\n"));
@@ -323,7 +326,7 @@ async function handleUpgrade(args: string[], flags: PluginCommandArgs["flags"]):
 			if (flags.scope) {
 				console.error(
 					chalk.yellow(
-						`Warning: --scope is ignored when upgrading all plugins. Use 'omp plugin upgrade <id> --scope ${flags.scope}' to target a specific plugin and scope.`,
+						`Warning: --scope is ignored when upgrading all plugins. Use '${CLI_COMMAND} plugin upgrade <id> --scope ${flags.scope}' to target a specific plugin and scope.`,
 					),
 				);
 			}
@@ -348,10 +351,10 @@ async function handleInstall(
 	flags: { json?: boolean; force?: boolean; dryRun?: boolean; scope?: "user" | "project" },
 ): Promise<void> {
 	if (packages.length === 0) {
-		console.error(chalk.red(`Usage: ${APP_NAME} plugin install <package[@version]>[features] ...`));
+		console.error(chalk.red(`Usage: ${CLI_COMMAND} plugin install <package[@version]>[features] ...`));
 		console.error(chalk.dim("Examples:"));
-		console.error(chalk.dim(`  ${APP_NAME} plugin install @oh-my-pi/exa`));
-		console.error(chalk.dim(`  ${APP_NAME} plugin install name@marketplace`));
+		console.error(chalk.dim(`  ${CLI_COMMAND} plugin install @oh-my-pi/exa`));
+		console.error(chalk.dim(`  ${CLI_COMMAND} plugin install name@marketplace`));
 		process.exit(1);
 	}
 
@@ -421,7 +424,7 @@ async function handleUninstall(
 	flags: { json?: boolean; scope?: "user" | "project" },
 ): Promise<void> {
 	if (packages.length === 0) {
-		console.error(chalk.red(`Usage: ${APP_NAME} plugin uninstall <package> ...`));
+		console.error(chalk.red(`Usage: ${CLI_COMMAND} plugin uninstall <package> ...`));
 		process.exit(1);
 	}
 
@@ -470,7 +473,7 @@ async function handleList(manager: PluginManager, flags: { json?: boolean }): Pr
 
 	if (npmPlugins.length === 0 && mktPlugins.length === 0) {
 		console.log(chalk.dim("No plugins installed"));
-		console.log(chalk.dim(`\nInstall plugins with: ${APP_NAME} plugin install <package>`));
+		console.log(chalk.dim(`\nInstall plugins with: ${CLI_COMMAND} plugin install <package>`));
 		return;
 	}
 
@@ -514,7 +517,7 @@ async function handleList(manager: PluginManager, flags: { json?: boolean }): Pr
 
 async function handleLink(manager: PluginManager, paths: string[], flags: { json?: boolean }): Promise<void> {
 	if (paths.length === 0) {
-		console.error(chalk.red(`Usage: ${APP_NAME} plugin link <path>`));
+		console.error(chalk.red(`Usage: ${CLI_COMMAND} plugin link <path>`));
 		process.exit(1);
 	}
 
@@ -578,7 +581,7 @@ async function handleFeatures(
 ): Promise<void> {
 	if (args.length === 0) {
 		console.error(
-			chalk.red(`Usage: ${APP_NAME} plugin features <plugin> [--enable f1,f2] [--disable f1] [--set f1,f2]`),
+			chalk.red(`Usage: ${CLI_COMMAND} plugin features <plugin> [--enable f1,f2] [--disable f1] [--set f1,f2]`),
 		);
 		process.exit(1);
 	}
@@ -671,7 +674,7 @@ async function handleConfig(
 ): Promise<void> {
 	if (args.length === 0) {
 		console.error(
-			chalk.red(`Usage: ${APP_NAME} plugin config <list|get|set|delete|validate> <plugin> [key] [value]`),
+			chalk.red(`Usage: ${CLI_COMMAND} plugin config <list|get|set|delete|validate> <plugin> [key] [value]`),
 		);
 		process.exit(1);
 	}
@@ -853,7 +856,7 @@ async function handleSetEnabled(
 	const jsonKey = enabled ? "enabled" : "disabled";
 
 	if (plugins.length === 0) {
-		console.error(chalk.red(`Usage: ${APP_NAME} plugin ${action} <plugin> ...`));
+		console.error(chalk.red(`Usage: ${CLI_COMMAND} plugin ${action} <plugin> ...`));
 		process.exit(1);
 	}
 
@@ -895,7 +898,7 @@ async function handleSetEnabled(
 // =============================================================================
 
 export function printPluginHelp(): void {
-	console.log(`${chalk.bold(`${APP_NAME} plugin`)} - Plugin lifecycle management
+	console.log(`${chalk.bold(`${CLI_COMMAND} plugin`)} - Plugin lifecycle management
 
 ${chalk.bold("Commands:")}
   install <pkg[@ver]>[features]  Install plugins from npm
@@ -932,11 +935,11 @@ ${chalk.bold("Options:")}
   -l, --local      Use project-local overrides
 
 ${chalk.bold("Examples:")}
-  ${APP_NAME} plugin install @oh-my-pi/exa[search]
-  ${APP_NAME} plugin list --json
-  ${APP_NAME} plugin features my-plugin --enable search,web
-  ${APP_NAME} plugin config set my-plugin apiKey sk-xxx
-  ${APP_NAME} plugin doctor --fix
-  ${APP_NAME} plugin install --scope project name@marketplace
+  ${CLI_COMMAND} plugin install @oh-my-pi/exa[search]
+  ${CLI_COMMAND} plugin list --json
+  ${CLI_COMMAND} plugin features my-plugin --enable search,web
+  ${CLI_COMMAND} plugin config set my-plugin apiKey sk-xxx
+  ${CLI_COMMAND} plugin doctor --fix
+  ${CLI_COMMAND} plugin install --scope project name@marketplace
 `);
 }

@@ -9,6 +9,7 @@ import {
 	type MinimizerGainSummary,
 	type MinimizerMissedSummary,
 	readMinimizerGain,
+	resolveMinimizerGainCwd,
 	summarizeMinimizerGain,
 	summarizeMissedMinimizerGain,
 } from "../minimizer-gain";
@@ -45,6 +46,11 @@ export async function runGainCommand(cmd: GainCommandArgs): Promise<void> {
 	validateDays(cmd.days);
 	writeGainOutput(selectOutputMode(cmd), await loadGainContext(cmd));
 }
+function validateDays(days: number): void {
+	if (Number.isInteger(days) && days >= 1) return;
+	process.stderr.write(chalk.red("error: --days must be a positive integer\n"));
+	process.exit(1);
+}
 
 function selectOutputMode(cmd: GainCommandArgs): OutputMode {
 	if (cmd.json) return "json";
@@ -53,8 +59,25 @@ function selectOutputMode(cmd: GainCommandArgs): OutputMode {
 	return "summary";
 }
 
+function writeGainOutput(mode: OutputMode, context: GainContext): void {
+	switch (mode) {
+		case "json":
+			printJsonPayload(context);
+			break;
+		case "summary":
+			printGainSummary(context);
+			break;
+		case "discover":
+			printGainDiscovery(context);
+			break;
+		case "missed":
+			printMissedSummary(context);
+			break;
+	}
+}
+
 async function loadGainContext(cmd: GainCommandArgs): Promise<GainContext> {
-	const cwd = resolveCwdScope(cmd);
+	const cwd = await resolveCwdScope(cmd);
 	const records = await readMinimizerGain({ sinceDays: cmd.days, cwd });
 	return {
 		path: getMinimizerGainPath(),
@@ -67,26 +90,9 @@ async function loadGainContext(cmd: GainCommandArgs): Promise<GainContext> {
 		missed: summarizeMissedMinimizerGain(records),
 	};
 }
-
-function writeGainOutput(mode: OutputMode, context: GainContext): void {
-	const writers: Record<OutputMode, (context: GainContext) => void> = {
-		json: printJsonPayload,
-		missed: printMissedSummary,
-		discover: printGainDiscovery,
-		summary: printGainSummary,
-	};
-	writers[mode](context);
-}
-
-function validateDays(days: number): void {
-	if (Number.isInteger(days) && days >= 1) return;
-	process.stderr.write(chalk.red("error: --days must be a positive integer\n"));
-	process.exit(1);
-}
-
-function resolveCwdScope(cmd: GainCommandArgs): string | undefined {
+async function resolveCwdScope(cmd: GainCommandArgs): Promise<string | undefined> {
 	if (cmd.all) return undefined;
-	return cmd.cwd ? path.resolve(cmd.cwd) : process.cwd();
+	return resolveMinimizerGainCwd(cmd.cwd ? path.resolve(cmd.cwd) : process.cwd());
 }
 
 function printJsonPayload(context: GainContext): void {

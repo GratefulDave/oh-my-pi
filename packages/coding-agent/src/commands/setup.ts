@@ -5,6 +5,8 @@ import { Args, Command, Flags, renderCommandHelp } from "@oh-my-pi/pi-utils/cli"
 import { runSetupCommand, type SetupCommandArgs, type SetupComponent } from "../cli/setup-cli";
 import { initTheme } from "../modes/theme/theme";
 
+const CLI_NAME = "lex";
+
 const COMPONENTS: SetupComponent[] = ["python", "stt"];
 
 export default class Setup extends Command {
@@ -26,7 +28,7 @@ export default class Setup extends Command {
 	async run(): Promise<void> {
 		const { args, flags } = await this.parse(Setup);
 		if (!args.component) {
-			renderCommandHelp("omp", "setup", Setup);
+			renderCommandHelp(CLI_NAME, "setup", Setup);
 			return;
 		}
 		const cmd: SetupCommandArgs = {

@@ -6,6 +6,8 @@ import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config
 import { buildArtifactRecoveryHint, executeBash } from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
 import { DEFAULT_MAX_BYTES } from "@oh-my-pi/pi-coding-agent/session/streaming-output";
 import * as shellSnapshot from "@oh-my-pi/pi-coding-agent/utils/shell-snapshot";
+import { getAgentDir, setAgentDir } from "@oh-my-pi/pi-utils";
+import { readMinimizerGain } from "../src/minimizer-gain";
 
 // Matches the schema default for `tools.artifactHeadBytes` (20 KB) used by
 // OutputSink when bash-executor pulls settings via resolveOutputSinkHeadBytes.
@@ -159,6 +161,42 @@ describe("executeBash", () => {
 		expect(result.output).toContain("timeout: Command timed out");
 		expect(result.output).not.toContain("No fixes applied");
 		expect(result.output).not.toContain("Exited with code 0");
+	});
+
+	it("records a positive saved gain for a timed-out reducible command", async () => {
+		if (process.platform === "win32") {
+			return;
+		}
+
+		const previousAgentDir = getAgentDir();
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-bash-gain-"));
+		try {
+			setAgentDir(agentDir);
+			fs.writeFileSync(
+				path.join(tempDir, "package.json"),
+				JSON.stringify({
+					scripts: {
+						"check:ts":
+							"printf '%s\\n' '@oh-my-pi/pi-utils check: Checked 40 files in 11ms. No fixes applied.' '@oh-my-pi/pi-utils check: Exited with code 0'; timeout 1s sh -c 'sleep 10'",
+					},
+				}),
+			);
+
+			const result = await executeBash("bun run 'check:ts'", { cwd: tempDir, timeout: 5000 });
+			expect(result.cancelled).toBe(false);
+
+			const records = await readMinimizerGain({ agentDir });
+			expect(records).toHaveLength(1);
+			expect(records[0]).toMatchObject({
+				cwd: fs.realpathSync(tempDir),
+				command: "bun run 'check:ts'",
+				kind: "saved",
+			});
+			expect(records[0].savedBytes).toBeGreaterThan(0);
+		} finally {
+			setAgentDir(previousAgentDir);
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
 	});
 
 	it("times out before follow-up output", async () => {

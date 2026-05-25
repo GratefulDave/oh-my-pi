@@ -151,6 +151,114 @@ describe("Settings", () => {
 		});
 	});
 
+	describe("model profiles", () => {
+		it("preserves flat model settings when no profile is active", async () => {
+			await writeSettings({
+				modelRoles: { default: "anthropic/claude-sonnet-4-5:medium" },
+				defaultThinkingLevel: Effort.Low,
+				enabledModels: ["anthropic/claude-sonnet-4-5"],
+				cycleOrder: ["default"],
+			});
+
+			const settings = await Settings.init({ cwd: projectDir, agentDir });
+
+			expect(settings.getActiveModelProfileName()).toBeUndefined();
+			expect(settings.get("modelRoles")).toEqual({ default: "anthropic/claude-sonnet-4-5:medium" });
+			expect(settings.get("defaultThinkingLevel")).toBe(Effort.Low);
+			expect(settings.get("enabledModels")).toEqual(["anthropic/claude-sonnet-4-5"]);
+			expect(settings.get("cycleOrder")).toEqual(["default"]);
+		});
+
+		it("overlays active profile model settings over flat base settings", async () => {
+			await writeSettings({
+				activeModelProfile: "fast",
+				modelRoles: { default: "anthropic/claude-sonnet-4-5:medium", slow: "anthropic/claude-opus-4-5:high" },
+				defaultThinkingLevel: Effort.High,
+				enabledModels: ["anthropic/claude-sonnet-4-5"],
+				cycleOrder: ["default", "slow"],
+				modelProfiles: {
+					fast: {
+						modelRoles: { default: "anthropic/claude-haiku-4-5:low" },
+						defaultThinkingLevel: Effort.Low,
+						enabledModels: ["anthropic/claude-haiku-4-5"],
+						cycleOrder: ["default"],
+					},
+				},
+			});
+
+			const settings = await Settings.init({ cwd: projectDir, agentDir });
+
+			expect(settings.getActiveModelProfileName()).toBe("fast");
+			expect(settings.get("modelRoles")).toEqual({
+				default: "anthropic/claude-haiku-4-5:low",
+				slow: "anthropic/claude-opus-4-5:high",
+			});
+			expect(settings.get("defaultThinkingLevel")).toBe(Effort.Low);
+			expect(settings.get("enabledModels")).toEqual(["anthropic/claude-haiku-4-5"]);
+			expect(settings.get("cycleOrder")).toEqual(["default"]);
+		});
+
+		it("writes profile-scoped model settings without corrupting flat base roles", async () => {
+			await writeSettings({
+				activeModelProfile: "fast",
+				modelRoles: { default: "anthropic/claude-sonnet-4-5:medium" },
+				modelProfiles: {
+					fast: {
+						modelRoles: { default: "anthropic/claude-haiku-4-5:low" },
+					},
+				},
+			});
+
+			const settings = await Settings.init({ cwd: projectDir, agentDir });
+			settings.setModelRole("default", "openai/gpt-5.2-codex:medium");
+			settings.set("defaultThinkingLevel", Effort.Medium);
+			await settings.flush();
+
+			const savedSettings = await readSettings();
+			expect(savedSettings.modelRoles).toEqual({ default: "anthropic/claude-sonnet-4-5:medium" });
+			expect(savedSettings.modelProfiles).toEqual({
+				fast: {
+					modelRoles: { default: "openai/gpt-5.2-codex:medium" },
+					defaultThinkingLevel: Effort.Medium,
+				},
+			});
+		});
+
+		it("preserves external profile edits when saving another setting", async () => {
+			await writeSettings({
+				activeModelProfile: "fast",
+				modelProfiles: {
+					fast: { modelRoles: { default: "anthropic/claude-haiku-4-5:low" } },
+				},
+			});
+
+			const settings = await Settings.init({ cwd: projectDir, agentDir });
+			await writeSettings({
+				activeModelProfile: "fast",
+				modelProfiles: {
+					fast: {
+						modelRoles: { default: "anthropic/claude-haiku-4-5:low" },
+						enabledModels: ["anthropic/claude-haiku-4-5"],
+					},
+				},
+				shellPath: "/bin/zsh",
+			});
+
+			settings.set("defaultThinkingLevel", Effort.Medium);
+			await settings.flush();
+
+			const savedSettings = await readSettings();
+			expect(savedSettings.shellPath).toBe("/bin/zsh");
+			expect(savedSettings.modelProfiles).toEqual({
+				fast: {
+					modelRoles: { default: "anthropic/claude-haiku-4-5:low" },
+					enabledModels: ["anthropic/claude-haiku-4-5"],
+					defaultThinkingLevel: Effort.Medium,
+				},
+			});
+		});
+	});
+
 	describe("migrations", () => {
 		it("maps removed atom edit mode settings to hashline", async () => {
 			await writeSettings({

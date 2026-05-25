@@ -4,8 +4,15 @@ import * as path from "node:path";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/utils/oauth";
 import { formatNumber, Snowflake, setProjectDir } from "@oh-my-pi/pi-utils";
 import { $ } from "bun";
-import type { SettingPath, SettingValue } from "../config/settings";
-import { settings } from "../config/settings";
+import { isAuthenticated } from "../config/model-registry";
+import { resolveModelRoleValue } from "../config/model-resolver";
+import {
+	DEFAULT_MODEL_PROFILE_NAME,
+	normalizeModelProfileName,
+	type SettingPath,
+	type SettingValue,
+	settings,
+} from "../config/settings";
 import {
 	clearPluginRootsAndCaches,
 	resolveActiveProjectRegistryPath,
@@ -30,7 +37,13 @@ import type {
 } from "../external-agents";
 import { buildContextSummary, buildExternalOrchestrationReport, runExternalAgentsParallel } from "../external-agents";
 import { resolveMemoryBackend } from "../memory-backend";
-import { getMinimizerGainPath, readMinimizerGain, summarizeMinimizerGain } from "../minimizer-gain";
+import {
+	getMinimizerGainPath,
+	readMinimizerGain,
+	resolveMinimizerGainCwd,
+	summarizeMinimizerGain,
+	summarizeMissedMinimizerGain,
+} from "../minimizer-gain";
 import { ExternalOrchestrationMonitorComponent } from "../modes/components/external-orchestration-monitor";
 import type { SkillsSkillToggle, SkillsSourceToggle } from "../modes/components/skills-overlay";
 import { SkillsOverlayComponent } from "../modes/components/skills-overlay";
@@ -65,6 +78,68 @@ function refreshStatusLine(ctx: InteractiveModeContext): void {
 	ctx.statusLine.invalidate();
 	ctx.updateEditorTopBorder();
 	ctx.ui.requestRender();
+}
+
+function formatProfileLabel(activeProfile: string | undefined, name: string): string {
+	return `${activeProfile === name || (!activeProfile && name === DEFAULT_MODEL_PROFILE_NAME) ? "* " : "  "}${name}`;
+}
+
+function buildProfileList(settingsInstance: typeof settings): string {
+	const activeProfile = settingsInstance.getActiveModelProfileName();
+	const names = Object.keys(settingsInstance.getModelProfiles()).sort();
+	return [DEFAULT_MODEL_PROFILE_NAME, ...names].map(name => formatProfileLabel(activeProfile, name)).join("\n");
+}
+
+function buildProfileShowText(settingsInstance: typeof settings, name: string | undefined): string {
+	const activeProfile = settingsInstance.getActiveModelProfileName();
+	const label = name ?? DEFAULT_MODEL_PROFILE_NAME;
+	const profile = name ? settingsInstance.getModelProfile(name) : undefined;
+	const payload =
+		profile ??
+		({
+			modelRoles: settingsInstance.get("modelRoles"),
+			defaultThinkingLevel: settingsInstance.get("defaultThinkingLevel"),
+			enabledModels: settingsInstance.get("enabledModels"),
+			cycleOrder: settingsInstance.get("cycleOrder"),
+			modelProviderOrder: settingsInstance.get("modelProviderOrder"),
+		} satisfies Record<string, unknown>);
+	return `${label}${activeProfile === name || (!activeProfile && !name) ? " (active)" : ""}\n${JSON.stringify(payload, null, 2)}`;
+}
+
+async function switchProfileRuntime(name: string | undefined, runtime: SlashCommandRuntime): Promise<string> {
+	runtime.settings.switchModelProfile(name);
+	await runtime.settings.flush();
+	const active = runtime.settings.getActiveModelProfileName();
+	const defaultRole = runtime.settings.getModelRole("default");
+	if (!defaultRole) {
+		await runtime.notifyConfigChanged?.();
+		return `Active profile: ${active ?? DEFAULT_MODEL_PROFILE_NAME}. Current model unchanged; profile has no default model role.`;
+	}
+	const availableModels = runtime.session.getAvailableModels();
+	const resolved = resolveModelRoleValue(defaultRole, availableModels, {
+		settings: runtime.settings,
+		matchPreferences: { usageOrder: runtime.settings.getStorage()?.getModelUsageOrder() },
+		modelRegistry: runtime.session.modelRegistry,
+	});
+	if (!resolved.model) {
+		await runtime.notifyConfigChanged?.();
+		return `Active profile: ${active ?? DEFAULT_MODEL_PROFILE_NAME}. Current model unchanged; default role could not be resolved.`;
+	}
+	const apiKey = await runtime.session.modelRegistry.getApiKey(resolved.model, runtime.session.sessionId);
+	if (!isAuthenticated(apiKey)) {
+		await runtime.notifyConfigChanged?.();
+		return `Active profile: ${active ?? DEFAULT_MODEL_PROFILE_NAME}. Current model unchanged; no auth for ${resolved.model.provider}/${resolved.model.id}.`;
+	}
+	await runtime.session.setModel(resolved.model, "default", {
+		selector: defaultRole,
+		thinkingLevel: resolved.explicitThinkingLevel ? resolved.thinkingLevel : undefined,
+	});
+	if (resolved.explicitThinkingLevel && resolved.thinkingLevel !== undefined) {
+		runtime.session.setThinkingLevel(resolved.thinkingLevel);
+	}
+	await runtime.notifyTitleChanged?.();
+	await runtime.notifyConfigChanged?.();
+	return `Active profile: ${active ?? DEFAULT_MODEL_PROFILE_NAME}. Model set to ${resolved.model.provider}/${resolved.model.id}.`;
 }
 
 const shutdownHandlerTui = (_command: ParsedSlashCommand, runtime: TuiSlashCommandRuntime): SlashCommandResult => {
@@ -149,12 +224,14 @@ type GainSlashRow = {
 
 async function buildGainSlashReport(input: { cwd: string; all: boolean; days?: number }): Promise<string> {
 	const days = input.days ?? 30;
-	const records = await readMinimizerGain({ sinceDays: days, cwd: input.all ? undefined : input.cwd });
+	const cwd = input.all ? undefined : await resolveMinimizerGainCwd(input.cwd);
+	const records = await readMinimizerGain({ sinceDays: days, cwd });
 	const summary = summarizeMinimizerGain(records);
+	const missed = summarizeMissedMinimizerGain(records);
 	const lines = [
 		input.all
 			? `Minimizer savings across all repos (${days}d)`
-			: `Minimizer savings for ${shortenPath(input.cwd)} (${days}d)`,
+			: `Minimizer savings for ${shortenPath(cwd ?? input.cwd)} (${days}d)`,
 		`Commands: ${formatNumber(summary.commands)}`,
 		`Saved Bytes: ${formatNumber(summary.savedBytes)}`,
 		`Estimated Tokens Saved: ${formatNumber(summary.estimatedTokensSaved)}`,
@@ -177,6 +254,10 @@ async function buildGainSlashReport(input: { cwd: string; all: boolean; days?: n
 
 	if (summary.commands === 0) {
 		lines.push("", "No positive native minimizer savings recorded for this scope yet.");
+		const missedCommands = missed.commands.reduce((total, row) => total + row.commands, 0);
+		if (missedCommands > 0) {
+			lines.push(`Missed runs: ${formatNumber(missedCommands)} (use \`omp gain --missed\`.)`);
+		}
 	}
 	lines.push("", `Path: ${shortenPath(getMinimizerGainPath())}`);
 	return lines.join("\n");
@@ -510,6 +591,99 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		handleTui: (_command, runtime) => {
 			runtime.ctx.showModelSelector();
 			runtime.ctx.editor.setText("");
+		},
+	},
+	{
+		name: "profile",
+		description: "Select named model profile",
+		inlineHint: "[list|show|create|use]",
+		allowArgs: true,
+		subcommands: [
+			{ name: "list", description: "List profiles" },
+			{ name: "show", description: "Show active profile settings" },
+			{ name: "create", description: "Create profile from current model settings", usage: "<name> [--no-activate]" },
+			{ name: "use", description: "Switch active profile", usage: "<name|default>" },
+		],
+		handle: async (command, runtime) => {
+			const tokens = command.args.split(/\s+/).filter(Boolean);
+			const action = tokens[0] ?? "show";
+			try {
+				if (action === "list") {
+					await runtime.output(buildProfileList(runtime.settings));
+					return commandConsumed();
+				}
+				if (action === "show") {
+					const name =
+						tokens[1] && tokens[1] !== DEFAULT_MODEL_PROFILE_NAME
+							? normalizeModelProfileName(tokens[1])
+							: undefined;
+					await runtime.output(buildProfileShowText(runtime.settings, name));
+					return commandConsumed();
+				}
+				if (action === "create") {
+					const name = tokens[1] ? normalizeModelProfileName(tokens[1]) : undefined;
+					if (!name) return usage("Usage: /profile create <name> [--no-activate]", runtime);
+					const activate = !tokens.includes("--no-activate");
+					runtime.settings.createModelProfile(name, "current");
+					let message = `Created profile ${name}.`;
+					if (activate) {
+						message = await switchProfileRuntime(name, runtime);
+					} else {
+						await runtime.settings.flush();
+						await runtime.notifyConfigChanged?.();
+					}
+					await runtime.output(message);
+					return commandConsumed();
+				}
+				if (action === "use") {
+					const rawName = tokens[1];
+					if (!rawName) return usage("Usage: /profile use <name|default>", runtime);
+					const name = rawName === DEFAULT_MODEL_PROFILE_NAME ? undefined : normalizeModelProfileName(rawName);
+					await runtime.output(await switchProfileRuntime(name, runtime));
+					return commandConsumed();
+				}
+				return usage("Usage: /profile [list|show|create|use]", runtime);
+			} catch (err) {
+				return usage(`Profile command failed: ${errorMessage(err)}`, runtime);
+			}
+		},
+		handleTui: async (command, runtime) => {
+			const adapted: SlashCommandRuntime = {
+				session: runtime.ctx.session,
+				sessionManager: runtime.ctx.sessionManager,
+				settings: runtime.ctx.settings,
+				cwd: runtime.ctx.sessionManager.getCwd(),
+				output: text => runtime.ctx.showStatus(text),
+				refreshCommands: () => runtime.ctx.refreshSlashCommandState(),
+				reloadPlugins: async () => {},
+			};
+			if (command.args.trim().length > 0) {
+				return BUILTIN_SLASH_COMMAND_LOOKUP.get("profile")?.handle?.(command, adapted);
+			}
+			const profiles = Object.keys(runtime.ctx.settings.getModelProfiles()).sort();
+			const choice = await runtime.ctx.showHookSelector("Select model profile", [
+				DEFAULT_MODEL_PROFILE_NAME,
+				...profiles,
+				"Create new profile...",
+			]);
+			if (!choice) {
+				runtime.ctx.editor.setText("");
+				return commandConsumed();
+			}
+			if (choice === "Create new profile...") {
+				const name = await runtime.ctx.showHookInput("Create model profile", "Profile name");
+				if (name) {
+					const normalized = normalizeModelProfileName(name);
+					runtime.ctx.settings.createModelProfile(normalized, "current");
+					runtime.ctx.showStatus(await switchProfileRuntime(normalized, adapted));
+				}
+			} else {
+				const name = choice === DEFAULT_MODEL_PROFILE_NAME ? undefined : normalizeModelProfileName(choice);
+				runtime.ctx.showStatus(await switchProfileRuntime(name, adapted));
+			}
+			runtime.ctx.editor.setText("");
+			refreshStatusLine(runtime.ctx);
+			return commandConsumed();
 		},
 	},
 	{

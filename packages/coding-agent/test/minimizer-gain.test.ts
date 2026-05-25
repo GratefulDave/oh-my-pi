@@ -8,6 +8,7 @@ import {
 	getMinimizerGainPath,
 	readMinimizerGain,
 	recordMinimizerGain,
+	resolveMinimizerGainCwd,
 	summarizeMinimizerGain,
 	summarizeMissedMinimizerGain,
 } from "../src/minimizer-gain";
@@ -174,6 +175,51 @@ describe("minimizer gain analytics", () => {
 
 			const records = await readMinimizerGain({ agentDir, cwd: "/repo", sinceDays: 1 });
 			expect(records.map(record => record.command)).toEqual(["git diff"]);
+		});
+	});
+
+	it("finds records after canonicalizing a raw cwd symlink", async () => {
+		if (process.platform === "win32") {
+			return;
+		}
+
+		await withTempAgentDir(async agentDir => {
+			const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-minimizer-gain-cwd-"));
+			try {
+				const canonicalCwd = path.join(workspaceDir, "real");
+				const rawCwd = path.join(workspaceDir, "raw");
+				await fs.mkdir(canonicalCwd, { recursive: true });
+				await fs.symlink(canonicalCwd, rawCwd, "dir");
+
+				const canonicalizedRawCwd = await resolveMinimizerGainCwd(rawCwd);
+				expect(canonicalizedRawCwd).toBe(await fs.realpath(rawCwd));
+
+				await recordMinimizerGain(
+					{
+						timestamp: "2026-05-20T00:04:00.000Z",
+						cwd: canonicalizedRawCwd,
+						command: "git status",
+						filter: "git",
+						inputBytes: 200,
+						outputBytes: 80,
+						savedBytes: 120,
+						exitCode: 0,
+						kind: "saved",
+					},
+					{ agentDir },
+				);
+
+				const records = await readMinimizerGain({ agentDir, cwd: canonicalizedRawCwd });
+				expect(records).toHaveLength(1);
+				expect(records[0]).toMatchObject({
+					cwd: canonicalizedRawCwd,
+					command: "git status",
+					savedBytes: 120,
+					kind: "saved",
+				});
+			} finally {
+				await fs.rm(workspaceDir, { recursive: true, force: true });
+			}
 		});
 	});
 

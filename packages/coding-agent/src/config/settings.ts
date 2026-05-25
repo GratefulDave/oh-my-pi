@@ -36,6 +36,8 @@ import {
 	type GroupPrefix,
 	type GroupTypeMap,
 	getDefault,
+	type ModelProfileSettings,
+	type ModelProfilesSettings,
 	SETTINGS_SCHEMA,
 	type SettingPath,
 	type SettingValue,
@@ -99,7 +101,60 @@ function setByPath(obj: RawSettings, segments: string[], value: unknown): void {
 	current[segments[segments.length - 1]] = value;
 }
 
+function deleteByPath(obj: RawSettings, segments: string[]): void {
+	let current = obj;
+	for (let i = 0; i < segments.length - 1; i++) {
+		const segment = segments[i];
+		if (!(segment in current) || typeof current[segment] !== "object" || current[segment] === null) return;
+		current = current[segment] as RawSettings;
+	}
+	delete current[segments[segments.length - 1]];
+}
+
 const PATH_SCOPED_ARRAY_SETTINGS = new Set<SettingPath>(["enabledModels", "disabledProviders"]);
+
+export const DEFAULT_MODEL_PROFILE_NAME = "default";
+
+const MODEL_PROFILE_SCOPED_PATH_ARRAY = [
+	"modelRoles",
+	"defaultThinkingLevel",
+	"enabledModels",
+	"cycleOrder",
+	"modelProviderOrder",
+] as const satisfies readonly SettingPath[];
+
+export type ModelProfileScopedPath = (typeof MODEL_PROFILE_SCOPED_PATH_ARRAY)[number];
+export type ModelProfileScopedValue =
+	| SettingValue<"modelRoles">
+	| SettingValue<"defaultThinkingLevel">
+	| SettingValue<"enabledModels">
+	| SettingValue<"cycleOrder">
+	| SettingValue<"modelProviderOrder">;
+
+export const MODEL_PROFILE_SCOPED_PATHS: ReadonlySet<SettingPath> = new Set(MODEL_PROFILE_SCOPED_PATH_ARRAY);
+
+export function normalizeModelProfileName(name: string): string {
+	const normalized = name.trim();
+	if (normalized.length === 0) {
+		throw new Error("Profile name is required");
+	}
+	if (!/^[A-Za-z0-9_-]+$/.test(normalized)) {
+		throw new Error("Profile names may only contain letters, numbers, underscores, and hyphens");
+	}
+	return normalized;
+}
+
+function isDefaultModelProfileName(name: string | undefined): boolean {
+	return name === undefined || name === DEFAULT_MODEL_PROFILE_NAME;
+}
+
+function isModelProfileSettings(value: unknown): value is ModelProfileSettings {
+	return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function isModelProfilesSettings(value: unknown): value is ModelProfilesSettings {
+	return !!value && typeof value === "object" && !Array.isArray(value);
+}
 
 type PathScopedStringArrayEntry = {
 	path?: unknown;
@@ -283,11 +338,16 @@ export class Settings {
 	 */
 	set<P extends SettingPath>(path: P, value: SettingValue<P>): void {
 		const prev = this.get(path);
-		const segments = path.split(".");
-		setByPath(this.#global, segments, value);
-		this.#modified.add(path);
-		this.#rebuildMerged();
-		this.#queueSave();
+		const activeProfile = this.getActiveModelProfileName();
+		if (activeProfile && MODEL_PROFILE_SCOPED_PATHS.has(path)) {
+			this.setModelProfileValue(activeProfile, path as ModelProfileScopedPath, value as ModelProfileScopedValue);
+		} else {
+			const segments = path.split(".");
+			setByPath(this.#global, segments, value);
+			this.#modified.add(path);
+			this.#rebuildMerged();
+			this.#queueSave();
+		}
 
 		// Trigger hook if exists
 		const hook = SETTING_HOOKS[path];
@@ -421,6 +481,102 @@ export class Settings {
 	}
 
 	/**
+	 * Get the active named model profile. Returns undefined for legacy/default settings.
+	 */
+	getActiveModelProfileName(): string | undefined {
+		const value = this.get("activeModelProfile");
+		if (typeof value !== "string") return undefined;
+		const normalized = value.trim();
+		return isDefaultModelProfileName(normalized) ? undefined : normalized;
+	}
+
+	getModelProfiles(): ReadOnlyDict<ModelProfileSettings> {
+		return this.get("modelProfiles");
+	}
+
+	getModelProfile(name: string): ModelProfileSettings | undefined {
+		const normalized = normalizeModelProfileName(name);
+		if (isDefaultModelProfileName(normalized)) return undefined;
+		return this.get("modelProfiles")[normalized];
+	}
+
+	createModelProfile(name: string, source: "current" | "empty" = "current"): void {
+		const normalized = normalizeModelProfileName(name);
+		if (isDefaultModelProfileName(normalized)) {
+			throw new Error("The default profile is the base configuration and cannot be created");
+		}
+		const profiles = { ...this.get("modelProfiles") };
+		if (profiles[normalized]) {
+			throw new Error(`Model profile already exists: ${normalized}`);
+		}
+		profiles[normalized] =
+			source === "empty"
+				? {}
+				: {
+						modelRoles: { ...this.get("modelRoles") },
+						defaultThinkingLevel: this.get("defaultThinkingLevel"),
+						enabledModels: [...this.get("enabledModels")],
+						cycleOrder: [...this.get("cycleOrder")],
+						modelProviderOrder: [...this.get("modelProviderOrder")],
+					};
+		this.set("modelProfiles", profiles);
+	}
+
+	switchModelProfile(name: string | undefined): void {
+		const normalized = name === undefined ? undefined : normalizeModelProfileName(name);
+		if (normalized === undefined || normalized === DEFAULT_MODEL_PROFILE_NAME) {
+			deleteByPath(this.#global, ["activeModelProfile"]);
+		} else {
+			const profileName = normalized;
+			const profiles = this.get("modelProfiles");
+			if (!profiles[profileName]) {
+				throw new Error(`Unknown model profile: ${profileName}`);
+			}
+			setByPath(this.#global, ["activeModelProfile"], profileName);
+		}
+		this.#modified.add("activeModelProfile");
+		this.#rebuildMerged();
+		this.#queueSave();
+	}
+
+	deleteModelProfile(name: string): void {
+		const normalized = normalizeModelProfileName(name);
+		if (isDefaultModelProfileName(normalized)) {
+			throw new Error("The default profile is the base configuration and cannot be deleted");
+		}
+		const profiles = { ...this.get("modelProfiles") };
+		if (!profiles[normalized]) {
+			throw new Error(`Unknown model profile: ${normalized}`);
+		}
+		delete profiles[normalized];
+		this.set("modelProfiles", profiles);
+		if (this.getActiveModelProfileName() === normalized) {
+			this.switchModelProfile(undefined);
+		}
+	}
+
+	setModelProfileValue(name: string, path: ModelProfileScopedPath, value: ModelProfileScopedValue): void {
+		const normalized = normalizeModelProfileName(name);
+		if (isDefaultModelProfileName(normalized)) {
+			setByPath(this.#global, [path], value);
+			this.#modified.add(path);
+			this.#rebuildMerged();
+			this.#queueSave();
+			return;
+		}
+		const profiles = { ...this.get("modelProfiles") };
+		const existing = profiles[normalized];
+		if (!existing) {
+			throw new Error(`Unknown model profile: ${normalized}`);
+		}
+
+		setByPath(this.#global, ["modelProfiles", normalized, path], value);
+		this.#modified.add(`modelProfiles.${normalized}.${path}`);
+		this.#rebuildMerged();
+		this.#queueSave();
+	}
+
+	/**
 	 * Set a model role (helper for modelRoles record).
 	 */
 	setModelRole(role: ModelRole | string, modelId: string): void {
@@ -447,13 +603,13 @@ export class Settings {
 	 * Override model roles (helper for modelRoles record).
 	 */
 	overrideModelRoles(roles: ReadOnlyDict<string>): void {
-		const prev = this.get("modelRoles");
+		const next = { ...this.get("modelRoles") };
 		for (const [role, modelId] of Object.entries(roles)) {
 			if (modelId) {
-				prev[role] = modelId;
+				next[role] = modelId;
 			}
 		}
-		this.override("modelRoles", prev);
+		this.override("modelRoles", next);
 	}
 
 	/**
@@ -758,8 +914,29 @@ export class Settings {
 	// ─────────────────────────────────────────────────────────────────────────
 
 	#rebuildMerged(): void {
-		this.#merged = this.#deepMerge(this.#deepMerge({}, this.#global), this.#project);
-		this.#merged = this.#deepMerge(this.#merged, this.#overrides);
+		const base = this.#deepMerge(this.#deepMerge({}, this.#global), this.#project);
+		const overrideProfile = getByPath(this.#overrides, ["activeModelProfile"]);
+		const profileName = typeof overrideProfile === "string" ? overrideProfile : base.activeModelProfile;
+		let merged = base;
+		if (typeof profileName === "string" && !isDefaultModelProfileName(profileName)) {
+			const overrideProfiles = getByPath(this.#overrides, ["modelProfiles"]);
+			const baseProfiles = isModelProfilesSettings(base.modelProfiles) ? base.modelProfiles : {};
+			const profiles = isModelProfilesSettings(overrideProfiles)
+				? (this.#deepMerge(baseProfiles, overrideProfiles) as ModelProfilesSettings)
+				: baseProfiles;
+			const profile = profiles[profileName];
+			if (isModelProfileSettings(profile)) {
+				const profileOverlay: RawSettings = {};
+				for (const scopedPath of MODEL_PROFILE_SCOPED_PATH_ARRAY) {
+					const value = profile[scopedPath];
+					if (value !== undefined) {
+						profileOverlay[scopedPath] = value;
+					}
+				}
+				merged = this.#deepMerge(merged, profileOverlay);
+			}
+		}
+		this.#merged = this.#deepMerge(merged, this.#overrides);
 	}
 
 	#fireAllHooks(): void {

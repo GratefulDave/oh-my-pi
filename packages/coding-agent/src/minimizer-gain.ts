@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { getAgentDir } from "@oh-my-pi/pi-utils";
+import { getAgentDir, logger } from "@oh-my-pi/pi-utils";
 
 export type MinimizerGainKind = "saved" | "missed";
 
@@ -108,6 +108,15 @@ const MISSED_FILTER = "missed";
 export function getMinimizerGainPath(agentDir?: string): string {
 	return path.join(agentDir ?? getAgentDir(), "minimizer-gain.jsonl");
 }
+export async function resolveMinimizerGainCwd(cwd: string | undefined): Promise<string | undefined> {
+	if (!cwd) return undefined;
+	const resolved = path.resolve(cwd);
+	try {
+		return await fs.realpath(resolved);
+	} catch {
+		return resolved;
+	}
+}
 
 export async function recordMinimizerGain(
 	record: MinimizerGainRecord,
@@ -117,8 +126,8 @@ export async function recordMinimizerGain(
 		const filePath = getMinimizerGainPath(options.agentDir);
 		await fs.mkdir(path.dirname(filePath), { recursive: true });
 		await fs.appendFile(filePath, `${JSON.stringify(record)}\n`, "utf-8");
-	} catch {
-		// Best-effort local analytics must never affect command execution.
+	} catch (err) {
+		logger.warn("Failed to record minimizer gain", { error: String(err) });
 	}
 }
 

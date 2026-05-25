@@ -183,12 +183,25 @@ export interface ModelTagsSettings {
 	[key: string]: ModelTagDef;
 }
 
+export interface ModelProfileSettings {
+	modelRoles?: Record<string, string>;
+	defaultThinkingLevel?: (typeof THINKING_EFFORTS)[number];
+	enabledModels?: string[];
+	cycleOrder?: string[];
+	modelProviderOrder?: string[];
+}
+
+export interface ModelProfilesSettings {
+	[key: string]: ModelProfileSettings;
+}
+
 // Typed defaults for array/record settings — named constants avoid `as` casts
 // under `as const` while still letting SettingValue infer the correct element type.
 const EMPTY_STRING_ARRAY: string[] = [];
 const EMPTY_STRING_RECORD: Record<string, string> = {};
 const DEFAULT_CYCLE_ORDER: string[] = ["smol", "default", "slow"];
 const EMPTY_MODEL_TAGS_RECORD: ModelTagsSettings = {};
+const EMPTY_MODEL_PROFILES: ModelProfilesSettings = {};
 const HINDSIGHT_RECALL_TYPES_DEFAULT: string[] = ["world", "experience"];
 export const DEFAULT_BASH_INTERCEPTOR_RULES: BashInterceptorRule[] = [
 	{
@@ -324,6 +337,9 @@ export const SETTINGS_SCHEMA = {
 	},
 
 	disabledExtensions: { type: "array", default: EMPTY_STRING_ARRAY },
+
+	activeModelProfile: { type: "string", default: undefined },
+	modelProfiles: { type: "record", default: EMPTY_MODEL_PROFILES },
 
 	modelRoles: { type: "record", default: EMPTY_STRING_RECORD },
 
@@ -3021,6 +3037,7 @@ export interface GroupTypeMap {
 	modelRoles: Record<string, string>;
 	modelTags: ModelTagsSettings;
 	cycleOrder: string[];
+	modelProfiles: ModelProfilesSettings;
 	shellMinimizer: ShellMinimizerSettings;
 }
 
