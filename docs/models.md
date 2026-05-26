@@ -441,12 +441,13 @@ Commands:
 ```bash
 omp profile list
 omp profile create fast --empty --activate
+omp profile create openrouter --preset openrouter --activate
 omp profile set fast modelRoles.default anthropic/claude-haiku-4-5:low
 omp profile use fast
 omp --profile fast --print "summarize status"
 ```
 
-`default` is reserved for the base flat config. `omp profile use default` clears the persisted active profile. `--profile <name|default>` is process-local and does not persist. `/profile` opens an interactive profile selector in TUI sessions; selecting `Create new profile...` copies the current effective model settings, saves them, and switches to the new profile.
+`default` is reserved for the base flat config. `omp profile use default` clears the persisted active profile. `--profile <name|default>` is process-local and does not persist. `/profile` opens an interactive profile selector in TUI sessions; selecting `Create new profile...` copies the current effective model settings, saves them, and switches to the new profile. `--preset openrouter` creates an OpenRouter-scoped profile by setting `enabledModels: ["openrouter/*"]` and `modelProviderOrder: ["openrouter"]`, which exposes every currently available OpenRouter model in `/model` and `--list-models`.
 
 Precedence for profile-scoped keys:
 

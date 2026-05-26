@@ -7,6 +7,8 @@
 - Added native `ast_dump` syntax-tree diagnostics and YAML rule mode for `ast_grep`, enabling relational ast-grep queries such as `has`, `inside`, `follows`, and `precedes`.
 - Added ICM as a selectable memory backend, using the local `icm` CLI for recall and retention while keeping Hindsight and local memory as separate options.
 - Added named model profiles for model-selection defaults: `omp profile`, launch-time `--profile`, and interactive `/profile` can now create, list, switch, and persist alternate `modelRoles`, `defaultThinkingLevel`, `enabledModels`, `cycleOrder`, and `modelProviderOrder` sets without changing provider auth.
+- Added `lex factory init|status|doctor` plus bundled project-scoped software-factory templates for verifier loops, safety gates, repo-local prompts/workflows, and optional legacy-config import into `.omp/factory/`.
+- Added `omp profile create --preset openrouter`, plus `/profile create ... --preset openrouter`, to create an OpenRouter-scoped model profile that exposes all currently available OpenRouter models in selectors and `--list-models`.
 
 ### Changed
 

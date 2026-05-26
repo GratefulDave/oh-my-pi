@@ -5,7 +5,12 @@ import { getOAuthProviders } from "@oh-my-pi/pi-ai/utils/oauth";
 import { formatNumber, Snowflake, setProjectDir } from "@oh-my-pi/pi-utils";
 import { $ } from "bun";
 import { isAuthenticated } from "../config/model-registry";
-import { resolveModelRoleValue } from "../config/model-resolver";
+import { resolveAllowedModels, resolveModelRoleValue } from "../config/model-resolver";
+import {
+	applyModelProfilePreset,
+	isModelProfilePreset,
+	MODEL_PROFILE_PRESETS,
+} from "../config/model-profile-presets";
 import {
 	DEFAULT_MODEL_PROFILE_NAME,
 	normalizeModelProfileName,
@@ -115,7 +120,11 @@ async function switchProfileRuntime(name: string | undefined, runtime: SlashComm
 		await runtime.notifyConfigChanged?.();
 		return `Active profile: ${active ?? DEFAULT_MODEL_PROFILE_NAME}. Current model unchanged; profile has no default model role.`;
 	}
-	const availableModels = runtime.session.getAvailableModels();
+	const availableModels = await resolveAllowedModels(
+		runtime.session.modelRegistry,
+		runtime.settings,
+		{ usageOrder: runtime.settings.getStorage()?.getModelUsageOrder() },
+	);
 	const resolved = resolveModelRoleValue(defaultRole, availableModels, {
 		settings: runtime.settings,
 		matchPreferences: { usageOrder: runtime.settings.getStorage()?.getModelUsageOrder() },
@@ -270,6 +279,7 @@ function pushGainRows<T extends GainSlashRow>(lines: string[], rows: T[], label:
 		);
 	}
 }
+
 
 const DELEGATE_USAGE =
 	"Usage: /delegate [--backend acpx|tmux|cmux] [--agents gemini,claude,codex] [--session <name>] [--mode exec|prompt] [--timeout <ms>] <prompt>";
@@ -601,7 +611,7 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		subcommands: [
 			{ name: "list", description: "List profiles" },
 			{ name: "show", description: "Show active profile settings" },
-			{ name: "create", description: "Create profile from current model settings", usage: "<name> [--no-activate]" },
+			{ name: "create", description: "Create profile from current model settings", usage: "<name> [--no-activate] [--preset <openrouter>]" },
 			{ name: "use", description: "Switch active profile", usage: "<name|default>" },
 		],
 		handle: async (command, runtime) => {
@@ -622,9 +632,28 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 				}
 				if (action === "create") {
 					const name = tokens[1] ? normalizeModelProfileName(tokens[1]) : undefined;
-					if (!name) return usage("Usage: /profile create <name> [--no-activate]", runtime);
+					if (!name) {
+						return usage(
+							`Usage: /profile create <name> [--no-activate] [--preset <${MODEL_PROFILE_PRESETS.join("|")}>]`,
+							runtime,
+						);
+					}
 					const activate = !tokens.includes("--no-activate");
+					const presetFlagIndex = tokens.indexOf("--preset");
+					const rawPreset = presetFlagIndex === -1 ? undefined : tokens[presetFlagIndex + 1];
+					if (presetFlagIndex !== -1 && !rawPreset) {
+						return usage(
+							`Usage: /profile create <name> [--no-activate] [--preset <${MODEL_PROFILE_PRESETS.join("|")}>]`,
+							runtime,
+						);
+					}
+					if (rawPreset && !isModelProfilePreset(rawPreset)) {
+						throw new Error(`Unknown profile preset: ${rawPreset}`);
+					}
 					runtime.settings.createModelProfile(name, "current");
+					if (rawPreset) {
+						applyModelProfilePreset(runtime.settings, name, rawPreset);
+					}
 					let message = `Created profile ${name}.`;
 					if (activate) {
 						message = await switchProfileRuntime(name, runtime);

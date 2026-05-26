@@ -9,6 +9,12 @@ import {
 	Settings,
 	settings,
 } from "../config/settings";
+import {
+	applyModelProfilePreset,
+	isModelProfilePreset,
+	MODEL_PROFILE_PRESETS,
+	type ModelProfilePreset,
+} from "../config/model-profile-presets";
 import { theme } from "../modes/theme/theme";
 
 export type ProfileAction = "list" | "show" | "create" | "use" | "delete" | "set";
@@ -22,6 +28,7 @@ export interface ProfileCommandArgs {
 		json?: boolean;
 		empty?: boolean;
 		activate?: boolean;
+		preset?: ModelProfilePreset;
 	};
 }
 
@@ -121,6 +128,10 @@ function printProfile(name: string | undefined): void {
 	console.log(JSON.stringify(getEffectiveProfileSnapshot(), null, 2));
 }
 
+function formatCreateUsage(): string {
+	return `Usage: ${COMMAND_NAME} profile create <name> [--empty] [--activate] [--preset <${MODEL_PROFILE_PRESETS.join("|")}>]`;
+}
+
 function handleList(flags: { json?: boolean }): void {
 	const active = settings.getActiveModelProfileName();
 	const names = Object.keys(settings.getModelProfiles()).sort();
@@ -154,11 +165,17 @@ function handleShow(name: string | undefined, flags: { json?: boolean }): void {
 
 async function handleCreate(
 	name: string | undefined,
-	flags: { empty?: boolean; activate?: boolean; json?: boolean },
+	flags: { empty?: boolean; activate?: boolean; json?: boolean; preset?: ModelProfilePreset },
 ): Promise<void> {
-	if (!name) throw new Error(`Usage: ${COMMAND_NAME} profile create <name> [--empty] [--activate]`);
+	if (!name) throw new Error(formatCreateUsage());
 	const normalized = normalizeModelProfileName(name);
+	if (flags.preset && !isModelProfilePreset(flags.preset)) {
+		throw new Error(`Unknown profile preset: ${flags.preset}`);
+	}
 	settings.createModelProfile(normalized, flags.empty ? "empty" : "current");
+	if (flags.preset) {
+		applyModelProfilePreset(settings, normalized, flags.preset);
+	}
 	if (flags.activate) settings.switchModelProfile(normalized);
 	await settings.flush();
 	if (flags.json) {

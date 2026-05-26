@@ -93,6 +93,24 @@ describe("profile CLI", () => {
 		});
 	});
 
+	it("applies openrouter preset when creating a profile", async () => {
+		vi.spyOn(console, "log").mockImplementation(() => {});
+
+		await runProfileCommand({
+			action: "create",
+			name: "openrouter",
+			flags: { empty: true, json: true, preset: "openrouter" },
+		});
+
+		const config = await readConfig();
+		expect(config.modelProfiles).toEqual({
+			openrouter: {
+				enabledModels: ["openrouter/*"],
+				modelProviderOrder: ["openrouter"],
+			},
+		});
+	});
+
 	it("rejects default as a creatable or deletable profile", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => {});
 		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
