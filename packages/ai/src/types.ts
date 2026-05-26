@@ -346,11 +346,14 @@ export interface StreamOptions {
 	/**
 	 * Optional override for the first streamed event watchdog in milliseconds.
 	 * Set to 0 to disable the first-event watchdog for this request.
+	 *
+	 * Honored by: anthropic, openai-completions, openai-responses,
+	 * azure-openai-responses, openai-codex-responses.
 	 */
 	streamFirstEventTimeoutMs?: number;
 	/**
-	 * Optional override for the maximum idle gap between streamed events in milliseconds.
-	 * Set to 0 to disable the inter-event idle watchdog for this request.
+	 * @deprecated Stream idle watchdogs were removed; provider streams now wait for
+	 * provider output, provider/socket errors, caller aborts, or request-layer timeouts.
 	 */
 	streamIdleTimeoutMs?: number;
 	/**

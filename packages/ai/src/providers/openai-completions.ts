@@ -51,6 +51,7 @@ import {
 	getStreamFirstEventTimeoutMs,
 	iterateWithIdleTimeout,
 } from "../utils/idle-iterator";
+import { resolveSdkTimeoutMs } from "../utils/sdk-stream-timeout";
 import { parseStreamingJson } from "../utils/json-parse";
 import { parseGitHubCopilotApiKey } from "../utils/oauth/github-copilot";
 import { getKimiCommonHeaders } from "../utils/oauth/kimi";
@@ -997,14 +998,7 @@ async function createClient(
 	// before-headers provider; respect it so the SDK doesn't give up before the
 	// wrapping watchdog arms. An explicit `0` disables the first-event watchdog,
 	// and the SDK treats `timeout: 0` as an immediate timeout, so do not pass a
-	// request timeout in that case.
-	const envSdkTimeoutMs = getStreamFirstEventTimeoutMs(getOpenAIStreamIdleTimeoutMs());
-	const sdkTimeoutMs =
-		streamFirstEventTimeoutOverride === 0
-			? undefined
-			: streamFirstEventTimeoutOverride !== undefined
-				? Math.max(envSdkTimeoutMs ?? 0, streamFirstEventTimeoutOverride)
-				: envSdkTimeoutMs;
+	const sdkTimeoutMs = resolveSdkTimeoutMs(streamFirstEventTimeoutOverride);
 	return {
 		client: new OpenAI({
 			apiKey,

@@ -1054,4 +1054,96 @@ describe("TUI terminal-state regressions", () => {
 			}
 		}
 	});
+
+	describe("scrollback duplication + growth", () => {
+		it("no snapshot duplication after clearScrollback + append", async () => {
+			const term = new VirtualTerminal(40, 5);
+			const tui = new TUI(term);
+			const component = new MutableLinesComponent([]);
+			tui.addChild(component);
+
+			try {
+				tui.start();
+				await settle(term);
+
+				// Initial content fills viewport.
+				component.setLines(rows("line", 5));
+				tui.requestRender();
+				await settle(term);
+
+				// Clear scrollback and render shorter content.
+				component.setLines(["fresh"]);
+				tui.requestRender(true, { clearScrollback: true });
+				await settle(term);
+
+				// Append more lines — without the fix the prior snapshot
+				// duplicates into scrollback alongside the appends.
+				component.setLines(["fresh", "line2", "line3"]);
+				tui.requestRender();
+				await settle(term);
+
+				const scrollBuffer = term.getScrollBuffer();
+				const visible = term.getViewport().map(l => l.trimEnd());
+
+				// "fresh" must appear exactly once across the whole buffer.
+				const freshCount = scrollBuffer.filter(l => l.trimEnd() === "fresh").length;
+				expect(freshCount).toBe(1);
+
+				// Latest content line must be visible in viewport.
+				expect(visible[2].trimEnd()).toBe("line3");
+			} finally {
+				tui.stop();
+			}
+		});
+
+		it("scrollback high-water marker caps growth after clearScrollback", async () => {
+			const term = new VirtualTerminal(40, 5);
+			const tui = new TUI(term);
+			const component = new MutableLinesComponent([]);
+			tui.addChild(component);
+
+			try {
+				tui.start();
+				await settle(term);
+
+				// Fill viewport and overflow scrollback.
+				component.setLines(rows("initial", 20));
+				tui.requestRender();
+				await settle(term);
+
+				const beforeScrollbackLen = term.getScrollBuffer().length;
+
+				// Clear scrollback and render fresh content.
+				component.setLines(rows("fresh", 10));
+				tui.requestRender(true, { clearScrollback: true });
+				await settle(term);
+
+				// Append even more lines — high water marker should prevent
+				// scrollback from growing beyond the fresh content + new appends.
+				const moreLines = rows("more", 15);
+				component.setLines([...rows("fresh", 10), ...moreLines]);
+				tui.requestRender();
+				await settle(term);
+
+				const afterScrollBuffer = term.getScrollBuffer();
+
+				// Scrollback should not be longer than the set content or
+				// the pre-clear history — whichever is smaller, thanks to the
+				// high-water reset.
+				expect(afterScrollBuffer.length).toBeLessThanOrEqual(25);
+
+				// No "initial" row should survive the clearScrollback.
+				const hasStaleInitial = afterScrollBuffer.some(l =>
+					l.trimEnd().startsWith("initial"),
+				);
+				expect(hasStaleInitial).toBe(false);
+
+				// The latest appended rows must be present.
+				const visible = term.getViewport().map(l => l.trimEnd());
+				expect(visible.some(l => l === "more14")).toBe(true);
+			} finally {
+				tui.stop();
+			}
+		});
+	});
 });

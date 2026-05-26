@@ -215,4 +215,13 @@ export class VirtualTerminal implements Terminal {
 	reset(): void {
 		this.xterm.reset();
 	}
+	/**
+	 * Get the cursor position (row and column, 0-indexed) from the active buffer.
+	 */
+	getCursor(): { row: number; col: number } {
+		return {
+			row: this.xterm.buffer.active.cursorY,
+			col: this.xterm.buffer.active.cursorX,
+		};
+	}
 }

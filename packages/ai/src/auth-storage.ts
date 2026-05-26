@@ -339,6 +339,7 @@ const USAGE_FAILURE_BACKOFF_MS = 10_000;
 // (~3.5s total worst case); a tight per-request budget aborts retries mid-cycle.
 const DEFAULT_USAGE_REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 10_000;
+const OAUTH_REFRESH_SKEW_MS = 60_000;
 /**
  * Cap on the buffered credential_disabled backlog held while no handler is attached.
  * In practice the backlog is 0–N where N ≈ active providers (≤ ~20). The cap exists so
@@ -1702,7 +1703,7 @@ export class AuthStorage {
 		if (
 			request.credential.type === "oauth" &&
 			request.credential.expiresAt !== undefined &&
-			Date.now() >= request.credential.expiresAt
+			Date.now() + OAUTH_REFRESH_SKEW_MS >= request.credential.expiresAt
 		) {
 			const refreshableCredential = this.#buildRefreshableOauthCredential(request.credential);
 			if (refreshableCredential) {
@@ -2556,8 +2557,14 @@ export class AuthStorage {
 					: refreshedCredentials.access;
 				result = { newCredentials: refreshedCredentials, apiKey };
 			} else {
+				const refreshedCredentials = await this.#refreshOAuthCredential(
+					provider,
+					selection.credential,
+					this.#getStoredCredentials(provider)[selection.index]?.id,
+					options?.signal,
+				);
 				const oauthCreds: Record<string, OAuthCredentials> = {
-					[provider]: selection.credential,
+					[provider]: refreshedCredentials,
 				};
 				result = await getOAuthApiKey(provider as OAuthProvider, oauthCreds);
 			}

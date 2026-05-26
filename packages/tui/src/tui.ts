@@ -284,7 +284,9 @@ export class TUI extends Container {
 	#fullRedrawCount = 0;
 	#clearScrollbackOnNextRender = false;
 	#hasEverRendered = false;
+	#scrollbackHighWater = 0;
 	#stopped = false;
+	#suppressNextSuffixScroll = false;
 
 	// Overlay stack for modal components rendered on top of base content
 	overlayStack: {
@@ -1085,7 +1087,7 @@ export class TUI extends Container {
 		const heightChanged = this.#previousHeight > 0 && this.#previousHeight !== height;
 
 		// 3. Classify intent.
-		const intent = this.#planRender(lines, widthChanged, heightChanged, prevViewportTop);
+		const intent = this.#planRender(lines, widthChanged, heightChanged, prevViewportTop, height);
 		this.#logRedraw(intent, lines.length, height);
 
 		// 4. Execute.
@@ -1149,6 +1151,7 @@ export class TUI extends Container {
 		widthChanged: boolean,
 		heightChanged: boolean,
 		prevViewportTop: number,
+		height: number,
 	): RenderIntent {
 		// Initial paint after start(): scrollback must keep its prior shell
 		// content, but the viewport must be cleared so stale rows do not bleed
@@ -1165,6 +1168,21 @@ export class TUI extends Container {
 
 		const diff = this.#diffLines(newLines);
 
+
+		// Content shrank below previous scrollback high water: rebuild history so
+		// terminal scrollback reflects the new shorter content without snapshot
+		// duplication from a prior clearScrollback.
+		if (newLines.length < this.#scrollbackHighWater && !isMultiplexerSession()) {
+			return { kind: "historyRebuild" };
+		}
+
+		// Suppressed suffix scroll: after a clearScrollback, appending content
+		// would double-slot into scrollback (once by the clear and once by the
+		// append). Route to viewport repaint to anchor fresh content cleanly.
+		if (this.#suppressNextSuffixScroll && diff.appendedLines && !isMultiplexerSession()) {
+			this.#suppressNextSuffixScroll = false;
+			return { kind: "viewportRepaint" };
+		}
 		if (diff.firstChanged === -1) {
 			// Content unchanged. Width change still alters wrapping geometry;
 			// height change shifts the visible window. Either needs a repaint
@@ -1293,13 +1311,20 @@ export class TUI extends Container {
 	 * Single state-transition point. Every emitter calls this exactly once at
 	 * the end so cursor/viewport/scrollback accounting stays consistent.
 	 */
-	#commit(lines: string[], width: number, height: number, viewportTop: number, hardwareCursorRow: number): void {
+	#commit(lines: string[], width: number, height: number, viewportTop: number, hardwareCursorRow: number, clearScrollback = false): void {
 		this.#previousLines = lines;
 		this.#previousWidth = width;
 		this.#previousHeight = height;
 		this.#cursorRow = Math.max(0, lines.length - 1);
 		this.#viewportTopRow = viewportTop;
 		this.#hardwareCursorRow = hardwareCursorRow;
+
+		if (clearScrollback) {
+			this.#scrollbackHighWater = 0;
+			this.#suppressNextSuffixScroll = lines.length > height;
+		}
+		const pushedNow = Math.max(0, lines.length - height);
+		if (pushedNow > this.#scrollbackHighWater) this.#scrollbackHighWater = pushedNow;
 	}
 
 	/**
@@ -1329,7 +1354,7 @@ export class TUI extends Container {
 		this.terminal.write(buffer);
 
 		this.#maxLinesRendered = options.clearViewport ? lines.length : Math.max(this.#maxLinesRendered, lines.length);
-		this.#commit(lines, width, height, Math.max(0, this.#maxLinesRendered - height), toRow);
+		this.#commit(lines, width, height, Math.max(0, this.#maxLinesRendered - height), toRow, options.clearScrollback);
 	}
 
 	/**
@@ -1389,6 +1414,10 @@ export class TUI extends Container {
 		}
 		buffer += "\x1b[?2026l";
 		this.terminal.write(buffer);
+
+		// Track scrollback growth for appended lines (no #commit call from this emitter).
+		const pushedNow = Math.max(0, lines.length - height);
+		if (pushedNow > this.#scrollbackHighWater) this.#scrollbackHighWater = pushedNow;
 	}
 
 	/**

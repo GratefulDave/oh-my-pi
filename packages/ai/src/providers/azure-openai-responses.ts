@@ -26,6 +26,7 @@ import {
 	getStreamFirstEventTimeoutMs,
 	iterateWithIdleTimeout,
 } from "../utils/idle-iterator";
+import { createSdkStreamRequestOptions, resolveSdkTimeoutMs } from "../utils/sdk-stream-timeout";
 import { sanitizeSchemaForOpenAIResponses, toolWireSchema } from "../utils/schema";
 import { wrapFetchForSseDebug } from "../utils/sse-debug";
 import { mapToOpenAIResponsesToolChoice } from "../utils/tool-choice";
@@ -129,7 +130,7 @@ export const streamAzureOpenAIResponses: StreamFunction<"azure-openai-responses"
 				url: `${baseUrl}/responses`,
 				body: params,
 			};
-			const openaiStream = await client.responses.create(params, { signal: requestSignal });
+			const openaiStream = await client.responses.create(params, createSdkStreamRequestOptions(requestSignal, options?.streamFirstEventTimeoutMs));
 			const firstEventWatchdog = createWatchdog(
 				options?.streamFirstEventTimeoutMs ?? getStreamFirstEventTimeoutMs(idleTimeoutMs),
 				() => abortTracker.abortLocally(firstEventTimeoutAbortError),

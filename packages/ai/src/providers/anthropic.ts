@@ -57,6 +57,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream";
 import { isFoundryEnabled } from "../utils/foundry";
 import { finalizeErrorMessage, type RawHttpRequestDump, rewriteCopilotError } from "../utils/http-inspector";
 import { getStreamFirstEventTimeoutMs, getStreamIdleTimeoutMs, iterateWithIdleTimeout } from "../utils/idle-iterator";
+import { createSdkStreamRequestOptions } from "../utils/sdk-stream-timeout";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse";
 import { parseGitHubCopilotApiKey } from "../utils/oauth/github-copilot";
 import { notifyProviderResponse } from "../utils/provider-response";
@@ -1103,7 +1104,8 @@ export const streamAnthropic: StreamFunction<"anthropic-messages"> = (
 				);
 				const idleTimeoutAbortError = new Error("Anthropic stream stalled while waiting for the next event");
 				const { requestSignal } = activeAbortTracker;
-				const anthropicRequest = client.messages.create({ ...params, stream: true }, { signal: requestSignal });
+				const requestOptions = createSdkStreamRequestOptions(requestSignal, options?.streamFirstEventTimeoutMs);
+				const anthropicRequest = client.messages.create({ ...params, stream: true }, requestOptions);
 				let streamedReplayUnsafeContent = false;
 
 				try {
