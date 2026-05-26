@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-
+import { COMMAND_NAME, MIN_BUN_VERSION, procmgr, VERSION } from "@oh-my-pi/pi-utils";
 
 // Strip macOS malloc-stack-logging env vars before any subprocess is spawned.
 // Otherwise every child bun process (subagents, plugin installs, ptree spawns,
