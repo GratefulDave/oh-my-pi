@@ -37,9 +37,13 @@ import { decodeEventStream } from "./aws-eventstream";
 import { signRequest } from "./aws-sigv4";
 import { transformMessages } from "./transform-messages";
 
+export type BedrockThinkingDisplay = "summarized" | "omitted";
+
 export interface BedrockOptions extends StreamOptions {
 	region?: string;
 	profile?: string;
+	/** Amazon Bedrock API key sent as `Authorization: Bearer`, ahead of SigV4 credential resolution. */
+	bearerToken?: string;
 	toolChoice?: "auto" | "any" | "none" | { type: "tool"; name: string };
 	/* See https://docs.aws.amazon.com/bedrock/latest/userguide/inference-reasoning.html for supported models. */
 	reasoning?: Effort;
@@ -47,7 +51,28 @@ export interface BedrockOptions extends StreamOptions {
 	thinkingBudgets?: ThinkingBudgets;
 	/* Only supported by Claude 4.x models, see https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-extended-thinking.html#claude-messages-extended-thinking-tool-use-interleaved */
 	interleavedThinking?: boolean;
+	/**
+	 * Controls how Claude returns thinking content in Bedrock responses.
+	 * - `"summarized"`: thinking blocks include human-readable summaries (default here).
+	 * - `"omitted"`: thinking content is suppressed; the encrypted signature still
+	 *   travels back for multi-turn continuity.
+	 *
+	 * Starting with Claude Opus 4.7 the Anthropic API default is `"omitted"`, which
+	 * leaves callers waiting on a silent stream during long reasoning runs (issue
+	 * #1373). We default to `"summarized"` so adaptive-thinking models that accept
+	 * the field keep producing visible thinking deltas. Older adaptive-thinking
+	 * models (Opus 4.6, Sonnet 4.6+) reject the field, so we omit it for them.
+	 */
+	thinkingDisplay?: BedrockThinkingDisplay;
 }
+
+const AUTHENTICATED_API_KEY_SENTINEL = "<authenticated>";
+
+function resolveBearerToken(options: BedrockOptions): string | undefined {
+	const apiKey = options.apiKey === AUTHENTICATED_API_KEY_SENTINEL ? undefined : options.apiKey;
+	return options.bearerToken || apiKey || $env.AWS_BEARER_TOKEN_BEDROCK;
+}
+
 
 type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
 
@@ -210,34 +235,40 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream"> = (
 				body: commandInput,
 			};
 
-			let credentials: { accessKeyId: string; secretAccessKey: string; sessionToken?: string };
-			if ($flag("AWS_BEDROCK_SKIP_AUTH")) {
-				credentials = { accessKeyId: "dummy-access-key", secretAccessKey: "dummy-secret-key" };
-			} else {
-				credentials = await resolveAwsCredentials({
-					profile: options.profile,
-					region,
-					signal: options.signal,
-				});
-			}
-
 			const bodyText = JSON.stringify(commandInput);
 			const body = new TextEncoder().encode(bodyText);
 			const baseHeaders: Record<string, string> = {
 				"content-type": "application/json",
 				accept: "application/vnd.amazon.eventstream",
 			};
-			const signed = await signRequest({
-				method: "POST",
-				host,
-				path: urlPath,
-				body,
-				region,
-				service: "bedrock",
-				credentials,
-				headers: baseHeaders,
-			});
-			const requestHeaders: Record<string, string> = { ...baseHeaders, ...signed };
+
+			const bearerToken = resolveBearerToken(options);
+			let requestHeaders: Record<string, string>;
+			if (bearerToken) {
+				requestHeaders = { ...baseHeaders, Authorization: `Bearer ${bearerToken}` };
+			} else {
+				let credentials: { accessKeyId: string; secretAccessKey: string; sessionToken?: string };
+				if ($flag("AWS_BEDROCK_SKIP_AUTH")) {
+					credentials = { accessKeyId: "dummy-access-key", secretAccessKey: "dummy-secret-key" };
+				} else {
+					credentials = await resolveAwsCredentials({
+						profile: options.profile,
+						region,
+						signal: options.signal,
+					});
+				}
+				const signed = await signRequest({
+					method: "POST",
+					host,
+					path: urlPath,
+					body,
+					region,
+					service: "bedrock",
+					credentials,
+					headers: baseHeaders,
+				});
+				requestHeaders = { ...baseHeaders, ...signed };
+			}
 
 			const response = await fetchWithRetry(url, {
 				method: "POST",
@@ -712,37 +743,6 @@ function convertToolConfig(
 	}));
 
 	let bedrockToolChoice: WireToolChoice | undefined;
-	switch (toolChoice) {
-		case "auto":
-			bedrockToolChoice = { auto: {} };
-			break;
-		case "any":
-			bedrockToolChoice = { any: {} };
-			break;
-		default:
-			if (toolChoice?.type === "tool") {
-				bedrockToolChoice = { tool: { name: toolChoice.name } };
-			}
-	}
-
-	return { tools: bedrockTools, toolChoice: bedrockToolChoice };
-}
-
-function mapStopReason(reason: string | undefined): StopReason {
-	switch (reason) {
-		case "end_turn":
-		case "stop_sequence":
-			return "stop";
-		case "max_tokens":
-		case "model_context_window_exceeded":
-			return "length";
-		case "tool_use":
-			return "toolUse";
-		default:
-			return "error";
-	}
-}
-
 function buildAdditionalModelRequestFields(
 	model: Model<"bedrock-converse-stream">,
 	options: BedrockOptions,
@@ -753,8 +753,16 @@ function buildAdditionalModelRequestFields(
 	const mode = model.thinking?.mode;
 	if (mode === "anthropic-adaptive") {
 		const effort = mapEffortToAnthropicAdaptiveEffort(model, reasoning);
+		// Starting with Claude Opus 4.7, Anthropic switched the adaptive-thinking
+		// default to "omitted", which silently suppresses streamed reasoning and
+		// can read as a stalled stream during long reasoning runs (issue #1373).
+		// Opt back into "summarized" by default on models that accept the field.
+		const adaptive: { type: "adaptive"; display?: BedrockThinkingDisplay } = { type: "adaptive" };
+		if (supportsAdaptiveThinkingDisplay(model.id)) {
+			adaptive.display = options.thinkingDisplay ?? "summarized";
+		}
 		return {
-			thinking: { type: "adaptive" },
+			thinking: adaptive,
 			output_config: { effort },
 		};
 	}
@@ -770,7 +778,11 @@ function buildAdditionalModelRequestFields(
 	const budget = options.thinkingBudgets?.[level] ?? defaultBudgets[level];
 
 	const result: Record<string, unknown> = {
-		thinking: { type: "enabled", budget_tokens: budget },
+		thinking: {
+			type: "enabled",
+			budget_tokens: budget,
+			display: options.thinkingDisplay ?? "summarized",
+		},
 	};
 
 	if (options.interleavedThinking) {
@@ -779,6 +791,20 @@ function buildAdditionalModelRequestFields(
 
 	return result;
 }
+
+/**
+ * Adaptive thinking `display` is supported starting with Claude Opus 4.7.
+ * Older adaptive-thinking models (Opus 4.6, Sonnet 4.6+) reject the field.
+ * Bedrock model ids are prefixed with region/inference-profile slugs (e.g.
+ * `eu.anthropic.claude-opus-4-7-...`); the regex matches the `claude-opus-X-Y`
+ * fragment regardless of prefix.
+ */
+function supportsAdaptiveThinkingDisplay(modelId: string): boolean {
+	const match = /claude-opus-(\d+)-(\d+)/.exec(modelId);
+	if (!match) return false;
+	const major = Number(match[1]);
+	const minor = Number(match[2]);
+	return major > 4 || (major === 4 && minor >= 7);
 
 /**
  * Bedrock's wire format expects the image as `{ source: { bytes: <base64-string> }, format }`.
