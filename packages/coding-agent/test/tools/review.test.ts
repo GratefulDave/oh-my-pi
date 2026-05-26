@@ -1,6 +1,16 @@
 import { describe, expect, it } from "bun:test";
+import { finalizeSubprocessOutput } from "../../src/task/executor";
 import { subprocessToolRegistry } from "../../src/task/subprocess-tool-registry";
-import { parseReportFindingDetails } from "../../src/tools/review";
+import { parseReportFindingDetails, toReviewFinding } from "../../src/tools/review";
+
+const baseFinding = {
+	title: "Example finding",
+	body: "Details",
+	confidence: 0.95,
+	file_path: "/tmp/example.ts",
+	line_start: 10,
+	line_end: 12,
+} as const;
 
 describe("report_finding subprocess extraction", () => {
 	it("returns undefined for malformed finding details", () => {
@@ -56,5 +66,65 @@ describe("report_finding subprocess extraction", () => {
 				isError: true,
 			}),
 		).toBeUndefined();
+	});
+});
+
+describe("toReviewFinding", () => {
+	it.each([
+		["P0", 0],
+		["P1", 1],
+		["P2", 2],
+		["P3", 3],
+	] as const)("maps %s to %i", (priority, expected) => {
+		expect(toReviewFinding({ ...baseFinding, priority })).toEqual({
+			...baseFinding,
+			priority: expected,
+		});
+	});
+
+	it("injects numeric report findings into successful yield output", () => {
+		const result = finalizeSubprocessOutput({
+			rawOutput: '{"overall_correctness":"correct","explanation":"ok","confidence":0.9}',
+			exitCode: 1,
+			stderr: "should clear",
+			doneAborted: false,
+			signalAborted: false,
+			yieldItems: [
+				{
+					status: "success",
+					data: { overall_correctness: "correct", explanation: "ok", confidence: 0.9 },
+				},
+			],
+			reportFindings: [toReviewFinding({ ...baseFinding, priority: "P2" })],
+			outputSchema: {
+				properties: {
+					overall_correctness: { enum: ["correct", "incorrect"] },
+					explanation: { type: "string" },
+					confidence: { type: "float64" },
+				},
+				optionalProperties: {
+					findings: {
+						elements: {
+							properties: {
+								title: { type: "string" },
+								body: { type: "string" },
+								priority: { type: "number" },
+								confidence: { type: "float64" },
+								file_path: { type: "string" },
+								line_start: { type: "int32" },
+								line_end: { type: "int32" },
+							},
+							required: ["title", "body", "priority", "confidence", "file_path", "line_start", "line_end"],
+						},
+					},
+				},
+				required: ["overall_correctness", "explanation", "confidence"],
+			},
+		});
+
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toBe("");
+		const parsed = JSON.parse(result.rawOutput) as { findings?: Array<{ priority: number }> };
+		expect(parsed.findings?.[0]?.priority).toBe(2);
 	});
 });

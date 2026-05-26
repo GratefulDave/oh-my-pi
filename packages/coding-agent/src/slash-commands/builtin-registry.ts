@@ -10,6 +10,7 @@ import {
 	applyModelProfilePreset,
 	isModelProfilePreset,
 	MODEL_PROFILE_PRESETS,
+	type ModelProfilePreset,
 } from "../config/model-profile-presets";
 import {
 	DEFAULT_MODEL_PROFILE_NAME,
@@ -651,12 +652,17 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 							runtime,
 						);
 					}
-					if (rawPreset && !isModelProfilePreset(rawPreset)) {
-						throw new Error(`Unknown profile preset: ${rawPreset}`);
+
+					let preset: ModelProfilePreset | undefined;
+					if (rawPreset) {
+						if (!isModelProfilePreset(rawPreset)) {
+							throw new Error(`Unknown profile preset: ${rawPreset}`);
+						}
+						preset = rawPreset;
 					}
 					runtime.settings.createModelProfile(name, "current");
-					if (rawPreset) {
-						applyModelProfilePreset(runtime.settings, name, rawPreset);
+					if (preset) {
+						applyModelProfilePreset(runtime.settings, name, preset);
 					}
 					let message = `Created profile ${name}.`;
 					if (activate) {

@@ -13,10 +13,12 @@ import type { Component } from "@oh-my-pi/pi-tui";
 import { Container, Text } from "@oh-my-pi/pi-tui";
 import { isRecord } from "@oh-my-pi/pi-utils";
 import * as z from "zod/v4";
+
 import type { Theme, ThemeColor } from "../modes/theme/theme";
 import { subprocessToolRegistry } from "../task/subprocess-tool-registry";
-export type FindingPriority = "P0" | "P1" | "P2" | "P3";
+import type { ReviewFinding } from "../task/types";
 
+export type FindingPriority = "P0" | "P1" | "P2" | "P3";
 export interface FindingPriorityInfo {
 	ord: 0 | 1 | 2 | 3;
 	symbol: "status.error" | "status.warning" | "status.info";
@@ -34,6 +36,19 @@ export const PRIORITY_LABELS: FindingPriority[] = ["P0", "P1", "P2", "P3"];
 
 export function getPriorityInfo(priority: FindingPriority): FindingPriorityInfo {
 	return PRIORITY_INFO[priority] ?? { ord: 3, symbol: "status.info", color: "muted" };
+}
+
+export function toReviewFinding(details: ReportFindingDetails): ReviewFinding {
+	const { ord } = getPriorityInfo(details.priority);
+	return {
+		title: details.title,
+		body: details.body,
+		priority: ord,
+		confidence: details.confidence,
+		file_path: details.file_path,
+		line_start: details.line_start,
+		line_end: details.line_end,
+	};
 }
 
 function getPriorityDisplay(

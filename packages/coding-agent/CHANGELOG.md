@@ -22,8 +22,9 @@
 - Fixed web search provider fallback to classify auth/quota/rate-limit failures and report every provider failure when the chain is exhausted.
 - Fixed session reload/switch/branch UI flows to explicitly clear terminal history while ordinary forced redraws now preserve scrollback.
 - Fixed bash cancellation to return promptly when native abort/timeout cleanup stalls, quarantining persistent shell sessions only until the stalled native run settles.
-## [15.1.9] - 2026-05-21
+- Fixed reviewer agent no longer fails JTD validation with `findings.0.priority: expected number, received string`; `report_finding` string priorities are coerced to numeric ordinals before auto-injecting `findings[]`. ([#1350](https://github.com/can1357/oh-my-pi/issues/1350))
 
+## [15.1.9] - 2026-05-21
 ### Fixed
 
 - Fixed `disabledProviders` still probing local discovery endpoints for Ollama, llama.cpp, and LM Studio during background model refresh. Disabled providers are now excluded before implicit and built-in discovery managers are created. ([#1232](https://github.com/can1357/oh-my-pi/issues/1232))
