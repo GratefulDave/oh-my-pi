@@ -59,6 +59,7 @@
 - Fixed native minimizer coverage for `git diff --name-only`, `--name-status`, and `--numstat`, plus direct and package-script lint/typecheck commands such as `eslint src/foo.ts`, `tsc --project`, `npm run lint`, and `bun run typecheck`.
 - Fixed minimizer miss telemetry to preserve native reason labels such as `git`, `compound`, and `pipeline-noop` instead of collapsing every non-rewrite to `missed`.
 - Fixed reviewer agent no longer fails JTD validation with `findings.0.priority: expected number, received string`; `report_finding` string priorities are coerced to numeric ordinals before auto-injecting `findings[]`. ([#1350](https://github.com/can1357/oh-my-pi/issues/1350))
+- Fixed `/gain` and `/gain-all` overlays to refresh their minimizer stats while open instead of rendering the snapshot captured at launch.
 
 ## [15.1.9] - 2026-05-21
 ### Fixed

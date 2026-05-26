@@ -245,6 +245,7 @@ async function showGainOverlay(runtime: TuiSlashCommandRuntime, all: boolean): P
 					context,
 					() => tui.requestRender(),
 					() => done(undefined),
+					() => loadMinimizerGainContext({ cwd: runtime.ctx.sessionManager.getCwd(), all }),
 				),
 			{ overlay: true },
 		)

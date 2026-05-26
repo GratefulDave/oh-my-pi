@@ -92,4 +92,33 @@ describe("MinimizerGainOverlayComponent", () => {
 		expect(output).toContain("minimizer-gain.jsonl");
 		expect(output).toContain("git status --short");
 	});
+	it("refreshes rendered stats from the latest context", async () => {
+		const updated = makeContext();
+		updated.summary.commands = 3;
+		updated.summary.savedBytes = 3100;
+		updated.summary.estimatedTokensSaved = 775;
+		updated.summary.byCommand[0]!.commands = 3;
+		updated.summary.byCommand[0]!.savedBytes = 3100;
+		updated.summary.byCommand[0]!.estimatedTokensSaved = 775;
+		const requestRender = vi.fn();
+		const component = new MinimizerGainOverlayComponent(
+			makeContext(),
+			requestRender,
+			() => {},
+			async () => updated,
+		);
+
+		try {
+			expect(render(component)).toContain("Commands: 2");
+
+			await component.refresh();
+
+			const output = render(component);
+			expect(output).toContain("Commands: 3");
+			expect(output).toContain("Saved Bytes: 3.1K");
+			expect(requestRender).toHaveBeenCalledTimes(1);
+		} finally {
+			component.dispose();
+		}
+	});
 });

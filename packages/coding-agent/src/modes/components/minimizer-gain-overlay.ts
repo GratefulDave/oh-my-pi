@@ -4,6 +4,10 @@ import type { MinimizerGainContext } from "../../minimizer-gain";
 import { shortenPath } from "../../tools/render-utils";
 import { theme } from "../theme/theme";
 
+type LoadMinimizerGainContext = () => Promise<MinimizerGainContext>;
+
+const REFRESH_INTERVAL_MS = 1000;
+
 const TABS = ["Gain", "Missed"] as const;
 type TabIndex = 0 | 1;
 
@@ -53,18 +57,54 @@ function formatMissedRow(
 }
 
 export class MinimizerGainOverlayComponent implements Component {
-	readonly #context: MinimizerGainContext;
+	#context: MinimizerGainContext;
 	readonly #onClose: () => void;
 	readonly #requestRender: () => void;
+	readonly #loadContext: LoadMinimizerGainContext | undefined;
 	#activeTabIndex: TabIndex = 0;
+	#refreshInterval: ReturnType<typeof setInterval> | undefined;
+	#refreshing = false;
+	#disposed = false;
 
-	constructor(context: MinimizerGainContext, requestRender: () => void, onClose: () => void) {
+	constructor(
+		context: MinimizerGainContext,
+		requestRender: () => void,
+		onClose: () => void,
+		loadContext?: LoadMinimizerGainContext,
+	) {
 		this.#context = context;
 		this.#requestRender = requestRender;
 		this.#onClose = onClose;
+		this.#loadContext = loadContext;
+		if (loadContext) {
+			this.#refreshInterval = setInterval(() => {
+				void this.refresh();
+			}, REFRESH_INTERVAL_MS);
+		}
+	}
+	dispose(): void {
+		this.#disposed = true;
+		if (!this.#refreshInterval) return;
+		clearInterval(this.#refreshInterval);
+		this.#refreshInterval = undefined;
 	}
 
 	invalidate(): void {}
+
+	async refresh(): Promise<void> {
+		if (!this.#loadContext || this.#refreshing || this.#disposed) return;
+		this.#refreshing = true;
+		try {
+			const context = await this.#loadContext();
+			if (this.#disposed) return;
+			this.#context = context;
+			this.#requestRender();
+		} catch {
+			// Keep rendering the last complete snapshot when best-effort analytics refresh fails.
+		} finally {
+			this.#refreshing = false;
+		}
+	}
 
 	handleInput(data: string): void {
 		if (matchesKey(data, "escape")) {
@@ -74,6 +114,10 @@ export class MinimizerGainOverlayComponent implements Component {
 		if (matchesKey(data, "tab")) {
 			this.#activeTabIndex = ((this.#activeTabIndex + 1) % TABS.length) as TabIndex;
 			this.#requestRender();
+			return;
+		}
+		if (data === "r" || data === "R") {
+			void this.refresh();
 		}
 	}
 
@@ -155,7 +199,7 @@ export class MinimizerGainOverlayComponent implements Component {
 		}
 
 		lines.push("");
-		lines.push(clean(theme.fg("dim", "Tab switch tabs · Esc close"), width));
+		lines.push(clean(theme.fg("dim", "Tab switch tabs · R refresh · Esc close"), width));
 		lines.push(clean(theme.fg("dim", `Path: ${shortenPath(this.#context.path)}`), width));
 		lines.push(border(width));
 		return lines;
