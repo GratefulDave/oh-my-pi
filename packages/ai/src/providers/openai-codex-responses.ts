@@ -2598,16 +2598,17 @@ function formatCodexErrorEvent(rawEvent: Record<string, unknown>, code: string, 
 }
 
 
+
 // ---------- WebSocket SSE debug frame helpers ----------
 
 function notifyCodexWebSocketInbound(
 	observer: ((event: { event: string | null; data: string; raw: string[] }) => void) | undefined,
-	parsed: { type: string; [key: string]: unknown },
+	payload: any,
 	rawText: string,
 ): void {
 	if (!observer) return;
-	const raw = [`: ws ← ${parsed.type}`, `event: ${parsed.type}`, `data: ${rawText}`];
-	observer({ event: parsed.type, data: rawText, raw });
+	const raw = [`: ws ← ${payload.type}`, `event: ${payload.type}`, `data: ${rawText}`];
+	observer({ event: payload.type, data: rawText, raw });
 }
 
 function notifyCodexWebSocketOutbound(

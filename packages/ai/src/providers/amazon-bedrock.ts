@@ -743,6 +743,37 @@ function convertToolConfig(
 	}));
 
 	let bedrockToolChoice: WireToolChoice | undefined;
+	switch (toolChoice) {
+		case "auto":
+			bedrockToolChoice = { auto: {} };
+			break;
+		case "any":
+			bedrockToolChoice = { any: {} };
+			break;
+		default:
+			if (toolChoice?.type === "tool") {
+				bedrockToolChoice = { tool: { name: toolChoice.name } };
+			}
+	}
+
+	return { tools: bedrockTools, toolChoice: bedrockToolChoice };
+}
+
+function mapStopReason(reason: string | undefined): StopReason {
+	switch (reason) {
+		case "end_turn":
+		case "stop_sequence":
+			return "stop";
+		case "max_tokens":
+		case "model_context_window_exceeded":
+			return "length";
+		case "tool_use":
+			return "toolUse";
+		default:
+			return "error";
+	}
+}
+
 function buildAdditionalModelRequestFields(
 	model: Model<"bedrock-converse-stream">,
 	options: BedrockOptions,
@@ -805,6 +836,7 @@ function supportsAdaptiveThinkingDisplay(modelId: string): boolean {
 	const major = Number(match[1]);
 	const minor = Number(match[2]);
 	return major > 4 || (major === 4 && minor >= 7);
+}
 
 /**
  * Bedrock's wire format expects the image as `{ source: { bytes: <base64-string> }, format }`.

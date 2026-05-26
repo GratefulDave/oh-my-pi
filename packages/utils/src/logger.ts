@@ -21,6 +21,7 @@ function ensureDir(dir: string): string {
 		fs.mkdirSync(dir, { recursive: true });
 	}
 	return dir;
+}
 
 /**
  * JSON.stringify replacer that unwraps {@link Error} instances. Error's own

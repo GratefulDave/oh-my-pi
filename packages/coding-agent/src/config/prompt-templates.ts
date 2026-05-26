@@ -28,7 +28,6 @@ prompt.registerHelper("jtdToTypeScript", (schema: unknown): string => {
 		return "unknown";
 	}
 });
-export function templateUsesInlineArgPlaceholders(templateSource: string): boolean {
 
 const INLINE_ARG_SHELL_PATTERN = /\$(?:ARGUMENTS|@(?:\[\d+(?::\d*)?\])?|\d+)/;
 const INLINE_ARG_TEMPLATE_PATTERN = /\{\{[\s\S]*?(?:\b(?:arguments|ARGUMENTS|args)\b|\barg\s+[^}]+)[\s\S]*?\}\}/;
