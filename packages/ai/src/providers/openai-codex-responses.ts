@@ -2596,3 +2596,38 @@ function formatCodexErrorEvent(rawEvent: Record<string, unknown>, code: string, 
 		return "Codex error event";
 	}
 }
+
+
+// ---------- WebSocket SSE debug frame helpers ----------
+
+function notifyCodexWebSocketInbound(
+	observer: ((event: { event: string | null; data: string; raw: string[] }) => void) | undefined,
+	parsed: { type: string; [key: string]: unknown },
+	rawText: string,
+): void {
+	if (!observer) return;
+	const raw = [`: ws ← ${parsed.type}`, `event: ${parsed.type}`, `data: ${rawText}`];
+	observer({ event: parsed.type, data: rawText, raw });
+}
+
+function notifyCodexWebSocketOutbound(
+	observer: ((event: { event: string | null; data: string; raw: string[] }) => void) | undefined,
+	request: Record<string, unknown>,
+	payload: string,
+): void {
+	if (!observer) return;
+	const type = (request.type ?? "unknown") as string;
+	const raw = [`: ws → ${type}`, `event: ${type}`, `data: ${payload}`];
+	observer({ event: type, data: payload, raw });
+}
+
+function notifyCodexWebSocketMalformed(
+	observer: ((event: { event: string | null; data: string; raw: string[] }) => void) | undefined,
+	data: string,
+	error: unknown,
+): void {
+	if (!observer) return;
+	const errorText = error instanceof Error ? error.message : String(error);
+	const raw = [`: ws ← (malformed)`, `: omp-decode-error: ${errorText}`, `data: ${data}`];
+	observer({ event: null, data, raw });
+}
