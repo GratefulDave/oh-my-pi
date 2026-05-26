@@ -21,6 +21,27 @@ function ensureDir(dir: string): string {
 		fs.mkdirSync(dir, { recursive: true });
 	}
 	return dir;
+
+/**
+ * JSON.stringify replacer that unwraps {@link Error} instances. Error's own
+ * properties are non-enumerable, so a plain `JSON.stringify(err)` produces
+ * `"{}"`. Without this, a context like `{ err }` lost every useful field and
+ * forensic logs showed only an opaque empty object.
+ */
+function jsonReplacer(_key: string, value: unknown): unknown {
+	if (value instanceof Error) {
+		const out: Record<string, unknown> = {
+			name: value.name,
+			message: value.message,
+			stack: value.stack,
+		};
+		// Preserve `.cause` and any custom enumerable fields the caller attached.
+		const errAsRecord = value as unknown as Record<string, unknown>;
+		for (const k in errAsRecord) out[k] = errAsRecord[k];
+		if (value.cause !== undefined) out.cause = value.cause;
+		return out;
+	}
+	return value;
 }
 
 /** Custom format that includes pid and flattens metadata */
@@ -39,7 +60,7 @@ const logFormat = winston.format.combine(
 				entry[key] = value;
 			}
 		}
-		return JSON.stringify(entry);
+		return JSON.stringify(entry, jsonReplacer);
 	}),
 );
 
