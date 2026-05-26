@@ -2,7 +2,7 @@
  * CLI argument parsing and help display
  */
 import { type Effort, THINKING_EFFORTS } from "@oh-my-pi/pi-ai";
-import { APP_NAME, CONFIG_DIR_NAME, logger } from "@oh-my-pi/pi-utils";
+import { COMMAND_NAME, CONFIG_DIR_NAME, logger } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
 import { parseEffort } from "../thinking";
 import { BUILTIN_TOOLS } from "../tools";
@@ -14,6 +14,7 @@ export interface Args {
 	allowHome?: boolean;
 	provider?: string;
 	model?: string;
+	profile?: string;
 	smol?: string;
 	slow?: string;
 	plan?: string;
@@ -97,6 +98,8 @@ export function parseArgs(args: string[], extensionFlags?: Map<string, { type: "
 			result.provider = args[++i];
 		} else if (arg === "--model" && i + 1 < args.length) {
 			result.model = args[++i];
+		} else if (arg === "--profile" && i + 1 < args.length) {
+			result.profile = args[++i];
 		} else if (arg === "--smol" && i + 1 < args.length) {
 			result.smol = args[++i];
 		} else if (arg === "--slow" && i + 1 < args.length) {
@@ -265,7 +268,7 @@ ${chalk.bold("Available Tools (default-enabled unless noted):")}
   grep          - Search file contents
   find          - Find files by glob pattern
   lsp           - Language server protocol (code intelligence)
-  python        - Execute Python code (requires: ${APP_NAME} setup python)
+  python        - Execute Python code (requires: ${COMMAND_NAME} setup python)
   notebook      - Edit Jupyter notebooks
   inspect_image - Analyze images with a vision model
   browser       - Browser automation (Puppeteer)
@@ -278,15 +281,15 @@ ${chalk.bold("Plugin Options:")}
   --plugin-dir <path>        Load plugin from directory (repeatable)
 
 ${chalk.bold("Useful Commands:")}
-  omp agents unpack           - Export bundled subagents to ~/.omp/agent/agents (default)
-  omp agents unpack --project - Export bundled subagents to ./.omp/agents`;
+  ${COMMAND_NAME} agents unpack           - Export bundled subagents to ~/.omp/agent/agents (default)
+  ${COMMAND_NAME} agents unpack --project - Export bundled subagents to ./.omp/agents`;
 }
 
 export function printHelp(): void {
 	process.stdout.write(
-		`${chalk.bold(APP_NAME)} - AI coding assistant\n\n` +
-			`Run ${APP_NAME} --help for full command and option details.\n` +
-			`Run ${APP_NAME} <command> --help for command-specific help.\n\n` +
+		`${chalk.bold(COMMAND_NAME)} - AI coding assistant\n\n` +
+			`Run ${COMMAND_NAME} --help for full command and option details.\n` +
+			`Run ${COMMAND_NAME} <command> --help for command-specific help.\n\n` +
 			`${getExtraHelpText()}\n`,
 	);
 }

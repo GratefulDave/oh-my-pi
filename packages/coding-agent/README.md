@@ -14,6 +14,10 @@ Package-specific references:
 - [DEVELOPMENT](./DEVELOPMENT.md)
 - [RenderMermaid guide](../../docs/render-mermaid.md)
 
+## Software factory scaffolds
+
+Use `lex factory init` to scaffold project-scoped `.omp` assets for verifier loops, safety gates, repo-local prompts/workflows, and optional legacy config import. Full guide: [docs/software-factory.md](../../docs/software-factory.md).
+
 ## Memory backends
 
 The agent supports three mutually-exclusive memory backends, selected via the `memory.backend` setting (Settings → Memory tab, or `~/.omp/config.yml`):

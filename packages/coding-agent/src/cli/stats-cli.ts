@@ -1,10 +1,10 @@
 /**
  * Stats CLI command handlers.
  *
- * Handles `omp stats` subcommand for viewing AI usage statistics.
+ * Handles `lex stats` subcommand for viewing AI usage statistics.
  */
 
-import { APP_NAME, formatDuration, formatNumber, formatPercent } from "@oh-my-pi/pi-utils";
+import { COMMAND_NAME, formatDuration, formatNumber, formatPercent } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
 import { openPath } from "../utils/open";
 
@@ -211,10 +211,10 @@ async function printStatsSummary(): Promise<void> {
 // =============================================================================
 
 export function printStatsHelp(): void {
-	console.log(`${chalk.bold(`${APP_NAME} stats`)} - AI Usage Statistics Dashboard
+	console.log(`${chalk.bold(`${COMMAND_NAME} stats`)} - AI Usage Statistics Dashboard
 
 ${chalk.bold("Usage:")}
-  ${APP_NAME} stats [options]
+  ${COMMAND_NAME} stats [options]
 
 ${chalk.bold("Options:")}
   -p, --port <port>  Port for the dashboard server (default: 3847)
@@ -223,10 +223,10 @@ ${chalk.bold("Options:")}
   -h, --help         Show this help message
 
 ${chalk.bold("Examples:")}
-  ${APP_NAME} stats              # Start dashboard server
-  ${APP_NAME} stats --json       # Print stats as JSON
-  ${APP_NAME} stats --summary    # Print summary to console
-  ${APP_NAME} stats --port 8080  # Start on custom port
+  ${COMMAND_NAME} stats              # Start dashboard server
+  ${COMMAND_NAME} stats --json       # Print stats as JSON
+  ${COMMAND_NAME} stats --summary    # Print summary to console
+  ${COMMAND_NAME} stats --port 8080  # Start on custom port
 
 ${chalk.bold("Metrics:")}
   - Total requests and error rate

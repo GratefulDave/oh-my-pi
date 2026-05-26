@@ -379,7 +379,8 @@ Related settings:
 
 - `modelRoles` (record)
 - `enabledModels` (scoped pattern list)
-- `modelProviderOrder` (global canonical-provider precedence)
+- `cycleOrder` (role cycling order)
+- `modelProviderOrder` (canonical-provider precedence)
 - `providers.kimiApiFormat` (`openai` or `anthropic` request format)
 - `providers.openaiWebsockets` (`auto|off|on` websocket preference for OpenAI Codex transport)
 
@@ -410,6 +411,50 @@ disabledProviders:
 ```
 
 String entries apply everywhere. Scoped entries apply when the current working directory is the configured path or one of its subdirectories. Use `path`, `paths`, `pathPrefix`, or `pathPrefixes`; use `models` for `enabledModels`, `providers` for `disabledProviders`, or `values` for either.
+
+### Named model profiles
+
+`config.yml` can hold named model profiles for switching model defaults without changing provider auth or the whole agent directory:
+
+```yaml
+activeModelProfile: fast
+modelProfiles:
+  fast:
+    modelRoles:
+      default: anthropic/claude-haiku-4-5:low
+      smol: anthropic/claude-haiku-4-5:low
+      plan: anthropic/claude-sonnet-4-5:medium
+    defaultThinkingLevel: low
+    enabledModels:
+      - anthropic/claude-haiku-4-5
+      - anthropic/claude-sonnet-4-5
+    cycleOrder:
+      - smol
+      - default
+      - plan
+```
+
+Profile-scoped keys are `modelRoles`, `defaultThinkingLevel`, `enabledModels`, `cycleOrder`, and `modelProviderOrder`. Other settings, including auth/provider credentials, still come from the base config.
+
+Commands:
+
+```bash
+omp profile list
+omp profile create fast --empty --activate
+omp profile create openrouter --preset openrouter --activate
+omp profile set fast modelRoles.default anthropic/claude-haiku-4-5:low
+omp profile use fast
+omp --profile fast --print "summarize status"
+```
+
+`default` is reserved for the base flat config. `omp profile use default` clears the persisted active profile. `--profile <name|default>` is process-local and does not persist. `/profile` opens an interactive profile selector in TUI sessions; selecting `Create new profile...` copies the current effective model settings, saves them, and switches to the new profile. `--preset openrouter` creates an OpenRouter-scoped profile by setting `enabledModels: ["openrouter/*"]` and `modelProviderOrder: ["openrouter"]`, which exposes every currently available OpenRouter model in `/model` and `--list-models`.
+
+Precedence for profile-scoped keys:
+
+1. flat global/project config supplies base values
+2. active profile overlays those values
+3. runtime overrides (`--profile`, `--model`, `--models`, `--smol`, `--slow`, `--plan`) win
+4. resumed session log model/thinking wins until the user explicitly switches profile in-session
 
 ## `/model` and `--list-models`
 

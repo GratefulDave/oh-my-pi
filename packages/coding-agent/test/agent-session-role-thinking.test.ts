@@ -174,6 +174,34 @@ describe("AgentSession role model thinking behavior", () => {
 		expect(sessionSettings.getModelRole("default")).toBe(`${slowModel.provider}/${slowModel.id}:off`);
 	});
 
+	it("writes model and persisted thinking changes into active profile", async () => {
+		const defaultModel = getAnthropicModelOrThrow("claude-sonnet-4-5");
+		const fastModel = getAnthropicModelOrThrow("claude-sonnet-4-6");
+
+		await createSession({
+			initialModelId: defaultModel.id,
+			initialThinkingLevel: Effort.High,
+			modelRoles: {
+				default: `${defaultModel.provider}/${defaultModel.id}:high`,
+			},
+		});
+		sessionSettings.createModelProfile("fast", "empty");
+		sessionSettings.switchModelProfile("fast");
+
+		await session.setModel(fastModel);
+		session.setThinkingLevel(Effort.Low, true);
+
+		expect(sessionSettings.getModelProfile("fast")).toEqual({
+			modelRoles: { default: `${fastModel.provider}/${fastModel.id}:high` },
+			defaultThinkingLevel: Effort.Low,
+		});
+		expect(sessionSettings.get("modelRoles")).toEqual({ default: `${fastModel.provider}/${fastModel.id}:high` });
+		sessionSettings.switchModelProfile(undefined);
+		expect(sessionSettings.get("modelRoles")).toEqual({
+			default: `${defaultModel.provider}/${defaultModel.id}:high`,
+		});
+	});
+
 	it("clamps unsupported selections from model metadata", async () => {
 		const model = getAnthropicModelOrThrow("claude-sonnet-4-6");
 		const agent = new Agent({

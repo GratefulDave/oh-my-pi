@@ -9,6 +9,7 @@ import {
 	type MinimizerGainSummary,
 	type MinimizerMissedSummary,
 	readMinimizerGain,
+	resolveMinimizerGainCwd,
 	summarizeMinimizerGain,
 	summarizeMissedMinimizerGain,
 } from "../minimizer-gain";
@@ -28,6 +29,7 @@ type GainRow = {
 	commands: number;
 	savedBytes: number;
 	estimatedTokensSaved: number;
+	usesEstimatedTokensSaved: boolean;
 };
 
 type GainContext = {
@@ -45,6 +47,11 @@ export async function runGainCommand(cmd: GainCommandArgs): Promise<void> {
 	validateDays(cmd.days);
 	writeGainOutput(selectOutputMode(cmd), await loadGainContext(cmd));
 }
+function validateDays(days: number): void {
+	if (Number.isInteger(days) && days >= 1) return;
+	process.stderr.write(chalk.red("error: --days must be a positive integer\n"));
+	process.exit(1);
+}
 
 function selectOutputMode(cmd: GainCommandArgs): OutputMode {
 	if (cmd.json) return "json";
@@ -53,8 +60,25 @@ function selectOutputMode(cmd: GainCommandArgs): OutputMode {
 	return "summary";
 }
 
+function writeGainOutput(mode: OutputMode, context: GainContext): void {
+	switch (mode) {
+		case "json":
+			printJsonPayload(context);
+			break;
+		case "summary":
+			printGainSummary(context);
+			break;
+		case "discover":
+			printGainDiscovery(context);
+			break;
+		case "missed":
+			printMissedSummary(context);
+			break;
+	}
+}
+
 async function loadGainContext(cmd: GainCommandArgs): Promise<GainContext> {
-	const cwd = resolveCwdScope(cmd);
+	const cwd = await resolveCwdScope(cmd);
 	const records = await readMinimizerGain({ sinceDays: cmd.days, cwd });
 	return {
 		path: getMinimizerGainPath(),
@@ -67,26 +91,9 @@ async function loadGainContext(cmd: GainCommandArgs): Promise<GainContext> {
 		missed: summarizeMissedMinimizerGain(records),
 	};
 }
-
-function writeGainOutput(mode: OutputMode, context: GainContext): void {
-	const writers: Record<OutputMode, (context: GainContext) => void> = {
-		json: printJsonPayload,
-		missed: printMissedSummary,
-		discover: printGainDiscovery,
-		summary: printGainSummary,
-	};
-	writers[mode](context);
-}
-
-function validateDays(days: number): void {
-	if (Number.isInteger(days) && days >= 1) return;
-	process.stderr.write(chalk.red("error: --days must be a positive integer\n"));
-	process.exit(1);
-}
-
-function resolveCwdScope(cmd: GainCommandArgs): string | undefined {
+async function resolveCwdScope(cmd: GainCommandArgs): Promise<string | undefined> {
 	if (cmd.all) return undefined;
-	return cmd.cwd ? path.resolve(cmd.cwd) : process.cwd();
+	return resolveMinimizerGainCwd(cmd.cwd ? path.resolve(cmd.cwd) : process.cwd());
 }
 
 function printJsonPayload(context: GainContext): void {
@@ -114,7 +121,7 @@ function printGainSummary(input: GainContext): void {
 	process.stdout.write(`  Input Bytes: ${formatNumber(summary.inputBytes)}\n`);
 	process.stdout.write(`  Output Bytes: ${formatNumber(summary.outputBytes)}\n`);
 	process.stdout.write(`  Saved Bytes: ${formatNumber(summary.savedBytes)}\n`);
-	process.stdout.write(`  Estimated Tokens Saved: ${formatNumber(summary.estimatedTokensSaved)}\n`);
+	process.stdout.write(`  ${formatTokensSavedLabel(summary.usesEstimatedTokensSaved)}: ${formatNumber(summary.estimatedTokensSaved)}\n`);
 
 	printRows("Top Filters", summary.byFilter, row => row.filter);
 	printRows("Top Commands", summary.byCommand, row => row.command);
@@ -162,6 +169,10 @@ function formatExitCodes(exitCodes: Array<number | null>): string {
 	return exitCodes.map(code => (code === null ? "null" : String(code))).join(",");
 }
 
+function formatTokensSavedLabel(usesEstimatedTokensSaved: boolean): string {
+	return usesEstimatedTokensSaved ? "Estimated Tokens Saved" : "Tokens Saved";
+}
+
 function formatScope(input: { days: number; cwd: string | undefined; all: boolean }): string {
 	const window = `${formatNumber(input.days)} day${input.days === 1 ? "" : "s"}`;
 	if (input.all) return `all working directories, last ${window}`;
@@ -176,7 +187,7 @@ function printRows<T extends GainRow>(title: string, rows: T[], label: (row: T) 
 	}
 	for (const row of rows.slice(0, 10)) {
 		process.stdout.write(
-			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes saved, ${formatNumber(row.estimatedTokensSaved)} tokens\n`,
+			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes saved, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}\n`,
 		);
 	}
 }

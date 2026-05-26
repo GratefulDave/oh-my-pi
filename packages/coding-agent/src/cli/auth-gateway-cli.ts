@@ -1,5 +1,5 @@
 /**
- * `omp auth-gateway` command handlers.
+ * `lex auth-gateway` command handlers.
  *
  * Boots a forward-proxy server that lets less-trusted clients (the macOS
  * usage widget, robomp containers, …) make provider API calls without ever
@@ -32,6 +32,7 @@ import { getConfigRootDir, isEnoent, VERSION } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
 import { type AuthBrokerClientConfig, resolveAuthBrokerConfig } from "../session/auth-broker-config";
 
+const CLI_COMMAND = "lex";
 export type AuthGatewayAction = "serve" | "token" | "status";
 
 export interface AuthGatewayCommandArgs {
@@ -132,7 +133,7 @@ async function runServe(flags: AuthGatewayCommandArgs["flags"]): Promise<void> {
 	const brokerConfig = await resolveAuthBrokerConfig();
 	if (!brokerConfig) {
 		throw new Error(
-			"`omp auth-gateway serve` requires OMP_AUTH_BROKER_URL (or `auth.broker.url`/`auth.broker.token` in config.yml). The gateway is itself a broker client.",
+			`${CLI_COMMAND} auth-gateway serve requires OMP_AUTH_BROKER_URL (or \`auth.broker.url\`/\`auth.broker.token\` in config.yml). The gateway is itself a broker client.`,
 		);
 	}
 	const bind = flags.bind ?? DEFAULT_AUTH_GATEWAY_BIND;
@@ -292,7 +293,7 @@ async function runStatus(flags: AuthGatewayCommandArgs["flags"]): Promise<void> 
 			);
 			if (!tokenPresent) {
 				process.stdout.write(
-					"Run `omp auth-gateway token` or `omp auth-gateway serve` to create a bearer token.\n",
+					`Run \`${CLI_COMMAND} auth-gateway token\` or \`${CLI_COMMAND} auth-gateway serve\` to create a bearer token.\n`,
 				);
 			}
 		}

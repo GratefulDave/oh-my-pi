@@ -1,0 +1,37 @@
+{
+  "template": {
+    "name": "software-factory",
+    "version": "__FACTORY_TEMPLATE_VERSION__",
+    "preset": "__FACTORY_PRESET__"
+  },
+  "repo": {
+    "name": "__FACTORY_REPO_NAME__",
+    "kind": "__FACTORY_REPO_KIND__"
+  },
+  "verifier": {
+    "enabled": false,
+    "trigger": "manual",
+    "agent": "factory-verifier",
+    "systemPrompt": "../../agents/factory-verifier.md",
+    "prompt": "prompts/verify-on-stop.md",
+    "oracle": "scripts/verify.sh",
+    "maxLoops": 2,
+    "tools": ["read", "search", "find", "bash"]
+  },
+  "safety": {
+    "enabled": true,
+    "rulesPath": "safety.rules.json"
+  },
+  "metaPrompt": {
+    "enabled": true,
+    "prompt": "prompts/meta-prompt.md"
+  },
+  "workflow": {
+    "enabled": false,
+    "default": "piter"
+  },
+  "memory": {
+    "captureCandidates": true,
+    "recommendedBackend": "icm"
+  }
+}

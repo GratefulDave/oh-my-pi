@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { getAgentDir } from "@oh-my-pi/pi-utils";
+import { getAgentDir, logger } from "@oh-my-pi/pi-utils";
 
 export type MinimizerGainKind = "saved" | "missed";
 
@@ -12,6 +12,7 @@ export interface MinimizerGainRecord {
 	inputBytes: number;
 	outputBytes: number;
 	savedBytes: number;
+	savedTokens?: number;
 	exitCode: number | null;
 	kind?: MinimizerGainKind;
 }
@@ -22,6 +23,7 @@ export interface MinimizerGainTotals {
 	outputBytes: number;
 	savedBytes: number;
 	estimatedTokensSaved: number;
+	usesEstimatedTokensSaved: boolean;
 }
 
 export interface MinimizerGainFilterSummary extends MinimizerGainTotals {
@@ -85,6 +87,7 @@ type ParsedRecordFields = {
 	inputBytes: number | Invalid;
 	outputBytes: number | Invalid;
 	savedBytes: number | Invalid;
+	savedTokens: number | undefined | Invalid;
 	exitCode: number | null | Invalid;
 	kind: MinimizerGainKind | undefined | Invalid;
 };
@@ -96,6 +99,7 @@ type ValidRecordFields = {
 	inputBytes: number;
 	outputBytes: number;
 	savedBytes: number;
+	savedTokens?: number;
 	exitCode: number | null;
 	kind: MinimizerGainKind | undefined;
 };
@@ -108,6 +112,15 @@ const MISSED_FILTER = "missed";
 export function getMinimizerGainPath(agentDir?: string): string {
 	return path.join(agentDir ?? getAgentDir(), "minimizer-gain.jsonl");
 }
+export async function resolveMinimizerGainCwd(cwd: string | undefined): Promise<string | undefined> {
+	if (!cwd) return undefined;
+	const resolved = path.resolve(cwd);
+	try {
+		return await fs.realpath(resolved);
+	} catch {
+		return resolved;
+	}
+}
 
 export async function recordMinimizerGain(
 	record: MinimizerGainRecord,
@@ -117,8 +130,8 @@ export async function recordMinimizerGain(
 		const filePath = getMinimizerGainPath(options.agentDir);
 		await fs.mkdir(path.dirname(filePath), { recursive: true });
 		await fs.appendFile(filePath, `${JSON.stringify(record)}\n`, "utf-8");
-	} catch {
-		// Best-effort local analytics must never affect command execution.
+	} catch (err) {
+		logger.warn("Failed to record minimizer gain", { error: String(err) });
 	}
 }
 
@@ -292,6 +305,7 @@ function parseRecordFields(value: JsonObject): MinimizerGainRecord | null {
 		inputBytes: requiredNumber(value.inputBytes),
 		outputBytes: requiredNumber(value.outputBytes),
 		savedBytes: requiredNumber(value.savedBytes),
+		savedTokens: optionalNumber(value.savedTokens),
 		exitCode: parseExitCode(value.exitCode),
 		kind: parseKind(value.kind),
 	};
@@ -336,6 +350,10 @@ function optionalString(value: unknown): string | undefined | Invalid {
 
 function requiredNumber(value: unknown): number | Invalid {
 	return typeof value === "number" && Number.isFinite(value) ? value : INVALID;
+}
+
+function optionalNumber(value: unknown): number | undefined | Invalid {
+	return value === undefined || (typeof value === "number" && Number.isFinite(value)) ? value : INVALID;
 }
 
 function parseExitCode(value: unknown): number | null | Invalid {
@@ -399,6 +417,7 @@ function createTotals(): MinimizerGainTotals {
 		outputBytes: 0,
 		savedBytes: 0,
 		estimatedTokensSaved: 0,
+		usesEstimatedTokensSaved: false,
 	};
 }
 
@@ -407,10 +426,11 @@ function addRecord(totals: MinimizerGainTotals, record: MinimizerGainRecord): vo
 	totals.inputBytes += record.inputBytes;
 	totals.outputBytes += record.outputBytes;
 	totals.savedBytes += record.savedBytes;
+	totals.estimatedTokensSaved += record.savedTokens ?? Math.floor(record.savedBytes / BYTES_PER_TOKEN_ESTIMATE);
+	totals.usesEstimatedTokensSaved ||= record.savedTokens === undefined;
 }
 
 function finalizeTotals<T extends MinimizerGainTotals>(totals: T): T {
-	totals.estimatedTokensSaved = Math.floor(totals.savedBytes / BYTES_PER_TOKEN_ESTIMATE);
 	return totals;
 }
 

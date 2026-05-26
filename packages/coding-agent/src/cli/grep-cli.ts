@@ -1,11 +1,12 @@
 /**
  * Grep CLI command handlers.
  *
- * Handles `omp grep` subcommand for testing grep tool on Windows.
+ * Handles `lex grep` subcommand for testing grep tool on Windows.
  */
 import * as path from "node:path";
+
 import { GrepOutputMode, grep } from "@oh-my-pi/pi-natives";
-import { APP_NAME } from "@oh-my-pi/pi-utils";
+import { COMMAND_NAME } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
 
 export interface GrepCommandArgs {
@@ -131,10 +132,10 @@ export async function runGrepCommand(cmd: GrepCommandArgs): Promise<void> {
 }
 
 export function printGrepHelp(): void {
-	console.log(`${chalk.bold(`${APP_NAME} grep`)} - Test grep tool
+	console.log(`${chalk.bold(`${COMMAND_NAME} grep`)} - Test grep tool
 
 ${chalk.bold("Usage:")}
-  ${APP_NAME} grep <pattern> [path] [options]
+  ${COMMAND_NAME} grep <pattern> [path] [options]
 
 ${chalk.bold("Arguments:")}
   pattern   Regex pattern to search for
@@ -153,8 +154,8 @@ ${chalk.bold("Environment:")}
   PI_GREP_WORKERS=N    Set filesystem walker workers (default 4, 0 = auto)
 
 ${chalk.bold("Examples:")}
-  ${APP_NAME} grep "import" src/
-  ${APP_NAME} grep "TODO" . --glob "*.ts"
-  ${APP_NAME} grep "function" --files
+  ${COMMAND_NAME} grep "import" src/
+  ${COMMAND_NAME} grep "TODO" . --glob "*.ts"
+  ${COMMAND_NAME} grep "function" --files
 `);
 }

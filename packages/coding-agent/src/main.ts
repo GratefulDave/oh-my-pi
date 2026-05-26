@@ -28,7 +28,14 @@ import { selectSession } from "./cli/session-picker";
 import { findConfigFile } from "./config";
 import { ModelRegistry, ModelsConfigFile } from "./config/model-registry";
 import { resolveCliModel, resolveModelRoleValue, resolveModelScope, type ScopedModel } from "./config/model-resolver";
-import { getDefault, type SettingPath, Settings, settings } from "./config/settings";
+import {
+	DEFAULT_MODEL_PROFILE_NAME,
+	getDefault,
+	normalizeModelProfileName,
+	type SettingPath,
+	Settings,
+	settings,
+} from "./config/settings";
 import { initializeWithSettings } from "./discovery";
 import {
 	clearPluginRootsAndCaches,
@@ -786,6 +793,14 @@ export async function runRootCommand(
 	const settingsInstance = deps.settings ?? (await logger.time("settings:init", Settings.init, { cwd }));
 	if (parsedArgs.mode === "rpc" || parsedArgs.mode === "rpc-ui" || parsedArgs.mode === "acp") {
 		applyRpcDefaultSettingOverrides(settingsInstance);
+	}
+	if (parsedArgs.profile) {
+		const profileName = normalizeModelProfileName(parsedArgs.profile);
+		if (profileName !== DEFAULT_MODEL_PROFILE_NAME && !settingsInstance.getModelProfile(profileName)) {
+			process.stderr.write(`${chalk.red(`Unknown model profile: ${profileName}`)}\n`);
+			process.exit(1);
+		}
+		settingsInstance.override("activeModelProfile", profileName);
 	}
 	if (parsedArgs.noPty || parsedArgs.mode === "rpc-ui") {
 		Bun.env.PI_NO_PTY = "1";

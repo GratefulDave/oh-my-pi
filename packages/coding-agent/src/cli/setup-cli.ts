@@ -1,13 +1,15 @@
 /**
  * Setup CLI command handler.
  *
- * Handles `omp setup <component>` to install dependencies for optional features.
+ * Handles `lex setup <component>` to install dependencies for optional features.
  */
 import * as path from "node:path";
-import { $which, APP_NAME, getPythonEnvDir } from "@oh-my-pi/pi-utils";
+import { $which, getPythonEnvDir } from "@oh-my-pi/pi-utils";
 import { $ } from "bun";
 import chalk from "chalk";
 import { theme } from "../modes/theme/theme";
+
+const CLI_COMMAND = "lex";
 
 export type SetupComponent = "python" | "stt";
 
@@ -33,7 +35,7 @@ export function parseSetupArgs(args: string[]): SetupCommandArgs | undefined {
 	}
 
 	if (args.length < 2) {
-		console.error(chalk.red(`Usage: ${APP_NAME} setup <component>`));
+		console.error(chalk.red(`Usage: ${CLI_COMMAND} setup <component>`));
 		console.error(`Valid components: ${VALID_COMPONENTS.join(", ")}`);
 		process.exit(1);
 	}
@@ -102,7 +104,7 @@ async function checkPythonSetup(): Promise<PythonCheckResult> {
  * Install Python packages using uv (preferred) or pip.
  */
 // Python installation helper removed: the subprocess runner has no Python
-// package dependencies beyond a working interpreter. `omp setup python --check`
+// package dependencies beyond a working interpreter. `lex setup python --check`
 // remains as a probe; users install optional libs (pandas, matplotlib, ...)
 // directly via pip or the in-process `%pip` magic.
 
@@ -207,10 +209,10 @@ async function handleSttSetup(flags: { json?: boolean; check?: boolean }): Promi
  * Print setup command help.
  */
 export function printSetupHelp(): void {
-	console.log(`${chalk.bold(`${APP_NAME} setup`)} - Install dependencies for optional features
+	console.log(`${chalk.bold(`${CLI_COMMAND} setup`)} - Install dependencies for optional features
 
 ${chalk.bold("Usage:")}
-  ${APP_NAME} setup <component> [options]
+  ${CLI_COMMAND} setup <component> [options]
 
 ${chalk.bold("Components:")}
   python    Verify a Python 3 interpreter is reachable for code execution
@@ -221,9 +223,9 @@ ${chalk.bold("Options:")}
   --json        Output status as JSON
 
 ${chalk.bold("Examples:")}
-  ${APP_NAME} setup python           Install Python execution dependencies
-  ${APP_NAME} setup stt              Install speech-to-text dependencies
-  ${APP_NAME} setup stt --check      Check if STT dependencies are available
-  ${APP_NAME} setup python --check   Check if Python execution is available
+  ${CLI_COMMAND} setup python           Install Python execution dependencies
+  ${CLI_COMMAND} setup stt              Install speech-to-text dependencies
+  ${CLI_COMMAND} setup stt --check      Check if STT dependencies are available
+  ${CLI_COMMAND} setup python --check   Check if Python execution is available
 `);
 }

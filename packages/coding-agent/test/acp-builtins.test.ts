@@ -2,6 +2,7 @@ import { describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { Effort } from "@oh-my-pi/pi-ai";
 import { getAgentDir, setAgentDir } from "@oh-my-pi/pi-utils";
 import { Settings } from "../src/config/settings";
 import { recordMinimizerGain } from "../src/minimizer-gain";
@@ -42,7 +43,7 @@ interface FakeAcpBuiltinSession {
 	setModel(model: unknown): Promise<void>;
 }
 
-function createRuntime() {
+function createRuntime(cwd = "/tmp/project") {
 	const output: string[] = [];
 	const session: FakeAcpBuiltinSession = {
 		fastMode: false,
@@ -144,7 +145,7 @@ function createRuntime() {
 			session: typedSession,
 			sessionManager: fakeSessionManager as unknown as SessionManager,
 			settings: Settings.isolated(),
-			cwd: "/tmp/project",
+			cwd,
 			output: (text: string) => {
 				output.push(text);
 			},
@@ -180,6 +181,7 @@ describe("ACP builtin slash commands", () => {
 					inputBytes: 1000,
 					outputBytes: 250,
 					savedBytes: 750,
+					savedTokens: 123,
 					exitCode: 0,
 					kind: "saved",
 				},
@@ -204,14 +206,49 @@ describe("ACP builtin slash commands", () => {
 			expect(await executeAcpBuiltinSlashCommand("/gain", current.runtime)).toEqual({ consumed: true });
 			expect(current.output[0]).toContain("Minimizer savings for /tmp/project");
 			expect(current.output[0]).toContain("Saved Bytes: 750");
+			expect(current.output[0]).toContain("Tokens Saved: 123");
 			expect(current.output[0]).not.toContain("/tmp/other");
 
 			const all = createRuntime();
 			expect(await executeAcpBuiltinSlashCommand("/gain-all", all.runtime)).toEqual({ consumed: true });
 			expect(all.output[0]).toContain("Minimizer savings across all repos");
 			expect(all.output[0]).toContain("Saved Bytes: 1.6K");
+			expect(all.output[0]).toContain("Estimated Tokens Saved:");
 			expect(all.output[0]).toContain("/tmp/project");
 			expect(all.output[0]).toContain("/tmp/other");
+		} finally {
+			setAgentDir(previousAgentDir);
+			await fs.rm(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("reports missed-only gain scopes with no savings and a missed hint", async () => {
+		const previousAgentDir = getAgentDir();
+		const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-acp-gain-missed-"));
+		try {
+			setAgentDir(agentDir);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/project",
+					command: "cargo test",
+					filter: "missed",
+					inputBytes: 4096,
+					outputBytes: 4096,
+					savedBytes: 0,
+					exitCode: 1,
+					kind: "missed",
+				},
+				{ agentDir },
+			);
+
+			const current = createRuntime();
+			const result = await executeAcpBuiltinSlashCommand("/gain", current.runtime);
+			expect(result).toEqual({ consumed: true });
+			expect(current.output[0]).toContain("Minimizer savings for /tmp/project");
+			expect(current.output[0]).toContain("Commands: 0");
+			expect(current.output[0]).toContain("No positive native minimizer savings recorded for this scope yet.");
+			expect(current.output[0]).toContain("Missed runs: 1 (use `omp gain --missed`.)");
 		} finally {
 			setAgentDir(previousAgentDir);
 			await fs.rm(agentDir, { recursive: true, force: true });
@@ -868,6 +905,75 @@ describe("wave 5 — adapters and polish", () => {
 		expect(result).toEqual({ consumed: true });
 		expect(output[0]).toContain("Model set to anthropic/claude-sonnet-test.");
 		expect(titleChanged).toBe(true);
+	});
+
+	it("/profile creates and lists named model profiles", async () => {
+		const { output, runtime } = createRuntime();
+
+		const createResult = await executeAcpBuiltinSlashCommand("/profile create fast --no-activate", runtime);
+		const listResult = await executeAcpBuiltinSlashCommand("/profile list", runtime);
+
+		expect(createResult).toEqual({ consumed: true });
+		expect(listResult).toEqual({ consumed: true });
+		expect(output[0]).toContain("Created profile fast.");
+		expect(output[1]).toContain("default");
+		expect(output[1]).toContain("fast");
+		expect(runtime.settings.getModelProfile("fast")).toEqual({
+			modelRoles: {},
+			defaultThinkingLevel: Effort.High,
+			enabledModels: [],
+			cycleOrder: ["smol", "default", "slow"],
+			modelProviderOrder: [],
+		});
+	});
+
+	it("/profile create --preset openrouter scopes profile to OpenRouter models", async () => {
+		const { output, runtime } = createRuntime();
+
+		const result = await executeAcpBuiltinSlashCommand("/profile create openrouter --preset openrouter --no-activate", runtime);
+
+		expect(result).toEqual({ consumed: true });
+		expect(output[0]).toContain("Created profile openrouter.");
+		expect(runtime.settings.getModelProfile("openrouter")).toEqual({
+			modelRoles: {},
+			defaultThinkingLevel: Effort.High,
+			enabledModels: ["openrouter/*"],
+			cycleOrder: ["smol", "default", "slow"],
+			modelProviderOrder: ["openrouter"],
+		});
+	});
+	it("/profile use resolves default from active profile allow-list, not stale session models", async () => {
+		const { output, runtime, session } = createRuntime();
+		const selectedModel = { provider: "openrouter", id: "qwen/qwen3.7-max", contextWindow: 1_000_000 };
+		session.getAvailableModels = () => [];
+		let setModelArg: unknown;
+		session.setModel = async model => {
+			setModelArg = model;
+		};
+		(
+			session as unknown as {
+				modelRegistry: {
+					getAvailable(): Array<{ provider: string; id: string; contextWindow?: number }>;
+					getCanonicalVariants(): [];
+					getApiKey(): Promise<string | undefined>;
+				};
+			}
+		).modelRegistry = {
+			getAvailable: () => [selectedModel],
+			getCanonicalVariants: () => [],
+			getApiKey: async () => "test-key",
+		};
+		runtime.settings.createModelProfile("fast", "empty");
+		runtime.settings.setModelProfileValue("fast", "modelRoles", {
+			default: `${selectedModel.provider}/${selectedModel.id}`,
+		});
+		runtime.settings.setModelProfileValue("fast", "enabledModels", [`${selectedModel.provider}/${selectedModel.id}`]);
+
+		const result = await executeAcpBuiltinSlashCommand("/profile use fast", runtime);
+
+		expect(result).toEqual({ consumed: true });
+		expect(setModelArg).toEqual(selectedModel);
+		expect(output.at(-1)).toContain("Active profile: fast. Model set to openrouter/qwen/qwen3.7-max.");
 	});
 
 	// /usage bar character

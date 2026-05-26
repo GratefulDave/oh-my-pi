@@ -243,7 +243,7 @@ Setting-gated, off by default: `github`, `calc`, `inspect_image`, `render_mermai
 
 ## Forty-plus providers, hundreds of models, _one /model away_.
 
-Roles route work by intent. `default` for normal turns. `smol` for cheap subagent fan-out. `slow` for deep reasoning. `plan` for plan mode. `commit` for changelogs. Override at launch with `--smol`, `--slow`, or `--plan`; cycle through the configured models for the active role with `Ctrl+P`. Swap the active model mid-session with the `/model` slash command.
+Roles route work by intent. `default` for normal turns. `smol` for cheap subagent fan-out. `slow` for deep reasoning. `plan` for plan mode. `commit` for changelogs. Override at launch with `--profile`, `--smol`, `--slow`, or `--plan`; cycle through the configured models for the active role with `Ctrl+P`. Swap the active model mid-session with `/model`, or switch a saved set of model defaults with `/profile`.
 
 Auth tags below: `oauth` signs in with your provider account, `plan` routes through a coding-plan subscription, `local` runs against a local server with the key optional.
 
@@ -269,7 +269,7 @@ Ollama `local` · Ollama Cloud · LM Studio `local` · llama.cpp `local` · vLLM
 
 - **Custom providers** — Declare anything that speaks `openai-completions`, `openai-responses`, `openai-codex-responses`, `azure-openai-responses`, `anthropic-messages`, `google-generative-ai`, or `google-vertex` in `~/.omp/agent/models.yml`.
 - **Fallback chains** — Per-role chains under `retry.fallbackChains`. When the primary throws 429s or hits a quota wall, the next entry takes the rest of the turn — restored on cooldown.
-- **Path-scoped roles** — Nest `paths:` under `modelRoles` to pin a heavier `default` on one repo without touching the global config. Closest path wins.
+- **Named model profiles** — Save model defaults as `modelProfiles` in `~/.omp/agent/config.yml`, switch persistently with `omp profile use <name>` or interactively with `/profile`, and test one launch with `--profile <name>`.
 - **Round-robin credentials** — Stack API keys per provider and the runtime rotates with session affinity and per-credential backoff. Useful when one key would burn its quota by lunch.
 
 Full provider & routing reference at [omp.sh/docs/providers](https://omp.sh/docs/providers).

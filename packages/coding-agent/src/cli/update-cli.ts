@@ -1,13 +1,13 @@
 /**
  * Update CLI command handler.
  *
- * Handles `omp update` to check for and install updates.
+ * Handles `lex update` to check for and install updates.
  * Uses bun if available, otherwise downloads binary from GitHub releases.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { $which, APP_NAME, isEnoent, VERSION } from "@oh-my-pi/pi-utils";
+import { $which, APP_NAME, COMMAND_NAME, isEnoent, VERSION } from "@oh-my-pi/pi-utils";
 import { $ } from "bun";
 import chalk from "chalk";
 import { theme } from "../modes/theme/theme";
@@ -88,7 +88,7 @@ function isPathInDirectory(filePath: string, directoryPath: string): boolean {
 	if (isPathInDirectoryLexical(filePath, directoryPath)) return true;
 	// Layer realpath resolution on top of the lexical guard. On Windows, ~/.bun
 	// is a junction when Bun is installed via Scoop, so `bun pm bin -g` and the
-	// PATH-resolved omp path can refer to the same directory through different
+	// PATH-resolved lex path can refer to the same directory through different
 	// strings. path.resolve does not traverse junctions/symlinks; realpath does.
 	// Resolve the file's parent directory to tolerate the file itself not yet
 	// existing (e.g. a fresh install path) while still catching link-traversed
@@ -122,7 +122,7 @@ async function resolveUpdateTarget(): Promise<UpdateTarget> {
 
 	if (bunBinDir) return { method: "bun" };
 
-	throw new Error(`Could not resolve ${APP_NAME} binary path in PATH`);
+	throw new Error(`Could not resolve ${COMMAND_NAME} binary path in PATH`);
 }
 
 /**
@@ -204,14 +204,14 @@ function getBinaryName(): string {
 }
 
 /**
- * Resolve the path that `omp` maps to in the user's PATH.
+ * Resolve the path that `lex` maps to in the user's PATH.
  */
 function resolveOmpPath(): string | undefined {
 	return $which(APP_NAME) ?? undefined;
 }
 
 /**
- * Run the resolved omp binary and check if it reports the expected version.
+ * Run the resolved lex binary and check if it reports the expected version.
  */
 async function verifyInstalledVersion(expectedVersion: string): Promise<InstalledVersionVerification> {
 	const ompPath = resolveOmpPath();
@@ -235,7 +235,7 @@ function printVerifiedVersion(expectedVersion: string): void {
 
 function formatVerificationFailure(result: InstalledVersionVerification, expectedVersion: string): string {
 	if (result.actual) {
-		return `${APP_NAME} at ${result.path} still reports ${result.actual} (expected ${expectedVersion})`;
+		return `${COMMAND_NAME} at ${result.path} still reports ${result.actual} (expected ${expectedVersion})`;
 	}
 	return `could not verify updated version${result.path ? ` at ${result.path}` : ""}`;
 }
@@ -333,7 +333,7 @@ async function updateViaBinaryAt(targetPath: string, expectedVersion: string): P
 		verifyInstalledVersion,
 	});
 	printVerifiedVersion(expectedVersion);
-	console.log(chalk.dim(`Restart ${APP_NAME} to use the new version`));
+	console.log(chalk.dim(`Restart ${COMMAND_NAME} to use the new version`));
 }
 
 /**
@@ -369,7 +369,7 @@ export async function runUpdateCommand(opts: { force: boolean; check: boolean })
 		return;
 	}
 
-	// Choose update method based on the prioritized omp binary in PATH
+	// Choose update method based on the prioritized lex binary in PATH
 	try {
 		const target = await resolveUpdateTarget();
 		if (target.method === "bun") {
@@ -387,18 +387,18 @@ export async function runUpdateCommand(opts: { force: boolean; check: boolean })
  * Print update command help.
  */
 export function printUpdateHelp(): void {
-	console.log(`${chalk.bold(`${APP_NAME} update`)} - Check for and install updates
+	console.log(`${chalk.bold(`${COMMAND_NAME} update`)} - Check for and install updates
 
 ${chalk.bold("Usage:")}
-  ${APP_NAME} update [options]
+  ${COMMAND_NAME} update [options]
 
 ${chalk.bold("Options:")}
   -c, --check   Check for updates without installing
   -f, --force   Force reinstall even if up to date
 
 ${chalk.bold("Examples:")}
-  ${APP_NAME} update           Update to latest version
-  ${APP_NAME} update --check   Check if updates are available
-  ${APP_NAME} update --force   Force reinstall
+  ${COMMAND_NAME} update           Update to latest version
+  ${COMMAND_NAME} update --check   Check if updates are available
+  ${COMMAND_NAME} update --force   Force reinstall
 `);
 }
