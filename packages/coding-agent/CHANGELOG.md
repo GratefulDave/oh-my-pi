@@ -19,6 +19,7 @@
 
 - Fixed CLI `@file` document conversion so PDFs and office docs now route through Markit before text fallback.
 - Fixed web search provider fallback to classify auth/quota/rate-limit failures and report every provider failure when the chain is exhausted.
+- Fixed session reload/switch/branch UI flows to explicitly clear terminal history while ordinary forced redraws now preserve scrollback.
 ## [15.1.9] - 2026-05-21
 
 ### Fixed

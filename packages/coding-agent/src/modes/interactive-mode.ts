@@ -2243,10 +2243,12 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#uiHelpers.renderSessionContext(sessionContext, options);
 	}
 
-	renderInitialMessages(prebuiltContext?: SessionContext): void {
-		this.#uiHelpers.renderInitialMessages(prebuiltContext);
+	renderInitialMessages(
+		prebuiltContext?: SessionContext,
+		options?: { preserveExistingChat?: boolean; clearTerminalHistory?: boolean },
+	): void {
+		this.#uiHelpers.renderInitialMessages(prebuiltContext, options);
 	}
-
 	getUserMessageText(message: Message): string {
 		return this.#uiHelpers.getUserMessageText(message);
 	}

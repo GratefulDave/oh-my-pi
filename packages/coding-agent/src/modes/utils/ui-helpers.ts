@@ -29,6 +29,10 @@ import type { SessionContext } from "../../session/session-manager";
 import { formatBytes, formatDuration } from "../../tools/render-utils";
 
 type TextBlock = { type: "text"; text: string };
+interface RenderInitialMessagesOptions {
+	preserveExistingChat?: boolean;
+	clearTerminalHistory?: boolean;
+}
 
 type QueuedMessages = {
 	steering: string[];
@@ -459,7 +463,7 @@ export class UiHelpers {
 		this.ctx.ui.requestRender();
 	}
 
-	renderInitialMessages(prebuiltContext?: SessionContext): void {
+	renderInitialMessages(prebuiltContext?: SessionContext, options: RenderInitialMessagesOptions = {}): void {
 		// This path is used to rebuild the visible chat transcript (e.g. after custom/debug UI).
 		// Clear existing rendered chat first to avoid duplicating the full session in the container.
 		this.ctx.chatContainer.clear();
@@ -485,6 +489,9 @@ export class UiHelpers {
 		if (compactionCount > 0) {
 			const times = compactionCount === 1 ? "1 time" : `${compactionCount} times`;
 			this.ctx.showStatus(`Session compacted ${times}`);
+		}
+		if (options.clearTerminalHistory) {
+			this.ctx.ui.requestRender(true, { clearScrollback: true });
 		}
 	}
 

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed redraws to preserve shell scrollback by default, avoid duplicated scrollback on forced renders/resizes, and clear history only for explicit session replacement renders.
+
 ## [15.1.9] - 2026-05-21
 
 ### Fixed
