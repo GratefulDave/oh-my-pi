@@ -29,6 +29,7 @@ import { kimiUsageProvider } from "./usage/kimi";
 import { codexRankingStrategy, openaiCodexUsageProvider } from "./usage/openai-codex";
 import { zaiUsageProvider } from "./usage/zai";
 import { getOAuthApiKey, getOAuthProvider, refreshOAuthToken } from "./utils/oauth";
+import { loginOpenAICodexDevice } from "./utils/oauth/openai-codex";
 import type { OAuthController, OAuthCredentials, OAuthProvider, OAuthProviderId } from "./utils/oauth/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,8 +126,8 @@ export interface AuthCredentialSnapshot {
  * Concrete implementations:
  * - {@link SqliteAuthCredentialStore} — local SQLite-backed store (default).
  * - `RemoteAuthCredentialStore` from `./auth-broker` — client-side snapshot of
- *   a remote broker; mutating methods (`replace*`, `upsert*`, `delete*ForProvider`)
- *   throw because login flows route through the broker, not the client.
+ *   a remote broker; remote stores may provide async write hooks for broker
+ *   upserts / replaces / deletes while SQLite stores keep the sync methods.
  */
 export interface AuthCredentialStore {
 	close(): void;
@@ -198,6 +199,18 @@ export interface AuthCredentialStore {
 	 * {@link AuthStorage.invalidateCredentialMatching} fall back to `reload()`.
 	 */
 	markCredentialSuspect?(credentialId: number, opts?: { signal?: AbortSignal }): Promise<void>;
+	/**
+	 * Optional async write hook for upserting a single credential.
+	 */
+	upsertAuthCredentialRemote?(provider: string, credential: AuthCredential): Promise<StoredAuthCredential[]>;
+	/**
+	 * Optional async write hook for replace-all semantics.
+	 */
+	replaceAuthCredentialsRemote?(provider: string, credentials: AuthCredential[]): Promise<StoredAuthCredential[]>;
+	/**
+	 * Optional async write hook for clearing every credential for a provider.
+	 */
+	deleteAuthCredentialsRemote?(provider: string, disabledCause: string): Promise<void>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1076,7 +1089,9 @@ export class AuthStorage {
 	async set(provider: string, credential: AuthCredentialEntry): Promise<void> {
 		const normalized = Array.isArray(credential) ? credential : [credential];
 		const deduped = this.#dedupeOAuthCredentials(provider, normalized);
-		const stored = this.#store.replaceAuthCredentialsForProvider(provider, deduped);
+		const stored = this.#store.replaceAuthCredentialsRemote
+			? await this.#store.replaceAuthCredentialsRemote(provider, deduped)
+			: this.#store.replaceAuthCredentialsForProvider(provider, deduped);
 		this.#setStoredCredentials(
 			provider,
 			stored.map(record => ({ id: record.id, credential: record.credential })),
@@ -1085,7 +1100,9 @@ export class AuthStorage {
 	}
 
 	async #upsertOAuthCredential(provider: string, credential: OAuthCredential): Promise<void> {
-		const stored = this.#store.upsertAuthCredentialForProvider(provider, credential);
+		const stored = this.#store.upsertAuthCredentialRemote
+			? await this.#store.upsertAuthCredentialRemote(provider, credential)
+			: this.#store.upsertAuthCredentialForProvider(provider, credential);
 		this.#setStoredCredentials(
 			provider,
 			stored.map(record => ({ id: record.id, credential: record.credential })),
@@ -1097,7 +1114,11 @@ export class AuthStorage {
 	 * Remove credential for a provider.
 	 */
 	async remove(provider: string): Promise<void> {
-		this.#store.deleteAuthCredentialsForProvider(provider, "deleted by user");
+		if (this.#store.deleteAuthCredentialsRemote) {
+			await this.#store.deleteAuthCredentialsRemote(provider, "deleted by user");
+		} else {
+			this.#store.deleteAuthCredentialsForProvider(provider, "deleted by user");
+		}
 		this.#setStoredCredentials(provider, []);
 		this.#resetProviderAssignments(provider);
 	}
@@ -1266,6 +1287,12 @@ export class AuthStorage {
 					onManualCodeInput: ctrl.onManualCodeInput ?? manualCodeInput,
 				});
 				break;
+			}
+			case "openai-codex-device": {
+				const deviceCredentials = await loginOpenAICodexDevice(ctrl);
+				const newCredential: OAuthCredential = { type: "oauth", ...deviceCredentials };
+				await this.#upsertOAuthCredential("openai-codex", newCredential);
+				return;
 			}
 			case "gitlab-duo": {
 				const { loginGitLabDuo } = await import("./utils/oauth/gitlab-duo");

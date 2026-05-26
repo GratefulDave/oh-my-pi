@@ -35,6 +35,7 @@ export type OAuthProvider =
 	| "ollama-cloud"
 	| "omlx"
 	| "openai-codex"
+	| "openai-codex-device"
 	| "opencode-go"
 	| "opencode-zen"
 	| "parallel"

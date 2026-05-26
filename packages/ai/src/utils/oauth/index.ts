@@ -26,6 +26,11 @@ const builtInOAuthProviders: OAuthProviderInfo[] = [
 		available: true,
 	},
 	{
+		id: "openai-codex-device",
+		name: "ChatGPT Plus/Pro (Codex, headless/device)",
+		available: true,
+	},
+	{
 		id: "gitlab-duo",
 		name: "GitLab Duo",
 		available: true,
@@ -285,6 +290,11 @@ export async function refreshOAuthToken(
 			break;
 		}
 		case "openai-codex": {
+			const { refreshOpenAICodexToken } = await import("./openai-codex");
+			newCredentials = await refreshOpenAICodexToken(credentials.refresh);
+			break;
+		}
+		case "openai-codex-device": {
 			const { refreshOpenAICodexToken } = await import("./openai-codex");
 			newCredentials = await refreshOpenAICodexToken(credentials.refresh);
 			break;

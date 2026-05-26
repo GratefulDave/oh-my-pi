@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed OMLX discovery to use local `/v1/models/status` token limits and generic OpenAI-compatible `context_window`/`max_model_len` metadata instead of stale bundled defaults for local models.
+- Fixed auth-broker clients to persist login/logout writes through remote credential endpoints, added OpenAI Codex device-code login with fixed redirect handling, and restored Antigravity auth injection for Gemini 3.1 models.
 
 ## [15.1.9] - 2026-05-21
 

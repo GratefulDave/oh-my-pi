@@ -22,6 +22,7 @@ import type { SearchParams } from "../../../src/web/search/providers/base";
 import { searchBrave } from "../../../src/web/search/providers/brave";
 import { withHardTimeout } from "../../../src/web/search/providers/utils";
 import type { SearchProviderId, SearchResponse } from "../../../src/web/search/types";
+import { SearchProviderError } from "../../../src/web/search/types";
 
 const FAKE_SESSION = {} as ToolSession;
 
@@ -126,11 +127,14 @@ describe("Brave provider hard-timeout wiring", () => {
 describe("executeSearch abort propagation", () => {
 	afterEach(() => vi.restoreAllMocks());
 
-	function fakeProvider(behaviour: (params: SearchParams) => Promise<SearchResponse>): provider.SearchProvider {
-		const id: SearchProviderId = "anthropic";
+	function fakeProvider(
+		behaviour: (params: SearchParams) => Promise<SearchResponse>,
+		id: SearchProviderId = "anthropic",
+		label: string = "Anthropic",
+	): provider.SearchProvider {
 		return {
 			id,
-			label: "Anthropic",
+			label,
 			isAvailable: () => true,
 			search: behaviour,
 		};
@@ -155,6 +159,39 @@ describe("executeSearch abort propagation", () => {
 
 		await expect(tool.execute("test-id", { query: "anything" }, ac.signal)).rejects.toBeInstanceOf(ToolAbortError);
 		expect(secondProviderSearch).not.toHaveBeenCalled();
+	});
+
+	it("reports every provider failure when the fallback chain is exhausted", async () => {
+		vi.spyOn(provider, "resolveProviderChain").mockResolvedValue([
+			fakeProvider(
+				async () => {
+					throw new SearchProviderError("codex", "Codex authorization failed (401): invalid api key", 401);
+				},
+				"codex",
+				"Codex",
+			),
+			fakeProvider(
+				async () => {
+					throw new SearchProviderError(
+						"perplexity",
+						"Perplexity quota exhausted (402): insufficient credits",
+						402,
+					);
+				},
+				"perplexity",
+				"Perplexity",
+			),
+		]);
+
+		const tool = new WebSearchTool(FAKE_SESSION);
+		const result = await tool.execute("test-id", { query: "anything" });
+		const block = result.content[0];
+		const text = block && "text" in block ? block.text : "";
+		expect(text).toContain("All web search providers failed");
+		expect(text).toContain("Codex authorization failed (401): invalid api key");
+		expect(text).toContain("Perplexity quota exhausted (402): insufficient credits");
+		expect(result.details?.error).toContain("Codex authorization failed (401): invalid api key");
+		expect(result.details?.error).toContain("Perplexity quota exhausted (402): insufficient credits");
 	});
 
 	it("still reports provider failures as a tool result when the caller has not aborted", async () => {

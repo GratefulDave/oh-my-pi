@@ -1,7 +1,7 @@
 /**
  * Client-side {@link AuthCredentialStore} that mirrors a remote broker's
- * snapshot. Refresh tokens never leave the broker; mutating methods (`replace*`,
- * `upsert*`, `delete*ForProvider`) throw because login flows are server-side.
+ * snapshot. Refresh tokens never leave the broker; remote write methods route
+ * through broker endpoints and refresh the local snapshot in-place.
  *
  * Cache (`getCache`/`setCache`/`cleanExpiredCache`) is in-memory and ephemeral —
  * usage reports cache TTL is 5 minutes per credential, so durability across
@@ -11,6 +11,7 @@ import { scheduler } from "node:timers/promises";
 import { logger } from "@oh-my-pi/pi-utils";
 import {
 	type AuthCredential,
+	type AuthCredentialSnapshotEntry,
 	type AuthCredentialStore,
 	type OAuthCredential,
 	REMOTE_REFRESH_SENTINEL,
@@ -192,6 +193,79 @@ export class RemoteAuthCredentialStore implements AuthCredentialStore {
 	async markCredentialSuspect(credentialId: number, opts: { signal?: AbortSignal } = {}): Promise<void> {
 		await this.#client.refreshCredential(credentialId, opts.signal);
 		await this.waitForFreshSnapshot(MAX_WAIT_MS, opts);
+	}
+	async upsertAuthCredentialRemote(provider: string, credential: AuthCredential): Promise<StoredAuthCredential[]> {
+		const { entries } = await this.#client.uploadCredential(provider, credential);
+		this.#applyProviderEntries(provider, entries);
+		void this.refreshSnapshot().catch(error => {
+			logger.debug("auth-broker snapshot refresh after upload failed", { error: String(error) });
+		});
+		return this.listAuthCredentials(provider);
+	}
+
+	async replaceAuthCredentialsRemote(
+		provider: string,
+		credentials: AuthCredential[],
+	): Promise<StoredAuthCredential[]> {
+		const existing = this.listAuthCredentials(provider);
+		for (const entry of existing) {
+			try {
+				await this.#client.disableCredential(entry.id, "replaced by newer credential");
+			} catch (error) {
+				logger.warn("auth-broker disable during replace failed", {
+					provider,
+					id: entry.id,
+					error: String(error),
+				});
+			}
+		}
+		this.#removeProviderEntries(provider);
+		for (const credential of credentials) {
+			const { entries } = await this.#client.uploadCredential(provider, credential);
+			this.#applyProviderEntries(provider, entries);
+		}
+		void this.refreshSnapshot().catch(error => {
+			logger.debug("auth-broker snapshot refresh after replace failed", { error: String(error) });
+		});
+		return this.listAuthCredentials(provider);
+	}
+
+	async deleteAuthCredentialsRemote(provider: string, disabledCause: string): Promise<void> {
+		const existing = this.listAuthCredentials(provider);
+		for (const entry of existing) {
+			try {
+				await this.#client.disableCredential(entry.id, disabledCause);
+			} catch (error) {
+				logger.warn("auth-broker disable during delete failed", {
+					provider,
+					id: entry.id,
+					error: String(error),
+				});
+			}
+		}
+		this.#removeProviderEntries(provider);
+		void this.refreshSnapshot().catch(error => {
+			logger.debug("auth-broker snapshot refresh after delete failed", { error: String(error) });
+		});
+	}
+
+	#applyProviderEntries(provider: string, entries: AuthCredentialSnapshotEntry[]): void {
+		const others = this.#snapshot.credentials.filter(entry => entry.provider !== provider);
+		const incoming = entries.map(entry => {
+			const credential =
+				entry.credential.type === "oauth"
+					? { ...entry.credential, refresh: REMOTE_REFRESH_SENTINEL }
+					: entry.credential;
+			return { ...entry, credential, rotatesInMs: null };
+		});
+		this.#snapshot = { ...this.#snapshot, credentials: [...others, ...incoming] };
+		this.#snapshotReceivedAt = Date.now();
+	}
+
+	#removeProviderEntries(provider: string): void {
+		const next = this.#snapshot.credentials.filter(entry => entry.provider !== provider);
+		this.#snapshot = { ...this.#snapshot, credentials: next };
+		this.#snapshotReceivedAt = Date.now();
 	}
 
 	replaceAuthCredentialsForProvider(_provider: string, _credentials: AuthCredential[]): StoredAuthCredential[] {

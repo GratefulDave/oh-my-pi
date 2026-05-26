@@ -22,7 +22,7 @@ import { SearchProviderError } from "../../../web/search/types";
 import { dateToAgeSeconds } from "../utils";
 import type { SearchParams } from "./base";
 import { SearchProvider } from "./base";
-import { withHardTimeout } from "./utils";
+import { classifyProviderHttpError, withHardTimeout } from "./utils";
 
 const PERPLEXITY_API_URL = "https://api.perplexity.ai/chat/completions";
 const PERPLEXITY_OAUTH_ASK_URL = "https://www.perplexity.ai/rest/sse/perplexity_ask";
@@ -253,13 +253,13 @@ async function callPerplexityApi(
 
 	if (!response.ok) {
 		const errorText = await response.text();
+		const classified = classifyProviderHttpError("perplexity", response.status, errorText);
 		throw new SearchProviderError(
 			"perplexity",
-			`Perplexity API error (${response.status}): ${errorText}`,
+			classified ?? `Perplexity API error (${response.status}): ${errorText}`,
 			response.status,
 		);
 	}
-
 	return response.json() as Promise<PerplexityResponse>;
 }
 
@@ -370,13 +370,13 @@ async function callPerplexityOAuth(
 
 	if (!response.ok) {
 		const errorText = await response.text();
+		const classified = classifyProviderHttpError("perplexity", response.status, errorText);
 		throw new SearchProviderError(
 			"perplexity",
-			`Perplexity OAuth API error (${response.status}): ${errorText}`,
+			classified ?? `Perplexity OAuth API error (${response.status}): ${errorText}`,
 			response.status,
 		);
 	}
-
 	if (!response.body) {
 		throw new SearchProviderError("perplexity", "Perplexity OAuth API returned no response body", 500);
 	}

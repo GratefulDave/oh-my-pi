@@ -106,15 +106,45 @@ describe("RemoteAuthCredentialStore + AuthStorage integration", () => {
 		clientStorage.close();
 	});
 
-	test("RemoteAuthCredentialStore rejects writes from the client", () => {
+	test("RemoteAuthCredentialStore upsert writes through broker and redacts snapshot refresh tokens", async () => {
+		const brokerClient = new AuthBrokerClient({ url: handle!.url, token });
+		const initialResult = await brokerClient.fetchSnapshot();
+		if (initialResult.status !== 200) throw new Error("expected snapshot");
 		const remoteStore = new RemoteAuthCredentialStore({
-			client: new AuthBrokerClient({ url: handle!.url, token }),
+			client: brokerClient,
+			initialSnapshot: initialResult.snapshot,
 		});
-		expect(() => remoteStore.replaceAuthCredentialsForProvider("anthropic", [])).toThrow(/read-only/);
-		expect(() => remoteStore.upsertAuthCredentialForProvider("anthropic", { type: "api_key", key: "x" })).toThrow(
-			/read-only/,
-		);
-		expect(() => remoteStore.deleteAuthCredentialsForProvider("anthropic", "x")).toThrow(/read-only/);
+
+		const expires = Date.now() + 120_000;
+		await remoteStore.upsertAuthCredentialRemote("anthropic", {
+			type: "oauth",
+			access: "client-access-2",
+			refresh: "client-refresh-2",
+			expires,
+			accountId: "account-1",
+			email: "a@example.com",
+		});
+
+		const clientRows = remoteStore.listAuthCredentials("anthropic");
+		expect(clientRows).toHaveLength(1);
+		expect(clientRows[0]?.credential).toEqual({
+			type: "oauth",
+			access: "client-access-2",
+			refresh: REMOTE_REFRESH_SENTINEL,
+			expires,
+			accountId: "account-1",
+			email: "a@example.com",
+		});
+		expect(serverStore!.listAuthCredentials("anthropic")).toHaveLength(1);
+		expect(serverStore!.listAuthCredentials("anthropic")[0]?.credential).toEqual({
+			type: "oauth",
+			access: "client-access-2",
+			refresh: "client-refresh-2",
+			expires,
+			accountId: "account-1",
+			email: "a@example.com",
+		});
+
 		remoteStore.close();
 	});
 

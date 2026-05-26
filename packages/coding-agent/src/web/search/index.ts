@@ -46,6 +46,9 @@ function formatProviderError(error: unknown, provider: SearchProvider): string {
 			return "Anthropic web search returned 404 (model or endpoint not found).";
 		}
 		if (error.status === 401 || error.status === 403) {
+			if (/authorization failed|quota exhausted|rate limited/i.test(error.message)) {
+				return error.message;
+			}
 			if (error.provider === "zai") {
 				return error.message;
 			}
@@ -55,6 +58,14 @@ function formatProviderError(error: unknown, provider: SearchProvider): string {
 	}
 	if (error instanceof Error) return error.message;
 	return `Unknown error from ${provider.label}`;
+}
+
+function formatProviderFailure(provider: SearchProvider, error: unknown): string {
+	const message = formatProviderError(error, provider);
+	if (error instanceof SearchProviderError) {
+		return message;
+	}
+	return `${provider.label}: ${message}`;
 }
 
 /** Truncate text for tool output */
@@ -138,7 +149,7 @@ async function executeSearch(
 		};
 	}
 
-	let lastError: unknown;
+	const failures: Array<{ provider: SearchProvider; error: unknown }> = [];
 	let lastProvider = providers[0];
 
 	for (const provider of providers) {
@@ -168,14 +179,16 @@ async function executeSearch(
 			// failure and the loop falls through to the next provider (or to the
 			// summary error), masking the cancellation.
 			throwIfAborted(signal);
-			lastError = error;
+			failures.push({ provider, error });
 		}
 	}
 
-	const baseMessage = formatProviderError(lastError, lastProvider);
+	const baseMessage = formatProviderError(failures[failures.length - 1]?.error, lastProvider);
 	const message =
 		providers.length > 1
-			? `All web search providers failed (${formatProviderList(providers)}). Last error: ${baseMessage}`
+			? `All web search providers failed (${formatProviderList(providers)}).\nFailures:\n- ${failures
+					.map(failure => formatProviderFailure(failure.provider, failure.error))
+					.join("\n- ")}`
 			: baseMessage;
 
 	return {

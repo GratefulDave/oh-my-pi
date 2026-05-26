@@ -15,7 +15,7 @@ import type { SearchCitation, SearchResponse, SearchSource } from "../../../web/
 import { SearchProviderError } from "../../../web/search/types";
 import type { SearchParams } from "./base";
 import { SearchProvider } from "./base";
-import { withHardTimeout } from "./utils";
+import { classifyProviderHttpError, withHardTimeout } from "./utils";
 
 const DEFAULT_ENDPOINT = "https://cloudcode-pa.googleapis.com";
 const ANTIGRAVITY_DAILY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
@@ -341,13 +341,13 @@ async function callGeminiSearch(
 
 	if (!response.ok) {
 		const errorText = await response.text();
+		const classified = classifyProviderHttpError("gemini", response.status, errorText);
 		throw new SearchProviderError(
 			"gemini",
-			`Gemini Cloud Code API error (${response.status}): ${errorText}`,
+			classified ?? `Gemini Cloud Code API error (${response.status}): ${errorText}`,
 			response.status,
 		);
 	}
-
 	if (!response.body) {
 		throw new SearchProviderError("gemini", "Gemini API returned no response body", 500);
 	}

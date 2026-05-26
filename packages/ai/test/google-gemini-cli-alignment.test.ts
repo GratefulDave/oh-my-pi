@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import { hookFetch } from "@oh-my-pi/pi-utils";
 import {
+	ANTIGRAVITY_SYSTEM_INSTRUCTION,
 	buildRequest,
 	parseGeminiCliCredentials,
 	shouldRefreshGeminiCliCredentials,
@@ -147,7 +148,38 @@ describe("Google Gemini CLI alignment", () => {
 		expect(payload.request.systemInstruction?.role).toBeUndefined();
 		expect(payload.request.contents).toEqual([{ role: "user", parts: [{ text: "implement token refresh" }] }]);
 	});
+	it("injects Antigravity system instruction first for Gemini 3.1 models", () => {
+		for (const modelId of ["gemini-3.1-pro-high", "gemini-3.1-pro-low"] as const) {
+			const model = {
+				...createModel("google-antigravity"),
+				id: modelId,
+			};
+			const payload = buildRequest(
+				model,
+				{
+					systemPrompt: ["primary instruction", "supplemental instruction"],
+					messages: [{ role: "user", content: "implement token refresh", timestamp: Date.now() }],
+				},
+				"proj-123",
+				{},
+				true,
+			) as {
+				request: {
+					systemInstruction?: { role?: string; parts: Array<{ text: string }> };
+				};
+			};
 
+			expect(payload.request.systemInstruction).toEqual({
+				role: "user",
+				parts: [
+					{ text: ANTIGRAVITY_SYSTEM_INSTRUCTION },
+					{ text: `Please ignore following [ignore]${ANTIGRAVITY_SYSTEM_INSTRUCTION}[/ignore]` },
+					{ text: "primary instruction" },
+					{ text: "supplemental instruction" },
+				],
+			});
+		}
+	});
 	it("keeps antigravity metadata in antigravity request payloads", () => {
 		const model = createModel("google-antigravity");
 		const payload = buildRequest(model, createContext(), "proj-123", {}, true) as {

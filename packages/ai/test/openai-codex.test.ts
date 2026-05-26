@@ -3,6 +3,8 @@ import { type RequestBody, transformRequestBody } from "@oh-my-pi/pi-ai/provider
 import { parseCodexError } from "@oh-my-pi/pi-ai/providers/openai-codex/response-handler";
 import { convertOpenAICodexResponsesTools } from "@oh-my-pi/pi-ai/providers/openai-codex-responses";
 import type { Tool } from "@oh-my-pi/pi-ai/types";
+import { hookFetch } from "@oh-my-pi/pi-utils";
+import { loginOpenAICodexDevice } from "../src/utils/oauth/openai-codex";
 import { createCodexModel } from "./helpers";
 
 const DEFAULT_PROMPT_PREFIX =
@@ -112,5 +114,65 @@ describe("openai-codex error parsing", () => {
 		const info = await parseCodexError(response);
 		expect(info.friendlyMessage?.toLowerCase()).toContain("usage limit");
 		expect(info.rateLimits?.primary?.used_percent).toBe(99);
+	});
+});
+
+describe("openai-codex device login", () => {
+	it("returns credentials with accountId", async () => {
+		const accessTokenPayload = {
+			"https://api.openai.com/auth": { chatgpt_account_id: "account-1" },
+			"https://api.openai.com/profile": { email: "user@example.com" },
+		};
+		const accessToken = `header.${Buffer.from(JSON.stringify(accessTokenPayload)).toString("base64")}.sig`;
+		using _hook = hookFetch((input, init) => {
+			const url = String(input);
+			if (url === "https://auth.openai.com/api/accounts/deviceauth/usercode") {
+				expect(init?.method).toBe("POST");
+				return new Response(
+					JSON.stringify({
+						device_auth_id: "device-auth-1",
+						user_code: "ABCD-EFGH",
+						interval: -3,
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				);
+			}
+			if (url === "https://auth.openai.com/api/accounts/deviceauth/token") {
+				return new Response(
+					JSON.stringify({
+						authorization_code: "auth-code-1",
+						code_verifier: "verifier-1",
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				);
+			}
+			if (url === "https://auth.openai.com/oauth/token") {
+				const body = init?.body ? String(init.body) : "";
+				expect(body).toContain("grant_type=authorization_code");
+				expect(body).toContain("redirect_uri=https%3A%2F%2Fauth.openai.com%2Fdeviceauth%2Fcallback");
+				return new Response(
+					JSON.stringify({
+						access_token: accessToken,
+						refresh_token: "refresh-token",
+						expires_in: 3600,
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				);
+			}
+			throw new Error(`unexpected url: ${url}`);
+		});
+
+		const credentials = await loginOpenAICodexDevice({
+			onAuth() {},
+			onProgress() {},
+		});
+
+		expect(credentials).toEqual({
+			refresh: "refresh-token",
+			access: accessToken,
+			expires: expect.any(Number),
+			accountId: "account-1",
+			email: "user@example.com",
+		});
 	});
 });
