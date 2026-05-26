@@ -34,6 +34,7 @@ describe("minimizer gain analytics", () => {
 					inputBytes: 1000,
 					outputBytes: 250,
 					savedBytes: 750,
+					savedTokens: 111,
 					exitCode: 0,
 				},
 				{ agentDir },
@@ -47,6 +48,7 @@ describe("minimizer gain analytics", () => {
 					inputBytes: 2200,
 					outputBytes: 200,
 					savedBytes: 2000,
+					savedTokens: 222,
 					exitCode: 101,
 				},
 				{ agentDir },
@@ -84,13 +86,17 @@ describe("minimizer gain analytics", () => {
 
 			const records = await readMinimizerGain({ agentDir });
 			expect(records).toHaveLength(4);
+			expect(records[0].savedTokens).toBe(111);
+			expect(records[1].savedTokens).toBe(222);
+			expect(records[3].savedTokens).toBeUndefined();
 
 			const summary = summarizeMinimizerGain(records);
 			expect(summary.commands).toBe(3);
 			expect(summary.inputBytes).toBe(4200);
 			expect(summary.outputBytes).toBe(850);
 			expect(summary.savedBytes).toBe(3350);
-			expect(summary.estimatedTokensSaved).toBe(837);
+			expect(summary.estimatedTokensSaved).toBe(483);
+			expect(summary.usesEstimatedTokensSaved).toBe(true);
 			expect(summary.byFilter.map(row => row.filter)).toEqual(["cargo", "git", "bun"]);
 			expect(summary.byCwd.map(row => row.cwd)).toEqual(["/repo", "/other-repo"]);
 			expect(summary.byCwd[0]).toMatchObject({ cwd: "/repo", savedBytes: 2750 });
@@ -102,6 +108,10 @@ describe("minimizer gain analytics", () => {
 				filter: "cargo",
 				savedBytes: 2000,
 				avgSavedBytes: 2000,
+				usesEstimatedTokensSaved: false,
+			});
+			expect(discovery.commands.find(row => row.command === "bun test")).toMatchObject({
+				usesEstimatedTokensSaved: true,
 			});
 			expect(discovery.commands.map(row => row.command)).not.toContain("git status --short");
 
@@ -174,6 +184,9 @@ describe("minimizer gain analytics", () => {
 			);
 
 			const records = await readMinimizerGain({ agentDir, cwd: "/repo", sinceDays: 1 });
+			const summary = summarizeMinimizerGain(records);
+			expect(summary.estimatedTokensSaved).toBe(75);
+			expect(summary.usesEstimatedTokensSaved).toBe(true);
 			expect(records.map(record => record.command)).toEqual(["git diff"]);
 		});
 	});

@@ -6,6 +6,7 @@
 import * as fs from "node:fs/promises";
 import {
 	applyShellMinimizer,
+	countTokens,
 	executeShell,
 	type MinimizerOptions,
 	type MinimizerResult,
@@ -320,6 +321,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 				inputBytes: minimized.inputBytes,
 				outputBytes: minimized.outputBytes,
 				savedBytes,
+				...(savedBytes > 0 ? { savedTokens: Math.max(0, countTokens(minimized.originalText) - countTokens(minimized.text)) } : {}),
 				exitCode,
 				kind: savedBytes > 0 ? "saved" : "missed",
 			});
@@ -406,6 +408,7 @@ async function dumpCancelledOutput(input: CancelledDumpInput): Promise<BashResul
 		inputBytes: effectiveInputBytes,
 		outputBytes: minimized.outputBytes,
 		savedBytes,
+		...(savedBytes > 0 ? { savedTokens: Math.max(0, countTokens(minimized.originalText) - countTokens(minimized.text)) } : {}),
 		exitCode: null,
 		kind: savedBytes > 0 ? "saved" : "missed",
 	});

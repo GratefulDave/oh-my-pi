@@ -7,7 +7,7 @@ import { buildArtifactRecoveryHint, executeBash } from "@oh-my-pi/pi-coding-agen
 import { DEFAULT_MAX_BYTES } from "@oh-my-pi/pi-coding-agent/session/streaming-output";
 import * as shellSnapshot from "@oh-my-pi/pi-coding-agent/utils/shell-snapshot";
 import { getAgentDir, setAgentDir } from "@oh-my-pi/pi-utils";
-import { readMinimizerGain } from "../src/minimizer-gain";
+import { readMinimizerGain, summarizeMinimizerGain } from "../src/minimizer-gain";
 
 // Matches the schema default for `tools.artifactHeadBytes` (20 KB) used by
 // OutputSink when bash-executor pulls settings via resolveOutputSinkHeadBytes.
@@ -187,6 +187,10 @@ describe("executeBash", () => {
 
 			const records = await readMinimizerGain({ agentDir });
 			expect(records).toHaveLength(1);
+			const summary = summarizeMinimizerGain(records);
+			expect(summary.usesEstimatedTokensSaved).toBe(false);
+			expect(typeof records[0].savedTokens).toBe("number");
+			expect(summary.estimatedTokensSaved).toBe(records[0].savedTokens);
 			expect(records[0]).toMatchObject({
 				cwd: fs.realpathSync(tempDir),
 				command: "bun run 'check:ts'",

@@ -229,6 +229,7 @@ type GainSlashRow = {
 	commands: number;
 	savedBytes: number;
 	estimatedTokensSaved: number;
+	usesEstimatedTokensSaved: boolean;
 };
 
 async function buildGainSlashReport(input: { cwd: string; all: boolean; days?: number }): Promise<string> {
@@ -243,7 +244,7 @@ async function buildGainSlashReport(input: { cwd: string; all: boolean; days?: n
 			: `Minimizer savings for ${shortenPath(cwd ?? input.cwd)} (${days}d)`,
 		`Commands: ${formatNumber(summary.commands)}`,
 		`Saved Bytes: ${formatNumber(summary.savedBytes)}`,
-		`Estimated Tokens Saved: ${formatNumber(summary.estimatedTokensSaved)}`,
+		`${formatTokensSavedLabel(summary.usesEstimatedTokensSaved)}: ${formatNumber(summary.estimatedTokensSaved)}`,
 	];
 
 	if (summary.byFilter.length > 0) {
@@ -275,11 +276,14 @@ async function buildGainSlashReport(input: { cwd: string; all: boolean; days?: n
 function pushGainRows<T extends GainSlashRow>(lines: string[], rows: T[], label: (row: T) => string): void {
 	for (const row of rows.slice(0, 10)) {
 		lines.push(
-			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes, ${formatNumber(row.estimatedTokensSaved)} tokens`,
+			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}`,
 		);
 	}
 }
 
+function formatTokensSavedLabel(usesEstimatedTokensSaved: boolean): string {
+	return usesEstimatedTokensSaved ? "Estimated Tokens Saved" : "Tokens Saved";
+}
 
 const DELEGATE_USAGE =
 	"Usage: /delegate [--backend acpx|tmux|cmux] [--agents gemini,claude,codex] [--session <name>] [--mode exec|prompt] [--timeout <ms>] <prompt>";

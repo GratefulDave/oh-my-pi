@@ -12,6 +12,7 @@ export interface MinimizerGainRecord {
 	inputBytes: number;
 	outputBytes: number;
 	savedBytes: number;
+	savedTokens?: number;
 	exitCode: number | null;
 	kind?: MinimizerGainKind;
 }
@@ -22,6 +23,7 @@ export interface MinimizerGainTotals {
 	outputBytes: number;
 	savedBytes: number;
 	estimatedTokensSaved: number;
+	usesEstimatedTokensSaved: boolean;
 }
 
 export interface MinimizerGainFilterSummary extends MinimizerGainTotals {
@@ -85,6 +87,7 @@ type ParsedRecordFields = {
 	inputBytes: number | Invalid;
 	outputBytes: number | Invalid;
 	savedBytes: number | Invalid;
+	savedTokens: number | undefined | Invalid;
 	exitCode: number | null | Invalid;
 	kind: MinimizerGainKind | undefined | Invalid;
 };
@@ -96,6 +99,7 @@ type ValidRecordFields = {
 	inputBytes: number;
 	outputBytes: number;
 	savedBytes: number;
+	savedTokens?: number;
 	exitCode: number | null;
 	kind: MinimizerGainKind | undefined;
 };
@@ -301,6 +305,7 @@ function parseRecordFields(value: JsonObject): MinimizerGainRecord | null {
 		inputBytes: requiredNumber(value.inputBytes),
 		outputBytes: requiredNumber(value.outputBytes),
 		savedBytes: requiredNumber(value.savedBytes),
+		savedTokens: optionalNumber(value.savedTokens),
 		exitCode: parseExitCode(value.exitCode),
 		kind: parseKind(value.kind),
 	};
@@ -345,6 +350,10 @@ function optionalString(value: unknown): string | undefined | Invalid {
 
 function requiredNumber(value: unknown): number | Invalid {
 	return typeof value === "number" && Number.isFinite(value) ? value : INVALID;
+}
+
+function optionalNumber(value: unknown): number | undefined | Invalid {
+	return value === undefined || (typeof value === "number" && Number.isFinite(value)) ? value : INVALID;
 }
 
 function parseExitCode(value: unknown): number | null | Invalid {
@@ -408,6 +417,7 @@ function createTotals(): MinimizerGainTotals {
 		outputBytes: 0,
 		savedBytes: 0,
 		estimatedTokensSaved: 0,
+		usesEstimatedTokensSaved: false,
 	};
 }
 
@@ -416,10 +426,11 @@ function addRecord(totals: MinimizerGainTotals, record: MinimizerGainRecord): vo
 	totals.inputBytes += record.inputBytes;
 	totals.outputBytes += record.outputBytes;
 	totals.savedBytes += record.savedBytes;
+	totals.estimatedTokensSaved += record.savedTokens ?? Math.floor(record.savedBytes / BYTES_PER_TOKEN_ESTIMATE);
+	totals.usesEstimatedTokensSaved ||= record.savedTokens === undefined;
 }
 
 function finalizeTotals<T extends MinimizerGainTotals>(totals: T): T {
-	totals.estimatedTokensSaved = Math.floor(totals.savedBytes / BYTES_PER_TOKEN_ESTIMATE);
 	return totals;
 }
 

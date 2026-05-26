@@ -39,7 +39,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		Some("status") if is_status_machine_format(ctx.command) => cleaned,
 		Some("status") => condense_status(&cleaned),
 		Some("diff") if is_stat_format(ctx.command) => condense_diff_stat(&cleaned),
-		Some("diff") => condense_diff(&cleaned),
+		Some("diff") => compact_diff_output(&cleaned),
 		Some("show") => condense_show(&cleaned),
 		Some("log") => condense_log(&cleaned, 32, 16),
 		Some("branch") => condense_branch(&cleaned),
@@ -457,7 +457,7 @@ fn condense_show(input: &str) -> String {
 	};
 	let prelude = &input[..diff_start];
 	let diff = &input[diff_start + 1..];
-	let diff_summary = condense_diff(diff);
+	let diff_summary = compact_diff_output(diff);
 	if diff_summary == diff {
 		return primitives::head_tail_lines(input, 80, 40);
 	}
@@ -583,7 +583,7 @@ struct DiffHunk {
 	lines:  Vec<String>,
 }
 
-fn condense_diff(input: &str) -> String {
+pub(crate) fn compact_diff_output(input: &str) -> String {
 	let files = parse_unified_diff(input);
 	if files.is_empty() {
 		return input.to_string();
@@ -655,6 +655,7 @@ fn parse_unified_diff(input: &str) -> Vec<DiffFile> {
 	let mut files = Vec::new();
 	let mut current: Option<DiffFile> = None;
 	let mut current_hunk: Option<DiffHunk> = None;
+	let mut pending_old_path: Option<String> = None;
 
 	for line in input.lines() {
 		if let Some(path) = parse_diff_git_path(line) {
@@ -663,12 +664,35 @@ fn parse_unified_diff(input: &str) -> Vec<DiffFile> {
 				files.push(file);
 			}
 			current = Some(DiffFile { path, added: 0, removed: 0, hunks: Vec::new() });
+			pending_old_path = None;
 			continue;
 		}
-		if let Some(path) = line.strip_prefix("+++ b/") {
-			if let Some(file) = current.as_mut() {
-				file.path = path.to_string();
+		if let Some(path) = line.strip_prefix("--- ") {
+			pending_old_path = Some(path.strip_prefix("a/").unwrap_or(path).to_string());
+			continue;
+		}
+		if let Some(path) = line.strip_prefix("+++ ") {
+			let path = path.strip_prefix("b/").unwrap_or(path);
+			let path = if path == "/dev/null" {
+				pending_old_path.as_deref().unwrap_or(path)
+			} else {
+				path
+			};
+			flush_hunk(&mut current, &mut current_hunk);
+			let update_current_path = current
+				.as_ref()
+				.is_some_and(|file| file.added == 0 && file.removed == 0 && file.hunks.is_empty());
+			if update_current_path {
+				if let Some(file) = current.as_mut() {
+					file.path = path.to_string();
+				}
+			} else if let Some(file) = current.take() {
+				files.push(file);
+				current = Some(DiffFile { path: path.to_string(), added: 0, removed: 0, hunks: Vec::new() });
+			} else {
+				current = Some(DiffFile { path: path.to_string(), added: 0, removed: 0, hunks: Vec::new() });
 			}
+			pending_old_path = None;
 			continue;
 		}
 		if line.starts_with("@@") {
