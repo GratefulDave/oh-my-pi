@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Removed the `href`, `hrefr`, and `hline` Handlebars prompt helpers along with the shared hashline anchor state; none were referenced by any built-in or user prompt template. Changed blank lines between hashline ops from silent separators to literal payload lines appended to the open op.
+
+### Added
+
+- Added `OMP_MCP_TIMEOUT_MS` environment variable to override MCP client request timeout for every server (set to `0` to disable client-side timeouts).
+- Added configurable IRC timeout via `irc.timeoutMs` setting (default 120s) with AbortSignal-based cancellation.
+- Added WebSocket SSE debug frame forwarding helpers for Codex debug event capture.
+
+### Changed
+
+- Changed Bedrock credential resolution to prefer bearer token ahead of SigV4. Defaulted Bedrock Claude thinking display to `"summarized"` with `supportsAdaptiveThinkingDisplay` gate.
+- Reduced default grep match column limit from 1024 to 512 characters.
+- Changed IRC dispatch to use `runIrcDispatchWithTimeout` wrapper with per-recipient timeout.
+- Changed Cursor provider to use `ResumeAction` for empty turns and `SelectedContext` with images for image-only turns.
+- Changed `transformMessages` to emit real tool results before synthetic aborted/placeholder results.
+
+### Fixed
+
+- Fixed duplicate `toolResult` emissions: real results now take priority over synthetic `aborted` results.
+- Fixed Bun HTTP/2 error retry matching by adding `HTTP2StreamReset`, `HTTP2RefusedStream`, and `HTTP2EnhanceYourCalm` to transient error detection.
+- Fixed HTTP/2 thinking-only turn filtering to drop truncated assistant turns with no actionable content.
+- Fixed runtime execution context variable from `session.cwd` to `msg.session.cwd` in browser tab-worker.
+- Fixed `logger.error` serialization to include `Error.message`, `.stack`, `.cause`, and custom enumerable fields.
+- Fixed Moonshot API key validation to use models endpoint instead of chat-completions.
+- Fixed typescript-edit-benchmark to use `postmortem.quit(0|1)` for clean CLI exit.
+
+### Removed
+
+- Removed HTTP/2 fetch patching bootstrap (`installH2Fetch`, `h2-fetch.ts`). Callers now use the default Bun fetch transport.
+
 ### Added
 
 - Added native `ast_dump` syntax-tree diagnostics and YAML rule mode for `ast_grep`, enabling relational ast-grep queries such as `has`, `inside`, `follows`, and `precedes`.
