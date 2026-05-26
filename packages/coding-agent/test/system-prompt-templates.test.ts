@@ -7,6 +7,7 @@ import { buildSystemPrompt, buildSystemPromptToolMetadata } from "@oh-my-pi/pi-c
 import { prompt } from "@oh-my-pi/pi-utils";
 import Handlebars from "handlebars";
 import * as z from "zod/v4";
+import hashlineToolPrompt from "../src/prompts/tools/hashline.md" with { type: "text" };
 
 const baseGitContext = {
 	isRepo: true,
@@ -117,6 +118,15 @@ describe("system Handlebars prompt templates", () => {
 			expect(() => Handlebars.parse(template), `Failed parsing ${fileName}`).not.toThrow();
 			expect(() => Handlebars.compile(template), `Failed compiling ${fileName}`).not.toThrow();
 		}
+	});
+
+	test("hashline tool prompt renders helper-generated anchors", () => {
+		const rendered = prompt.render(hashlineToolPrompt);
+
+		expect(rendered).toContain('1:const TITLE = "Mr";');
+		expect(rendered).toContain("3-6:	return [");
+		expect(rendered).not.toContain("{{hline");
+		expect(rendered).not.toContain("{{hrefr");
 	});
 
 	test("custom-system-prompt renders project section for context and git combinations", async () => {

@@ -6,6 +6,7 @@ import * as os from "node:os";
 import type { AgentTool } from "@oh-my-pi/pi-agent-core";
 import { $env, getGpuCachePath, getProjectDir, hasFsCode, isEnoent, logger, prompt } from "@oh-my-pi/pi-utils";
 import { $ } from "bun";
+import "./config/hashline-prompt-helpers";
 import { contextFileCapability } from "./capability/context-file";
 import { systemPromptCapability } from "./capability/system-prompt";
 import type { SkillsSettings } from "./config/settings";

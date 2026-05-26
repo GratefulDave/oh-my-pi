@@ -8,6 +8,7 @@ import {
 	parseFrontmatter,
 	prompt,
 } from "@oh-my-pi/pi-utils";
+import "./hashline-prompt-helpers";
 import { jtdToTypeScript } from "../tools/jtd-to-typescript";
 import { parseCommandArgs, substituteArgs } from "../utils/command-args";
 
