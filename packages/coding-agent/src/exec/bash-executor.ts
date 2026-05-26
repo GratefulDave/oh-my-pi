@@ -56,8 +56,6 @@ export interface BashResult {
 	artifactId?: string;
 }
 
-const HARD_TIMEOUT_GRACE_MS = 5_000;
-
 const shellSessions = new Map<string, Shell>();
 const brokenShellSessions = new Set<string>();
 
@@ -128,8 +126,9 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 	// sink.push() is synchronous — buffer management, counters, and onChunk
 	// all run inline. File writes (artifact path) are handled asynchronously
 	// inside the sink. No promise chain needed.
+	let acceptingChunks = true;
 	const enqueueChunk = (chunk: string) => {
-		sink.push(chunk);
+		if (acceptingChunks) sink.push(chunk);
 	};
 
 	if (options?.signal?.aborted) {
@@ -175,21 +174,22 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 			void shellSession.abort();
 		}
 	};
+	const abortDeferred = Promise.withResolvers<"abort">();
 	const abortHandler = () => {
 		abortCurrentExecution();
+		abortDeferred.resolve("abort");
 	};
 	if (userSignal) {
 		userSignal.addEventListener("abort", abortHandler, { once: true });
 	}
 
-	let hardTimeoutTimer: NodeJS.Timeout | undefined;
-	const hardTimeoutDeferred = Promise.withResolvers<"hard-timeout">();
+	let timeoutTimer: NodeJS.Timeout | undefined;
+	const timeoutDeferred = Promise.withResolvers<"timeout">();
 	const baseTimeoutMs = Math.max(1_000, options?.timeout ?? 300_000);
-	const hardTimeoutMs = baseTimeoutMs + HARD_TIMEOUT_GRACE_MS;
-	hardTimeoutTimer = setTimeout(() => {
+	timeoutTimer = setTimeout(() => {
 		abortCurrentExecution();
-		hardTimeoutDeferred.resolve("hard-timeout");
-	}, hardTimeoutMs);
+		timeoutDeferred.resolve("timeout");
+	}, baseTimeoutMs);
 
 	let resetSession = false;
 
@@ -229,24 +229,34 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 
 		const winner = await Promise.race([
 			runPromise.then(result => ({ kind: "result" as const, result })),
-			hardTimeoutDeferred.promise.then(() => ({ kind: "hard-timeout" as const })),
+			timeoutDeferred.promise.then(kind => ({ kind })),
+			abortDeferred.promise.then(kind => ({ kind })),
 		]);
 
-		if (winner.kind === "hard-timeout") {
+		if (winner.kind === "timeout" || winner.kind === "abort") {
+			acceptingChunks = false;
 			if (shellSession) {
 				resetSession = true;
-				// Fall back to one-shot execution for the rest of the process once
-				// a persistent session has stopped responding to cancellation.
 				brokenShellSessions.add(sessionKey);
+				void runPromise.finally(() => brokenShellSessions.delete(sessionKey)).catch(() => undefined);
+			} else {
+				void runPromise.catch(() => undefined);
 			}
 			return await dumpCancelledOutput({
 				sink,
 				command: finalCommand,
 				commandCwd,
-				notice: `Command exceeded hard timeout after ${Math.round(hardTimeoutMs / 1000)} seconds`,
+				notice:
+					winner.kind === "timeout"
+						? `Command timed out after ${Math.round(baseTimeoutMs / 1000)} seconds`
+						: "Command cancelled",
 				minimizer,
 				options,
 			});
+		}
+		if (timeoutTimer) {
+			clearTimeout(timeoutTimer);
+			timeoutTimer = undefined;
 		}
 
 		// Handle timeout
@@ -321,7 +331,9 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 				inputBytes: minimized.inputBytes,
 				outputBytes: minimized.outputBytes,
 				savedBytes,
-				...(savedBytes > 0 ? { savedTokens: Math.max(0, countTokens(minimized.originalText) - countTokens(minimized.text)) } : {}),
+				...(savedBytes > 0
+					? { savedTokens: Math.max(0, countTokens(minimized.originalText) - countTokens(minimized.text)) }
+					: {}),
 				exitCode,
 				kind: savedBytes > 0 ? "saved" : "missed",
 			});
@@ -346,8 +358,8 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		resetSession = true;
 		throw err;
 	} finally {
-		if (hardTimeoutTimer) {
-			clearTimeout(hardTimeoutTimer);
+		if (timeoutTimer) {
+			clearTimeout(timeoutTimer);
 		}
 		if (userSignal) {
 			userSignal.removeEventListener("abort", abortHandler);
@@ -408,7 +420,9 @@ async function dumpCancelledOutput(input: CancelledDumpInput): Promise<BashResul
 		inputBytes: effectiveInputBytes,
 		outputBytes: minimized.outputBytes,
 		savedBytes,
-		...(savedBytes > 0 ? { savedTokens: Math.max(0, countTokens(minimized.originalText) - countTokens(minimized.text)) } : {}),
+		...(savedBytes > 0
+			? { savedTokens: Math.max(0, countTokens(minimized.originalText) - countTokens(minimized.text)) }
+			: {}),
 		exitCode: null,
 		kind: savedBytes > 0 ? "saved" : "missed",
 	});
