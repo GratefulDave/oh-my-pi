@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "defaultMode": "advise",
+  "rules": [
+    {
+      "id": "factory-block-root-delete",
+      "description": "Block obvious destructive shell deletes.",
+      "tool": "bash",
+      "mode": "block",
+      "commandRegex": "\\b(?:sudo\\s+)?rm\\s+-rf\\s+(?:/|~|\\$HOME)"
+    },
+    {
+      "id": "factory-block-force-push",
+      "description": "Block force-push and history rewrite commands.",
+      "tool": "bash",
+      "mode": "block",
+      "commandRegex": "\\bgit\\s+(?:push\\s+--force(?:-with-lease)?|reset\\s+--hard|clean\\s+-fdx?|rebase\\b|filter-branch\\b)"
+    },
+    {
+      "id": "factory-protect-secrets-write",
+      "description": "Require confirmation before mutating obvious secret files.",
+      "tool": "write",
+      "mode": "ask",
+      "pathGlobs": ["**/.env*", "**/*.pem", "**/*.key", "**/*.p12", "**/id_rsa*"]
+    },
+    {
+      "id": "factory-protect-secrets-read",
+      "description": "Require confirmation before reading obvious secret files.",
+      "tool": "read",
+      "mode": "ask",
+      "pathGlobs": ["**/.env*", "**/*.pem", "**/*.key", "**/*.p12", "**/id_rsa*"]
+    },
+    {
+      "id": "factory-package-mutation",
+      "description": "Flag dependency mutations for explicit review.",
+      "tool": "bash",
+      "mode": "ask",
+      "commandRegex": "\\b(?:bun|npm|pnpm|yarn|cargo|pip|poetry|uv)\\s+(?:add|remove|install|uninstall|update|upgrade|publish)\\b"
+    },
+    {
+      "id": "factory-lockfile-write",
+      "description": "Flag lockfile and manifest edits.",
+      "tool": "write",
+      "mode": "ask",
+      "pathGlobs": ["package.json", "package-lock.json", "bun.lock", "pnpm-lock.yaml", "yarn.lock", "Cargo.toml", "Cargo.lock", "pyproject.toml", "uv.lock"]
+    },
+    {
+      "id": "factory-lockfile-edit",
+      "description": "Flag lockfile and manifest patch edits.",
+      "tool": "edit",
+      "mode": "ask",
+      "pathGlobs": ["package.json", "package-lock.json", "bun.lock", "pnpm-lock.yaml", "yarn.lock", "Cargo.toml", "Cargo.lock", "pyproject.toml", "uv.lock"]
+    }
+  ]
+}

@@ -35,6 +35,7 @@ const commands: CommandEntry[] = [
 	{ name: "auth-broker", load: () => import("./commands/auth-broker").then(m => m.default) },
 	{ name: "auth-gateway", load: () => import("./commands/auth-gateway").then(m => m.default) },
 	{ name: "agents", load: () => import("./commands/agents").then(m => m.default) },
+	{ name: "factory", load: () => import("./commands/factory").then(m => m.default) },
 	{ name: "commit", load: () => import("./commands/commit").then(m => m.default) },
 	{ name: "config", load: () => import("./commands/config").then(m => m.default) },
 	{ name: "grep", load: () => import("./commands/grep").then(m => m.default) },

@@ -1,0 +1,32 @@
+{
+  "name": "piter",
+  "description": "Plan, implement, test, evaluate, refine.",
+  "enabled": false,
+  "maxLoops": 3,
+  "steps": [
+    {
+      "id": "plan",
+      "agent": "factory-planner",
+      "prompt": "prompts/workflow-step.md",
+      "outputs": ["plan", "risks"]
+    },
+    {
+      "id": "implement",
+      "agent": "factory-implementer",
+      "prompt": "prompts/workflow-step.md",
+      "requires": ["plan.plan"]
+    },
+    {
+      "id": "verify",
+      "agent": "factory-verifier",
+      "prompt": "prompts/verify-on-stop.md",
+      "onFailure": "refine"
+    },
+    {
+      "id": "refine",
+      "agent": "factory-reviewer",
+      "prompt": "prompts/builder-error.md",
+      "requires": ["verify"]
+    }
+  ]
+}

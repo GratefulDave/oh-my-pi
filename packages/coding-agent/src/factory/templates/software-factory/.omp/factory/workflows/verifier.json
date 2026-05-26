@@ -1,0 +1,13 @@
+{
+  "name": "verifier",
+  "description": "Single-step verification pass for current turn.",
+  "enabled": false,
+  "maxLoops": 2,
+  "steps": [
+    {
+      "id": "verify",
+      "agent": "factory-verifier",
+      "prompt": "prompts/verify-on-stop.md"
+    }
+  ]
+}
