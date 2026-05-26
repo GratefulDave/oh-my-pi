@@ -138,6 +138,33 @@ describe("runSubprocess yield reminders", () => {
 		expect(refreshSpy).not.toHaveBeenCalled();
 		expect(createAgentSessionSpy).toHaveBeenCalledTimes(1);
 	});
+	it("forwards parent eval session ID and LSP flag into subagent session creation", async () => {
+		const session = createMockSession(({ emit }) => {
+			emit({
+				type: "tool_execution_end",
+				toolCallId: "tool-forward-eval",
+				toolName: "yield",
+				result: {
+					content: [{ type: "text", text: "Result submitted." }],
+					details: { status: "success", data: { ok: true } },
+				},
+				isError: false,
+			});
+		});
+		const createAgentSessionSpy = mockCreateAgentSession(session);
+
+		await runSubprocess({
+			...baseOptions,
+			id: "subagent-forward-eval",
+			enableLsp: true,
+			parentEvalSessionId: "eval:parent-session",
+		});
+
+		expect(createAgentSessionSpy).toHaveBeenCalledTimes(1);
+		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.enableLsp).toBe(true);
+		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.parentEvalSessionId).toBe("eval:parent-session");
+	});
+
 
 	it("renders shared task context in subagent system prompt before now", async () => {
 		let userPrompt = "";
@@ -177,6 +204,51 @@ describe("runSubprocess yield reminders", () => {
 		expect(userPrompt).not.toContain("[CONTEXT]");
 		expect(userPrompt).not.toContain("Shared task background");
 	});
+	it("waits for session_start follow-up deliveries before prompting the subagent", async () => {
+		const promptOrder: string[] = [];
+		const deliveryGate = Promise.withResolvers<void>();
+		let runtime: { sendUserMessage: (content: string, options?: { deliverAs?: "steer" | "followUp" }) => void } | undefined;
+		const session = createMockSession(({ text, emit }) => {
+			promptOrder.push(text);
+			emit({
+				type: "tool_execution_end",
+				toolCallId: "tool-session-start",
+				toolName: "yield",
+				result: {
+					content: [{ type: "text", text: "Result submitted." }],
+					details: { status: "success", data: { ok: true } },
+				},
+				isError: false,
+			});
+		});
+		(session as AgentSession & { sendUserMessage: (content: string) => Promise<void> }).sendUserMessage = vi.fn(async () => {
+			await deliveryGate.promise;
+			promptOrder.push("delivery");
+		});
+		Object.defineProperty(session, "extensionRunner", {
+			configurable: true,
+			value: {
+				initialize(runtimeApi: { sendUserMessage: (content: string, options?: { deliverAs?: "steer" | "followUp" }) => void }) {
+					runtime = runtimeApi;
+				},
+				onError() {
+					return () => {};
+				},
+				async emit() {
+					runtime?.sendUserMessage("Queued startup follow-up", { deliverAs: "followUp" });
+					queueMicrotask(() => deliveryGate.resolve());
+					return undefined as never;
+				},
+			},
+		});
+		mockCreateAgentSession(session);
+
+		const result = await runSubprocess({ ...baseOptions, id: "subagent-session-start-drain" });
+
+		expect(result.exitCode).toBe(0);
+		expect(promptOrder).toEqual(["delivery", "do work"]);
+	});
+
 
 	it("sends reminder prompt when subagent stops without yield", async () => {
 		const prompts: string[] = [];

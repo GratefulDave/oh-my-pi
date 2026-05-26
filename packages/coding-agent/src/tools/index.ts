@@ -146,6 +146,8 @@ export interface ToolSession {
 	getSessionFile: () => string | null;
 	/** Get eval kernel owner ID for session-scoped retained-kernel cleanup. */
 	getEvalKernelOwnerId?: () => string | null;
+	/** Get eval session ID for shared JS/Python runtime reuse across parent/subagents. */
+	getEvalSessionId?: () => string | null;
 	/** Reject new eval (python or js) work once session disposal has started. */
 	assertEvalExecutionAllowed?: () => void;
 	/** Track tool-owned eval work so session disposal can await/abort it like direct session eval runs. */

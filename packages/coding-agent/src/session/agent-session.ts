@@ -105,6 +105,7 @@ import {
 	executePython as executePythonCommand,
 	type PythonResult,
 } from "../eval/py/executor";
+import { defaultEvalSessionId } from "../eval/session-id";
 import { type BashResult, executeBash as executeBashCommand } from "../exec/bash-executor";
 import { exportSessionToHtml } from "../export/html";
 import type { TtsrManager, TtsrMatchContext } from "../export/ttsr";
@@ -328,6 +329,8 @@ export interface AgentSessionConfig {
 	 * so that credential sticky selection is consistent with the session's streaming calls.
 	 */
 	providerSessionId?: string;
+	/** Override the eval runtime session ID shared with child sessions. */
+	parentEvalSessionId?: string;
 }
 
 /** Options for AgentSession.prompt() */
@@ -826,6 +829,7 @@ export class AgentSession {
 	#agentId: string | undefined;
 	#agentRegistry: AgentRegistry | undefined;
 	#providerSessionId: string | undefined;
+	#parentEvalSessionId: string | undefined;
 	#isDisposed = false;
 	// Extension system
 	#extensionRunner: ExtensionRunner | undefined = undefined;
@@ -1089,6 +1093,7 @@ export class AgentSession {
 		this.#agentId = config.agentId;
 		this.#agentRegistry = config.agentRegistry;
 		this.#providerSessionId = config.providerSessionId;
+		this.#parentEvalSessionId = config.parentEvalSessionId;
 		this.agent.setAssistantMessageEventInterceptor((message, assistantMessageEvent) => {
 			const event: AgentEvent = {
 				type: "message_update",
@@ -3678,6 +3683,16 @@ export class AgentSession {
 	get sessionId(): string {
 		return this.#providerSessionId ?? this.sessionManager.getSessionId();
 	}
+	getEvalSessionId(): string {
+		return (
+			this.#parentEvalSessionId ??
+			defaultEvalSessionId({
+				cwd: this.sessionManager.getCwd(),
+				sessionFile: this.sessionManager.getSessionFile(),
+			})
+		);
+	}
+
 
 	/** Current session display name, if set */
 	get sessionName(): string | undefined {
@@ -4573,10 +4588,18 @@ export class AgentSession {
 			if (images.length === 0) images = undefined;
 		}
 
+		if (options?.deliverAs === "followUp") {
+			await this.#queueFollowUp(text, images);
+			return;
+		}
+		if (options?.deliverAs === "steer") {
+			await this.#queueSteer(text, images);
+			return;
+		}
+
 		// Use prompt() with expandPromptTemplates: false to skip command handling and template expansion
 		await this.prompt(text, {
 			expandPromptTemplates: false,
-			streamingBehavior: options?.deliverAs,
 			images,
 		});
 	}
@@ -7420,8 +7443,7 @@ export class AgentSession {
 			}
 
 			// Use the same session ID as eval's Python backend for kernel sharing
-			const sessionFile = this.sessionManager.getSessionFile();
-			const sessionId = sessionFile ? `session:${sessionFile}:cwd:${cwd}` : `cwd:${cwd}`;
+			const sessionId = this.getEvalSessionId();
 			const result = await executePythonCommand(code, {
 				cwd,
 				sessionId,

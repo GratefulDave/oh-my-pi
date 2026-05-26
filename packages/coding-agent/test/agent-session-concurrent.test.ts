@@ -230,6 +230,58 @@ describe("AgentSession concurrent prompt guard", () => {
 			}),
 		).toBe(true);
 	});
+	it("queues follow-up user messages on idle startup without forcing an immediate turn", async () => {
+		const model = getBundledModel("anthropic", "claude-sonnet-4-5")!;
+		const mock = createMockModel({ handler: () => ({ content: ["Done"] }) });
+		const callMessages: Message[][] = [];
+		const agent = new Agent({
+			getApiKey: () => "test-key",
+			initialState: {
+				model,
+				systemPrompt: ["Test"],
+				tools: [],
+			},
+			convertToLlm,
+			streamFn: (_model, context) => {
+				callMessages.push([...context.messages]);
+				return mock.stream(_model, context);
+			},
+		});
+
+		const sessionManager = SessionManager.inMemory();
+		const settings = Settings.isolated();
+		const authStorage = await AuthStorage.create(path.join(tempDir, "testauth-idle-followup.db"));
+		authStorages.push(authStorage);
+		const modelRegistry = new ModelRegistry(authStorage, path.join(tempDir, "models-idle-followup.yml"));
+		authStorage.setRuntimeApiKey("anthropic", "test-key");
+
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settings,
+			modelRegistry,
+		});
+
+		await session.sendUserMessage("Queued startup follow-up", { deliverAs: "followUp" });
+		expect(callMessages).toHaveLength(0);
+		expect(session.getQueuedMessages()).toEqual({ steering: [], followUp: ["Queued startup follow-up"] });
+
+		await session.prompt("Real first user message");
+
+		expect(callMessages).toHaveLength(2);
+		expect(
+			callMessages[1]?.some(message => {
+				if (typeof message.content === "string") {
+					return message.content.includes("Queued startup follow-up");
+				}
+
+				return message.content.some(
+					content => content.type === "text" && content.text.includes("Queued startup follow-up"),
+				);
+			}),
+		).toBe(true);
+	});
+
 
 	it("should allow prompt() after previous completes", async () => {
 		// Create session with a stream that completes immediately

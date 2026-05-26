@@ -51,6 +51,7 @@ if (!globalThis.__omp_js_prelude_loaded__) {
 		warn: (...args) => globalThis.__omp_log__("warn", ...formatArgs(args)),
 		error: (...args) => globalThis.__omp_log__("error", ...formatArgs(args)),
 		debug: (...args) => globalThis.__omp_log__("debug", ...formatArgs(args)),
+		table: (value, properties) => globalThis.__omp_table__(value, properties),
 	};
 
 	globalThis.console = consoleBridge;

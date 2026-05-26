@@ -450,6 +450,23 @@ describe("executeJs", () => {
 		// No JSON display because structuredClone fails on the embedded function.
 		expect(result.displayOutputs.filter(o => o.type === "json")).toHaveLength(0);
 	});
+	it("supports console.table output", async () => {
+		const result = await executeJs(
+			[
+				"console.table([{ name: 'alpha', count: 2 }, { name: 'beta', count: 3 }]);",
+				"return 'done';",
+			].join("\n"),
+			{ sessionId, session, sessionFile, reset: true },
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain("(index)");
+		expect(result.output).toContain("name");
+		expect(result.output).toContain("count");
+		expect(result.output).toContain("alpha");
+		expect(result.output).toContain("beta");
+		expect(result.output.trim().endsWith("done")).toBe(true);
+	});
+
 
 	it("cancels execution when the timeout expires", async () => {
 		const result = await executeJs("await new Promise(() => {})", {

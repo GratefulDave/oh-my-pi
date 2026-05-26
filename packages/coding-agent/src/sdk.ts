@@ -49,6 +49,7 @@ import { CursorExecHandlers } from "./cursor";
 import "./discovery";
 import { resolveConfigValue } from "./config/resolve-config-value";
 import { initializeWithSettings } from "./discovery";
+import { defaultEvalSessionId } from "./eval/session-id";
 import { disposeAllKernelSessions, disposeKernelSessionsByOwner } from "./eval/py/executor";
 import { TtsrManager } from "./export/ttsr";
 import {
@@ -317,6 +318,8 @@ export interface CreateAgentSessionOptions {
 	agentRegistry?: AgentRegistry;
 	/** Parent task ID prefix for nested artifact naming (e.g., "6-Extensions") */
 	parentTaskPrefix?: string;
+	/** Parent eval session ID to reuse shared JS/Python runtimes across subagents. */
+	parentEvalSessionId?: string;
 
 	/** Session manager. Default: session stored under the configured agentDir sessions root */
 	sessionManager?: SessionManager;
@@ -1158,6 +1161,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			taskDepth: options.taskDepth ?? 0,
 			getSessionFile: () => sessionManager.getSessionFile() ?? null,
 			getEvalKernelOwnerId: () => evalKernelOwnerId,
+			getEvalSessionId: () =>
+				session?.getEvalSessionId() ??
+				options.parentEvalSessionId ??
+				defaultEvalSessionId({
+					cwd: sessionManager.getCwd(),
+					sessionFile: sessionManager.getSessionFile() ?? null,
+				}),
 			assertEvalExecutionAllowed: () => session?.assertEvalExecutionAllowed(),
 			trackEvalExecution: (execution, abortController) =>
 				session ? session.trackEvalExecution(execution, abortController) : execution,
@@ -1646,9 +1656,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		};
 
 		const toolNamesFromRegistry = Array.from(toolRegistry.keys());
-		const requestedToolNames =
-			(options.toolNames ? [...new Set(options.toolNames.map(name => name.toLowerCase()))] : undefined) ??
-			toolNamesFromRegistry;
+		const explicitlyRequestedToolNames = options.toolNames
+			? [...new Set(options.toolNames.map(name => name.toLowerCase()))]
+			: undefined;
+		if (options.requireYieldTool && explicitlyRequestedToolNames && !explicitlyRequestedToolNames.includes("yield")) {
+			explicitlyRequestedToolNames.push("yield");
+		}
+		const requestedToolNames = explicitlyRequestedToolNames ?? toolNamesFromRegistry;
 		const normalizedRequested = requestedToolNames.filter(name => toolRegistry.has(name));
 		const requestedToolNameSet = new Set(normalizedRequested);
 		// Effective discovery mode: tools.discoveryMode takes precedence; mcp.discoveryMode is back-compat alias.
@@ -1967,6 +1981,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			agentId: resolvedAgentId,
 			agentRegistry,
 			providerSessionId: options.providerSessionId,
+			parentEvalSessionId: options.parentEvalSessionId,
 		});
 		hasSession = true;
 		if (asyncJobManager) {

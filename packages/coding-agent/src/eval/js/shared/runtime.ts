@@ -236,6 +236,10 @@ export class JsRuntime {
 				const text = `${prefix}${formatConsoleArgs(args)}`;
 				this.#getHooks()?.onText(text.endsWith("\n") ? text : `${text}\n`);
 			},
+			__omp_table__: (value: unknown, properties?: readonly string[]) => {
+				const text = formatConsoleTable(value, properties);
+				this.#getHooks()?.onText(text.endsWith("\n") ? text : `${text}\n`);
+			},
 			__omp_display__: (value: unknown) => this.displayValue(value),
 			__omp_set_final_expr__: (value: unknown) => {
 				this.#finalExpressionSet = true;
@@ -261,6 +265,71 @@ function formatConsoleArgs(args: unknown[]): string {
 		.map(arg => (typeof arg === "string" ? arg : util.inspect(arg, { depth: 6, colors: false, breakLength: 120 })))
 		.join(" ");
 }
+function formatConsoleTable(value: unknown, properties?: readonly string[]): string {
+	const rows = normalizeConsoleTableRows(value, properties);
+	if (rows.length === 0) return "";
+	const columns = new Set<string>(["(index)"]);
+	for (const row of rows) {
+		for (const key of Object.keys(row.values)) columns.add(key);
+	}
+	const orderedColumns = Array.from(columns);
+	const widths = new Map<string, number>();
+	for (const column of orderedColumns) {
+		widths.set(column, column.length);
+	}
+	for (const row of rows) {
+		widths.set("(index)", Math.max(widths.get("(index)") ?? 0, row.index.length));
+		for (const column of orderedColumns) {
+			if (column === "(index)") continue;
+			const text = row.values[column] ?? "";
+			widths.set(column, Math.max(widths.get(column) ?? 0, text.length));
+		}
+	}
+	const renderRow = (cells: string[]): string =>
+		cells.map((cell, index) => cell.padEnd(widths.get(orderedColumns[index]!) ?? cell.length)).join(" | ");
+	const header = renderRow(orderedColumns);
+	const separator = orderedColumns
+		.map(column => "-".repeat(widths.get(column) ?? column.length))
+		.join("-|-");
+	const body = rows.map(row =>
+		renderRow(orderedColumns.map(column => (column === "(index)" ? row.index : row.values[column] ?? ""))),
+	);
+	return [header, separator, ...body].join("\n");
+}
+
+function normalizeConsoleTableRows(
+	value: unknown,
+	properties?: readonly string[],
+): Array<{ index: string; values: Record<string, string> }> {
+	const selected = properties?.filter(Boolean);
+	if (Array.isArray(value)) {
+		return value.map((entry, index) => ({
+			index: String(index),
+			values: normalizeConsoleTableRecord(entry, selected),
+		}));
+	}
+	if (value && typeof value === "object") {
+		return Object.entries(value as Record<string, unknown>).map(([index, entry]) => ({
+			index,
+			values: normalizeConsoleTableRecord(entry, selected),
+		}));
+	}
+	return [{ index: "0", values: { Value: inspectConsoleValue(value) } }];
+}
+
+function normalizeConsoleTableRecord(entry: unknown, properties?: readonly string[]): Record<string, string> {
+	if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+		const record = entry as Record<string, unknown>;
+		const keys = properties && properties.length > 0 ? properties : Object.keys(record);
+		return Object.fromEntries(keys.map(key => [key, inspectConsoleValue(record[key])]));
+	}
+	return { Value: inspectConsoleValue(entry) };
+}
+
+function inspectConsoleValue(value: unknown): string {
+	return typeof value === "string" ? value : util.inspect(value, { depth: 3, colors: false, breakLength: 120 });
+}
+
 
 function buildRequire(cwd: string): NodeJS.Require {
 	return createRequire(pathToFileURL(path.join(cwd, "[eval]")).href);

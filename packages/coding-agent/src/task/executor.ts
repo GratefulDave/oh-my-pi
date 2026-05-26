@@ -156,6 +156,7 @@ export interface ExecutorOptions {
 	/** Parent task recursion depth (0 = top-level, 1 = first child, etc.) */
 	taskDepth?: number;
 	enableLsp?: boolean;
+	parentEvalSessionId?: string;
 	signal?: AbortSignal;
 	onProgress?: (progress: AgentProgress) => void;
 	sessionFile?: string | null;
@@ -1143,6 +1144,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 					agentId: id,
 					agentDisplayName: agent.name,
 					enableLsp: lspEnabled,
+					parentEvalSessionId: options.parentEvalSessionId,
 					skipPythonPreflight,
 					enableMCP,
 					mcpManager: options.mcpManager,
@@ -1197,21 +1199,29 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 
 			const extensionRunner = session.extensionRunner;
 			if (extensionRunner) {
+				let sessionStartActive = true;
+				const sessionStartDeliveries: Promise<void>[] = [];
 				extensionRunner.initialize(
 					{
 						sendMessage: (message, options) => {
-							session.sendCustomMessage(message, options).catch(e => {
+							const delivery = session.sendCustomMessage(message, options).catch(e => {
 								logger.error("Extension sendMessage failed", {
 									error: e instanceof Error ? e.message : String(e),
 								});
 							});
+							if (sessionStartActive) {
+								sessionStartDeliveries.push(delivery);
+							}
 						},
 						sendUserMessage: (content, options) => {
-							session.sendUserMessage(content, options).catch(e => {
+							const delivery = session.sendUserMessage(content, options).catch(e => {
 								logger.error("Extension sendUserMessage failed", {
 									error: e instanceof Error ? e.message : String(e),
 								});
 							});
+							if (sessionStartActive) {
+								sessionStartDeliveries.push(delivery);
+							}
 						},
 						appendEntry: (customType, data) => {
 							session.sessionManager.appendCustomEntry(customType, data);
@@ -1247,6 +1257,10 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 					logger.error("Extension error", { path: err.extensionPath, error: err.error });
 				});
 				await awaitAbortable(extensionRunner.emit({ type: "session_start" }));
+				sessionStartActive = false;
+				if (sessionStartDeliveries.length > 0) {
+					await awaitAbortable(Promise.allSettled(sessionStartDeliveries).then(() => undefined));
+				}
 			}
 
 			const MAX_YIELD_RETRIES = 3;

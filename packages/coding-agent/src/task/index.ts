@@ -634,6 +634,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			fallbackModelPattern: this.session.getModelString?.(),
 		});
 		const thinkingLevelOverride = effectiveAgent.thinkingLevel;
+		const subagentLspEnabled = (this.session.enableLsp ?? true) && this.session.settings.get("task.enableLsp");
+		const parentEvalSessionId = this.session.getEvalSessionId?.() ?? undefined;
 
 		// Output schema priority: task call > agent frontmatter > inherited parent session.
 		// task.simple can disable the task-call override while leaving agent/session schemas intact.
@@ -863,7 +865,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				if (!isIsolated) {
 					return runSubprocess({
 						cwd: this.session.cwd,
-						agent,
+						agent: effectiveAgent,
 						task: renderSubagentUserPrompt(task.assignment, simpleMode),
 						assignment: task.assignment.trim(),
 						context: sharedContext,
@@ -879,7 +881,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 						persistArtifacts: !!artifactsDir,
 						artifactsDir: effectiveArtifactsDir,
 						contextFile: contextFilePath,
-						enableLsp: false,
+						enableLsp: subagentLspEnabled,
+						parentEvalSessionId,
 						signal,
 						eventBus: this.session.eventBus,
 						onProgress: progress => {
@@ -917,7 +920,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 					const result = await runSubprocess({
 						cwd: this.session.cwd,
 						worktree: isolationDir,
-						agent,
+						agent: effectiveAgent,
 						task: renderSubagentUserPrompt(task.assignment, simpleMode),
 						assignment: task.assignment.trim(),
 						context: sharedContext,
@@ -933,7 +936,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 						persistArtifacts: !!artifactsDir,
 						artifactsDir: effectiveArtifactsDir,
 						contextFile: contextFilePath,
-						enableLsp: false,
+						enableLsp: subagentLspEnabled,
+						parentEvalSessionId,
 						signal,
 						eventBus: this.session.eventBus,
 						onProgress: progress => {

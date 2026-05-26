@@ -2386,6 +2386,16 @@ export const SETTINGS_SCHEMA = {
 			description: "Encourage the agent to delegate work to subagents unless changes are trivial",
 		},
 	},
+	"task.enableLsp": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "tasks",
+			label: "Enable LSP in subagents",
+			description: "Allow subagent sessions to load the lsp tool and related integrations when the parent session also has LSP enabled.",
+		},
+	},
+
 
 	"task.simple": {
 		type: "enum",
