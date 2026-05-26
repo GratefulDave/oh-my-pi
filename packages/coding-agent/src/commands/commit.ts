@@ -32,9 +32,9 @@ export default class Commit extends Command {
 		};
 
 		await initTheme();
-		// The agentic commit flow opens HTTP/2 keep-alive sockets to the model
-		// provider (via `installH2Fetch`) and spins up an AgentSession with
-		// background async-job + extension machinery. `session.dispose()` releases
+		// The agentic commit flow opens keep-alive sockets to the model provider
+		// and spins up an AgentSession with background async-job + extension
+		// machinery. `session.dispose()` releases what it can, but Bun's fetch
 		// what it can, but Bun's fetch keeps idle connections warm and a few
 		// timers (Settings autosave, OAuth refresh) stay armed long enough to
 		// pin the event loop after the commit is already written. Mirror the
