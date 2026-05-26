@@ -7,12 +7,12 @@ import type { AgentSession } from "../src/session/agent-session";
 import type { SessionManager } from "../src/session/session-manager";
 import { executeAcpBuiltinSlashCommand } from "../src/slash-commands/acp-builtins";
 import { lookupBuiltinSlashCommand } from "../src/slash-commands/builtin-registry";
-import type { AcpBuiltinCommandRuntime } from "../src/slash-commands/types";
+import type { SlashCommandRuntime } from "../src/slash-commands/types";
 
 function createRuntime(
 	cwd: string,
 	settingsOverrides?: Partial<Record<string, unknown>>,
-): { output: string[]; runtime: AcpBuiltinCommandRuntime } {
+): { output: string[]; runtime: SlashCommandRuntime } {
 	const output: string[] = [];
 	return {
 		output,

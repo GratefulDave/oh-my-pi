@@ -263,15 +263,6 @@ FROM model_usage_legacy
 		return settings as Settings;
 	}
 
-	/**
-	 * @deprecated Settings are now stored in config.yml, not agent.db.
-	 * This method is kept for backward compatibility but does nothing.
-	 */
-	saveSettings(settings: Settings): void {
-		logger.warn("AgentStorage.saveSettings is deprecated - settings are now stored in config.yml", {
-			keys: Object.keys(settings),
-		});
-	}
 
 	/**
 	 * Records model usage, updating the last-used timestamp.

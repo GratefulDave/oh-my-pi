@@ -5,14 +5,14 @@ import * as externalAgents from "../src/external-agents";
 import type { AgentSession } from "../src/session/agent-session";
 import type { SessionManager } from "../src/session/session-manager";
 import { executeAcpBuiltinSlashCommand } from "../src/slash-commands/acp-builtins";
-import type { AcpBuiltinCommandRuntime } from "../src/slash-commands/types";
+import type { SlashCommandRuntime } from "../src/slash-commands/types";
 
 function createRuntime(
 	cwd: string,
 	artifactSaveResult?: string,
 ): {
 	output: string[];
-	runtime: AcpBuiltinCommandRuntime;
+	runtime: SlashCommandRuntime;
 } {
 	const output: string[] = [];
 	return {

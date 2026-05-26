@@ -19,8 +19,6 @@ import type { ToolChoiceQueue } from "../session/tool-choice-queue";
 import { TaskTool } from "../task";
 import type { AgentOutputManager } from "../task/output-manager";
 import type {
-	DiscoverableMCPSearchIndex,
-	DiscoverableMCPTool,
 	DiscoverableTool,
 	DiscoverableToolSearchIndex,
 } from "../tool-discovery/tool-index";
@@ -199,12 +197,10 @@ export interface ToolSession {
 	setTodoPhases?: (phases: TodoPhase[]) => void;
 	/** Whether MCP tool discovery is active for this session. */
 	isMCPDiscoveryEnabled?: () => boolean;
-	getDiscoverableMCPTools?: () => DiscoverableMCPTool[];
 	/** Get MCP tools activated by prior search_tool_bm25 calls. */
 	getSelectedMCPToolNames?: () => string[];
 	/** Merge MCP tool selections into the active session tool set. */
 	activateDiscoveredMCPTools?: (toolNames: string[]) => Promise<string[]>;
-	getDiscoverableMCPSearchIndex?: () => DiscoverableMCPSearchIndex;
 	// ── Generic tool discovery (unified — covers built-in + MCP + extension) ──
 	/** Whether any form of tool discovery is active (tools.discoveryMode !== "off" or mcp.discoveryMode). */
 	isToolDiscoveryEnabled?: () => boolean;

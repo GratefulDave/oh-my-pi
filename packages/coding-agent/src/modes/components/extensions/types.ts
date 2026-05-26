@@ -143,10 +143,6 @@ export interface DashboardState {
 	selected: Extension | null;
 }
 
-/**
- * @deprecated Use FocusRegion instead
- */
-export type FocusPane = "sidebar" | "main" | "inspector";
 
 /**
  * Callbacks from dashboard to parent.
