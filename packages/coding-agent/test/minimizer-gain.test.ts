@@ -2,10 +2,12 @@ import { describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+
 import {
 	buildMinimizerMissedRecord,
 	discoverMinimizerGain,
 	getMinimizerGainPath,
+	loadMinimizerGainContext,
 	readMinimizerGain,
 	recordMinimizerGain,
 	resolveMinimizerGainCwd,
@@ -143,6 +145,46 @@ describe("minimizer gain analytics", () => {
 		});
 	});
 
+	it("loads a gain context with summaries and path", async () => {
+		await withTempAgentDir(async agentDir => {
+			await recordMinimizerGain(
+				{
+					timestamp: "2026-05-20T00:00:00.000Z",
+					cwd: "/repo",
+					command: "git status",
+					filter: "git",
+					inputBytes: 1000,
+					outputBytes: 250,
+					savedBytes: 750,
+					savedTokens: 111,
+					exitCode: 0,
+				},
+				{ agentDir },
+			);
+			await recordMinimizerGain(
+				{
+					timestamp: "2026-05-20T00:04:00.000Z",
+					cwd: "/repo",
+					command: "unknown-tool --verbose",
+					filter: "missed",
+					inputBytes: 5000,
+					outputBytes: 5000,
+					savedBytes: 0,
+					exitCode: 0,
+					kind: "missed",
+				},
+				{ agentDir },
+			);
+
+			const context = await loadMinimizerGainContext({ cwd: "/repo", all: false, days: 7, agentDir });
+			expect(context.path).toBe(getMinimizerGainPath(agentDir));
+			expect(context.cwd).toBe("/repo");
+			expect(context.all).toBe(false);
+			expect(context.summary.commands).toBe(1);
+			expect(context.missed.commands).toHaveLength(1);
+		});
+	});
+
 	it("skips invalid lines and filters old or unrelated records", async () => {
 		await withTempAgentDir(async agentDir => {
 			const filePath = getMinimizerGainPath(agentDir);
@@ -265,5 +307,21 @@ describe("minimizer gain analytics", () => {
 				exitCode: 0,
 			}),
 		).toBeNull();
+	});
+	it("builds missed records with explicit filter reasons", () => {
+		const record = buildMinimizerMissedRecord({
+			timestamp: "2026-05-20T00:00:00.000Z",
+			command: "git diff ; printf done",
+			totalBytes: 128,
+			exitCode: 0,
+			filter: "compound",
+		});
+
+		expect(record).toMatchObject({
+			filter: "compound",
+			kind: "missed",
+			inputBytes: 128,
+			outputBytes: 128,
+		});
 	});
 });

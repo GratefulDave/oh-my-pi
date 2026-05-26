@@ -209,6 +209,56 @@ describe("executeBash", () => {
 		}
 	});
 
+	it("records a reason label for a native minimizer miss", async () => {
+		if (process.platform === "win32") {
+			return;
+		}
+
+		const previousAgentDir = getAgentDir();
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-bash-miss-"));
+		const runSpy = vi.spyOn(piNatives.Shell.prototype, "run").mockImplementation(function (
+			this: Shell,
+			_options,
+			onChunk,
+		) {
+			onChunk?.(null, "hello\n");
+			return Promise.resolve({
+				exitCode: 0,
+				cancelled: false,
+				timedOut: false,
+				minimized: {
+					filter: "compound",
+					text: "hello\n",
+					originalText: "hello\n",
+					inputBytes: 6,
+					outputBytes: 6,
+				},
+			});
+		});
+
+		try {
+			setAgentDir(agentDir);
+			const result = await executeBash("git diff ; printf done", {
+				cwd: tempDir,
+				timeout: 5000,
+				sessionKey: "reason-miss",
+			});
+			expect(result.cancelled).toBe(false);
+
+			const records = await readMinimizerGain({ agentDir });
+			expect(records).toHaveLength(1);
+			expect(records[0]).toMatchObject({
+				command: "git diff ; printf done",
+				filter: "compound",
+				kind: "missed",
+			});
+		} finally {
+			setAgentDir(previousAgentDir);
+			runSpy.mockRestore();
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("times out before follow-up output", async () => {
 		if (process.platform === "win32") {
 			return;

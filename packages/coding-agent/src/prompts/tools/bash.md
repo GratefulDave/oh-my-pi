@@ -5,7 +5,8 @@ Executes bash command in shell session for terminal operations like git, bun, ca
 - Prefer `env: { NAME: "…" }` for multiline, quote-heavy, or untrusted values; reference as `$NAME`
 - Quote variable expansions like `"$NAME"` to preserve exact content
 - PTY mode is opt-in: set `pty: true` only when the command needs a real terminal (e.g. `sudo`, `ssh` requiring user input); default is `false`
-- Use `;` only when later commands should run regardless of earlier failures
+- Prefer separate Bash calls for output-producing commands. The output minimizer can now rewrite safe simple `&&`/`;` chains, but pipes, `||`, command substitutions, async/background jobs, and compound syntax still bypass it. For example, run `git diff --stat` and `git diff …` as separate calls so the diff can be minimized.
+- Use `;` only when later commands should run regardless of earlier failures.
 - Internal URIs (`skill://`, `agent://`, etc.) are auto-resolved to filesystem paths
 {{#if asyncEnabled}}
 - Use `async: true` for long-running commands when you don't need immediate output; the call returns a background job ID and the result is delivered automatically as a follow-up.

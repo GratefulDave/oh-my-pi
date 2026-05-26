@@ -88,6 +88,32 @@ fn is_pkg_test_invocation(ctx: &MinimizerCtx<'_>) -> bool {
 		|| matches!(ctx.subcommand, Some("run")) && command_contains_test_script(ctx.command)
 }
 
+fn is_pkg_lint_invocation(ctx: &MinimizerCtx<'_>) -> bool {
+	matches!(ctx.subcommand, Some("run"))
+		&& (command_contains_lint_script(ctx.command)
+			|| command_contains_tool(ctx.command, &["tsc", "eslint", "biome"]))
+}
+
+fn command_contains_lint_script(command: &str) -> bool {
+	command
+		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
+		.any(is_lint_script_token)
+}
+
+fn is_lint_script_token(token: &str) -> bool {
+	let token = token.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'));
+	matches!(token, "lint" | "typecheck" | "type-check")
+		|| token.starts_with("lint:")
+		|| token.starts_with("typecheck:")
+		|| token.starts_with("type-check:")
+}
+
+fn command_contains_tool(command: &str, tools: &[&str]) -> bool {
+	command
+		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
+		.any(|token| tools.contains(&token))
+}
+
 /// Apply the matching built-in filter.
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	let _ = ctx.command;
@@ -122,6 +148,8 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		"npm" | "pnpm" | "yarn" => {
 			if is_pkg_test_invocation(ctx) {
 				node_tests::filter(ctx, input, exit_code)
+			} else if is_pkg_lint_invocation(ctx) {
+				lint::filter(ctx, input, exit_code)
 			} else {
 				pkg::filter(ctx, input, exit_code)
 			}
@@ -403,6 +431,31 @@ mod tests {
 		let out = filter(&context, "Resolving dependencies\nDownloaded foo\nerror: failed\n", 1).text;
 		assert!(!out.contains("Resolving dependencies"));
 		assert!(out.contains("error: failed"));
+	}
+
+	#[test]
+	fn package_manager_lint_scripts_route_to_lint_filter() {
+		let config = MinimizerConfig::default();
+		let input = concat!(
+			"src/app.ts:1:1: error TS2322: Type 'string' is not assignable to type 'number'.\n",
+			"src/app.ts:2:1: error TS7006: Parameter 'x' implicitly has an 'any' type.\n",
+		);
+
+		for (program, command) in [
+			("npm", "npm run lint"),
+			("npm", "npm run typecheck"),
+			("pnpm", "pnpm run lint:ci"),
+			("yarn", "yarn run typecheck:ci"),
+		] {
+			let context = ctx(program, Some("run"), command, &config);
+			let routed = filter(&context, input, 1).text;
+			let expected = lint::filter(&context, input, 1).text;
+			assert_eq!(routed, expected, "{command} should use lint filter");
+			assert!(
+				routed.contains("2 diagnostics in 1 files"),
+				"{command} should condense lint output"
+			);
+		}
 	}
 
 	#[test]

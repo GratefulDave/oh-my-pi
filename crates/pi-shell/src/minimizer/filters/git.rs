@@ -39,7 +39,17 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		Some("status") if is_status_machine_format(ctx.command) => cleaned,
 		Some("status") => condense_status(&cleaned),
 		Some("diff") if is_stat_format(ctx.command) => condense_diff_stat(&cleaned),
-		Some("diff") => compact_diff_output(&cleaned),
+		Some("diff") => {
+			if exit_code == 0 {
+				if let Some(mode) = diff_listing_mode(ctx.command) {
+					compact_diff_listing(&cleaned, mode)
+				} else {
+					compact_diff_output(&cleaned)
+				}
+			} else {
+				compact_diff_output(&cleaned)
+			}
+		},
 		Some("show") => condense_show(&cleaned),
 		Some("log") => condense_log(&cleaned, 32, 16),
 		Some("branch") => condense_branch(&cleaned),
@@ -109,15 +119,80 @@ fn is_stat_format(command: &str) -> bool {
 		.any(|part| part == "--stat" || part.starts_with("--stat="))
 }
 
+#[derive(Clone, Copy)]
+enum DiffListingMode {
+	NameOnly,
+	NameStatus,
+	Numstat,
+}
+
+const DIFF_LISTING_LIMIT: usize = 20;
+
+impl DiffListingMode {
+	const fn label(self) -> &'static str {
+		match self {
+			Self::NameOnly => "--name-only",
+			Self::NameStatus => "--name-status",
+			Self::Numstat => "--numstat",
+		}
+	}
+}
+
+fn diff_listing_mode(command: &str) -> Option<DiffListingMode> {
+	if has_token(command, "--name-only") {
+		Some(DiffListingMode::NameOnly)
+	} else if has_token(command, "--name-status") {
+		Some(DiffListingMode::NameStatus)
+	} else if has_token(command, "--numstat") {
+		Some(DiffListingMode::Numstat)
+	} else {
+		None
+	}
+}
+
+fn compact_diff_listing(input: &str, mode: DiffListingMode) -> String {
+	let mut entries = Vec::new();
+	for line in input.lines() {
+		if line.is_empty() {
+			continue;
+		}
+		if !is_diff_listing_line(mode, line) {
+			return input.to_string();
+		}
+		entries.push(primitives::truncate_line(line, 160));
+	}
+
+	if entries.len() <= DIFF_LISTING_LIMIT {
+		return input.to_string();
+	}
+
+	let mut out = String::new();
+	let _ = writeln!(out, "git diff {}: {}", mode.label(), format_file_count(entries.len()));
+	for entry in entries.iter().take(DIFF_LISTING_LIMIT) {
+		out.push_str(entry);
+		out.push('\n');
+	}
+	let _ = writeln!(out, "… {} files omitted …", entries.len() - DIFF_LISTING_LIMIT);
+	out
+}
+
+fn is_diff_listing_line(mode: DiffListingMode, line: &str) -> bool {
+	match mode {
+		DiffListingMode::NameOnly => true,
+		DiffListingMode::NameStatus => line.split('\t').count() >= 2,
+		DiffListingMode::Numstat => line.split('\t').count() >= 3,
+	}
+}
+
 #[derive(Default)]
 struct StatusSummary {
-	branch:    Option<String>,
-	clean:     bool,
-	staged:    usize,
-	unstaged:  usize,
+	branch: Option<String>,
+	clean: bool,
+	staged: usize,
+	unstaged: usize,
 	untracked: usize,
 	conflicts: usize,
-	paths:     Vec<String>,
+	paths: Vec<String>,
 }
 
 fn condense_status(input: &str) -> String {
@@ -361,9 +436,9 @@ fn condense_log(input: &str, head: usize, tail: usize) -> String {
 }
 
 struct LogEntry {
-	hash:    String,
+	hash: String,
 	subject: String,
-	body:    Vec<String>,
+	body: Vec<String>,
 }
 
 fn push_log_entry(out: &mut String, entry: &LogEntry) {
@@ -394,9 +469,9 @@ fn parse_log_entries(input: &str) -> Vec<LogEntry> {
 				.split_once(' ')
 				.map_or((trimmed, ""), |(hash, subject)| (hash, subject.trim()));
 			current = Some(LogEntry {
-				hash:    short_hash(hash),
+				hash: short_hash(hash),
 				subject: subject.to_string(),
-				body:    Vec::new(),
+				body: Vec::new(),
 			});
 			continue;
 		}
@@ -572,15 +647,15 @@ fn has_local_tracking_branch(remote: &str, current: Option<&str>, local: &[Strin
 }
 
 struct DiffFile {
-	path:    String,
-	added:   usize,
+	path: String,
+	added: usize,
 	removed: usize,
-	hunks:   Vec<DiffHunk>,
+	hunks: Vec<DiffHunk>,
 }
 
 struct DiffHunk {
 	header: String,
-	lines:  Vec<String>,
+	lines: Vec<String>,
 }
 
 pub(crate) fn compact_diff_output(input: &str) -> String {
@@ -688,9 +763,11 @@ fn parse_unified_diff(input: &str) -> Vec<DiffFile> {
 				}
 			} else if let Some(file) = current.take() {
 				files.push(file);
-				current = Some(DiffFile { path: path.to_string(), added: 0, removed: 0, hunks: Vec::new() });
+				current =
+					Some(DiffFile { path: path.to_string(), added: 0, removed: 0, hunks: Vec::new() });
 			} else {
-				current = Some(DiffFile { path: path.to_string(), added: 0, removed: 0, hunks: Vec::new() });
+				current =
+					Some(DiffFile { path: path.to_string(), added: 0, removed: 0, hunks: Vec::new() });
 			}
 			pending_old_path = None;
 			continue;
@@ -1351,6 +1428,96 @@ mod tests {
 				.contains("packages/coding-agent/test/bash-executor.test.ts")
 		);
 		assert!(!out.text.contains("3 files changed"));
+	}
+
+	#[test]
+	fn diff_name_only_is_compacted_and_bounded() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("diff"), "git diff --name-only HEAD~1", &cfg);
+		let mut input = String::new();
+		for idx in 0..26 {
+			input.push_str("src/file-");
+			input.push_str(&idx.to_string());
+			input.push_str(".rs\n");
+		}
+
+		let out = filter(&ctx, &input, 0);
+
+		assert!(out.changed);
+		assert!(out.text.starts_with("git diff --name-only: 26 files\n"));
+		assert!(out.text.contains("src/file-0.rs\n"));
+		assert!(out.text.contains("src/file-19.rs\n"));
+		assert!(!out.text.contains("src/file-20.rs\n"));
+		assert!(out.text.contains("… 6 files omitted …"));
+	}
+
+	#[test]
+	fn diff_name_status_is_compacted_and_bounded() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("diff"), "git diff --name-status HEAD~1", &cfg);
+		let mut input = String::new();
+		for idx in 0..24 {
+			input.push_str(if idx % 3 == 0 {
+				"R100\told-"
+			} else {
+				"M\tpath-"
+			});
+			input.push_str(&idx.to_string());
+			if idx % 3 == 0 {
+				input.push_str(".rs\tnew-");
+				input.push_str(&idx.to_string());
+				input.push_str(".rs\n");
+			} else {
+				input.push_str(".rs\n");
+			}
+		}
+
+		let out = filter(&ctx, &input, 0);
+
+		assert!(out.changed);
+		assert!(out.text.starts_with("git diff --name-status: 24 files\n"));
+		assert!(out.text.contains("R100\told-0.rs\tnew-0.rs\n"));
+		assert!(out.text.contains("M\tpath-1.rs\n"));
+		assert!(!out.text.contains("path-20.rs\n"));
+		assert!(out.text.contains("… 4 files omitted …"));
+	}
+
+	#[test]
+	fn diff_numstat_is_compacted_and_bounded() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("diff"), "git diff --numstat HEAD~1", &cfg);
+		let mut input = String::new();
+		for idx in 0..22 {
+			input.push_str(&(idx + 1).to_string());
+			input.push('\t');
+			input.push_str(&(idx % 7).to_string());
+			input.push('\t');
+			input.push_str("src/file-");
+			input.push_str(&idx.to_string());
+			input.push_str(".rs\n");
+		}
+
+		let out = filter(&ctx, &input, 0);
+
+		assert!(out.changed);
+		assert!(out.text.starts_with("git diff --numstat: 22 files\n"));
+		assert!(out.text.contains("1\t0\tsrc/file-0.rs\n"));
+		assert!(out.text.contains("20\t5\tsrc/file-19.rs\n"));
+		assert!(!out.text.contains("src/file-20.rs\n"));
+		assert!(out.text.contains("… 2 files omitted …"));
+	}
+
+	#[test]
+	fn diff_name_only_failure_keeps_diagnostics() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("diff"), "git diff --name-only badrev", &cfg);
+		let input =
+			"fatal: ambiguous argument 'badrev': unknown revision or path not in the working tree.\n";
+
+		let out = filter(&ctx, input, 128);
+
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
 	}
 
 	#[test]

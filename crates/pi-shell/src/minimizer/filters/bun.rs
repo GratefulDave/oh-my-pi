@@ -98,13 +98,28 @@ fn command_contains_check_script(command: &str) -> bool {
 
 fn is_check_script_token(token: &str) -> bool {
 	let token = token.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'));
-	matches!(token, "check" | "typecheck" | "type-check") || token.starts_with("check:")
+	matches!(token, "check") || token.starts_with("check:")
+}
+
+fn is_lint_script_token(token: &str) -> bool {
+	let token = token.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'));
+	matches!(token, "lint" | "typecheck" | "type-check")
+		|| token.starts_with("lint:")
+		|| token.starts_with("typecheck:")
+		|| token.starts_with("type-check:")
+}
+
+fn command_contains_lint_script(command: &str) -> bool {
+	command
+		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
+		.any(is_lint_script_token)
 }
 
 fn is_lint_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
 	matches!((program, subcommand), ("bun" | "bunx", Some("tsc" | "eslint" | "biome")))
 		|| is_exec_package_subcommand(program, subcommand)
-			&& command_contains_tool(command, &["tsc", "eslint", "biome"])
+			&& (command_contains_tool(command, &["tsc", "eslint", "biome"])
+				|| command_contains_lint_script(command))
 }
 
 fn is_js_tool_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
@@ -415,6 +430,28 @@ mod tests {
 		assert!(!out.text.contains("✓ pass 1"));
 		assert!(out.text.contains("FAIL app.test.ts"));
 		assert!(out.text.contains("Tests 1 failed, 2 passed"));
+	}
+
+	#[test]
+	fn bun_run_lint_and_typecheck_route_to_lint_filter() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let input = concat!(
+			"src/app.ts:1:1: error TS2322: Type 'string' is not assignable to type 'number'.\n",
+			"src/app.ts:2:1: error TS7006: Parameter 'x' implicitly has an 'any' type.\n",
+		);
+
+		for command in
+			["bun run lint", "bun run lint:ci", "bun run typecheck", "bun run typecheck:ci"]
+		{
+			let ctx = ctx("bun", Some("run"), command, &cfg);
+			let routed = filter(&ctx, input, 1).text;
+			let expected = lint::filter(&ctx, input, 1).text;
+			assert_eq!(routed, expected, "{command} should use lint filter");
+			assert!(
+				routed.contains("2 diagnostics in 1 files"),
+				"{command} should condense lint output"
+			);
+		}
 	}
 
 	#[test]

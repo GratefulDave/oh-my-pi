@@ -33,6 +33,7 @@ export interface MinimizerGainFilterSummary extends MinimizerGainTotals {
 export interface MinimizerGainCommandSummary extends MinimizerGainTotals {
 	command: string;
 }
+
 export interface MinimizerGainCwdSummary extends MinimizerGainTotals {
 	cwd: string;
 }
@@ -41,6 +42,36 @@ export interface MinimizerGainSummary extends MinimizerGainTotals {
 	byFilter: MinimizerGainFilterSummary[];
 	byCommand: MinimizerGainCommandSummary[];
 	byCwd: MinimizerGainCwdSummary[];
+}
+
+export interface MinimizerGainContext {
+	path: string;
+	days: number;
+	cwd?: string;
+	all: boolean;
+	records: MinimizerGainRecord[];
+	summary: MinimizerGainSummary;
+	missed: MinimizerMissedSummary;
+}
+
+export async function loadMinimizerGainContext(input: {
+	cwd: string;
+	all: boolean;
+	days?: number;
+	agentDir?: string;
+}): Promise<MinimizerGainContext> {
+	const days = input.days ?? 30;
+	const cwd = input.all ? undefined : await resolveMinimizerGainCwd(input.cwd);
+	const records = await readMinimizerGain({ sinceDays: days, cwd, agentDir: input.agentDir });
+	return {
+		path: getMinimizerGainPath(input.agentDir),
+		days,
+		cwd,
+		all: input.all,
+		records,
+		summary: summarizeMinimizerGain(records),
+		missed: summarizeMissedMinimizerGain(records),
+	};
 }
 
 export interface MinimizerGainDiscoveryItem extends MinimizerGainTotals {
@@ -141,13 +172,14 @@ export function buildMinimizerMissedRecord(input: {
 	command: string;
 	totalBytes: number;
 	exitCode: number | null;
+	filter?: string;
 }): MinimizerGainRecord | null {
 	if (input.totalBytes <= 0) return null;
 	return {
 		timestamp: input.timestamp,
 		...(input.cwd === undefined ? {} : { cwd: input.cwd }),
 		command: input.command,
-		filter: MISSED_FILTER,
+		filter: input.filter ?? MISSED_FILTER,
 		inputBytes: input.totalBytes,
 		outputBytes: input.totalBytes,
 		savedBytes: 0,

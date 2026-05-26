@@ -9,12 +9,14 @@
 - Added named model profiles for model-selection defaults: `omp profile`, launch-time `--profile`, and interactive `/profile` can now create, list, switch, and persist alternate `modelRoles`, `defaultThinkingLevel`, `enabledModels`, `cycleOrder`, and `modelProviderOrder` sets without changing provider auth.
 - Added `lex factory init|status|doctor` plus bundled project-scoped software-factory templates for verifier loops, safety gates, repo-local prompts/workflows, and optional legacy-config import into `.omp/factory/`.
 - Added `omp profile create --preset openrouter`, plus `/profile create ... --preset openrouter`, to create an OpenRouter-scoped model profile that exposes all currently available OpenRouter models in selectors and `--list-models`.
+- Added `/gain` and `/gain-all` TUI overlays with Gain and Missed tabs for native minimizer savings and unminimized-output review.
 
 ### Changed
 
 - Split ambiguous orchestration slash commands: `/delegate` now owns external CLI agent spawning (acpx/tmux/cmux); `/orchestrate` is reserved for in-process subagent workflow orchestration.
 - Compressed timed-out `bun run check:*` shell output before adding timeout annotations, preserving package summaries and timeout ambiguity while dropping repeated per-package success noise.
 - Changed hashline editing to the upstream file-level hash format (`¶PATH#HASH`, `LINE:TEXT`) with inline payload syntax and removed the legacy vim edit mode, migrating existing `vim` edit settings to `hashline`.
+- Changed Bash tool guidance to note that safe simple `&&`/`;` chains may now be minimized while pipes, `||`, command substitutions, async/background jobs, and other compound syntax still bypass the native minimizer.
 
 ### Fixed
 
@@ -22,6 +24,8 @@
 - Fixed web search provider fallback to classify auth/quota/rate-limit failures and report every provider failure when the chain is exhausted.
 - Fixed session reload/switch/branch UI flows to explicitly clear terminal history while ordinary forced redraws now preserve scrollback.
 - Fixed bash cancellation to return promptly when native abort/timeout cleanup stalls, quarantining persistent shell sessions only until the stalled native run settles.
+- Fixed native minimizer coverage for `git diff --name-only`, `--name-status`, and `--numstat`, plus direct and package-script lint/typecheck commands such as `eslint src/foo.ts`, `tsc --project`, `npm run lint`, and `bun run typecheck`.
+- Fixed minimizer miss telemetry to preserve native reason labels such as `git`, `compound`, and `pipeline-noop` instead of collapsing every non-rewrite to `missed`.
 - Fixed reviewer agent no longer fails JTD validation with `findings.0.priority: expected number, received string`; `report_finding` string priorities are coerced to numeric ordinals before auto-injecting `findings[]`. ([#1350](https://github.com/can1357/oh-my-pi/issues/1350))
 
 ## [15.1.9] - 2026-05-21

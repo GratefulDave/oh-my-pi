@@ -463,6 +463,17 @@ mod tests {
 	}
 
 	#[test]
+	fn detects_direct_lint_tools() {
+		let command = detect("eslint src/foo.ts").expect("eslint command is detected");
+		assert_eq!(command.program, "eslint");
+		assert_eq!(command.subcommand.as_deref(), Some("src/foo.ts"));
+
+		let command = detect("tsc --project tsconfig.json").expect("tsc command is detected");
+		assert_eq!(command.program, "tsc");
+		assert_eq!(command.subcommand.as_deref(), Some("tsconfig.json"));
+	}
+
+	#[test]
 	fn detects_gt_through_wrappers_and_globals() {
 		let command = detect("env GRAPHITE_TOKEN=x command gt --repo owner/repo submit --stack")
 			.expect("gt command is detected");

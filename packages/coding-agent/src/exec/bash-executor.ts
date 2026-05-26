@@ -323,20 +323,34 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		const exitCode = winner.result.exitCode ?? null;
 		if (minimized) {
 			const savedBytes = Math.max(0, minimized.inputBytes - minimized.outputBytes);
-			await recordMinimizerGain({
-				timestamp: new Date().toISOString(),
-				...(commandCwd === undefined ? {} : { cwd: commandCwd }),
-				command,
-				filter: minimized.filter,
-				inputBytes: minimized.inputBytes,
-				outputBytes: minimized.outputBytes,
-				savedBytes,
-				...(savedBytes > 0
-					? { savedTokens: Math.max(0, countTokens(minimized.originalText) - countTokens(minimized.text)) }
-					: {}),
-				exitCode,
-				kind: savedBytes > 0 ? "saved" : "missed",
-			});
+			if (minimized.text === minimized.originalText) {
+				const missed = buildMinimizerMissedRecord({
+					timestamp: new Date().toISOString(),
+					...(commandCwd === undefined ? {} : { cwd: commandCwd }),
+					command,
+					totalBytes: summary.totalBytes,
+					exitCode,
+					filter: minimized.filter,
+				});
+				if (missed) {
+					await recordMinimizerGain(missed);
+				}
+			} else {
+				await recordMinimizerGain({
+					timestamp: new Date().toISOString(),
+					...(commandCwd === undefined ? {} : { cwd: commandCwd }),
+					command,
+					filter: minimized.filter,
+					inputBytes: minimized.inputBytes,
+					outputBytes: minimized.outputBytes,
+					savedBytes,
+					...(savedBytes > 0
+						? { savedTokens: Math.max(0, countTokens(minimized.originalText) - countTokens(minimized.text)) }
+						: {}),
+					exitCode,
+					kind: savedBytes > 0 ? "saved" : "missed",
+				});
+			}
 		} else {
 			const missed = buildMinimizerMissedRecord({
 				timestamp: new Date().toISOString(),
@@ -382,13 +396,25 @@ interface CancelledDumpInput {
 async function dumpCancelledOutput(input: CancelledDumpInput): Promise<BashResult> {
 	const summary = await input.sink.dump(input.notice);
 	const minimized = applyMinimizer(input.command, summary.output, 1, input.minimizer);
-	if (!minimized || minimized.text === minimized.originalText) {
+	if (!minimized) {
 		const missed = buildMinimizerMissedRecord({
 			timestamp: new Date().toISOString(),
 			...(input.commandCwd === undefined ? {} : { cwd: input.commandCwd }),
 			command: input.command,
 			totalBytes: summary.totalBytes,
 			exitCode: null,
+		});
+		if (missed) await recordMinimizerGain(missed);
+		return { exitCode: undefined, cancelled: true, ...summary };
+	}
+	if (minimized.text === minimized.originalText) {
+		const missed = buildMinimizerMissedRecord({
+			timestamp: new Date().toISOString(),
+			...(input.commandCwd === undefined ? {} : { cwd: input.commandCwd }),
+			command: input.command,
+			totalBytes: summary.totalBytes,
+			exitCode: null,
+			filter: minimized.filter,
 		});
 		if (missed) await recordMinimizerGain(missed);
 		return { exitCode: undefined, cancelled: true, ...summary };

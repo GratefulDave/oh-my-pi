@@ -14,9 +14,9 @@ use std::{
 use anyhow::{Error, Result};
 use brush_builtins::{BuiltinSet, default_builtins};
 use brush_core::{
-	ExecutionContext, ExecutionControlFlow, ExecutionExitCode, ExecutionResult, ProcessGroupPolicy,
-	ProfileLoadBehavior, RcLoadBehavior, Shell as BrushShell, ShellValue, ShellVariable, SourceInfo,
-	builtins,
+	ExecutionContext, ExecutionControlFlow, ExecutionExitCode, ExecutionParameters, ExecutionResult,
+	ProcessGroupPolicy, ProfileLoadBehavior, RcLoadBehavior, Shell as BrushShell, ShellValue,
+	ShellVariable, SourceInfo, builtins,
 	env::EnvironmentScope,
 	openfiles::{self, OpenFile, OpenFiles},
 };
@@ -566,6 +566,37 @@ async fn source_snapshot(shell: &mut BrushShell, snapshot_path: &str) -> Result<
 	Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum CommandCaptureMode {
+	Streaming,
+	Buffered { max_capture_bytes: usize },
+}
+
+struct CommandRunOutput {
+	result: ExecutionResult,
+	buffered: Option<BufferedOutput>,
+}
+
+struct ChainCapture {
+	original_text: String,
+	text: String,
+	input_bytes: usize,
+	changed: bool,
+}
+
+impl ChainCapture {
+	fn new() -> Self {
+		Self { original_text: String::new(), text: String::new(), input_bytes: 0, changed: false }
+	}
+
+	fn push(&mut self, original: &str, original_input_bytes: usize, minimized: &str, changed: bool) {
+		self.original_text.push_str(original);
+		self.text.push_str(minimized);
+		self.input_bytes = self.input_bytes.saturating_add(original_input_bytes);
+		self.changed |= changed;
+	}
+}
+
 async fn run_shell_command(
 	session: &mut ShellSessionCore,
 	options: &ShellRunConfig,
@@ -586,13 +617,217 @@ async fn run_shell_command(
 	} else {
 		minimizer::engine::MinimizerMode::None
 	};
-	let should_minimize = !matches!(minimizer_mode, minimizer::engine::MinimizerMode::None);
-	let max_capture_bytes = if let Some(config) = options.minimizer.as_ref() {
-		config.max_capture_bytes as usize
-	} else {
-		0
+
+	let result = match minimizer_mode {
+		minimizer::engine::MinimizerMode::SegmentedChain => {
+			run_shell_command_segmented_chain(session, options, on_chunk, cancel_token).await
+		},
+		minimizer::engine::MinimizerMode::WholeCommand | minimizer::engine::MinimizerMode::None => {
+			run_shell_command_single(session, options, on_chunk, cancel_token, minimizer_mode).await
+		},
 	};
 
+	if env_scope_pushed {
+		session
+			.shell
+			.env_mut()
+			.pop_scope(EnvironmentScope::Command)
+			.map_err(|err| Error::msg(format!("Failed to pop env scope: {err}")))?;
+	}
+
+	result
+}
+
+async fn run_shell_command_single(
+	session: &mut ShellSessionCore,
+	options: &ShellRunConfig,
+	on_chunk: Option<mpsc::UnboundedSender<String>>,
+	cancel_token: CancellationToken,
+	minimizer_mode: minimizer::engine::MinimizerMode,
+) -> Result<(ExecutionResult, Option<MinimizerResult>)> {
+	debug_assert!(!matches!(minimizer_mode, minimizer::engine::MinimizerMode::SegmentedChain));
+
+	let params = session.shell.default_exec_params();
+	let capture_mode = match minimizer_mode {
+		minimizer::engine::MinimizerMode::WholeCommand => {
+			let Some(config) = options.minimizer.as_ref() else {
+				return Err(Error::msg("Missing minimizer config for whole-command mode"));
+			};
+			CommandCaptureMode::Buffered { max_capture_bytes: config.max_capture_bytes as usize }
+		},
+		minimizer::engine::MinimizerMode::None => CommandCaptureMode::Streaming,
+		minimizer::engine::MinimizerMode::SegmentedChain => CommandCaptureMode::Streaming,
+	};
+
+	let command_run = run_shell_command_once(
+		session,
+		options.command.clone(),
+		params,
+		on_chunk,
+		cancel_token,
+		capture_mode,
+	)
+	.await?;
+
+	let mut minimized_out = None;
+	if let Some(buffered) = command_run.buffered
+		&& let Some(config) = options.minimizer.as_ref()
+		&& !buffered.exceeded
+	{
+		let minimized = match minimizer_mode {
+			minimizer::engine::MinimizerMode::WholeCommand => minimizer::apply(
+				&options.command,
+				&buffered.text,
+				exit_code(&command_run.result),
+				config,
+			),
+			minimizer::engine::MinimizerMode::None => {
+				minimizer::MinimizerOutput::passthrough(&buffered.text)
+			},
+			minimizer::engine::MinimizerMode::SegmentedChain => {
+				minimizer::MinimizerOutput::passthrough(&buffered.text)
+			},
+		};
+		if minimized.filter != "passthrough" {
+			let original_text = minimized
+				.original_text
+				.unwrap_or_else(|| minimized.text.clone());
+			let output_bytes = u32::try_from(minimized.text.len()).unwrap_or(u32::MAX);
+			minimized_out = Some(MinimizerResult {
+				filter: minimized.filter.to_string(),
+				text: minimized.text,
+				original_text,
+				input_bytes: u32::try_from(minimized.input_bytes).unwrap_or(u32::MAX),
+				output_bytes,
+			});
+		}
+	}
+
+	Ok((command_run.result, minimized_out))
+}
+
+async fn run_shell_command_segmented_chain(
+	session: &mut ShellSessionCore,
+	options: &ShellRunConfig,
+	on_chunk: Option<mpsc::UnboundedSender<String>>,
+	cancel_token: CancellationToken,
+) -> Result<(ExecutionResult, Option<MinimizerResult>)> {
+	let Some(config) = options.minimizer.as_ref() else {
+		return run_shell_command_single(
+			session,
+			options,
+			on_chunk,
+			cancel_token,
+			minimizer::engine::MinimizerMode::None,
+		)
+		.await;
+	};
+
+	let segments = match minimizer::plan::analyze(&options.command) {
+		minimizer::plan::CommandPlan::Chain { segments } => segments,
+		_ => {
+			return run_shell_command_single(
+				session,
+				options,
+				on_chunk,
+				cancel_token,
+				minimizer::engine::MinimizerMode::None,
+			)
+			.await;
+		},
+	};
+
+	let params = session.shell.default_exec_params();
+	let mut aggregate = Some(ChainCapture::new());
+	let mut previous_succeeded = true;
+	let mut last_result = None;
+	let max_capture_bytes = config.max_capture_bytes as usize;
+
+	for segment in segments {
+		if segment.run_if_previous_succeeded && !previous_succeeded {
+			continue;
+		}
+
+		let mut segment_params = params.clone();
+		segment_params.suppress_errexit = segment.suppress_errexit;
+		let capture_mode = if aggregate.is_some() {
+			CommandCaptureMode::Buffered { max_capture_bytes }
+		} else {
+			CommandCaptureMode::Streaming
+		};
+
+		let command_run = run_shell_command_once(
+			session,
+			segment.command.clone(),
+			segment_params,
+			on_chunk.clone(),
+			cancel_token.clone(),
+			capture_mode,
+		)
+		.await?;
+
+		let exit = exit_code(&command_run.result);
+		previous_succeeded = exit == 0;
+
+		if let Some(buffered) = command_run.buffered {
+			if buffered.exceeded {
+				aggregate = None;
+			} else if let Some(capture) = aggregate.as_mut() {
+				if capture.input_bytes.saturating_add(buffered.input_bytes) > max_capture_bytes {
+					aggregate = None;
+				} else {
+					let minimized = minimizer::apply(&segment.command, &buffered.text, exit, config);
+					capture.push(
+						&buffered.text,
+						buffered.input_bytes,
+						&minimized.text,
+						minimized.changed,
+					);
+				}
+			}
+		} else {
+			aggregate = None;
+		}
+
+		let keep_running = session_keepalive(&command_run.result) && !cancel_token.is_cancelled();
+		last_result = Some(command_run.result);
+		if !keep_running {
+			break;
+		}
+	}
+
+	let result = match last_result {
+		Some(result) => result,
+		None => return Err(Error::msg("Segmented chain executed no segments")),
+	};
+
+	let minimized_out = aggregate.map(|capture| {
+		let minimized = minimizer::chain_output(
+			capture.text,
+			capture.original_text,
+			capture.input_bytes,
+			capture.changed,
+		);
+		MinimizerResult {
+			filter: minimized.filter.to_string(),
+			text: minimized.text,
+			original_text: minimized.original_text.unwrap_or_default(),
+			input_bytes: u32::try_from(minimized.input_bytes).unwrap_or(u32::MAX),
+			output_bytes: u32::try_from(minimized.output_bytes).unwrap_or(u32::MAX),
+		}
+	});
+
+	Ok((result, minimized_out))
+}
+
+async fn run_shell_command_once(
+	session: &mut ShellSessionCore,
+	command: String,
+	mut params: ExecutionParameters,
+	on_chunk: Option<mpsc::UnboundedSender<String>>,
+	cancel_token: CancellationToken,
+	capture_mode: CommandCaptureMode,
+) -> Result<CommandRunOutput> {
 	let (reader_file, writer_file) = pipe_to_files("output")?;
 
 	let stdout_file = OpenFile::from(
@@ -602,7 +837,6 @@ async fn run_shell_command(
 	);
 	let stderr_file = OpenFile::from(writer_file);
 
-	let mut params = session.shell.default_exec_params();
 	params.set_fd(OpenFiles::STDIN_FD, null_file()?);
 	params.set_fd(OpenFiles::STDOUT_FD, stdout_file);
 	params.set_fd(OpenFiles::STDERR_FD, stderr_file);
@@ -611,28 +845,27 @@ async fn run_shell_command(
 	let baseline_descendants = process::current_descendant_pids();
 	let reader_cancel = CancellationToken::new();
 	let (activity_tx, mut activity_rx) = mpsc::channel::<()>(1);
-	// Stream every raw chunk to the caller live, regardless of whether
-	// minimization is enabled. When minimization actually transforms the
-	// output, we propagate the replacement text via `MinimizerResult.text`
-	// so the caller can swap their accumulated buffer for the minimized
-	// version without losing intermediate progress updates.
 	let reader_callback = on_chunk;
 	let mut reader_handle = tokio::spawn({
 		let reader_cancel = reader_cancel.clone();
 		async move {
-			if should_minimize {
-				let output = read_output_buffered(
-					reader_file,
-					reader_callback,
-					reader_cancel,
-					activity_tx,
-					max_capture_bytes,
-				)
-				.await;
-				Result::<OutputRead>::Ok(OutputRead::Buffered(output))
-			} else {
-				Box::pin(read_output(reader_file, reader_callback, reader_cancel, activity_tx)).await;
-				Result::<OutputRead>::Ok(OutputRead::Streaming)
+			match capture_mode {
+				CommandCaptureMode::Buffered { max_capture_bytes } => {
+					let output = read_output_buffered(
+						reader_file,
+						reader_callback,
+						reader_cancel,
+						activity_tx,
+						max_capture_bytes,
+					)
+					.await;
+					Result::<OutputRead>::Ok(OutputRead::Buffered(output))
+				},
+				CommandCaptureMode::Streaming => {
+					Box::pin(read_output(reader_file, reader_callback, reader_cancel, activity_tx))
+						.await;
+					Result::<OutputRead>::Ok(OutputRead::Streaming)
+				},
 			}
 		}
 	});
@@ -682,19 +915,11 @@ async fn run_shell_command(
 	let source_info = SourceInfo::from("pi-natives:command");
 	let result = session
 		.shell
-		.run_string(options.command.clone(), &source_info, &params)
+		.run_string(command, &source_info, &params)
 		.await;
 
 	if cancel_token.is_cancelled() {
 		terminate_background_jobs(&session.shell);
-	}
-
-	if env_scope_pushed {
-		session
-			.shell
-			.env_mut()
-			.pop_scope(EnvironmentScope::Command)
-			.map_err(|err| Error::msg(format!("Failed to pop env scope: {err}")))?;
 	}
 
 	drop(params);
@@ -759,33 +984,11 @@ async fn run_shell_command(
 	}
 
 	let result = result.map_err(|err| Error::msg(format!("Shell execution failed: {err}")))?;
-	let mut minimized_out: Option<MinimizerResult> = None;
-	if let Some(OutputRead::Buffered(output)) = reader_output
-		&& let Some(config) = options.minimizer.as_ref()
-		&& !output.exceeded
-	{
-		let minimized = match minimizer_mode {
-			minimizer::engine::MinimizerMode::WholeCommand => {
-				minimizer::apply(&options.command, &output.text, exit_code(&result), config)
-			},
-			minimizer::engine::MinimizerMode::None => {
-				minimizer::MinimizerOutput::passthrough(&output.text)
-			},
-		};
-		if minimized.changed
-			&& let Some(original) = minimized.original_text
-		{
-			let output_bytes = u32::try_from(minimized.text.len()).unwrap_or(u32::MAX);
-			minimized_out = Some(MinimizerResult {
-				filter: minimized.filter.to_string(),
-				text: minimized.text,
-				original_text: original,
-				input_bytes: u32::try_from(minimized.input_bytes).unwrap_or(u32::MAX),
-				output_bytes,
-			});
-		}
-	}
-	Ok((result, minimized_out))
+	let buffered = match reader_output {
+		Some(OutputRead::Buffered(output)) => Some(output),
+		Some(OutputRead::Streaming) | None => None,
+	};
+	Ok(CommandRunOutput { result, buffered })
 }
 
 async fn run_shell_command_streams(
@@ -1168,6 +1371,7 @@ enum OutputRead {
 
 struct BufferedOutput {
 	text: String,
+	input_bytes: usize,
 	exceeded: bool,
 }
 
@@ -1289,6 +1493,7 @@ async fn read_output_buffered(
 	const REPLACEMENT: &str = "\u{FFFD}";
 	const BUF: usize = 65536;
 	let mut buf = vec![0u8; BUF];
+	let mut input_bytes = 0usize;
 	let mut captured = Vec::new();
 	let mut exceeded = false;
 	// Pending bytes from a prior read that ended mid-UTF-8 sequence. We hold
@@ -1298,7 +1503,7 @@ async fn read_output_buffered(
 
 	#[cfg(unix)]
 	let Ok(reader) = register_nonblocking_pipe(reader) else {
-		return BufferedOutput { text: String::new(), exceeded: true };
+		return BufferedOutput { text: String::new(), input_bytes: 0, exceeded: true };
 	};
 	#[cfg(not(unix))]
 	let reader = tokio::fs::File::from_std(reader);
@@ -1338,6 +1543,7 @@ async fn read_output_buffered(
 		};
 		if n > 0 {
 			let _ = activity.try_send(());
+			input_bytes = input_bytes.saturating_add(n);
 		}
 		// Once `exceeded`, the post-process minimizer is bypassed (see the
 		// `!output.exceeded` gate at the call site), so further appends just
@@ -1396,7 +1602,7 @@ async fn read_output_buffered(
 		}
 	}
 
-	BufferedOutput { text: String::from_utf8_lossy(&captured).into_owned(), exceeded }
+	BufferedOutput { text: String::from_utf8_lossy(&captured).into_owned(), input_bytes, exceeded }
 }
 
 #[cfg(unix)]
@@ -1695,6 +1901,234 @@ mod tests {
 		}
 	}
 
+	#[cfg(unix)]
+	fn shell_test_lock() -> &'static TokioMutex<()> {
+		static LOCK: std::sync::OnceLock<TokioMutex<()>> = std::sync::OnceLock::new();
+		LOCK.get_or_init(|| TokioMutex::new(()))
+	}
+
+	#[cfg(unix)]
+	async fn run_command_capture(
+		command: &str,
+		cwd: Option<&std::path::Path>,
+		minimizer: Option<minimizer::MinimizerOptions>,
+		cancel_token: CancelToken,
+	) -> (ShellExecuteResult, String) {
+		let _guard = shell_test_lock().lock().await;
+		let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+		let options = ShellExecuteOptions {
+			command: command.to_string(),
+			cwd: cwd.map(|path| path.to_string_lossy().into_owned()),
+			minimizer,
+			..Default::default()
+		};
+		let result = execute_shell(options, Some(tx), cancel_token)
+			.await
+			.expect("execute_shell");
+		let mut output = String::new();
+		while let Some(chunk) = rx.recv().await {
+			output.push_str(&chunk);
+		}
+		(result, output)
+	}
+
+	#[cfg(unix)]
+	fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
+		let mut path = std::env::temp_dir();
+		let nonce = std::time::SystemTime::now()
+			.duration_since(std::time::UNIX_EPOCH)
+			.expect("system time")
+			.as_nanos();
+		path.push(format!("pi-shell-{prefix}-{}-{nonce}", std::process::id()));
+		std::fs::create_dir_all(&path).expect("create temp dir");
+		path
+	}
+
+	#[cfg(unix)]
+	fn printf_minimizer(
+		settings_path: &std::path::Path,
+		max_capture_bytes: Option<u32>,
+	) -> minimizer::MinimizerOptions {
+		std::fs::write(
+			settings_path,
+			r#"
+schema_version = 1
+
+[filters.printf]
+match_command = "^printf$"
+replace = [{ pattern = "hello", replacement = "HI" }]
+"#,
+		)
+		.expect("write settings");
+		minimizer::MinimizerOptions {
+			enabled: Some(true),
+			settings_path: Some(settings_path.to_string_lossy().into_owned()),
+			max_capture_bytes,
+			..Default::default()
+		}
+	}
+
+	#[cfg(unix)]
+	#[tokio::test(flavor = "multi_thread")]
+	async fn segmented_false_and_printf_skips_second_and_returns_nonzero() {
+		let root = unique_temp_dir("false-and");
+		let minimizer = printf_minimizer(&root.join("minimizer.toml"), None);
+		let (result, output) = run_command_capture(
+			"false && printf skipped",
+			None,
+			Some(minimizer),
+			CancelToken::default(),
+		)
+		.await;
+		let _ = std::fs::remove_dir_all(&root);
+		assert_eq!(result.exit_code, Some(1));
+		assert!(!result.cancelled);
+		assert!(!result.timed_out);
+		assert_eq!(output, "");
+		assert_eq!(result.minimized.expect("chain noop").filter, "chain-noop");
+	}
+
+	#[cfg(unix)]
+	#[tokio::test(flavor = "multi_thread")]
+	async fn segmented_false_semicolon_printf_continues_and_returns_last_code() {
+		let root = unique_temp_dir("false-semi");
+		let minimizer = printf_minimizer(&root.join("minimizer.toml"), None);
+		let (result, output) = run_command_capture(
+			"false ; printf 'hello\n'",
+			None,
+			Some(minimizer),
+			CancelToken::default(),
+		)
+		.await;
+		let _ = std::fs::remove_dir_all(&root);
+		let minimized = result.minimized.expect("minimized result");
+		assert_eq!(result.exit_code, Some(0));
+		assert_eq!(output, "hello\n");
+		assert_eq!(minimized.filter, "chain");
+		assert_eq!(minimized.original_text, "hello\n");
+		assert_eq!(minimized.text, "HI\n");
+	}
+
+	#[cfg(unix)]
+	#[tokio::test(flavor = "multi_thread")]
+	async fn segmented_cd_tmp_and_pwd_persists_state_across_segments() {
+		let root = unique_temp_dir("cwd");
+		let tmp_dir = root.join("tmp");
+		std::fs::create_dir_all(&tmp_dir).expect("create nested tmp dir");
+		let settings_path = root.join("minimizer.toml");
+		std::fs::write(
+			&settings_path,
+			r#"
+schema_version = 1
+
+[filters.pwd]
+match_command = "^pwd$"
+replace = [{ pattern = "^.+$", replacement = "PWD" }]
+"#,
+		)
+		.expect("write settings");
+		let minimizer = minimizer::MinimizerOptions {
+			enabled: Some(true),
+			settings_path: Some(settings_path.to_string_lossy().into_owned()),
+			..Default::default()
+		};
+
+		let expected = format!("{}\n", tmp_dir.display());
+		let (result, output) =
+			run_command_capture("cd tmp && pwd", Some(&root), Some(minimizer), CancelToken::default())
+				.await;
+		let _ = std::fs::remove_dir_all(&root);
+		let minimized = result.minimized.expect("minimized result");
+		assert_eq!(result.exit_code, Some(0));
+		assert_eq!(output, expected);
+		assert_eq!(minimized.filter, "chain");
+		assert_eq!(minimized.text, "PWD\n");
+		assert_eq!(minimized.original_text, expected);
+	}
+
+	#[cfg(unix)]
+	#[tokio::test(flavor = "multi_thread")]
+	async fn segmented_printf_chain_preserves_raw_original_text() {
+		let root = unique_temp_dir("minimizer");
+		let minimizer = printf_minimizer(&root.join("minimizer.toml"), None);
+		let (result, output) = run_command_capture(
+			"printf 'hello\n' ; printf 'world\n'",
+			None,
+			Some(minimizer),
+			CancelToken::default(),
+		)
+		.await;
+		let _ = std::fs::remove_dir_all(&root);
+		let minimized = result.minimized.expect("minimized result");
+		assert_eq!(result.exit_code, Some(0));
+		assert_eq!(output, "hello\nworld\n");
+		assert_eq!(minimized.filter, "chain");
+		assert_eq!(minimized.original_text, "hello\nworld\n");
+		assert_eq!(minimized.text, "HI\nworld\n");
+		assert_eq!(minimized.input_bytes, 12);
+		assert_eq!(minimized.output_bytes, 9);
+	}
+
+	#[cfg(unix)]
+	#[tokio::test(flavor = "multi_thread")]
+	async fn segmented_chain_exceeding_aggregate_capture_cap_stays_raw() {
+		let root = unique_temp_dir("aggregate-cap");
+		let minimizer = printf_minimizer(&root.join("minimizer.toml"), Some(1024));
+		let (result, output) = run_command_capture(
+			"printf '%600s' x ; printf '%600s' y",
+			None,
+			Some(minimizer),
+			CancelToken::default(),
+		)
+		.await;
+		let _ = std::fs::remove_dir_all(&root);
+		assert_eq!(result.exit_code, Some(0));
+		assert_eq!(output.len(), 1200);
+		assert!(output.ends_with('y'));
+		assert!(result.minimized.is_none());
+	}
+
+	#[cfg(unix)]
+	#[tokio::test(flavor = "multi_thread")]
+	async fn segmented_timeout_in_first_segment_prevents_later_segments() {
+		let root = unique_temp_dir("timeout");
+		let minimizer = printf_minimizer(&root.join("minimizer.toml"), None);
+		let (result, output) = run_command_capture(
+			"sleep 1 && printf later",
+			None,
+			Some(minimizer),
+			CancelToken::new(Some(10)),
+		)
+		.await;
+		let _ = std::fs::remove_dir_all(&root);
+		assert!(result.exit_code.is_none());
+		assert!(!result.cancelled);
+		assert!(result.timed_out);
+		assert!(result.minimized.is_none());
+		assert!(!output.contains("later"));
+	}
+
+	#[cfg(unix)]
+	#[tokio::test(flavor = "multi_thread")]
+	async fn segmented_cancel_in_first_segment_prevents_later_segments() {
+		let root = unique_temp_dir("cancel");
+		let minimizer = printf_minimizer(&root.join("minimizer.toml"), None);
+		let mut cancel_token = CancelToken::default();
+		let abort_token = cancel_token.emplace_abort_token();
+		let cancel_task = tokio::spawn(async move {
+			time::sleep(Duration::from_millis(10)).await;
+			abort_token.abort(AbortReason::Signal);
+		});
+		let (result, output) =
+			run_command_capture("sleep 1 && printf later", None, Some(minimizer), cancel_token).await;
+		let _ = cancel_task.await;
+		let _ = std::fs::remove_dir_all(&root);
+		assert!(result.exit_code.is_none());
+		assert!(result.cancelled);
+		assert!(!result.timed_out);
+		assert!(result.minimized.is_none());
+		assert!(!output.contains("later"));
+	}
 	/// End-to-end verification that brush, when embedded as a non-interactive
 	/// library (`interactive: false`, exactly what `create_session` produces),
 	/// spawns external commands in a **separate session** from the host.

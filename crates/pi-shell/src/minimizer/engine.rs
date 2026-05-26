@@ -21,6 +21,8 @@ pub enum MinimizerMode {
 	None,
 	/// Capture the whole command and apply one filter to the whole buffer.
 	WholeCommand,
+	/// Execute a safe `&&` / `;` chain segment-by-segment.
+	SegmentedChain,
 }
 
 /// Return the minimization mode for a command.
@@ -32,6 +34,13 @@ pub fn mode_for(command: &str, config: &MinimizerConfig) -> MinimizerMode {
 			};
 			if identity_has_filter(&identity, config) {
 				MinimizerMode::WholeCommand
+			} else {
+				MinimizerMode::None
+			}
+		},
+		plan::CommandPlan::Chain { segments } => {
+			if chain_has_eligible_segment(&segments, config) {
+				MinimizerMode::SegmentedChain
 			} else {
 				MinimizerMode::None
 			}
@@ -72,11 +81,15 @@ pub fn apply(
 	}
 
 	// Structural guard: this whole-buffer path only handles single simple
-	// commands. Compound commands and pipes can feed downstream parsers
-	// (awk, jq, rg, …), so rewriting their combined output is a correctness
-	// bug.
+	// commands. Safe chains are intentionally kept opaque here so the engine
+	// can only segment them when the shell executes each piece separately.
+	// Pipes can feed downstream parsers (awk, jq, rg, …), so rewriting their
+	// combined output is a correctness bug.
 	match plan::analyze(command) {
 		plan::CommandPlan::Single { .. } => {},
+		plan::CommandPlan::Chain { .. } => {
+			return MinimizerOutput::passthrough(captured).labeled("compound");
+		},
 		plan::CommandPlan::Piped => {
 			return MinimizerOutput::passthrough(captured).labeled("piped");
 		},
@@ -103,6 +116,13 @@ fn identity_has_filter(identity: &detect::CommandIdentity, config: &MinimizerCon
 	let subcommand = identity.subcommand.as_deref();
 	filters::supports(&identity.program, subcommand)
 		|| resolve_pipeline(config, &identity.program, subcommand).is_some()
+}
+
+fn chain_has_eligible_segment(segments: &[plan::ChainSegment], config: &MinimizerConfig) -> bool {
+	segments.iter().any(|segment| {
+		detect::detect(&segment.command)
+			.is_some_and(|identity| identity_has_filter(&identity, config))
+	})
 }
 
 fn apply_identity(
@@ -437,21 +457,28 @@ strip_lines_matching = [".*"]
 	}
 
 	#[test]
-	fn compound_and_piped_commands_do_not_minimize() {
+	fn segmented_chain_mode_is_only_for_eligible_safe_chains() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
-		assert_eq!(mode_for("echo start ; git status", &cfg), MinimizerMode::None);
-		assert_eq!(mode_for("false && git status", &cfg), MinimizerMode::None);
+		assert_eq!(
+			mode_for("git diff --stat && git diff --name-only", &cfg),
+			MinimizerMode::SegmentedChain
+		);
+		assert_eq!(mode_for("git diff ; printf done", &cfg), MinimizerMode::SegmentedChain);
+		assert_eq!(mode_for("false && echo no ; echo yes", &cfg), MinimizerMode::None);
+		assert_eq!(mode_for("foo || bar", &cfg), MinimizerMode::None);
 		assert_eq!(mode_for("git status | cat", &cfg), MinimizerMode::None);
+		assert_eq!(mode_for("sleep 1 &", &cfg), MinimizerMode::None);
+		assert_eq!(mode_for("(cd foo && make)", &cfg), MinimizerMode::None);
 	}
 
 	#[test]
-	fn compound_supported_command_is_passthrough_without_unknown_record() {
+	fn segmented_chain_supported_command_is_passthrough_without_unknown_record() {
 		reset_unknown_command_count();
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let input = "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n";
 		let before = unknown_command_count();
 
-		assert_eq!(mode_for("git diff ; printf done", &cfg), MinimizerMode::None);
+		assert_eq!(mode_for("git diff ; printf done", &cfg), MinimizerMode::SegmentedChain);
 		let out = apply("git diff ; printf done", input, 0, &cfg);
 
 		assert!(!out.changed);

@@ -1060,11 +1060,10 @@ export interface MinimizerOptions {
 /**
  * Telemetry for a single minimization.
  *
- * Surfaced when the minimizer actually rewrote the command's output. The
- * session layer is expected to persist `original_text` via its
- * `ArtifactManager`, splice the resulting `artifact://<id>` reference
- * into `text`, and replace any previously streamed raw output with the
- * minimized text.
+ * Surfaced when the minimizer rewrote output or emitted a reason-only
+ * miss label. The session layer should persist `original_text` only for
+ * actual rewrites; reason-only records keep `text` unchanged and must not
+ * trigger artifact persistence.
  */
 export interface MinimizerResult {
   /**

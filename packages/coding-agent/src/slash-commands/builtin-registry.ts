@@ -4,14 +4,14 @@ import * as path from "node:path";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/utils/oauth";
 import { formatNumber, Snowflake, setProjectDir } from "@oh-my-pi/pi-utils";
 import { $ } from "bun";
-import { isAuthenticated } from "../config/model-registry";
-import { resolveAllowedModels, resolveModelRoleValue } from "../config/model-resolver";
 import {
 	applyModelProfilePreset,
 	isModelProfilePreset,
 	MODEL_PROFILE_PRESETS,
 	type ModelProfilePreset,
 } from "../config/model-profile-presets";
+import { isAuthenticated } from "../config/model-registry";
+import { resolveAllowedModels, resolveModelRoleValue } from "../config/model-resolver";
 import {
 	DEFAULT_MODEL_PROFILE_NAME,
 	normalizeModelProfileName,
@@ -42,15 +42,12 @@ import type {
 	ExternalOrchestrationResult,
 } from "../external-agents";
 import { buildContextSummary, buildExternalOrchestrationReport, runExternalAgentsParallel } from "../external-agents";
+
 import { resolveMemoryBackend } from "../memory-backend";
-import {
-	getMinimizerGainPath,
-	readMinimizerGain,
-	resolveMinimizerGainCwd,
-	summarizeMinimizerGain,
-	summarizeMissedMinimizerGain,
-} from "../minimizer-gain";
+import type { MinimizerGainContext } from "../minimizer-gain";
+import { loadMinimizerGainContext } from "../minimizer-gain";
 import { ExternalOrchestrationMonitorComponent } from "../modes/components/external-orchestration-monitor";
+import { MinimizerGainOverlayComponent } from "../modes/components/minimizer-gain-overlay";
 import type { SkillsSkillToggle, SkillsSourceToggle } from "../modes/components/skills-overlay";
 import { SkillsOverlayComponent } from "../modes/components/skills-overlay";
 import type { InteractiveModeContext } from "../modes/types";
@@ -121,11 +118,9 @@ async function switchProfileRuntime(name: string | undefined, runtime: SlashComm
 		await runtime.notifyConfigChanged?.();
 		return `Active profile: ${active ?? DEFAULT_MODEL_PROFILE_NAME}. Current model unchanged; profile has no default model role.`;
 	}
-	const availableModels = await resolveAllowedModels(
-		runtime.session.modelRegistry,
-		runtime.settings,
-		{ usageOrder: runtime.settings.getStorage()?.getModelUsageOrder() },
-	);
+	const availableModels = await resolveAllowedModels(runtime.session.modelRegistry, runtime.settings, {
+		usageOrder: runtime.settings.getStorage()?.getModelUsageOrder(),
+	});
 	const resolved = resolveModelRoleValue(defaultRole, availableModels, {
 		settings: runtime.settings,
 		matchPreferences: { usageOrder: runtime.settings.getStorage()?.getModelUsageOrder() },
@@ -234,52 +229,88 @@ type GainSlashRow = {
 };
 
 async function buildGainSlashReport(input: { cwd: string; all: boolean; days?: number }): Promise<string> {
-	const days = input.days ?? 30;
-	const cwd = input.all ? undefined : await resolveMinimizerGainCwd(input.cwd);
-	const records = await readMinimizerGain({ sinceDays: days, cwd });
-	const summary = summarizeMinimizerGain(records);
-	const missed = summarizeMissedMinimizerGain(records);
+	const context = await loadMinimizerGainContext(input);
+	const lines = buildGainReportLines(context);
+	lines.push("", `Path: ${shortenPath(context.path)}`);
+	return lines.join("\n");
+}
+
+async function showGainOverlay(runtime: TuiSlashCommandRuntime, all: boolean): Promise<void> {
+	const context = await loadMinimizerGainContext({ cwd: runtime.ctx.sessionManager.getCwd(), all });
+	runtime.ctx.editor.setText("");
+	void runtime.ctx
+		.showHookCustom<void>(
+			async (tui, _theme, _keybindings, done) =>
+				new MinimizerGainOverlayComponent(
+					context,
+					() => tui.requestRender(),
+					() => done(undefined),
+				),
+			{ overlay: true },
+		)
+		.catch(error => {
+			runtime.ctx.showError(`Gain overlay failed: ${error instanceof Error ? error.message : String(error)}`);
+		});
+}
+function buildGainReportLines(context: MinimizerGainContext): string[] {
 	const lines = [
-		input.all
-			? `Minimizer savings across all repos (${days}d)`
-			: `Minimizer savings for ${shortenPath(cwd ?? input.cwd)} (${days}d)`,
-		`Commands: ${formatNumber(summary.commands)}`,
-		`Saved Bytes: ${formatNumber(summary.savedBytes)}`,
-		`${formatTokensSavedLabel(summary.usesEstimatedTokensSaved)}: ${formatNumber(summary.estimatedTokensSaved)}`,
+		context.all
+			? `Minimizer savings across all repos (${context.days}d)`
+			: `Minimizer savings for ${shortenPath(context.cwd ?? context.path)} (${context.days}d)`,
+		`Commands: ${formatNumber(context.summary.commands)}`,
+		`Saved Bytes: ${formatNumber(context.summary.savedBytes)}`,
+		`${formatTokensSavedLabel(context.summary.usesEstimatedTokensSaved)}: ${formatNumber(context.summary.estimatedTokensSaved)}`,
+		"",
+		"Gain:",
 	];
-
-	if (summary.byFilter.length > 0) {
-		lines.push("", "Top filters:");
-		pushGainRows(lines, summary.byFilter, row => row.filter);
+	if (context.summary.byFilter.length > 0) {
+		lines.push("Top filters:");
+		pushGainRows(lines, context.summary.byFilter, row => row.filter, 5);
 	}
-
-	if (summary.byCommand.length > 0) {
+	if (context.summary.byCommand.length > 0) {
 		lines.push("", "Top commands:");
-		pushGainRows(lines, summary.byCommand, row => row.command);
+		pushGainRows(lines, context.summary.byCommand, row => row.command, 5);
 	}
-
-	if (input.all && summary.byCwd.length > 0) {
+	if (context.all && context.summary.byCwd.length > 0) {
 		lines.push("", "Repositories:");
-		pushGainRows(lines, summary.byCwd, row => shortenPath(row.cwd));
+		pushGainRows(lines, context.summary.byCwd, row => shortenPath(row.cwd), 5);
 	}
-
-	if (summary.commands === 0) {
+	if (context.summary.commands === 0) {
 		lines.push("", "No positive native minimizer savings recorded for this scope yet.");
-		const missedCommands = missed.commands.reduce((total, row) => total + row.commands, 0);
+		const missedCommands = context.missed.commands.reduce((total, row) => total + row.commands, 0);
 		if (missedCommands > 0) {
 			lines.push(`Missed runs: ${formatNumber(missedCommands)} (use \`omp gain --missed\`.)`);
 		}
 	}
-	lines.push("", `Path: ${shortenPath(getMinimizerGainPath())}`);
-	return lines.join("\n");
+	lines.push("", "Missed:");
+	if (context.missed.commands.length === 0) {
+		lines.push("  No unminimized shell output recorded for this scope yet.");
+	} else {
+		for (const row of context.missed.commands.slice(0, 8)) {
+			lines.push(
+				`  ${row.command}: ${formatNumber(row.inputBytes)} bytes total, ${formatNumber(row.avgInputBytes)} avg, ${formatNumber(row.commands)} cmds, exit=${formatExitCodes(row.exitCodes)}`,
+			);
+		}
+	}
+	return lines;
 }
 
-function pushGainRows<T extends GainSlashRow>(lines: string[], rows: T[], label: (row: T) => string): void {
-	for (const row of rows.slice(0, 10)) {
+function pushGainRows<T extends GainSlashRow>(
+	lines: string[],
+	rows: T[],
+	label: (row: T) => string,
+	limit: number,
+): void {
+	for (const row of rows.slice(0, limit)) {
 		lines.push(
 			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}`,
 		);
 	}
+}
+
+function formatExitCodes(exitCodes: Array<number | null>): string {
+	if (exitCodes.length === 0) return "-";
+	return exitCodes.map(code => (code === null ? "null" : String(code))).join(",");
 }
 
 function formatTokensSavedLabel(usesEstimatedTokensSaved: boolean): string {
@@ -436,11 +467,16 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 			runtime.ctx.editor.setText("");
 		},
 	},
+
 	{
 		name: "gain",
 		description: "Show native minimizer savings for current repo",
 		handle: async (_command, runtime) => {
 			await runtime.output(await buildGainSlashReport({ cwd: runtime.cwd, all: false }));
+			return commandConsumed();
+		},
+		handleTui: async (_command, runtime) => {
+			await showGainOverlay(runtime, false);
 			return commandConsumed();
 		},
 	},
@@ -449,6 +485,10 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		description: "Show native minimizer savings across all repos",
 		handle: async (_command, runtime) => {
 			await runtime.output(await buildGainSlashReport({ cwd: runtime.cwd, all: true }));
+			return commandConsumed();
+		},
+		handleTui: async (_command, runtime) => {
+			await showGainOverlay(runtime, true);
 			return commandConsumed();
 		},
 	},
@@ -616,7 +656,11 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		subcommands: [
 			{ name: "list", description: "List profiles" },
 			{ name: "show", description: "Show active profile settings" },
-			{ name: "create", description: "Create profile from current model settings", usage: "<name> [--no-activate] [--preset <openrouter>]" },
+			{
+				name: "create",
+				description: "Create profile from current model settings",
+				usage: "<name> [--no-activate] [--preset <openrouter>]",
+			},
 			{ name: "use", description: "Switch active profile", usage: "<name|default>" },
 		],
 		handle: async (command, runtime) => {

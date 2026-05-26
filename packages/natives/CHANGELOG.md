@@ -5,6 +5,10 @@
 ### Added
 
 - Added `applyShellMinimizer()` so callers can reuse native shell-output minimization for already-captured partial output, including timeout paths.
+- Added native minimizer reason-only results so callers can distinguish pass-through causes from rewritten output without creating raw-output artifacts.
+
+### Changed
+- Changed native shell minimization to allow safe simple `&&`/`;` chains through the minimizer while keeping pipes, `||`, command substitutions, async/background jobs, and other compound syntax bypassed.
 
 ## [15.0.2] - 2026-05-15
 
