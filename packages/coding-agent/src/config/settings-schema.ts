@@ -581,6 +581,17 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"tui.hyperlinks": {
+		type: "enum",
+		values: ["auto", "off", "always"],
+		default: "auto",
+		ui: {
+			tab: "appearance",
+			label: "Terminal Hyperlinks",
+			description: "Render file paths as OSC 8 terminal hyperlinks when supported",
+		},
+	},
+
 	"images.autoResize": {
 		type: "boolean",
 		default: true,
@@ -1580,7 +1591,7 @@ export const SETTINGS_SCHEMA = {
 		ui: {
 			tab: "editing",
 			label: "Edit Mode",
-			description: "Select the edit tool variant (replace, patch, hashline, vim, or apply_patch)",
+			description: "Select the edit tool variant (replace, patch, hashline, or apply_patch)",
 		},
 	},
 
@@ -2392,10 +2403,10 @@ export const SETTINGS_SCHEMA = {
 		ui: {
 			tab: "tasks",
 			label: "Enable LSP in subagents",
-			description: "Allow subagent sessions to load the lsp tool and related integrations when the parent session also has LSP enabled.",
+			description:
+				"Allow subagent sessions to load the lsp tool and related integrations when the parent session also has LSP enabled.",
 		},
 	},
-
 
 	"task.simple": {
 		type: "enum",

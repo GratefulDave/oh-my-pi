@@ -5,10 +5,12 @@ import type { Component } from "@oh-my-pi/pi-tui";
 import { Text } from "@oh-my-pi/pi-tui";
 import { prompt, untilAborted } from "@oh-my-pi/pi-utils";
 import * as z from "zod/v4";
+import { getFileReadCache } from "../edit/file-read-cache";
 import type { RenderResultOptions } from "../extensibility/custom-tools/types";
+import { computeFileHash, formatHashlineHeader } from "../hashline/hash";
 import type { Theme } from "../modes/theme/theme";
 import astGrepDescription from "../prompts/tools/ast-grep.md" with { type: "text" };
-import { Ellipsis, renderStatusLine, renderTreeList, truncateToWidth } from "../tui";
+import { Ellipsis, fileHyperlink, renderStatusLine, renderTreeList, truncateToWidth } from "../tui";
 import { resolveFileDisplayMode } from "../utils/file-display-mode";
 import type { ToolSession } from ".";
 import { createFileRecorder, formatResultPath } from "./file-recorder";
@@ -32,33 +34,18 @@ import {
 import { ToolError } from "./tool-errors";
 import { toolResult } from "./tool-result";
 
-const astGrepSchema = z
-	.object({
-		pat: z.string().describe("ast pattern").optional(),
-		rule: z.string().describe("ast-grep YAML rule").optional(),
-		paths: z
-			.array(z.string().describe("file, directory, glob, or internal URL to search"))
-			.min(1)
-			.describe("files, directories, globs, or internal URLs to search"),
-		skip: z.number().default(0).describe("matches to skip").optional(),
-	})
-	.superRefine((params, ctx) => {
-		const hasPat = typeof params.pat === "string" && params.pat.trim().length > 0;
-		const hasRule = typeof params.rule === "string" && params.rule.trim().length > 0;
-		if (hasPat === hasRule) {
-			ctx.addIssue({
-				code: "custom",
-				message: "Provide exactly one of `pat` or `rule`",
-				path: hasPat ? ["rule"] : ["pat"],
-			});
-		}
-	});
-
-type AstGrepSearchMode = { patterns: string[]; rule?: never } | { patterns?: never; rule: string };
+const astGrepSchema = z.object({
+	pat: z.string().describe("ast pattern"),
+	paths: z
+		.array(z.string().describe("file, directory, glob, or internal URL to search"))
+		.min(1)
+		.describe("files, directories, globs, or internal URLs to search"),
+	skip: z.number().default(0).describe("matches to skip").optional(),
+});
 
 async function runMultiTargetAstGrep(
 	targets: Array<{ basePath: string; glob?: string }>,
-	options: AstGrepSearchMode & { commonBasePath: string; skip: number; limit: number; signal?: AbortSignal },
+	options: { patterns: string[]; commonBasePath: string; skip: number; limit: number; signal?: AbortSignal },
 ): Promise<{
 	matches: AstFindMatch[];
 	totalMatches: number;
@@ -74,7 +61,7 @@ async function runMultiTargetAstGrep(
 	let limitReached = false;
 	for (const target of targets) {
 		const targetResult = await astGrep({
-			...(options.patterns ? { patterns: options.patterns } : { rule: options.rule }),
+			patterns: options.patterns,
 			path: target.basePath,
 			glob: target.glob,
 			offset: 0,
@@ -128,6 +115,9 @@ export interface AstGrepToolDetails {
 	/** Pre-formatted text for the user-visible TUI render. Mirrors `result.text` lines but uses
 	 * a `│` gutter and `*` to mark match lines. The TUI uses this directly so it never parses model-facing text. */
 	displayContent?: string;
+	/** Absolute base directory used during search. Used by the renderer to resolve
+	 * display-relative paths to absolute paths for OSC 8 hyperlinks. */
+	searchPath?: string;
 }
 
 export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolDetails> {
@@ -151,14 +141,11 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 		_context?: AgentToolContext,
 	): Promise<AgentToolResult<AstGrepToolDetails>> {
 		return untilAborted(signal, async () => {
-			const hasPat = typeof params.pat === "string" && params.pat.trim().length > 0;
-			const hasRule = typeof params.rule === "string" && params.rule.trim().length > 0;
-			if (hasPat === hasRule) {
-				throw new ToolError("Provide exactly one of `pat` or `rule`");
+			const pattern = params.pat.trim();
+			if (pattern.length === 0) {
+				throw new ToolError("`pat` must be a non-empty pattern");
 			}
-			const searchMode: AstGrepSearchMode = hasPat
-				? { patterns: [params.pat!.trim()] }
-				: { rule: params.rule!.trim() };
+			const patterns = [pattern];
 			const skip = params.skip === undefined ? 0 : Math.floor(params.skip);
 			if (!Number.isFinite(skip) || skip < 0) {
 				throw new ToolError("skip must be a non-negative number");
@@ -173,14 +160,14 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 			const DEFAULT_AST_LIMIT = 50;
 			const result = multiTargets
 				? await runMultiTargetAstGrep(multiTargets, {
-						...searchMode,
+						patterns,
 						commonBasePath: resolvedSearchPath,
 						skip,
 						limit: DEFAULT_AST_LIMIT,
 						signal,
 					})
 				: await astGrep({
-						...searchMode,
+						patterns,
 						path: resolvedSearchPath,
 						glob: globFilter,
 						offset: skip,
@@ -215,6 +202,7 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 				limitReached: result.limitReached,
 				...(cappedParseErrors.length > 0 ? { parseErrors: cappedParseErrors, parseErrorsTotal } : {}),
 				scopePath,
+				searchPath: resolvedSearchPath,
 				files: fileList,
 				fileMatches: [],
 			};
@@ -230,25 +218,43 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 			}
 
 			const useHashLines = resolveFileDisplayMode(this.session).hashLines;
+			const hashContexts = new Map<string, { absolutePath: string; fileHash: string }>();
+			if (useHashLines) {
+				for (const relativePath of fileList) {
+					const absolutePath = path.resolve(this.session.cwd, relativePath);
+					try {
+						const fullText = await Bun.file(absolutePath).text();
+						const fileHash = computeFileHash(fullText);
+						hashContexts.set(relativePath, { absolutePath, fileHash });
+					} catch {
+						// Best-effort: if a file disappears between ast-grep and rendering, emit plain line output.
+					}
+				}
+			}
 			const outputLines: string[] = [];
 			const displayLines: string[] = [];
 			const renderMatchesForFile = (relativePath: string): { model: string[]; display: string[] } => {
 				const modelOut: string[] = [];
 				const displayOut: string[] = [];
 				const fileMatches = matchesByFile.get(relativePath) ?? [];
+				const hashContext = hashContexts.get(relativePath);
 				const lineNumberWidth = fileMatches.reduce((width, match) => {
 					const lineCount = match.text.split("\n").length;
 					const endLine = match.startLine + lineCount - 1;
 					return Math.max(width, String(match.startLine).length, String(endLine).length);
 				}, 0);
+				const cacheEntries: Array<readonly [number, string]> = [];
 				for (const match of fileMatches) {
 					const matchLines = match.text.split("\n");
 					for (let index = 0; index < matchLines.length; index++) {
 						const lineNumber = match.startLine + index;
 						const isMatch = index === 0;
 						const line = matchLines[index] ?? "";
-						modelOut.push(formatMatchLine(lineNumber, line, isMatch, { useHashLines }));
+						modelOut.push(
+							formatMatchLine(lineNumber, line, isMatch, { useHashLines: hashContext !== undefined }),
+						);
 						displayOut.push(formatCodeFrameLine(isMatch ? "*" : " ", lineNumber, line, lineNumberWidth));
+						cacheEntries.push([lineNumber, line] as const);
 					}
 					if (match.metaVariables && Object.keys(match.metaVariables).length > 0) {
 						const serializedMeta = Object.entries(match.metaVariables)
@@ -260,19 +266,39 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 					}
 					fileMatchCounts.set(relativePath, (fileMatchCounts.get(relativePath) ?? 0) + 1);
 				}
+				if (hashContext && cacheEntries.length > 0) {
+					getFileReadCache(this.session).recordSparse(hashContext.absolutePath, cacheEntries, {
+						fileHash: hashContext.fileHash,
+					});
+				}
 				return { model: modelOut, display: displayOut };
 			};
 
 			if (isDirectory) {
 				const grouped = formatGroupedFiles(fileList, relativePath => {
 					const rendered = renderMatchesForFile(relativePath);
-					return { modelLines: rendered.model, displayLines: rendered.display };
+					const hashContext = hashContexts.get(relativePath);
+					return {
+						modelLines: rendered.model,
+						displayLines: rendered.display,
+						headerSuffix: hashContext ? `#${hashContext.fileHash}` : "",
+						skip: rendered.model.length === 0,
+					};
 				});
 				outputLines.push(...grouped.model);
 				displayLines.push(...grouped.display);
 			} else {
 				for (const relativePath of fileList) {
 					const rendered = renderMatchesForFile(relativePath);
+					if (rendered.model.length === 0) continue;
+					if (outputLines.length > 0) {
+						outputLines.push("");
+						displayLines.push("");
+					}
+					const hashContext = hashContexts.get(relativePath);
+					if (hashContext) {
+						outputLines.push(formatHashlineHeader(relativePath, hashContext.fileHash));
+					}
 					outputLines.push(...rendered.model);
 					displayLines.push(...rendered.display);
 				}
@@ -304,7 +330,6 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 
 interface AstGrepRenderArgs {
 	pat?: string;
-	rule?: string;
 	paths?: string[];
 	skip?: number;
 }
@@ -317,9 +342,8 @@ export const astGrepToolRenderer = {
 		const meta: string[] = [];
 		if (args.paths?.length) meta.push(`in ${args.paths.join(", ")}`);
 		if (args.skip !== undefined && args.skip > 0) meta.push(`skip:${args.skip}`);
-		if (args.rule) meta.push("rule");
 
-		const description = args.pat ?? (args.rule ? "YAML rule" : "?");
+		const description = args.pat ?? "?";
 		const text = renderStatusLine({ icon: "pending", title: "AST Grep", description, meta }, uiTheme);
 		return new Text(text, 0, 0);
 	},
@@ -343,7 +367,7 @@ export const astGrepToolRenderer = {
 		const limitReached = details?.limitReached ?? false;
 
 		if (matchCount === 0) {
-			const description = args?.pat ?? (args?.rule ? "YAML rule" : undefined);
+			const description = args?.pat;
 			const meta = ["0 matches"];
 			if (details?.scopePath) meta.push(`in ${details.scopePath}`);
 			if (filesSearched > 0) meta.push(`searched ${filesSearched}`);
@@ -361,7 +385,7 @@ export const astGrepToolRenderer = {
 		if (details?.scopePath) meta.push(`in ${details.scopePath}`);
 		meta.push(`searched ${filesSearched}`);
 		if (limitReached) meta.push(uiTheme.fg("warning", "limit reached"));
-		const description = args?.pat ?? (args?.rule ? "YAML rule" : undefined);
+		const description = args?.pat;
 		const header = renderStatusLine(
 			{ icon: limitReached ? "warning" : "success", title: "AST Grep", description, meta },
 			uiTheme,
@@ -386,6 +410,7 @@ export const astGrepToolRenderer = {
 		return createCachedComponent(
 			() => options.expanded,
 			width => {
+				const searchBase = details?.searchPath;
 				const matchLines = renderTreeList(
 					{
 						items: matchGroups,
@@ -393,13 +418,41 @@ export const astGrepToolRenderer = {
 						maxCollapsed: matchGroups.length,
 						maxCollapsedLines: COLLAPSED_MATCH_LIMIT,
 						itemType: "match",
-						renderItem: group =>
-							group.map(line => {
-								if (line.startsWith("## ")) return uiTheme.fg("dim", line);
-								if (line.startsWith("# ")) return uiTheme.fg("accent", line);
+						renderItem: group => {
+							let contextDir = searchBase ?? "";
+							return group.map(line => {
+								if (line.startsWith("## ")) {
+									const fileName = line
+										.slice(3)
+										.trimEnd()
+										.replace(/\s+\([^)]*\)\s*$/, "")
+										.replace(/#[0-9a-f]+$/, "");
+									const absPath = contextDir && fileName ? path.join(contextDir, fileName) : undefined;
+									const styled = uiTheme.fg("dim", line);
+									return absPath ? fileHyperlink(absPath, styled) : styled;
+								}
+								if (line.startsWith("# ")) {
+									const raw = line
+										.slice(2)
+										.trimEnd()
+										.replace(/\s+\([^)]*\)\s*$/, "");
+									const isDirectory = raw.endsWith("/");
+									const name = isDirectory ? raw.replace(/\/$/, "") : raw.replace(/#[0-9a-f]+$/, "");
+									if (isDirectory) {
+										if (searchBase) {
+											contextDir = name === "." ? searchBase : path.join(searchBase, name);
+										}
+										return uiTheme.fg("accent", line);
+									}
+									// Root-level file (single # without trailing slash) from formatGroupedFiles.
+									const absPath = searchBase && name ? path.join(searchBase, name) : undefined;
+									const styled = uiTheme.fg("accent", line);
+									return absPath ? fileHyperlink(absPath, styled) : styled;
+								}
 								if (line.startsWith("  meta:")) return uiTheme.fg("dim", line);
 								return uiTheme.fg("toolOutput", line);
-							}),
+							});
+						},
 					},
 					uiTheme,
 				);

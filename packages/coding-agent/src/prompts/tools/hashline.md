@@ -1,149 +1,109 @@
 Your patch language is a compact, line-anchored edit format.
 
-A patch contains one or more file sections. The first non-blank line of every edit section MUST be `@@ PATH`.
-Operations reference lines in the file by their line number and hash, called "Anchors", e.g. `5th`, `123ab`.
-You MUST copy them verbatim from the latest output for the file you're editing.
+A patch contains one or more file sections. Each anchored section starts with `¶PATH#HASH`, copied verbatim from the latest `read`/`search` output. `HASH` is a 4-hex file hash; `¶PATH` without `#HASH` is allowed only for new-file / `BOF` / `EOF` boundary inserts.
 
-Purely textual format. The tool has NO awareness of language, indentation, brackets, fences, or table widths. You MUST emit valid syntax in replacements/insertions.
+Operations reference lines by bare line number (`5`, `123`). Payload text is verbatim — NEVER escape unicode. The tool has NO awareness of language, indentation, brackets, fences, or table widths. Emit valid syntax in replacements/insertions.
 
 <ops>
-@@ PATH          header: subsequent ops apply to PATH
-Each op line is ONE of:
-+ ANCHOR         insert lines AFTER  the anchored line (or EOF); payload follows as `{{hsep}}TEXT` lines
-< ANCHOR         insert lines BEFORE the anchored line (or BOF); payload follows as `{{hsep}}TEXT` lines
-- A..B           delete the line range (inclusive).
-= A..B           replace the range with payload `{{hsep}}TEXT` lines, or with one blank line if no payload follows.
+¶PATH#HASH     header: subsequent anchored ops apply to PATH at file hash HASH
+¶PATH          unbound header: only BOF/EOF boundary inserts
+LINE↑PAYLOAD   insert ABOVE the anchored line (or BOF)
+LINE↓PAYLOAD   insert BELOW the anchored line (or EOF)
+A-B:PAYLOAD    replace the inclusive range A..B with PAYLOAD
+A:PAYLOAD      shorthand for A-A:PAYLOAD
+A-B!           delete the inclusive range A..B (payload forbidden)
+A!             shorthand for A-A!
 </ops>
 
-<format-reminder>
-Op lines carry no content — payload goes on the next line.
-
-WRONG: + 5pg| some code
-WRONG: {{hsep}} some code
-RIGHT: + 5pg
-{{hsep}}some code
-
-A single `+`/`<`/`=` op accepts MANY `{{hsep}}` payload lines. To insert N consecutive lines, write ONE op followed by N payload lines — NEVER N ops with one payload each.
-
-WRONG (one op per inserted line, with fabricated anchors):
-  + 5pg
-  {{hsep}}first new line
-  + 6xx    ← FABRICATED
-  {{hsep}}second new line
-
-RIGHT (one op, many payload lines):
-  + 5pg
-  {{hsep}}first new line
-  {{hsep}}second new line
-</format-reminder>
+<payload>
+- The first payload line is whatever follows the sigil on the op line. Additional payload lines follow on the next lines and append after the first.
+- An empty inline IS an empty first line. So bare `A↓` / `A↑` insert one blank line; bare `A:` / `A-B:` replace with one blank line. `A↓\nfoo` inserts blank-then-`foo`, NOT just `foo`.
+- Payload ends at the next op, next `¶PATH`, envelope marker, or EOF. Blank lines immediately before a next op or `¶PATH` are dropped; blank lines between content lines are preserved.
+</payload>
 
 <rules>
-- Every payload line MUST start with `{{hsep}}` immediately followed by payload text. Do NOT add a readability space after `{{hsep}}`.
-- Every character after `{{hsep}}` is file content. If the target line intentionally starts with one space, write exactly one space after `{{hsep}}`; otherwise write none.
-- Payload text is verbatim — NEVER escape unicode.
-- **Payload is only what's NEW relative to your range:**
-  - `=` replaces inside; NEVER include lines outside.
-  - `+`/`<` adds at the anchor; NEVER repeat line A or neighbors.
-  - Payload matching nearby content duplicates — drop it or widen.
-- **Pick a self-contained unit first.** Touching a multiline construct? Widen to the whole thing.
-- Then smallest op: add → `+`/`<`; delete → `-`; `=` ONLY when modifying inside.
+- The sigil tells where content lands: `↑` above, `↓` below, `:` replaces, `!` deletes.
+- **Payload is only what's NEW relative to your range.** `:` replaces inside; `↑`/`↓` add at anchor. NEVER repeat the anchor line or neighbors — that duplicates them.
+- **Pick a self-contained unit.** Touching a multiline construct (return, array, brace block, JSX element)? Widen the range to span it. Don't bisect.
+- Smallest op wins: add with `↑`/`↓`; replace with `:`; delete with `!`.
+- Anchors reference the file as last read. ONE patch, ONE coordinate space — later ops still use original line numbers.
 </rules>
-
-<brace-shapes>
-When braces bound your edit, you SHOULD prefer these shapes:
-- **Whole block**: range spans `{` through matching `}`.
-- **Signature only**: one-line `=` on the opener; body untouched.
-- **Insert inside**: anchor on `{` or last interior line; NEVER repeat the braces.
-- **End on `}`**: only when that `}` is part of the change. Otherwise extend or stop earlier.
-</brace-shapes>
 
 <common-failures>
 - **NEVER replay past your range.** Stop before B+1; extend B if it must go.
-- **NEVER duplicate chunks inside one payload.** Caught re-emitting? Rewrite.
-- **Anchor only inside the visible region.** B+1 truncated? Re-`read` first.
-- **You SHOULD prefer the narrowest self-contained edit.** Small `+`/`-` beats wide `=`.
-- **Anchors reference the file as last read.** NEVER shift for prior ops.
-- **One `+`/`<` op per block, NOT per line.** N lines = ONE op, N payloads. Collapse adjacent ops.
-- **NEVER fabricate anchor hashes.** Missing? Re-`read`.
+- **NEVER duplicate chunks inside one payload.**
+- **Read lines look like replace ops.** `84:content` already means "make line 84 equal to content" — don't echo a context line before it.
+- **NEVER fabricate file hashes.** Missing? Re-`read`.
+- **`A!` deletes silently.** Deleting a line that closes/opens a block (`}`, `} else {`, `})`, `*/`) breaks structure with no parse error.
 </common-failures>
 
 <case file="mod.ts">
-{{hline 1 "const TITLE = \"Mr\";"}}
-{{hline 2 "export function greet(name) {"}}
-{{hline 3 "\treturn ["}}
-{{hline 4 "\t\tTITLE,"}}
-{{hline 5 "\t\tname?.trim() || \"guest\","}}
-{{hline 6 "\t].join(\" \");"}}
+¶mod.ts#1a2b
+{{hline 1 'const TITLE = "Mr";'}}
+{{hline 2 'export function greet(name) {'}}
+{{hline 3 '	return ['}}
+{{hline 4 '		TITLE,'}}
+{{hline 5 '		name?.trim() || "guest",'}}
+{{hline 6 '	].join(" ");'}}
 {{hline 7 "}"}}
 </case>
 
 <examples>
-# Replace one line (the payload must re-emit the original indentation)
-@@ mod.ts
-= {{hrefr 1}}..{{hrefr 1}}
-{{hsep}}const TITLE = "Mrs";
+# Replace one line (inline payload preserves original indentation)
+¶mod.ts#1a2b
+{{hrefr 1}}:const TITLE = "Mrs";
 
-# Replace a full multiline statement (widen to a self-contained boundary)
-@@ mod.ts
-= {{hrefr 3}}..{{hrefr 6}}
-{{hsep}}	return [
-{{hsep}}		"Mrs",
-{{hsep}}		name?.trim() || "guest",
-{{hsep}}	].join(" ");
+# Replace a multiline statement — first line inline, rest below
+¶mod.ts#1a2b
+{{hrefr 3}}-{{hrefr 6}}:	return [
+		"Mrs",
+		name?.trim() || "guest",
+	].join(" ");
 
-# Insert AFTER/BEFORE a line
-@@ mod.ts
-+ {{hrefr 4}}
-{{hsep}}		"Dr",
-< {{hrefr 5}}
-{{hsep}}		"Dr",
+# Insert ABOVE / BELOW a line
+¶mod.ts#1a2b
+{{hrefr 4}}↓		"Dr",
+{{hrefr 5}}↑		"Dr",
 
-# Append to file
-@@ mod.ts
-+ EOF
-{{hsep}}export const done = true;
+# Delete one line / blank a line / insert a blank line
+¶mod.ts#1a2b
+{{hrefr 5}}!
+{{hrefr 6}}:
+{{hrefr 7}}↑
 
-# Delete a line
-@@ mod.ts
-- {{hrefr 5}}..{{hrefr 5}}
+# Create a file / append to one (hash optional for boundary-only inserts)
+¶new.ts
+BOF↓export const done = true;
+¶mod.ts
+EOF↓export const done = true;
 
-# Blank a line (replace with LF)
-@@ mod.ts
-= {{hrefr 5}}..{{hrefr 5}}
+# Multi-file patch
+¶src/a.ts#1a2b
+12:const enabled = true;
+¶src/b.ts#3c4d
+20!
 </examples>
 
 <anti-pattern>
 # WRONG — replaces 2 lines just to add one.
-@@ mod.ts
-= {{hrefr 1}}..{{hrefr 2}}
-{{hsep}}const TITLE = "Mr";
-{{hsep}}const DEBUG = false;
-{{hsep}}export function greet(name) {
-# RIGHT — same effect, one-line insert
-@@ mod.ts
-+ {{hrefr 1}}
-{{hsep}}const DEBUG = false;
+¶mod.ts#1a2b
+{{hrefr 1}}-{{hrefr 2}}:const TITLE = "Mr";
+const DEBUG = false;
+export function greet(name) {
 
-# WRONG — replace from the middle of a larger statement (error-prone)
-@@ mod.ts
-= {{hrefr 4}}..{{hrefr 5}}
-{{hsep}}		"Dr",
-{{hsep}}		name?.trim() || "guest",
+# RIGHT — one-line insert
+¶mod.ts#1a2b
+{{hrefr 1}}↓const DEBUG = false;
+
+# WRONG — bisects a multiline statement
+¶mod.ts#1a2b
+{{hrefr 4}}-{{hrefr 5}}:		"Dr",
+		name?.trim() || "guest",
+
 # RIGHT — widen to the full statement
-@@ mod.ts
-= {{hrefr 3}}..{{hrefr 6}}
-{{hsep}}	return [
-{{hsep}}		"Dr",
-{{hsep}}		name?.trim() || "guest",
-{{hsep}}	].join(" ");
+¶mod.ts#1a2b
+{{hrefr 3}}-{{hrefr 6}}:	return [
+		"Dr",
+		name?.trim() || "guest",
+	].join(" ");
 </anti-pattern>
-
-<critical>
-- Copy anchors verbatim (line number + 2-char hash); NEVER include the `|TEXT` body.
-- Every payload line MUST start with `{{hsep}}`; raw content is invalid.
-- NEVER write unified diff syntax. Header is `@@ PATH`; ops are `<`/`+`/`-`/`=`.
-- `= A..B` deletes the range; payload is what's written. Edge line matches just outside? Widen, or it duplicates.
-- Multiple ops are cheap. SHOULD prefer two narrow ops over one wide `=`.
-  - Before `= A..B`, mentally delete A..B. Splits an unclosed bracket/brace/string from above, or orphans a closer inside? You're bisecting a construct.
-- NEVER use this tool to reformat code (indentation, whitespace, line wrapping, style). Run the project's formatter instead.
-</critical>

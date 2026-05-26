@@ -536,7 +536,11 @@ export class SessionObserverOverlayComponent extends Container {
 			case "search":
 				return [
 					args.pattern ? `pattern: ${args.pattern}` : "",
-					Array.isArray(args.paths) ? `paths: ${args.paths.join(", ")}` : "",
+					Array.isArray(args.paths)
+						? `paths: ${args.paths.join(", ")}`
+						: typeof args.paths === "string"
+							? `paths: ${args.paths}`
+							: "",
 				]
 					.filter(Boolean)
 					.join(", ");

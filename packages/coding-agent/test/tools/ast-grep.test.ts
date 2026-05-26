@@ -100,8 +100,9 @@ describe("ast_grep parse errors", () => {
 			const text = result.content.find(content => content.type === "text")?.text ?? "";
 			const details = result.details as { matchCount?: number; fileCount?: number } | undefined;
 
-			expect(text).toContain("## root.ts");
-			expect(text).toContain("## child.ts");
+			// Directory mode uses tree-grouped `# dir/` + `## name#hash` headers.
+			expect(text).toMatch(/## root\.ts#[0-9a-f]+/);
+			expect(text).toMatch(/## child\.ts#[0-9a-f]+/);
 			expect(text).not.toContain("ignore.js");
 			expect(text).not.toContain("outside.ts");
 			expect(details?.matchCount).toBe(2);
@@ -109,61 +110,6 @@ describe("ast_grep parse errors", () => {
 		} finally {
 			await fs.rm(tempDir, { recursive: true, force: true });
 		}
-	});
-
-	it("accepts YAML rule mode for relational ast-grep queries", async () => {
-		const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ast-grep-rule-"));
-		try {
-			await Bun.write(
-				path.join(tempDir, "with-await.ts"),
-				"export const values = Promise.all([await loadOne(), loadTwo()]);\n",
-			);
-			await Bun.write(
-				path.join(tempDir, "without-await.ts"),
-				"export const values = Promise.all([loadOne(), loadTwo()]);\n",
-			);
-
-			const tools = await createTools(createTestSession(tempDir));
-			const tool = tools.find(entry => entry.name === "ast_grep");
-			expect(tool).toBeDefined();
-
-			const result = await tool!.execute("ast-grep-rule", {
-				rule: [
-					"id: await-in-promise-all",
-					"language: TypeScript",
-					"rule:",
-					"  pattern: Promise.all($A)",
-					"  has:",
-					"    pattern: await $_",
-					"    stopBy: end",
-				].join("\n"),
-				paths: [tempDir],
-			});
-
-			const text = result.content.find(content => content.type === "text")?.text ?? "";
-			const details = result.details as { matchCount?: number; fileCount?: number } | undefined;
-
-			expect(text).toContain("with-await.ts");
-			expect(text).not.toContain("without-await.ts");
-			expect(details?.matchCount).toBe(1);
-			expect(details?.fileCount).toBe(1);
-		} finally {
-			await fs.rm(tempDir, { recursive: true, force: true });
-		}
-	});
-
-	it("rejects ambiguous pattern and rule parameters", async () => {
-		const tools = await createTools(createTestSession());
-		const tool = tools.find(entry => entry.name === "ast_grep");
-		expect(tool).toBeDefined();
-
-		await expect(
-			tool!.execute("ast-grep-ambiguous", {
-				pat: "console.log($$$)",
-				rule: "id: log\nlanguage: TypeScript\nrule: { pattern: console.log($$$) }",
-				paths: ["."],
-			}),
-		).rejects.toThrow("Provide exactly one");
 	});
 
 	it("parses PlusCal content through the tlaplus language aliases", async () => {

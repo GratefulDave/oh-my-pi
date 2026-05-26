@@ -28,17 +28,17 @@ Append `:<sel>` to `path`. The bare path falls back to the default mode.
 
 - Reading a directory path returns a depth-limited dirent listing.
 {{#if IS_HL_MODE}}
-- Reading a file with an explicit selector returns lines prefixed with `line+hash` anchors: `41th|def alpha():`. The 2-char hash is a content fingerprint that `edit` / `apply_patch` consume — copy it verbatim, NEVER fabricate. The pipe character after the hash is a separator, not part of the file content.
+- Reading a file with an explicit selector emits a file-hash header and numbered lines: `¶src/foo.ts#1a2b` then `41:def alpha():`. Copy the `¶PATH#HASH` header for anchored edits; ops use bare line numbers. NEVER fabricate the hash.
 {{else}}
 {{#if IS_LINE_NUMBER_MODE}}
 - Reading a file with an explicit selector returns lines prefixed with line numbers: `41|def alpha():`.
 {{/if}}
 {{/if}}
-- Parseable code without a selector returns a **structural summary**: declarations kept, large bodies collapsed to `..` (merged brace pair) or `…` (standalone). Summarized output ends with a footer of the form:
+- Parseable code without a selector returns a **structural summary**: declarations kept, large bodies collapsed to `..` (merged brace pair) or `…` (standalone). Summarized output ends with a footer demonstrating the multi-range selector you can use to recover the elided bodies, e.g.:
 
-  `[NN lines across MM elided regions; read <path>:raw or a line range like <path>:1-9999 for verbatim content]`
+  `[NN lines elided; re-read needed ranges, e.g. <path>:5-16,40-80]`
 
-  If the elided body is what you actually need, re-issue the **exact selector the footer names**. NEVER guess what's inside `..` / `…` — those markers carry no content.
+  Re-issue **only the relevant range(s)** using the multi-range selector (e.g. `<path>:5-16,120-200`). NEVER guess what's inside `..` / `…` — those markers carry no content. NEVER re-read the whole file or use `:raw` when targeted ranges suffice.
 
 # Documents & Notebooks
 
@@ -73,9 +73,7 @@ For `.sqlite`, `.sqlite3`, `.db`, `.db3`:
 `skill://<name>`, `agent://<id>`, `artifact://<id>`, `memory://root`, `rule://<name>`, `local://<name>.md`, `mcp://<uri>` resolve transparently and accept the same line selectors as filesystem paths. Use `artifact://<id>` to recover full output that a previous bash/eval/tool result spilled or truncated.
 
 <critical>
-- Exact file inspection or editing? You MUST use `read`: selectors, anchors, internal URIs, archives, SQLite, documents, images, and URLs.
-- File analysis/exploration/summarization/counting/filtering/comparison where exact bytes or edit anchors are unnecessary? If context-mode tools are available, use `ctx_execute_file`, `ctx_execute`, `ctx_batch_execute`, or `ctx_fetch_and_index`.
-- NEVER use shell file/web tools (`cat`, `head`, `tail`, `less`, `more`, `ls`, `tar`, `unzip`, `grep`, `curl`, `wget`) when `read` or a context-mode sandbox applies.
+- You MUST use `read` for every file, directory, archive, and URL inspection. `cat`, `head`, `tail`, `less`, `more`, `ls`, `tar`, `unzip`, `curl`, `wget` are FORBIDDEN — any such bash call is a bug, regardless of how short or convenient it looks.
 - You MUST prefer `read` over a browser/puppeteer tool for URL content; only reach for a browser when `read` cannot deliver reasonable content.
 - You MUST always include `path`. NEVER call `read` with `{}`.
 - For line ranges, append the selector to `path` (`path="src/foo.ts:50-200"`, `path="src/foo.ts:50+150"`). NEVER substitute `sed -n`, `awk NR`, or `head`/`tail` pipelines.

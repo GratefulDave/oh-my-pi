@@ -22,6 +22,7 @@ import {
 	containsRecognizableHashlineOperations,
 	END_PATCH_MARKER,
 	type HashlineInputSection,
+	HashlineTokenizer,
 	splitHashlineInputs,
 } from "../hashline";
 import type { Theme } from "../modes/theme/theme";
@@ -76,29 +77,25 @@ export interface EditStreamingStrategy<Args = unknown> {
 const STREAMING_FALLBACK_LINES = 12;
 const STREAMING_FALLBACK_WIDTH = 80;
 
-function isHashlineHeaderLine(line: string): boolean {
-	const trimmed = line.trimEnd();
-	return trimmed.startsWith("@") && trimmed.length > 1;
-}
-
-function isHashlineEnvelopeMarkerLine(line: string): boolean {
-	const trimmed = line.trimEnd();
-	return trimmed === BEGIN_PATCH_MARKER || trimmed === END_PATCH_MARKER || trimmed === ABORT_MARKER;
-}
+// Streaming-preview classification reuses one tokenizer instance for the
+// stateless predicates and `tokenize`/`tokenizeAll` helpers; instances are
+// cheap, but keeping a single module-level reference matches the rest of
+// the hashline package.
+const HASHLINE_TOKENIZER = new HashlineTokenizer();
 
 function trimHashlineStreamingSyntax(lines: string[]): string[] {
 	let index = lines.findIndex(line => line.trim().length > 0);
 	if (index === -1) return [];
 
-	if (lines[index].trimEnd() === BEGIN_PATCH_MARKER) {
+	if (HASHLINE_TOKENIZER.tokenize(lines[index]).kind === "envelope-begin") {
 		index++;
 		while (index < lines.length && lines[index].trim().length === 0) index++;
 	}
-	if (index < lines.length && isHashlineHeaderLine(lines[index])) {
+	if (index < lines.length && HASHLINE_TOKENIZER.tokenize(lines[index]).kind === "header") {
 		index++;
 	}
 
-	return lines.slice(index).filter(line => !isHashlineEnvelopeMarkerLine(line));
+	return lines.slice(index).filter(line => !HASHLINE_TOKENIZER.isEnvelopeMarker(line));
 }
 
 function renderHashlineInputFallback(input: string, uiTheme: Theme): string {
@@ -358,43 +355,61 @@ function buildApplyPatchNaturalOrderPreviews(input: string): PerFileDiffPreview[
 }
 
 /**
- * Hashline equivalent: emit each section's `~payload` lines as `+added`
- * lines in the order the model typed them. We deliberately omit op headers
- * and removal targets from the streaming preview because their content
- * lives in the file and would require a costly re-apply per tick; the
- * complete unified diff is shown once streaming finishes.
+ * Hashline equivalent: emit each payload line as a `+added` line in the
+ * order the model typed it. We deliberately omit op headers and removal
+ * targets from the streaming preview because their content lives in the file
+ * and would require a costly re-apply per tick; the complete unified diff is
+ * shown once streaming finishes.
  */
 function buildHashlineNaturalOrderPreviews(
 	input: string,
 	defaultPath: string | undefined,
 ): PerFileDiffPreview[] | null {
-	const lines = input.split("\n");
 	const groups = new Map<string, string[]>();
 	let currentPath = defaultPath ?? "";
-	const ensure = (path: string): string[] => {
-		let bucket = groups.get(path);
+	const ensure = (sectionPath: string): string[] => {
+		let bucket = groups.get(sectionPath);
 		if (!bucket) {
 			bucket = [];
-			groups.set(path, bucket);
+			groups.set(sectionPath, bucket);
 		}
 		return bucket;
 	};
-	for (const raw of lines) {
-		if (isHashlineEnvelopeMarkerLine(raw)) continue;
-		if (isHashlineHeaderLine(raw)) {
-			currentPath = raw.trimEnd().slice(1).trim();
-			if (currentPath) ensure(currentPath);
-			continue;
-		}
-		if (raw.startsWith("~")) {
-			ensure(currentPath).push(`+${raw.slice(1)}`);
+
+	// Per-call instance: the streaming preview re-runs each tick with the
+	// cumulative input, and we need the line counter to start at 1. A
+	// dedicated tokenizer keeps the shared HASHLINE_TOKENIZER above free
+	// for stateless predicate use elsewhere in this module.
+	const streamer = new HashlineTokenizer();
+	for (const token of streamer.tokenizeAll(input)) {
+		switch (token.kind) {
+			case "envelope-begin":
+			case "envelope-end":
+			case "abort":
+			case "op-insert":
+			case "op-replace":
+			case "op-delete":
+				continue;
+			case "header":
+				currentPath = token.path;
+				if (currentPath) ensure(currentPath);
+				continue;
+			case "blank":
+				if (!currentPath) continue;
+				ensure(currentPath).push("+");
+				continue;
+			case "payload":
+				if (!currentPath) continue;
+				ensure(currentPath).push(`+${token.text}`);
+				continue;
 		}
 	}
+
 	if (groups.size === 0) return null;
 	const previews: PerFileDiffPreview[] = [];
-	for (const [path, body] of groups) {
+	for (const [sectionPath, body] of groups) {
 		if (body.length === 0) continue;
-		previews.push({ path, diff: body.join("\n") });
+		previews.push({ path: sectionPath, diff: body.join("\n") });
 	}
 	return previews.length > 0 ? previews : null;
 }
@@ -409,7 +424,7 @@ const hashlineStrategy: EditStreamingStrategy<HashlineArgs> = {
 		if (input.length === 0) return null;
 		if (ctx.isStreaming) {
 			// Skip the costly per-tick re-apply and avoid `Diff.structuredPatch`
-			// reordering by showing the model's `~payload` lines in input order.
+			// reordering by showing payload lines in input order.
 			return buildHashlineNaturalOrderPreviews(input, args.path);
 		}
 		ctx.signal.throwIfAborted();
@@ -419,7 +434,7 @@ const hashlineStrategy: EditStreamingStrategy<HashlineArgs> = {
 			sections = splitHashlineInputs(input, { cwd: ctx.cwd, path: args.path });
 		} catch {
 			// Single-section fallback keeps the original error rendering for the
-			// "haven't typed `@@ PATH` yet" case.
+			// "haven't typed `¶ PATH` yet" case.
 			const result = await computeHashlineDiff({ input, path: args.path }, ctx.cwd, {
 				autoDropPureInsertDuplicates: ctx.hashlineAutoDropPureInsertDuplicates,
 			});
@@ -512,27 +527,11 @@ const applyPatchStrategy: EditStreamingStrategy<ApplyPatchArgs> = {
 		return "";
 	},
 };
-
-// Vim streaming preview is handled by the existing vimToolRenderer inside
-// edit/renderer.ts. The strategy here is a no-op so the registry is total.
-const vimStrategy: EditStreamingStrategy<unknown> = {
-	extractCompleteEdits(args) {
-		return args;
-	},
-	async computeDiffPreview() {
-		return null;
-	},
-	renderStreamingFallback() {
-		return "";
-	},
-};
-
 export const EDIT_MODE_STRATEGIES: Record<EditMode, EditStreamingStrategy<unknown>> = {
 	replace: replaceStrategy as EditStreamingStrategy<unknown>,
 	patch: patchStrategy as EditStreamingStrategy<unknown>,
 	hashline: hashlineStrategy as EditStreamingStrategy<unknown>,
 	apply_patch: applyPatchStrategy as EditStreamingStrategy<unknown>,
-	vim: vimStrategy,
 };
 
 export { resolveEditMode };

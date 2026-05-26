@@ -14,6 +14,7 @@
 
 - Split ambiguous orchestration slash commands: `/delegate` now owns external CLI agent spawning (acpx/tmux/cmux); `/orchestrate` is reserved for in-process subagent workflow orchestration.
 - Compressed timed-out `bun run check:*` shell output before adding timeout annotations, preserving package summaries and timeout ambiguity while dropping repeated per-package success noise.
+- Changed hashline editing to the upstream file-level hash format (`¶PATH#HASH`, `LINE:TEXT`) with inline payload syntax and removed the legacy vim edit mode, migrating existing `vim` edit settings to `hashline`.
 
 ### Fixed
 

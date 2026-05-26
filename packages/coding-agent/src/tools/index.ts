@@ -18,12 +18,16 @@ import type { CustomMessage } from "../session/messages";
 import type { ToolChoiceQueue } from "../session/tool-choice-queue";
 import { TaskTool } from "../task";
 import type { AgentOutputManager } from "../task/output-manager";
-import type { DiscoverableTool, DiscoverableToolSearchIndex } from "../tool-discovery/tool-index";
+import type {
+	DiscoverableMCPSearchIndex,
+	DiscoverableMCPTool,
+	DiscoverableTool,
+	DiscoverableToolSearchIndex,
+} from "../tool-discovery/tool-index";
 import type { EventBus } from "../utils/event-bus";
 import { WebSearchTool } from "../web/search";
 import type { WorkspaceTree } from "../workspace-tree";
 import { AskTool } from "./ask";
-import { AstDumpTool } from "./ast-dump";
 import { AstEditTool } from "./ast-edit";
 import { AstGrepTool } from "./ast-grep";
 import { BashTool } from "./bash";
@@ -65,7 +69,6 @@ export * from "../session/streaming-output";
 export * from "../task";
 export * from "../web/search";
 export * from "./ask";
-export * from "./ast-dump";
 export * from "./ast-edit";
 export * from "./ast-grep";
 export * from "./bash";
@@ -93,7 +96,6 @@ export * from "./search";
 export * from "./search-tool-bm25";
 export * from "./ssh";
 export * from "./todo-write";
-export * from "./vim";
 export * from "./write";
 export * from "./yield";
 
@@ -106,7 +108,6 @@ export type ContextFileEntry = {
 	depth?: number;
 };
 
-export type { DiscoverableMCPTool } from "../mcp/discoverable-tool-metadata";
 export type {
 	DiscoverableTool,
 	DiscoverableToolSearchIndex,
@@ -142,12 +143,12 @@ export interface ToolSession {
 	requireYieldTool?: boolean;
 	/** Task recursion depth (0 = top-level, 1 = first child, etc.) */
 	taskDepth?: number;
+	/** Get shared eval executor session ID. Subagents inherit this to share JS/Python state. */
+	getEvalSessionId?: () => string | null;
 	/** Get session file */
 	getSessionFile: () => string | null;
 	/** Get eval kernel owner ID for session-scoped retained-kernel cleanup. */
 	getEvalKernelOwnerId?: () => string | null;
-	/** Get eval session ID for shared JS/Python runtime reuse across parent/subagents. */
-	getEvalSessionId?: () => string | null;
 	/** Reject new eval (python or js) work once session disposal has started. */
 	assertEvalExecutionAllowed?: () => void;
 	/** Track tool-owned eval work so session disposal can await/abort it like direct session eval runs. */
@@ -198,16 +199,12 @@ export interface ToolSession {
 	setTodoPhases?: (phases: TodoPhase[]) => void;
 	/** Whether MCP tool discovery is active for this session. */
 	isMCPDiscoveryEnabled?: () => boolean;
-	/** Get hidden-but-discoverable MCP tools for search_tool_bm25 prompts and fallbacks.
-	 * @deprecated Use getDiscoverableTools with source filter instead. */
-	getDiscoverableMCPTools?: () => import("../mcp/discoverable-tool-metadata").DiscoverableMCPTool[];
-	/** Get the cached discoverable MCP search index for search_tool_bm25 execution.
-	 * @deprecated Use getDiscoverableToolSearchIndex instead. */
-	getDiscoverableMCPSearchIndex?: () => import("../tool-discovery/tool-index").DiscoverableMCPSearchIndex;
+	getDiscoverableMCPTools?: () => DiscoverableMCPTool[];
 	/** Get MCP tools activated by prior search_tool_bm25 calls. */
 	getSelectedMCPToolNames?: () => string[];
 	/** Merge MCP tool selections into the active session tool set. */
 	activateDiscoveredMCPTools?: (toolNames: string[]) => Promise<string[]>;
+	getDiscoverableMCPSearchIndex?: () => DiscoverableMCPSearchIndex;
 	// ── Generic tool discovery (unified — covers built-in + MCP + extension) ──
 	/** Whether any form of tool discovery is active (tools.discoveryMode !== "off" or mcp.discoveryMode). */
 	isToolDiscoveryEnabled?: () => boolean;
@@ -289,7 +286,6 @@ export const BUILTIN_TOOLS: Record<string, ToolFactory> = {
 	bash: s => new BashTool(s),
 	edit: s => new EditTool(s),
 	ast_grep: s => new AstGrepTool(s),
-	ast_dump: s => new AstDumpTool(s),
 	ast_edit: s => new AstEditTool(s),
 	render_mermaid: s => new RenderMermaidTool(s),
 	ask: AskTool.createIf,
@@ -457,7 +453,7 @@ export async function createTools(session: ToolSession, toolNames?: string[]): P
 		if (name === "find") return session.settings.get("find.enabled");
 		if (name === "search") return session.settings.get("search.enabled");
 		if (name === "github") return session.settings.get("github.enabled");
-		if (name === "ast_grep" || name === "ast_dump") return session.settings.get("astGrep.enabled");
+		if (name === "ast_grep") return session.settings.get("astGrep.enabled");
 		if (name === "ast_edit") return session.settings.get("astEdit.enabled");
 		if (name === "render_mermaid") return session.settings.get("renderMermaid.enabled");
 		if (name === "inspect_image") return session.settings.get("inspect_image.enabled");

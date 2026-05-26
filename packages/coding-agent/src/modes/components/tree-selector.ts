@@ -690,7 +690,7 @@ class TreeList implements Component {
 			}
 			case "search": {
 				const pattern = String(args.pattern || "");
-				const paths = Array.isArray(args.paths) ? args.paths.join(", ") : String(args.path || ".");
+				const paths = Array.isArray(args.paths) ? args.paths.join(", ") : String(args.paths || args.path || ".");
 				return `[search: /${pattern}/ in ${shortenPath(paths)}]`;
 			}
 			case "find": {
