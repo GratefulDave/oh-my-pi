@@ -15,6 +15,9 @@
 - Split ambiguous orchestration slash commands: `/delegate` now owns external CLI agent spawning (acpx/tmux/cmux); `/orchestrate` is reserved for in-process subagent workflow orchestration.
 - Compressed timed-out `bun run check:*` shell output before adding timeout annotations, preserving package summaries and timeout ambiguity while dropping repeated per-package success noise.
 
+### Fixed
+
+- Fixed CLI `@file` document conversion so PDFs and office docs now route through Markit before text fallback.
 ## [15.1.9] - 2026-05-21
 
 ### Fixed

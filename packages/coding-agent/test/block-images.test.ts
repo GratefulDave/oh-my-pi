@@ -10,6 +10,33 @@ import { ReadTool } from "@oh-my-pi/pi-coding-agent/tools/read";
 // 1x1 red PNG image as base64 (smallest valid PNG)
 const TINY_PNG_BASE64 =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+function createMinimalPdfBuffer(text: string): Buffer {
+	const escapedText = text.replace(/([\\()])/g, "\\$1");
+	const streamContent = `BT /F1 24 Tf 72 120 Td (${escapedText}) Tj ET\n`;
+	const objects = [
+		"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+		"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+		"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+		"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+		`5 0 obj\n<< /Length ${Buffer.byteLength(streamContent, "ascii")} >>\nstream\n${streamContent}endstream\nendobj\n`,
+	];
+	const header = "%PDF-1.4\n";
+	let offset = Buffer.byteLength(header, "ascii");
+	const offsets = [0];
+	for (const object of objects) {
+		offsets.push(offset);
+		offset += Buffer.byteLength(object, "ascii");
+	}
+	const xref = [
+		"xref\n",
+		`0 ${objects.length + 1}\n`,
+		"0000000000 65535 f \n",
+		...offsets.slice(1).map(objectOffset => `${objectOffset.toString().padStart(10, "0")} 00000 n \n`),
+		`trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\n`,
+		`startxref\n${offset}\n%%EOF\n`,
+	].join("");
+	return Buffer.from([header, ...objects, xref].join(""), "ascii");
+}
 
 function createTestToolSession(cwd: string, settings: Settings = Settings.isolated()): ToolSession {
 	return {
@@ -97,6 +124,17 @@ describe("blockImages setting", () => {
 
 			expect(result.images).toHaveLength(0);
 			expect(result.text).toContain("Hello, world!");
+		});
+		it("should convert supported documents via markit", async () => {
+			const pdfPath = path.join(testDir, "test.pdf");
+			fs.writeFileSync(pdfPath, createMinimalPdfBuffer("Hello PDF"));
+
+			const result = await processFileArguments([pdfPath]);
+
+			expect(result.images).toHaveLength(0);
+			expect(result.text).toContain("Hello PDF");
+			expect(result.text).not.toContain("%PDF");
+			expect(result.text).not.toContain("stream");
 		});
 	});
 });

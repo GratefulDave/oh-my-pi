@@ -1,5 +1,5 @@
 /**
- * Process @file CLI arguments into text content and image attachments
+ * Process @file CLI arguments into text/document content and image attachments
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -8,12 +8,14 @@ import { getProjectDir, isEnoent, readImageMetadata } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
 import { resolveReadPath } from "../tools/path-utils";
 import { formatBytes } from "../tools/render-utils";
+import { convertFileWithMarkit } from "../utils/markit";
 import { formatDimensionNote, resizeImage } from "../utils/image-resize";
 
 // Keep CLI startup responsive and avoid OOM when users pass huge files.
 // If a file exceeds these limits, we include it as a path-only <file/> block.
 const MAX_CLI_TEXT_BYTES = 5 * 1024 * 1024; // 5MB
 const MAX_CLI_IMAGE_BYTES = 25 * 1024 * 1024; // 25MB
+const SUPPORTED_DOCUMENT_EXTENSIONS = new Set([".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".rtf", ".epub"]);
 
 export interface ProcessedFiles {
 	text: string;
@@ -25,7 +27,7 @@ export interface ProcessFileOptions {
 	autoResizeImages?: boolean;
 }
 
-/** Process @file arguments into text content and image attachments */
+/** Process @file arguments into text/document content and image attachments */
 export async function processFileArguments(fileArgs: string[], options?: ProcessFileOptions): Promise<ProcessedFiles> {
 	const autoResizeImages = options?.autoResizeImages ?? true;
 	let text = "";
@@ -49,6 +51,21 @@ export async function processFileArguments(fileArgs: string[], options?: Process
 				chalk.yellow(`Warning: Skipping file contents (too large: ${formatBytes(stat.size)}): ${absolutePath}`),
 			);
 			text += `<file name="${absolutePath}">(skipped: too large, ${formatBytes(stat.size)})</file>\n`;
+			continue;
+		}
+		const extension = path.extname(absolutePath).toLowerCase();
+		if (SUPPORTED_DOCUMENT_EXTENSIONS.has(extension)) {
+			try {
+				const result = await convertFileWithMarkit(absolutePath);
+				if (result.ok) {
+					text += `<file name="${absolutePath}">\n${result.content}\n</file>\n`;
+				} else {
+					text += `<file name="${absolutePath}">[Unreadable document: ${result.error || "conversion failed"}]</file>\n`;
+				}
+			} catch (error: unknown) {
+				const message = error instanceof Error ? error.message : String(error);
+				text += `<file name="${absolutePath}">[Unreadable document: ${message || "conversion failed"}]</file>\n`;
+			}
 			continue;
 		}
 
