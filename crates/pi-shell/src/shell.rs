@@ -63,40 +63,40 @@ impl ShellAbortState {
 
 #[derive(Clone)]
 struct ShellConfig {
-	session_env: Option<HashMap<String, String>>,
+	session_env:   Option<HashMap<String, String>>,
 	snapshot_path: Option<String>,
-	minimizer: Option<minimizer::MinimizerConfig>,
+	minimizer:     Option<minimizer::MinimizerConfig>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ShellOptions {
-	pub session_env: Option<HashMap<String, String>>,
+	pub session_env:   Option<HashMap<String, String>>,
 	pub snapshot_path: Option<String>,
-	pub minimizer: Option<minimizer::MinimizerOptions>,
+	pub minimizer:     Option<minimizer::MinimizerOptions>,
 }
 
 struct ShellRunConfig {
-	command: String,
-	cwd: Option<String>,
-	env: Option<HashMap<String, String>>,
+	command:   String,
+	cwd:       Option<String>,
+	env:       Option<HashMap<String, String>>,
 	minimizer: Option<minimizer::MinimizerConfig>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ShellRunOptions {
-	pub command: String,
-	pub cwd: Option<String>,
-	pub env: Option<HashMap<String, String>>,
+	pub command:    String,
+	pub cwd:        Option<String>,
+	pub env:        Option<HashMap<String, String>>,
 	pub timeout_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MinimizerResult {
-	pub filter: String,
-	pub text: String,
+	pub filter:        String,
+	pub text:          String,
 	pub original_text: String,
-	pub input_bytes: u32,
-	pub output_bytes: u32,
+	pub input_bytes:   u32,
+	pub output_bytes:  u32,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -109,21 +109,21 @@ pub struct ShellRunResult {
 
 #[derive(Debug, Clone, Default)]
 pub struct ShellExecuteOptions {
-	pub command: String,
-	pub cwd: Option<String>,
-	pub env: Option<HashMap<String, String>>,
-	pub session_env: Option<HashMap<String, String>>,
-	pub timeout_ms: Option<u32>,
+	pub command:       String,
+	pub cwd:           Option<String>,
+	pub env:           Option<HashMap<String, String>>,
+	pub session_env:   Option<HashMap<String, String>>,
+	pub timeout_ms:    Option<u32>,
 	pub snapshot_path: Option<String>,
-	pub minimizer: Option<minimizer::MinimizerOptions>,
+	pub minimizer:     Option<minimizer::MinimizerOptions>,
 }
 
 pub type ShellExecuteResult = ShellRunResult;
 
 pub struct Shell {
-	session: Arc<TokioMutex<Option<ShellSessionCore>>>,
+	session:     Arc<TokioMutex<Option<ShellSessionCore>>>,
 	abort_state: ShellAbortState,
-	config: ShellConfig,
+	config:      ShellConfig,
 }
 
 impl Shell {
@@ -157,9 +157,9 @@ impl Shell {
 		mut cancel_token: CancelToken,
 	) -> Result<ShellRunResult> {
 		let run_config = ShellRunConfig {
-			command: options.command,
-			cwd: options.cwd,
-			env: options.env,
+			command:   options.command,
+			cwd:       options.cwd,
+			env:       options.env,
 			minimizer: self.config.minimizer.clone(),
 		};
 		run_shell_session(
@@ -188,9 +188,9 @@ pub async fn execute_shell(
 		.as_ref()
 		.map(minimizer::MinimizerConfig::from_options);
 	let config = ShellConfig {
-		session_env: options.session_env,
+		session_env:   options.session_env,
 		snapshot_path: options.snapshot_path,
-		minimizer: minimizer.clone(),
+		minimizer:     minimizer.clone(),
 	};
 	let run_config =
 		ShellRunConfig { command: options.command, cwd: options.cwd, env: options.env, minimizer };
@@ -220,14 +220,14 @@ pub async fn execute_shell_streams(
 	cancel_token: CancelToken,
 ) -> Result<ShellExecuteResult> {
 	let config = ShellConfig {
-		session_env: options.session_env,
+		session_env:   options.session_env,
 		snapshot_path: options.snapshot_path,
-		minimizer: None,
+		minimizer:     None,
 	};
 	let run_config = ShellRunConfig {
-		command: options.command,
-		cwd: options.cwd,
-		env: options.env,
+		command:   options.command,
+		cwd:       options.cwd,
+		env:       options.env,
 		minimizer: None,
 	};
 	run_shell_oneshot_streams(config, run_config, streams, cancel_token).await
@@ -573,20 +573,25 @@ enum CommandCaptureMode {
 }
 
 struct CommandRunOutput {
-	result: ExecutionResult,
+	result:   ExecutionResult,
 	buffered: Option<BufferedOutput>,
 }
 
 struct ChainCapture {
 	original_text: String,
-	text: String,
-	input_bytes: usize,
-	changed: bool,
+	text:          String,
+	input_bytes:   usize,
+	changed:       bool,
 }
 
 impl ChainCapture {
 	fn new() -> Self {
-		Self { original_text: String::new(), text: String::new(), input_bytes: 0, changed: false }
+		Self {
+			original_text: String::new(),
+			text:          String::new(),
+			input_bytes:   0,
+			changed:       false,
+		}
 	}
 
 	fn push(&mut self, original: &str, original_input_bytes: usize, minimized: &str, changed: bool) {
@@ -809,11 +814,11 @@ async fn run_shell_command_segmented_chain(
 			capture.changed,
 		);
 		MinimizerResult {
-			filter: minimized.filter.to_string(),
-			text: minimized.text,
+			filter:        minimized.filter.to_string(),
+			text:          minimized.text,
 			original_text: minimized.original_text.unwrap_or_default(),
-			input_bytes: u32::try_from(minimized.input_bytes).unwrap_or(u32::MAX),
-			output_bytes: u32::try_from(minimized.output_bytes).unwrap_or(u32::MAX),
+			input_bytes:   u32::try_from(minimized.input_bytes).unwrap_or(u32::MAX),
+			output_bytes:  u32::try_from(minimized.output_bytes).unwrap_or(u32::MAX),
 		}
 	});
 
@@ -1370,9 +1375,9 @@ enum OutputRead {
 }
 
 struct BufferedOutput {
-	text: String,
+	text:        String,
 	input_bytes: usize,
-	exceeded: bool,
+	exceeded:    bool,
 }
 
 async fn read_output(
@@ -1724,7 +1729,7 @@ struct TimeoutCommand {
 	#[arg(required = true)]
 	duration: String,
 	#[arg(required = true, num_args = 1.., trailing_var_arg = true)]
-	command: Vec<String>,
+	command:  Vec<String>,
 }
 
 impl builtins::Command for TimeoutCommand {

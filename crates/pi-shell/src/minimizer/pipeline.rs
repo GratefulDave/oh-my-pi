@@ -33,42 +33,42 @@ use crate::minimizer::primitives;
 pub struct PipelineDef {
 	/// Human-readable one-liner. Not consumed at runtime.
 	#[serde(default)]
-	pub description: Option<String>,
+	pub description:          Option<String>,
 	/// Regex that selects which commands this pipeline claims. Matched against
 	/// the first token of the command (post-wrapper stripping).
-	pub match_command: String,
+	pub match_command:        String,
 	/// Optional regex matched against the detected subcommand. When absent,
 	/// any subcommand is accepted.
 	#[serde(default)]
-	pub match_subcommand: Option<String>,
+	pub match_subcommand:     Option<String>,
 	#[serde(default)]
-	pub strip_ansi: bool,
+	pub strip_ansi:           bool,
 	#[serde(default)]
-	pub replace: Vec<ReplaceDef>,
+	pub replace:              Vec<ReplaceDef>,
 	#[serde(default)]
-	pub match_output: Vec<MatchOutputDef>,
+	pub match_output:         Vec<MatchOutputDef>,
 	#[serde(default)]
 	pub strip_lines_matching: Vec<String>,
 	#[serde(default)]
-	pub keep_lines_matching: Vec<String>,
-	pub truncate_lines_at: Option<usize>,
-	pub head_lines: Option<usize>,
-	pub tail_lines: Option<usize>,
-	pub max_lines: Option<usize>,
-	pub on_empty: Option<String>,
+	pub keep_lines_matching:  Vec<String>,
+	pub truncate_lines_at:    Option<usize>,
+	pub head_lines:           Option<usize>,
+	pub tail_lines:           Option<usize>,
+	pub max_lines:            Option<usize>,
+	pub on_empty:             Option<String>,
 	/// Apply only when the command exit code is in this list. Empty = always.
 	#[serde(default)]
-	pub only_on_exit: Vec<i32>,
+	pub only_on_exit:         Vec<i32>,
 	/// Apply only when the command exit code is NOT in this list. Empty =
 	/// always.
 	#[serde(default)]
-	pub except_on_exit: Vec<i32>,
+	pub except_on_exit:       Vec<i32>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReplaceDef {
-	pub pattern: String,
+	pub pattern:     String,
 	pub replacement: String,
 }
 
@@ -78,7 +78,7 @@ pub struct MatchOutputDef {
 	pub pattern: String,
 	pub message: String,
 	#[serde(default)]
-	pub unless: Option<String>,
+	pub unless:  Option<String>,
 }
 
 /// Inline filter test embedded next to pipeline definitions via
@@ -87,11 +87,11 @@ pub struct MatchOutputDef {
 #[serde(deny_unknown_fields)]
 #[allow(dead_code, reason = "test-only API surface")]
 pub struct PipelineTest {
-	pub name: String,
-	pub input: String,
+	pub name:     String,
+	pub input:    String,
 	pub expected: String,
 	#[serde(default)]
-	pub exit: Option<i32>,
+	pub exit:     Option<i32>,
 }
 
 /// On-disk schema for the builtin / user settings TOML.
@@ -99,16 +99,16 @@ pub struct PipelineTest {
 pub struct PipelineFile {
 	pub schema_version: Option<u32>,
 	#[serde(default)]
-	pub filters: std::collections::BTreeMap<String, PipelineDef>,
+	pub filters:        std::collections::BTreeMap<String, PipelineDef>,
 	#[serde(default)]
-	pub tests: std::collections::BTreeMap<String, Vec<PipelineTest>>,
+	pub tests:          std::collections::BTreeMap<String, Vec<PipelineTest>>,
 }
 
 pub const SUPPORTED_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug)]
 pub struct CompiledReplace {
-	pattern: Regex,
+	pattern:     Regex,
 	replacement: String,
 }
 
@@ -116,7 +116,7 @@ pub struct CompiledReplace {
 pub struct CompiledMatchOutput {
 	pattern: Regex,
 	message: String,
-	unless: Option<Regex>,
+	unless:  Option<Regex>,
 }
 
 #[derive(Debug)]
@@ -130,22 +130,22 @@ pub enum CompiledLineFilter {
 #[derive(Debug)]
 pub struct CompiledPipeline {
 	#[allow(dead_code, reason = "test-only API surface")]
-	pub name: String,
+	pub name:              String,
 	#[allow(dead_code, reason = "test-only API surface")]
-	pub description: Option<String>,
-	pub match_command: Regex,
-	pub match_subcommand: Option<Regex>,
-	pub strip_ansi: bool,
-	pub replace: Vec<CompiledReplace>,
-	pub match_output: Vec<CompiledMatchOutput>,
-	pub line_filter: CompiledLineFilter,
+	pub description:       Option<String>,
+	pub match_command:     Regex,
+	pub match_subcommand:  Option<Regex>,
+	pub strip_ansi:        bool,
+	pub replace:           Vec<CompiledReplace>,
+	pub match_output:      Vec<CompiledMatchOutput>,
+	pub line_filter:       CompiledLineFilter,
 	pub truncate_lines_at: Option<usize>,
-	pub head_lines: Option<usize>,
-	pub tail_lines: Option<usize>,
-	pub max_lines: Option<usize>,
-	pub on_empty: Option<String>,
-	pub only_on_exit: Vec<i32>,
-	pub except_on_exit: Vec<i32>,
+	pub head_lines:        Option<usize>,
+	pub tail_lines:        Option<usize>,
+	pub max_lines:         Option<usize>,
+	pub on_empty:          Option<String>,
+	pub only_on_exit:      Vec<i32>,
+	pub except_on_exit:    Vec<i32>,
 }
 
 /// Compile a raw TOML definition. Returns a descriptive error on regex
@@ -346,7 +346,7 @@ pub type ParsedPipelineFile = (Vec<CompiledPipeline>, Vec<(String, Vec<PipelineT
 pub struct PipelineRegistry {
 	pub pipelines: Vec<CompiledPipeline>,
 	#[allow(dead_code, reason = "test-only API surface")]
-	pub tests: Vec<(String, Vec<PipelineTest>)>,
+	pub tests:     Vec<(String, Vec<PipelineTest>)>,
 }
 
 impl PipelineRegistry {
@@ -395,10 +395,10 @@ pub fn parse_file(contents: &str, source_label: &str) -> Result<ParsedPipelineFi
 #[allow(dead_code, reason = "test-only API surface")]
 pub struct TestOutcome {
 	pub filter_name: String,
-	pub test_name: String,
-	pub passed: bool,
-	pub actual: String,
-	pub expected: String,
+	pub test_name:   String,
+	pub passed:      bool,
+	pub actual:      String,
+	pub expected:    String,
 }
 
 /// Run every inline test in `registry` and return the outcomes.
@@ -410,10 +410,10 @@ pub fn run_tests(registry: &PipelineRegistry) -> Vec<TestOutcome> {
 			for test in tests {
 				out.push(TestOutcome {
 					filter_name: filter_name.clone(),
-					test_name: test.name.clone(),
-					passed: false,
-					actual: format!("pipeline '{filter_name}' not found"),
-					expected: test.expected.clone(),
+					test_name:   test.name.clone(),
+					passed:      false,
+					actual:      format!("pipeline '{filter_name}' not found"),
+					expected:    test.expected.clone(),
 				});
 			}
 			continue;

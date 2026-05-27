@@ -210,7 +210,7 @@ fn compact_log(input: &str) -> String {
 
 struct LogLine {
 	original: String,
-	count: usize,
+	count:    usize,
 }
 
 fn normalize_log_line(line: &str) -> String {

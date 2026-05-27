@@ -35,10 +35,10 @@ use brush_parser::{
 /// One segment of a safe `&&` / `;` chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChainSegment {
-	pub command: String,
-	pub program: String,
+	pub command:                   String,
+	pub program:                   String,
 	pub run_if_previous_succeeded: bool,
-	pub suppress_errexit: bool,
+	pub suppress_errexit:          bool,
 }
 
 /// Outcome of analyzing a raw command string.
@@ -327,16 +327,16 @@ mod tests {
 			chain_of(plan),
 			Some(vec![
 				ChainSegment {
-					command: "git diff --stat".to_string(),
-					program: "git".to_string(),
+					command:                   "git diff --stat".to_string(),
+					program:                   "git".to_string(),
 					run_if_previous_succeeded: false,
-					suppress_errexit: true,
+					suppress_errexit:          true,
 				},
 				ChainSegment {
-					command: "git diff --name-only".to_string(),
-					program: "git".to_string(),
+					command:                   "git diff --name-only".to_string(),
+					program:                   "git".to_string(),
 					run_if_previous_succeeded: true,
-					suppress_errexit: false,
+					suppress_errexit:          false,
 				},
 			])
 		);
@@ -349,16 +349,16 @@ mod tests {
 			chain_of(plan),
 			Some(vec![
 				ChainSegment {
-					command: "git status".to_string(),
-					program: "git".to_string(),
+					command:                   "git status".to_string(),
+					program:                   "git".to_string(),
 					run_if_previous_succeeded: false,
-					suppress_errexit: false,
+					suppress_errexit:          false,
 				},
 				ChainSegment {
-					command: "bun test".to_string(),
-					program: "bun".to_string(),
+					command:                   "bun test".to_string(),
+					program:                   "bun".to_string(),
 					run_if_previous_succeeded: false,
-					suppress_errexit: false,
+					suppress_errexit:          false,
 				},
 			])
 		);
@@ -371,22 +371,22 @@ mod tests {
 			chain_of(plan),
 			Some(vec![
 				ChainSegment {
-					command: "false".to_string(),
-					program: "false".to_string(),
+					command:                   "false".to_string(),
+					program:                   "false".to_string(),
 					run_if_previous_succeeded: false,
-					suppress_errexit: true,
+					suppress_errexit:          true,
 				},
 				ChainSegment {
-					command: "echo no".to_string(),
-					program: "echo".to_string(),
+					command:                   "echo no".to_string(),
+					program:                   "echo".to_string(),
 					run_if_previous_succeeded: true,
-					suppress_errexit: false,
+					suppress_errexit:          false,
 				},
 				ChainSegment {
-					command: "echo yes".to_string(),
-					program: "echo".to_string(),
+					command:                   "echo yes".to_string(),
+					program:                   "echo".to_string(),
 					run_if_previous_succeeded: false,
-					suppress_errexit: false,
+					suppress_errexit:          false,
 				},
 			])
 		);

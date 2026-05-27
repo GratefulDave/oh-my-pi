@@ -332,10 +332,10 @@ mod tests {
 	fn keeps_dotnet_build_diagnostic_and_strips_restore_noise() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = MinimizerCtx {
-			program: "dotnet",
+			program:    "dotnet",
 			subcommand: Some("build"),
-			command: "dotnet build",
-			config: &cfg,
+			command:    "dotnet build",
+			config:     &cfg,
 		};
 		let input = "  Determining projects to restore...\n  Restored app.csproj (in 1 \
 		             sec).\nProgram.cs(10,5): error CS1002: ; expected [/repo/app.csproj]\nBuild \

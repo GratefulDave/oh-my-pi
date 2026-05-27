@@ -95,10 +95,10 @@ fn failures_only(input: &str, exit_code: i32) -> String {
 
 #[derive(Default)]
 struct CargoTestTotals {
-	suites: usize,
-	passed: u64,
-	failed: u64,
-	ignored: u64,
+	suites:   usize,
+	passed:   u64,
+	failed:   u64,
+	ignored:  u64,
 	measured: u64,
 	filtered: u64,
 	warnings: u64,
@@ -328,8 +328,8 @@ fn is_install_summary(line: &str) -> bool {
 
 #[derive(Debug)]
 struct ClippyWarning {
-	location: String,
-	message: String,
+	location:  String,
+	message:   String,
 	lint_rule: Option<String>,
 }
 
@@ -479,10 +479,10 @@ mod tests {
 	fn strips_compiling_noise() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = MinimizerCtx {
-			program: "cargo",
+			program:    "cargo",
 			subcommand: Some("build"),
-			command: "cargo build",
-			config: &cfg,
+			command:    "cargo build",
+			config:     &cfg,
 		};
 		let out = filter(&ctx, "   Compiling foo v0.1.0\nerror: nope\nsrc/lib.rs:1:1 bad\n", 1);
 		assert!(!out.text.contains("Compiling"));
@@ -687,10 +687,10 @@ mod tests {
 	fn metadata_is_passthrough() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = MinimizerCtx {
-			program: "cargo",
+			program:    "cargo",
 			subcommand: Some("metadata"),
-			command: "cargo metadata --format-version 1",
-			config: &cfg,
+			command:    "cargo metadata --format-version 1",
+			config:     &cfg,
 		};
 		let input = r#"{"packages":[{"name":"app","targets":[{"kind":["bin"]}]}],"resolve":null}"#;
 		let out = filter(&ctx, input, 0);
