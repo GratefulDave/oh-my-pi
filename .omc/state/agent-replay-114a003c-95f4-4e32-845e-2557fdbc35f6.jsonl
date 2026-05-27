@@ -2,3 +2,4 @@
 {"t":0,"agent":"a30b496","agent_type":"caveman:cavecrew-investigator","event":"agent_start","parent_mode":"none"}
 {"t":0,"agent":"a30b496","agent_type":"caveman:cavecrew-investigator","event":"agent_stop","success":true,"duration_ms":67020}
 {"t":0,"agent":"a480969","agent_type":"caveman:cavecrew-investigator","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a480969","agent_type":"caveman:cavecrew-investigator","event":"agent_stop","success":true,"duration_ms":14100}
