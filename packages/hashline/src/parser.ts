@@ -283,7 +283,7 @@ export class Executor {
 		if (!pending) return;
 
 		const { op, payload } = pending;
-		const linesToInsert = payload;
+		const linesToInsert = payload.length === 0 ? [""] : payload;
 
 		if (op.kind === "insert") {
 			for (const text of linesToInsert) {
