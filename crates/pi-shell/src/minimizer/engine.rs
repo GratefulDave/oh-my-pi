@@ -135,20 +135,46 @@ fn is_common_chain_utility(program: &str) -> bool {
 	matches!(
 		program,
 		"echo"
-			| "printf" | "head" | "tail"
-			| "file" | "which" | "type"
-			| "sed" | "awk" | "sleep"
-			| "seq" | "cp" | "mv" | "rm"
-			| "mkdir" | "rmdir" | "touch"
-			| "basename" | "dirname" | "realpath"
-			| "readlink" | "true" | "false"
-			| "yes" | "tr" | "tee" | "sort"
-			| "uniq" | "cut" | "paste" | "rev"
-			| "split" | "comm" | "patch"
-			| "xargs" | "unzip" | "zip"
-			| "tar" | "gzip" | "gunzip"
-			| "cd" | "pwd" | "export"
-			| "env" | "test"
+			| "printf"
+			| "head"
+			| "tail"
+			| "file"
+			| "which"
+			| "type"
+			| "sed"
+			| "awk"
+			| "sleep"
+			| "seq"
+			| "cp" | "mv"
+			| "rm" | "mkdir"
+			| "rmdir"
+			| "touch"
+			| "basename"
+			| "dirname"
+			| "realpath"
+			| "readlink"
+			| "true"
+			| "false"
+			| "yes"
+			| "tr" | "tee"
+			| "sort"
+			| "uniq"
+			| "cut"
+			| "paste"
+			| "rev"
+			| "split"
+			| "comm"
+			| "patch"
+			| "xargs"
+			| "unzip"
+			| "zip"
+			| "tar"
+			| "gzip"
+			| "gunzip"
+			| "cd" | "pwd"
+			| "export"
+			| "env"
+			| "test"
 	)
 }
 
@@ -494,10 +520,7 @@ strip_lines_matching = [".*"]
 		// Common shell utilities make a chain eligible for the segmented runner
 		// even when no segment has a dedicated filter — segments stream through
 		// per-segment passthrough so the chain itself is captured for telemetry.
-		assert_eq!(
-			mode_for("false && echo no ; echo yes", &cfg),
-			MinimizerMode::SegmentedChain
-		);
+		assert_eq!(mode_for("false && echo no ; echo yes", &cfg), MinimizerMode::SegmentedChain);
 		assert_eq!(mode_for("foo || bar", &cfg), MinimizerMode::None);
 		assert_eq!(mode_for("git status | cat", &cfg), MinimizerMode::None);
 		assert_eq!(mode_for("sleep 1 &", &cfg), MinimizerMode::None);

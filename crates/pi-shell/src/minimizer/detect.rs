@@ -3,7 +3,7 @@
 /// Parsed command identity used for filter dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandIdentity {
-	pub program:    String,
+	pub program: String,
 	pub subcommand: Option<String>,
 }
 
@@ -226,7 +226,11 @@ fn skip_aws_global_options(args: &[String]) -> Option<usize> {
 		}
 		break;
 	}
-	if index > args.len() { None } else { Some(index) }
+	if index > args.len() {
+		None
+	} else {
+		Some(index)
+	}
 }
 
 fn skip_option_value(tokens: &[String], index: usize) -> Option<usize> {
