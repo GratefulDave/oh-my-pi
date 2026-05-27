@@ -267,6 +267,7 @@ export class Executor {
 	}
 
 	#flushPending(): void {
+		this.#pendingBlanks = 0; // discard — blank lines before an op are separators, not payload
 		const pending = this.#pending;
 		if (!pending) return;
 
