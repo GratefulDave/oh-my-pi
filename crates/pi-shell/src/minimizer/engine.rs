@@ -10,6 +10,7 @@ use std::{
 
 use crate::minimizer::{
 	MinimizerConfig, MinimizerCtx, MinimizerOutput, detect, filters,
+	filters::ai_smart,
 	pipeline::{self, CompiledPipeline, PipelineRegistry},
 	plan,
 };
