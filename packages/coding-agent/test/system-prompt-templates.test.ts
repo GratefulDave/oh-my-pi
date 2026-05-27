@@ -7,7 +7,7 @@ import { buildSystemPrompt, buildSystemPromptToolMetadata } from "@oh-my-pi/pi-c
 import { prompt } from "@oh-my-pi/pi-utils";
 import Handlebars from "handlebars";
 import * as z from "zod/v4";
-import hashlineToolPrompt from "../src/prompts/tools/hashline.md" with { type: "text" };
+import hashlineToolPrompt from "@oh-my-pi/hashline/prompt.md" with { type: "text" };
 
 const baseGitContext = {
 	isRepo: true,
