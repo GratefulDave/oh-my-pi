@@ -230,8 +230,8 @@
   "hotPaths": [
     {
       "path": "packages/hashline/src/parser.ts",
-      "accessCount": 6,
-      "lastAccessed": 1779912201908,
+      "accessCount": 7,
+      "lastAccessed": 1779912207181,
       "type": "file"
     },
     {

@@ -164,6 +164,22 @@ export class Executor {
 		this.#editIndex = 0;
 		this.#pending = undefined;
 		this.#terminated = false;
+		this.#pendingBlanks = 0;
+	}
+
+	/**
+	 * Flush any buffered blank lines into the pending payload. Called before
+	 * processing a `+` payload line so that blanks between payload lines are
+	 * preserved. When called from `#flushPending` (op/header boundary) the
+	 * buffered blanks are simply discarded — they were inter-op separators.
+	 */
+	#flushPendingBlanks(): void {
+		if (this.#pendingBlanks > 0 && this.#pending) {
+			for (let i = 0; i < this.#pendingBlanks; i++) {
+				this.#pending.payload.push("");
+			}
+		}
+		this.#pendingBlanks = 0;
 	}
 
 	/**
