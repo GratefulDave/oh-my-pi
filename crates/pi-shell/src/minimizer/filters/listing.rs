@@ -769,28 +769,29 @@ fn aggressive_strip_bodies(input: &str, path: &str) -> Option<String> {
 	}
 }
 
-/// Replace the body of every top-level brace-delimited declaration with
-/// `{ ... }`, keeping signatures, doc comments, attributes, imports, and any
-/// non-body top-level lines verbatim. Brace depth tracking handles nested
-/// braces inside string/macro content imperfectly but conservatively — when in
-/// doubt we re-emit the original line.
+/// Replace the body of every function/method declaration with `{ ... }`,
+/// keeping signatures, doc comments, attributes, imports, and container
+/// declarations (`class`/`struct`/`enum`/`trait`/`impl`/`interface`/
+/// `namespace`/`module`) intact. We descend into container bodies so inner
+/// method signatures stay visible.
+///
+/// Brace depth tracking handles nested braces inside string/macro content
+/// imperfectly but conservatively — when in doubt we re-emit the original
+/// line.
 fn strip_brace_bodies(input: &str) -> String {
 	let mut out = String::with_capacity(input.len() / 2);
-	let mut in_body = false;
-	let mut depth: i32 = 0;
+	let mut skip_depth: i32 = 0;
 	for line in input.lines() {
-		if in_body {
-			depth += brace_delta(line);
-			if depth <= 0 {
-				in_body = false;
-				depth = 0;
+		if skip_depth > 0 {
+			skip_depth += brace_delta(line);
+			if skip_depth <= 0 {
+				skip_depth = 0;
 			}
 			continue;
 		}
 		let trimmed = line.trim_start();
 		let delta = brace_delta(line);
-		let opens_body = delta > 0 && is_brace_body_starter(trimmed);
-		if opens_body {
+		if delta > 0 && is_function_body_starter(trimmed) {
 			let cut = match line.find('{') {
 				Some(i) => i,
 				None => {
@@ -801,11 +802,8 @@ fn strip_brace_bodies(input: &str) -> String {
 			};
 			out.push_str(line[..cut].trim_end());
 			out.push_str(" { ... }\n");
-			depth += delta;
-			if depth > 0 {
-				in_body = true;
-			} else {
-				depth = 0;
+			if delta > 0 {
+				skip_depth = delta;
 			}
 			continue;
 		}

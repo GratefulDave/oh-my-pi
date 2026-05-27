@@ -35,7 +35,7 @@
   },
   "build": {
     "buildCommand": "rtk cargo build -p pi-shell --lib --features ai-smart 2>&1 | rtk tail -30",
-    "testCommand": "rtk cargo test -p pi-shell --lib --features ai-smart minimizer::filters::ai_smart 2>&1 | rtk tail -20",
+    "testCommand": "rtk cargo test -p pi-shell --lib minimizer::filters::listing 2>&1 | rtk tail -30",
     "lintCommand": "npm run lint",
     "devCommand": "npm run dev",
     "scripts": {
@@ -214,8 +214,8 @@
   "hotPaths": [
     {
       "path": "crates/pi-shell/src/minimizer/filters/listing.rs",
-      "accessCount": 8,
-      "lastAccessed": 1779867704927,
+      "accessCount": 10,
+      "lastAccessed": 1779867764493,
       "type": "file"
     },
     {
