@@ -104,8 +104,7 @@ pub fn apply(
 
 	let Some(identity) = detect::detect(command) else {
 		record_unknown_command(command);
-		let unknown = MinimizerOutput::passthrough(captured).labeled("unknown");
-		return apply_ai_smart_overlay(&identity_for_ai("unknown"), command, captured, config, unknown);
+		return MinimizerOutput::passthrough(captured).labeled("unknown");
 	};
 	let output = apply_identity(&identity, command, captured, exit_code, config);
 	apply_ai_smart_overlay(&identity, command, captured, config, output)

@@ -225,6 +225,12 @@
       "type": "file"
     },
     {
+      "path": "crates/pi-shell/src/minimizer/engine.rs",
+      "accessCount": 3,
+      "lastAccessed": 1779867462370,
+      "type": "file"
+    },
+    {
       "path": "crates/pi-shell/Cargo.toml",
       "accessCount": 2,
       "lastAccessed": 1779867332937,
@@ -234,12 +240,6 @@
       "path": "crates/pi-shell/src/minimizer/filters/mod.rs",
       "accessCount": 2,
       "lastAccessed": 1779867357113,
-      "type": "file"
-    },
-    {
-      "path": "crates/pi-shell/src/minimizer/engine.rs",
-      "accessCount": 2,
-      "lastAccessed": 1779867445498,
       "type": "file"
     },
     {
@@ -264,6 +264,12 @@
       "path": "crates/pi-shell/src/minimizer/filters/ai_smart.rs",
       "accessCount": 1,
       "lastAccessed": 1779867436042,
+      "type": "file"
+    },
+    {
+      "path": "crates/pi-shell/src/minimizer/detect.rs",
+      "accessCount": 1,
+      "lastAccessed": 1779867471556,
       "type": "file"
     }
   ],
