@@ -37,6 +37,14 @@ function validateRangeOrder(range: ParsedRange, lineNum: number): void {
 	}
 }
 
+function rangesEqual(a: ParsedRange, b: ParsedRange): boolean {
+	return a.start.line === b.start.line && a.end.line === b.end.line;
+}
+
+function rangeContains(outer: ParsedRange, inner: ParsedRange): boolean {
+	return outer.start.line <= inner.start.line && inner.end.line <= outer.end.line;
+}
+
 function expandRange(range: ParsedRange): Anchor[] {
 	const anchors: Anchor[] = [];
 	for (let line = range.start.line; line <= range.end.line; line++) {
