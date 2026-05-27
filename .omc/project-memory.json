@@ -277,6 +277,12 @@
       "type": "file"
     },
     {
+      "path": "packages/coding-agent/src/web/search/providers/perplexity.ts",
+      "accessCount": 3,
+      "lastAccessed": 1779911312225,
+      "type": "file"
+    },
+    {
       "path": "packages/coding-agent/CHANGELOG.md",
       "accessCount": 2,
       "lastAccessed": 1779855406691,
@@ -310,12 +316,6 @@
       "path": "packages/hashline/src/parser.ts",
       "accessCount": 2,
       "lastAccessed": 1779911300197,
-      "type": "file"
-    },
-    {
-      "path": "packages/coding-agent/src/web/search/providers/perplexity.ts",
-      "accessCount": 2,
-      "lastAccessed": 1779911311246,
       "type": "file"
     },
     {

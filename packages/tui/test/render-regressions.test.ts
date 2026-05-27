@@ -1111,7 +1111,7 @@ describe("TUI terminal-state regressions", () => {
 				tui.requestRender();
 				await settle(term);
 
-				const beforeScrollbackLen = term.getScrollBuffer().length;
+				const _beforeScrollbackLen = term.getScrollBuffer().length;
 
 				// Clear scrollback and render fresh content.
 				component.setLines(rows("fresh", 10));
