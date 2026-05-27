@@ -331,6 +331,36 @@
       "type": "file"
     },
     {
+      "path": "packages/hashline/src/grammar.lark",
+      "accessCount": 2,
+      "lastAccessed": 1779911475525,
+      "type": "file"
+    },
+    {
+      "path": "packages/hashline/src/messages.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779911525796,
+      "type": "file"
+    },
+    {
+      "path": "packages/hashline/src/apply.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779911567531,
+      "type": "file"
+    },
+    {
+      "path": "packages/hashline/src/format.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779911568328,
+      "type": "file"
+    },
+    {
+      "path": "packages/coding-agent/test/sdk-tool-activation.test.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779911718739,
+      "type": "file"
+    },
+    {
       "path": "packages/coding-agent/src/cli/gain-cli.ts",
       "accessCount": 1,
       "lastAccessed": 1779854484171,
@@ -385,33 +415,15 @@
       "type": "file"
     },
     {
-      "path": "packages/hashline/src/apply.ts",
-      "accessCount": 1,
-      "lastAccessed": 1779911140451,
-      "type": "file"
-    },
-    {
-      "path": "packages/hashline/src/format.ts",
-      "accessCount": 1,
-      "lastAccessed": 1779911140846,
-      "type": "file"
-    },
-    {
-      "path": "packages/hashline/src/grammar.lark",
-      "accessCount": 1,
-      "lastAccessed": 1779911140935,
-      "type": "file"
-    },
-    {
-      "path": "packages/hashline/src/messages.ts",
-      "accessCount": 1,
-      "lastAccessed": 1779911235115,
-      "type": "file"
-    },
-    {
       "path": "packages/coding-agent/src/edit/index.ts",
       "accessCount": 1,
       "lastAccessed": 1779911299583,
+      "type": "file"
+    },
+    {
+      "path": "biome.json",
+      "accessCount": 1,
+      "lastAccessed": 1779911566378,
       "type": "file"
     }
   ],
