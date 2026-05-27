@@ -757,6 +757,210 @@ fn render_source_declaration(trimmed: &str) -> String {
 	line
 }
 
+/// Aggressive source-outline body stripping for brace-based and indent-based
+/// languages. Returns `None` for languages we don't have a strip path for so
+/// the caller falls back to default outline rendering.
+fn aggressive_strip_bodies(input: &str, path: &str) -> Option<String> {
+	let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("");
+	match ext {
+		"rs" | "ts" | "tsx" | "js" | "jsx" | "go" => Some(strip_brace_bodies(input)),
+		"py" => Some(strip_python_bodies(input)),
+		_ => None,
+	}
+}
+
+/// Replace the body of every top-level brace-delimited declaration with
+/// `{ ... }`, keeping signatures, doc comments, attributes, imports, and any
+/// non-body top-level lines verbatim. Brace depth tracking handles nested
+/// braces inside string/macro content imperfectly but conservatively — when in
+/// doubt we re-emit the original line.
+fn strip_brace_bodies(input: &str) -> String {
+	let mut out = String::with_capacity(input.len() / 2);
+	let mut in_body = false;
+	let mut depth: i32 = 0;
+	for line in input.lines() {
+		if in_body {
+			depth += brace_delta(line);
+			if depth <= 0 {
+				in_body = false;
+				depth = 0;
+			}
+			continue;
+		}
+		let trimmed = line.trim_start();
+		let delta = brace_delta(line);
+		let opens_body = delta > 0 && is_brace_body_starter(trimmed);
+		if opens_body {
+			let cut = match line.find('{') {
+				Some(i) => i,
+				None => {
+					out.push_str(line);
+					out.push('\n');
+					continue;
+				},
+			};
+			out.push_str(line[..cut].trim_end());
+			out.push_str(" { ... }\n");
+			depth += delta;
+			if depth > 0 {
+				in_body = true;
+			} else {
+				depth = 0;
+			}
+			continue;
+		}
+		out.push_str(line);
+		out.push('\n');
+	}
+	out
+}
+
+fn brace_delta(line: &str) -> i32 {
+	let mut delta: i32 = 0;
+	let mut in_str: Option<char> = None;
+	let mut prev = '\0';
+	for ch in line.chars() {
+		match in_str {
+			Some(q) => {
+				if ch == q && prev != '\\' {
+					in_str = None;
+				}
+			},
+			None => match ch {
+				'"' | '\'' | '`' => in_str = Some(ch),
+				'{' => delta += 1,
+				'}' => delta -= 1,
+				_ => {},
+			},
+		}
+		prev = ch;
+	}
+	delta
+}
+
+fn is_brace_body_starter(trimmed: &str) -> bool {
+	let without_attr = trimmed.trim_start_matches(|c: char| c == '#' || c == '[' || c == ']');
+	let without_vis = strip_leading_keywords(without_attr.trim_start());
+	without_vis.starts_with("fn ")
+		|| without_vis.starts_with("function ")
+		|| without_vis.starts_with("function(")
+		|| without_vis.starts_with("function*")
+		|| without_vis.starts_with("struct ")
+		|| without_vis.starts_with("enum ")
+		|| without_vis.starts_with("trait ")
+		|| without_vis.starts_with("impl ")
+		|| without_vis.starts_with("impl<")
+		|| without_vis.starts_with("class ")
+		|| without_vis.starts_with("interface ")
+		|| without_vis.starts_with("type ")
+		|| without_vis.starts_with("namespace ")
+		|| without_vis.starts_with("module ")
+		|| without_vis.starts_with("func ")
+		|| without_vis.starts_with("method ")
+		|| without_vis.starts_with("constructor")
+		|| starts_with_ts_method(without_vis)
+}
+
+fn strip_leading_keywords(s: &str) -> &str {
+	let mut current = s;
+	loop {
+		let next = current
+			.strip_prefix("pub ")
+			.or_else(|| current.strip_prefix("pub(crate) "))
+			.or_else(|| current.strip_prefix("export "))
+			.or_else(|| current.strip_prefix("export default "))
+			.or_else(|| current.strip_prefix("async "))
+			.or_else(|| current.strip_prefix("default "))
+			.or_else(|| current.strip_prefix("static "))
+			.or_else(|| current.strip_prefix("private "))
+			.or_else(|| current.strip_prefix("protected "))
+			.or_else(|| current.strip_prefix("public "))
+			.or_else(|| current.strip_prefix("readonly "))
+			.or_else(|| current.strip_prefix("abstract "))
+			.or_else(|| current.strip_prefix("override "))
+			.or_else(|| current.strip_prefix("const "));
+		match next {
+			Some(rest) => current = rest,
+			None => break,
+		}
+	}
+	current
+}
+
+/// Heuristic for TypeScript-style class methods: `name(args): Ret {` or
+/// `name(args) {`. We accept any identifier-like token followed by `(`.
+fn starts_with_ts_method(s: &str) -> bool {
+	let mut chars = s.char_indices();
+	let Some((_, first)) = chars.next() else {
+		return false;
+	};
+	if !(first.is_ascii_alphabetic() || first == '_' || first == '$') {
+		return false;
+	}
+	let mut paren_idx = None;
+	for (idx, ch) in chars {
+		if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+			continue;
+		}
+		if ch == '(' {
+			paren_idx = Some(idx);
+		}
+		break;
+	}
+	paren_idx.is_some()
+}
+
+/// Strip Python function/class bodies. We detect a `def`, `async def`, or
+/// `class` line ending with `:`, emit the signature, then drop every following
+/// line whose indentation is strictly greater than the signature's, replacing
+/// the run with a single `    ...` placeholder.
+fn strip_python_bodies(input: &str) -> String {
+	let lines: Vec<&str> = input.lines().collect();
+	let mut out = String::with_capacity(input.len() / 2);
+	let mut i = 0;
+	while i < lines.len() {
+		let line = lines[i];
+		let indent = line.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+		let trimmed = line.trim_start();
+		let is_def = trimmed.starts_with("def ") || trimmed.starts_with("async def ");
+		let is_class = trimmed.starts_with("class ");
+		let ends_with_colon = trimmed.trim_end().ends_with(':');
+		if (is_def || is_class) && ends_with_colon {
+			out.push_str(line);
+			out.push('\n');
+			i += 1;
+			let mut stripped_any = false;
+			while i < lines.len() {
+				let body_line = lines[i];
+				let body_indent = body_line.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+				if body_line.trim().is_empty() {
+					if !stripped_any {
+						out.push_str(body_line);
+						out.push('\n');
+					}
+					i += 1;
+					continue;
+				}
+				if body_indent <= indent {
+					break;
+				}
+				stripped_any = true;
+				i += 1;
+			}
+			if stripped_any {
+				let pad: String = " ".repeat(indent + 4);
+				out.push_str(&pad);
+				out.push_str("...\n");
+			}
+			continue;
+		}
+		out.push_str(line);
+		out.push('\n');
+		i += 1;
+	}
+	out
+}
+
 fn compact_summary_output(input: &str) -> String {
 	let lines: Vec<&str> = input.lines().collect();
 	if lines.len() <= 30 {
