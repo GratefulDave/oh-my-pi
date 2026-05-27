@@ -656,7 +656,12 @@ fn is_source_path(path: &str) -> bool {
 	)
 }
 
-fn compact_source_outline(input: &str) -> String {
+fn compact_source_outline(input: &str, path: &str, level: OutlineLevel) -> String {
+	if level == OutlineLevel::Aggressive
+		&& let Some(stripped) = aggressive_strip_bodies(input, path)
+	{
+		return stripped;
+	}
 	let lines: Vec<&str> = input.lines().collect();
 	if lines.len() < 160 && input.len() < 12_000 {
 		return input.to_string();
