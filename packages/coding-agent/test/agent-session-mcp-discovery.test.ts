@@ -827,7 +827,6 @@ describe("AgentSession MCP discovery", () => {
 		expect(session.systemPrompt).toEqual(["tools:read"]);
 	});
 
-
 	// ── Findings #3: discovery index is invalidated on active-tool changes ─────
 	it("setActiveToolsByName invalidates the generic discoverable tool search index", async () => {
 		const readTool = createBasicTool("read", "Read");

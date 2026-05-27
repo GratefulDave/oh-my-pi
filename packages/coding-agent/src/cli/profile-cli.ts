@@ -1,7 +1,12 @@
 import { type Effort, THINKING_EFFORTS } from "@oh-my-pi/pi-ai";
 import { COMMAND_NAME } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
-
+import {
+	applyModelProfilePreset,
+	isModelProfilePreset,
+	MODEL_PROFILE_PRESETS,
+	type ModelProfilePreset,
+} from "../config/model-profile-presets";
 import {
 	DEFAULT_MODEL_PROFILE_NAME,
 	type ModelProfileScopedPath,
@@ -9,12 +14,6 @@ import {
 	Settings,
 	settings,
 } from "../config/settings";
-import {
-	applyModelProfilePreset,
-	isModelProfilePreset,
-	MODEL_PROFILE_PRESETS,
-	type ModelProfilePreset,
-} from "../config/model-profile-presets";
 import { theme } from "../modes/theme/theme";
 
 export type ProfileAction = "list" | "show" | "create" | "use" | "delete" | "set";

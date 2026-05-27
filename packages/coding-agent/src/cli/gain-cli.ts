@@ -121,7 +121,9 @@ function printGainSummary(input: GainContext): void {
 	process.stdout.write(`  Input Bytes: ${formatNumber(summary.inputBytes)}\n`);
 	process.stdout.write(`  Output Bytes: ${formatNumber(summary.outputBytes)}\n`);
 	process.stdout.write(`  Saved Bytes: ${formatNumber(summary.savedBytes)}\n`);
-	process.stdout.write(`  ${formatTokensSavedLabel(summary.usesEstimatedTokensSaved)}: ${formatNumber(summary.estimatedTokensSaved)}\n`);
+	process.stdout.write(
+		`  ${formatTokensSavedLabel(summary.usesEstimatedTokensSaved)}: ${formatNumber(summary.estimatedTokensSaved)}\n`,
+	);
 
 	printRows("Top Filters", summary.byFilter, row => row.filter);
 	printRows("Top Commands", summary.byCommand, row => row.command);

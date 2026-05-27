@@ -1133,9 +1133,7 @@ describe("TUI terminal-state regressions", () => {
 				expect(afterScrollBuffer.length).toBeLessThanOrEqual(25);
 
 				// No "initial" row should survive the clearScrollback.
-				const hasStaleInitial = afterScrollBuffer.some(l =>
-					l.trimEnd().startsWith("initial"),
-				);
+				const hasStaleInitial = afterScrollBuffer.some(l => l.trimEnd().startsWith("initial"));
 				expect(hasStaleInitial).toBe(false);
 
 				// The latest appended rows must be present.

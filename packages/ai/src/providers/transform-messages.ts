@@ -249,7 +249,6 @@ export function transformMessages<TApi extends Api>(
 				continue;
 			}
 
-
 			if (toolCalls.length > 0) {
 				pendingToolCalls = toolCalls;
 			}
@@ -318,12 +317,11 @@ export function transformMessages<TApi extends Api>(
 						timestamp: messageTimestamp,
 					} as UserMessage);
 				}
-			continue;
-		}
-		// The matching tool_use exists elsewhere, but this result is not in
-		// the currently open result window. Emitting it here would break the
-		// provider invariant; the first real result is pulled into the correct
-		// slot by the pending-call flush instead.
+			}
+			// The matching tool_use exists elsewhere, but this result is not in
+			// the currently open result window. Emitting it here would break the
+			// provider invariant; the first real result is pulled into the correct
+			// slot by the pending-call flush instead.
 		} else if (msg.role === "user" || msg.role === "developer") {
 			flushPendingToolCalls(messageTimestamp);
 			flushPendingAbortedToolCalls();

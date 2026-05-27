@@ -6,7 +6,12 @@ import { COMMAND_NAME, getAgentDir, isEnoent } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
 
 import { runFactoryDoctor } from "../factory/doctor";
-import { applyFactoryScaffold, buildFactoryScaffoldPlan, inspectFactoryRepo, type FactoryPreset } from "../factory/scaffold";
+import {
+	applyFactoryScaffold,
+	buildFactoryScaffoldPlan,
+	type FactoryPreset,
+	inspectFactoryRepo,
+} from "../factory/scaffold";
 import { getSoftwareFactoryManifest } from "../factory/template-manifest";
 import { theme } from "../modes/theme/theme";
 
@@ -74,14 +79,18 @@ async function handleInit(flags: FactoryCommandArgs["flags"]): Promise<void> {
 	}
 	for (const item of plan.imports) {
 		const marker = item.action === "skip" ? "=" : "+";
-		writeStdout(chalk.dim(`  ${marker} import ${path.relative(cwd, item.source)} -> ${path.relative(cwd, item.target)}`));
+		writeStdout(
+			chalk.dim(`  ${marker} import ${path.relative(cwd, item.source)} -> ${path.relative(cwd, item.target)}`),
+		);
 	}
 	if (flags.dryRun) {
 		writeStdout(chalk.green(`${theme.status.success} Dry run complete`));
 		return;
 	}
 	if (!flags.yes) {
-		const approved = await confirmApply(`About to scaffold ${plan.files.filter(file => file.action !== "skip").length} file(s).`);
+		const approved = await confirmApply(
+			`About to scaffold ${plan.files.filter(file => file.action !== "skip").length} file(s).`,
+		);
 		if (!approved) {
 			writeStdout(chalk.yellow(`${theme.status.warning} Aborted`));
 			return;
@@ -132,12 +141,19 @@ async function handleStatus(flags: FactoryCommandArgs["flags"]): Promise<void> {
 	writeStdout(chalk.dim(`Bundled version: ${status.bundledVersion}`));
 	writeStdout(chalk.dim(`Installed version: ${status.installedVersion ?? "missing"}`));
 	if (status.stale) writeStdout(chalk.yellow(`${theme.status.warning} Installed scaffold is stale`));
-	if (status.globalShadow) writeStdout(chalk.yellow(`${theme.status.warning} User-scoped software-factory extension may shadow project behavior`));
+	if (status.globalShadow)
+		writeStdout(
+			chalk.yellow(`${theme.status.warning} User-scoped software-factory extension may shadow project behavior`),
+		);
 	for (const item of presentFiles) {
 		writeStdout(chalk.dim(`  ${item.present ? "✓" : "✗"} ${item.entry.target}`));
 	}
 	if (repo.legacySources.length > 0) {
-		writeStdout(chalk.dim(`Legacy config roots detected: ${repo.legacySources.map(source => path.basename(source)).join(", ")}`));
+		writeStdout(
+			chalk.dim(
+				`Legacy config roots detected: ${repo.legacySources.map(source => path.basename(source)).join(", ")}`,
+			),
+		);
 	}
 }
 
@@ -174,7 +190,9 @@ export async function runFactoryCommand(cmd: FactoryCommandArgs): Promise<void> 
 export function printFactoryHelp(): void {
 	writeStdout(`${chalk.bold(`${COMMAND_NAME} factory`)} - project-scoped software-factory scaffolds\n`);
 	writeStdout(`${chalk.bold("Usage:")}`);
-	writeStdout(`  ${COMMAND_NAME} factory init [--preset minimal|standard|software-factory] [--dry-run] [--yes] [--existing] [--force] [--enable-memory]`);
+	writeStdout(
+		`  ${COMMAND_NAME} factory init [--preset minimal|standard|software-factory] [--dry-run] [--yes] [--existing] [--force] [--enable-memory]`,
+	);
 	writeStdout(`  ${COMMAND_NAME} factory status [--json]`);
 	writeStdout(`  ${COMMAND_NAME} factory doctor [--json]`);
 }

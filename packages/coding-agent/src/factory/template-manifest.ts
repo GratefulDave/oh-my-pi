@@ -16,13 +16,22 @@ const SOFTWARE_FACTORY_MANIFEST: TemplateManifest = {
 	description: "Project-scoped verifier, safety, workflow, and learning scaffolds for lex/OMP.",
 	files: [
 		{ source: ".omp/settings.json", target: ".omp/settings.json" },
-		{ source: ".omp/extensions/software-factory/package.json", target: ".omp/extensions/software-factory/package.json" },
+		{
+			source: ".omp/extensions/software-factory/package.json",
+			target: ".omp/extensions/software-factory/package.json",
+		},
 		{ source: ".omp/extensions/software-factory/index.ts", target: ".omp/extensions/software-factory/index.ts" },
 		{ source: ".omp/extensions/software-factory/config.ts", target: ".omp/extensions/software-factory/config.ts" },
 		{ source: ".omp/extensions/software-factory/paths.ts", target: ".omp/extensions/software-factory/paths.ts" },
 		{ source: ".omp/extensions/software-factory/safety.ts", target: ".omp/extensions/software-factory/safety.ts" },
-		{ source: ".omp/extensions/software-factory/verifier.ts", target: ".omp/extensions/software-factory/verifier.ts" },
-		{ source: ".omp/extensions/software-factory/workflow.ts", target: ".omp/extensions/software-factory/workflow.ts" },
+		{
+			source: ".omp/extensions/software-factory/verifier.ts",
+			target: ".omp/extensions/software-factory/verifier.ts",
+		},
+		{
+			source: ".omp/extensions/software-factory/workflow.ts",
+			target: ".omp/extensions/software-factory/workflow.ts",
+		},
 		{ source: ".omp/extensions/software-factory/ipc.ts", target: ".omp/extensions/software-factory/ipc.ts" },
 		{ source: ".omp/factory/factory.json", target: ".omp/factory/factory.json" },
 		{ source: ".omp/factory/safety.rules.json", target: ".omp/factory/safety.rules.json" },
@@ -41,19 +50,43 @@ const SOFTWARE_FACTORY_MANIFEST: TemplateManifest = {
 		{ source: ".omp/agents/factory-implementer.md", target: ".omp/agents/factory-implementer.md" },
 		{ source: ".omp/prompts/factory-meta-prompt.md", target: ".omp/prompts/factory-meta-prompt.md" },
 		{ source: ".omp/rules/factory-software-factory.md", target: ".omp/rules/factory-software-factory.md" },
-		{ source: ".omp/skills/factory-software-factory/SKILL.md", target: ".omp/skills/factory-software-factory/SKILL.md" },
+		{
+			source: ".omp/skills/factory-software-factory/SKILL.md",
+			target: ".omp/skills/factory-software-factory/SKILL.md",
+		},
 	],
 };
 
 const TEMPLATE_RELATIVE_PATHS = new Map<string, string>([
 	[".omp/settings.json", "./templates/software-factory/.omp/settings.json"],
-	[".omp/extensions/software-factory/package.json", "./templates/software-factory/.omp/extensions/software-factory/package.json"],
-	[".omp/extensions/software-factory/index.ts", "./templates/software-factory/.omp/extensions/software-factory/index.ts"],
-	[".omp/extensions/software-factory/config.ts", "./templates/software-factory/.omp/extensions/software-factory/config.ts"],
-	[".omp/extensions/software-factory/paths.ts", "./templates/software-factory/.omp/extensions/software-factory/paths.ts"],
-	[".omp/extensions/software-factory/safety.ts", "./templates/software-factory/.omp/extensions/software-factory/safety.ts"],
-	[".omp/extensions/software-factory/verifier.ts", "./templates/software-factory/.omp/extensions/software-factory/verifier.ts"],
-	[".omp/extensions/software-factory/workflow.ts", "./templates/software-factory/.omp/extensions/software-factory/workflow.ts"],
+	[
+		".omp/extensions/software-factory/package.json",
+		"./templates/software-factory/.omp/extensions/software-factory/package.json",
+	],
+	[
+		".omp/extensions/software-factory/index.ts",
+		"./templates/software-factory/.omp/extensions/software-factory/index.ts",
+	],
+	[
+		".omp/extensions/software-factory/config.ts",
+		"./templates/software-factory/.omp/extensions/software-factory/config.ts",
+	],
+	[
+		".omp/extensions/software-factory/paths.ts",
+		"./templates/software-factory/.omp/extensions/software-factory/paths.ts",
+	],
+	[
+		".omp/extensions/software-factory/safety.ts",
+		"./templates/software-factory/.omp/extensions/software-factory/safety.ts",
+	],
+	[
+		".omp/extensions/software-factory/verifier.ts",
+		"./templates/software-factory/.omp/extensions/software-factory/verifier.ts",
+	],
+	[
+		".omp/extensions/software-factory/workflow.ts",
+		"./templates/software-factory/.omp/extensions/software-factory/workflow.ts",
+	],
 	[".omp/extensions/software-factory/ipc.ts", "./templates/software-factory/.omp/extensions/software-factory/ipc.ts"],
 	[".omp/factory/factory.json", "./templates/software-factory/.omp/factory/factory.json"],
 	[".omp/factory/safety.rules.json", "./templates/software-factory/.omp/factory/safety.rules.json"],
@@ -72,7 +105,10 @@ const TEMPLATE_RELATIVE_PATHS = new Map<string, string>([
 	[".omp/agents/factory-implementer.md", "./templates/software-factory/.omp/agents/factory-implementer.md"],
 	[".omp/prompts/factory-meta-prompt.md", "./templates/software-factory/.omp/prompts/factory-meta-prompt.md"],
 	[".omp/rules/factory-software-factory.md", "./templates/software-factory/.omp/rules/factory-software-factory.md"],
-	[".omp/skills/factory-software-factory/SKILL.md", "./templates/software-factory/.omp/skills/factory-software-factory/SKILL.md"],
+	[
+		".omp/skills/factory-software-factory/SKILL.md",
+		"./templates/software-factory/.omp/skills/factory-software-factory/SKILL.md",
+	],
 ]);
 
 export function getSoftwareFactoryManifest(): TemplateManifest {

@@ -576,7 +576,7 @@ export class WorkerCore {
 			else signal.addEventListener("abort", onCancel, { once: true });
 			try {
 				const returnValue = await Promise.race([
-				runtime.run(msg.code, `browser-run-${msg.id}.js`),
+					runtime.run(msg.code, `browser-run-${msg.id}.js`),
 					cancelRejection,
 				]);
 				await this.#postReadyInfo();

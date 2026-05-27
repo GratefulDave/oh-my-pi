@@ -282,7 +282,6 @@ describe("AgentSession concurrent prompt guard", () => {
 		).toBe(true);
 	});
 
-
 	it("should allow prompt() after previous completes", async () => {
 		// Create session with a stream that completes immediately
 		const model = getBundledModel("anthropic", "claude-sonnet-4-5")!;

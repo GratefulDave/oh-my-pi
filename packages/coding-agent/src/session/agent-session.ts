@@ -159,11 +159,11 @@ import { resolveThinkingLevelForModel, toReasoningEffort } from "../thinking";
 import {
 	buildDiscoverableToolSearchIndex,
 	collectDiscoverableTools,
+	type DiscoverableTool,
+	type DiscoverableToolSearchIndex,
 	filterBySource,
 	isMCPToolName,
 	selectDiscoverableToolNamesByServer,
-	type DiscoverableTool,
-	type DiscoverableToolSearchIndex,
 } from "../tool-discovery/tool-index";
 import { assertEditableFile } from "../tools/auto-generated-guard";
 import type { CheckpointState } from "../tools/checkpoint";
@@ -2873,7 +2873,11 @@ export class AgentSession {
 	}
 
 	#collectDiscoverableMCPToolsFromRegistry(): Map<string, DiscoverableTool> {
-		return new Map(filterBySource(collectDiscoverableTools(this.#toolRegistry.values()), "mcp").map(tool => [tool.name, tool] as const));
+		return new Map(
+			filterBySource(collectDiscoverableTools(this.#toolRegistry.values()), "mcp").map(
+				tool => [tool.name, tool] as const,
+			),
+		);
 	}
 
 	#setDiscoverableMCPTools(discoverableMCPTools: Map<string, DiscoverableTool>): void {
@@ -2988,7 +2992,6 @@ export class AgentSession {
 		return this.#mcpDiscoveryEnabled;
 	}
 
-
 	getSelectedMCPToolNames(): string[] {
 		if (!this.#mcpDiscoveryEnabled) {
 			return this.getActiveToolNames().filter(name => isMCPToolName(name) && this.#toolRegistry.has(name));
@@ -3036,8 +3039,9 @@ export class AgentSession {
 		// For "mcp-only" mode we only return MCP tools.
 		const mode = this.#resolveEffectiveDiscoveryMode();
 		const activeNames = new Set(this.getActiveToolNames());
-		const mcpTools: DiscoverableTool[] = Array.from(this.#discoverableMCPTools.values())
-			.filter(t => !activeNames.has(t.name));
+		const mcpTools: DiscoverableTool[] = Array.from(this.#discoverableMCPTools.values()).filter(
+			t => !activeNames.has(t.name),
+		);
 		const builtinTools: DiscoverableTool[] = mode === "all" ? this.#collectDiscoverableBuiltinTools() : [];
 		const allTools = [...builtinTools, ...mcpTools];
 		return filter?.source ? allTools.filter(t => t.source === filter.source) : allTools;
@@ -3655,7 +3659,6 @@ export class AgentSession {
 			})
 		);
 	}
-
 
 	/** Current session display name, if set */
 	get sessionName(): string | undefined {

@@ -33,7 +33,7 @@ fn compact_listing_output(input: &str) -> String {
 
 struct GrepMatch {
 	line_no: String,
-	text: String,
+	text:    String,
 }
 
 fn compact_grep_output(input: &str) -> String {
@@ -121,9 +121,9 @@ fn collapse_match_text(text: &str) -> String {
 
 /// Center-truncate grep/ripgrep match text so the match region stays visible.
 ///
-/// Instead of truncating from the front (which loses matches deep in long lines),
-/// this centers the visible window. The heuristic biases toward non-whitespace
-/// content when the line has significant leading whitespace.
+/// Instead of truncating from the front (which loses matches deep in long
+/// lines), this centers the visible window. The heuristic biases toward
+/// non-whitespace content when the line has significant leading whitespace.
 fn center_truncate_match(text: &str, max_chars: usize) -> String {
 	if max_chars == 0 {
 		return String::new();
@@ -297,9 +297,9 @@ fn push_wrapped_names(out: &mut String, names: &[String], per_line: usize, max_n
 }
 
 struct LsEntry {
-	name: String,
-	is_dir: bool,
-	size: Option<u64>,
+	name:    String,
+	is_dir:  bool,
+	size:    Option<u64>,
 	is_file: bool,
 }
 
@@ -839,17 +839,20 @@ mod tests {
 	fn center_truncate_long_line_with_leading_whitespace_centers_in_code() {
 		// Match is in the code region after significant indentation.
 		let indent = "                              ";
-		let body = "let result = deeply_nested_function(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, extra, more, stuff, padding, fill, end);";
+		let body = "let result = deeply_nested_function(arg1, arg2, arg3, arg4, arg5, arg6, arg7, \
+		            arg8, arg9, arg10, arg11, arg12, arg13, extra, more, stuff, padding, fill, end);";
 		let line = format!("{indent}{body}");
 		assert!(line.chars().count() > 140, "test line must exceed max_chars");
 		let out = center_truncate_match(&line, 140);
-		// Should show leading … (indentation was skipped), centered code, and …[+N] tally.
+		// Should show leading … (indentation was skipped), centered code, and …[+N]
+		// tally.
 		assert!(out.starts_with('\u{2026}'), "should start with …: {out}");
 		assert!(out.ends_with(']'), "should end with tally: {out}");
 		assert!(out.contains("result"), "match region 'result' should be visible: {out}");
 		assert!(out.contains("arg5"), "middle args should be visible: {out}");
-		// Should NOT show the raw "let result" from the very front (since indentation was dropped).
-		// But it might appear inside the window. The key assertion: leading indent chars are dropped.
+		// Should NOT show the raw "let result" from the very front (since indentation
+		// was dropped). But it might appear inside the window. The key assertion:
+		// leading indent chars are dropped.
 		let after_ellipsis = &out['\u{2026}'.len_utf8()..];
 		assert!(
 			!after_ellipsis.starts_with(' '),

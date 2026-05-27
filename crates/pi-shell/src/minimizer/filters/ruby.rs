@@ -450,8 +450,12 @@ mod tests {
 	#[test]
 	fn rubocop_routes_to_lint_grouping() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
-		let context =
-			MinimizerCtx { program: "rubocop", subcommand: None, command: "rubocop", config: &cfg };
+		let context = MinimizerCtx {
+			program:    "rubocop",
+			subcommand: None,
+			command:    "rubocop",
+			config:     &cfg,
+		};
 		let out = filter(
 			&context,
 			"app/models/user.rb:1:1: C: Style/FrozenStringLiteralComment: Missing frozen string \

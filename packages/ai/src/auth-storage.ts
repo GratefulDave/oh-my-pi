@@ -376,7 +376,6 @@ type AuthApiKeyOptions = {
 	signal?: AbortSignal;
 };
 
-
 type OAuthResolutionResult = { apiKey: string; credential: OAuthCredential };
 
 /**
@@ -2403,13 +2402,20 @@ export class AuthStorage {
 		const fallback = candidates[0];
 
 		for (const candidate of candidates) {
-			const resolved = await this.#tryOAuthCredential(provider, candidate.selection, providerKey, sessionId, options, {
-				checkUsage,
-				allowBlocked: false,
-				prefetchedUsage: candidate.usage,
-				usagePrechecked: candidate.usageChecked,
-				enforceProRequirement,
-			});
+			const resolved = await this.#tryOAuthCredential(
+				provider,
+				candidate.selection,
+				providerKey,
+				sessionId,
+				options,
+				{
+					checkUsage,
+					allowBlocked: false,
+					prefetchedUsage: candidate.usage,
+					usagePrechecked: candidate.usageChecked,
+					enforceProRequirement,
+				},
+			);
 			if (resolved) return resolved;
 		}
 
@@ -2824,7 +2830,6 @@ export class AuthStorage {
 			enterpriseUrl: credential.enterpriseUrl,
 		};
 	}
-
 
 	#extractStructuredApiKeyToken(apiKey: string): string | undefined {
 		if (!apiKey.startsWith("{")) return undefined;

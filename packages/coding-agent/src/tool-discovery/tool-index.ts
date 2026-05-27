@@ -44,7 +44,6 @@ export interface DiscoverableToolSearchResult {
 	score: number;
 }
 
-
 // ─── BM25 Constants ───────────────────────────────────────────────────────────
 
 const BM25_K1 = 1.2;

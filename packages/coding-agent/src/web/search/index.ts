@@ -12,14 +12,14 @@ import type { CustomTool, CustomToolContext, RenderResultOptions } from "../../e
 import type { Theme } from "../../modes/theme/theme";
 import webSearchSystemPrompt from "../../prompts/system/web-search.md" with { type: "text" };
 import webSearchDescription from "../../prompts/tools/web-search.md" with { type: "text" };
+import { discoverAuthStorage } from "../../sdk";
+import type { AuthStorage } from "../../session/auth-storage";
 import type { ToolSession } from "../../tools";
 import { formatAge } from "../../tools/render-utils";
 import { throwIfAborted } from "../../tools/tool-errors";
 import { getSearchProvider, getSearchProviderLabel, resolveProviderChain, type SearchProvider } from "./provider";
 import { renderSearchCall, renderSearchResult, type SearchRenderDetails } from "./render";
 import type { SearchProviderId, SearchResponse } from "./types";
-import { discoverAuthStorage } from "../../sdk";
-import type { AuthStorage } from "../../session/auth-storage";
 import { SearchProviderError } from "./types";
 
 /** Web search tool parameters schema */

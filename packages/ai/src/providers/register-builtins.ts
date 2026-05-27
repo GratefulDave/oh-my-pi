@@ -160,6 +160,15 @@ export function setBedrockProviderModule(module: BedrockProviderModule): void {
 const LAZY_STREAM_IDLE_TIMEOUT_ERROR = "Provider stream stalled while waiting for the next event";
 const LAZY_STREAM_FIRST_EVENT_TIMEOUT_ERROR = "Provider stream timed out while waiting for the first event";
 
+interface LazyStreamLimits {
+	defaultFirstEventTimeoutMs?: number;
+	defaultIdleTimeoutMs?: number;
+}
+
+const GOOGLE_GEMINI_CLI_LAZY_STREAM_LIMITS: LazyStreamLimits = {
+	defaultFirstEventTimeoutMs: 300_000,
+};
+
 function hasFinalResult(
 	source: AsyncIterable<AssistantMessageEvent>,
 ): source is AsyncIterable<AssistantMessageEvent> & { result(): Promise<AssistantMessage> } {
@@ -172,13 +181,14 @@ function forwardStream<TApi extends Api>(
 	model: Model<TApi>,
 	options: OptionsForApi<TApi>,
 	abortTracker: AbortSourceTracker,
+	limits?: LazyStreamLimits,
 ): void {
 	(async () => {
 		try {
-			const idleTimeoutMs = options.streamIdleTimeoutMs ?? getStreamIdleTimeoutMs();
+		const idleTimeoutMs = options.streamIdleTimeoutMs ?? getStreamIdleTimeoutMs() ?? limits?.defaultIdleTimeoutMs;
 			const watchedSource = iterateWithIdleTimeout(source, {
 				idleTimeoutMs,
-				firstItemTimeoutMs: options.streamFirstEventTimeoutMs ?? getStreamFirstEventTimeoutMs(idleTimeoutMs),
+		firstItemTimeoutMs: options.streamFirstEventTimeoutMs ?? getStreamFirstEventTimeoutMs(idleTimeoutMs) ?? limits?.defaultFirstEventTimeoutMs,
 				errorMessage: LAZY_STREAM_IDLE_TIMEOUT_ERROR,
 				firstItemErrorMessage: LAZY_STREAM_FIRST_EVENT_TIMEOUT_ERROR,
 				onIdle: () => abortTracker.abortLocally(new Error(LAZY_STREAM_IDLE_TIMEOUT_ERROR)),
@@ -240,7 +250,7 @@ function createLazyLoadErrorMessage<TApi extends Api>(
 // ---------------------------------------------------------------------------
 
 function createLazyStream<TApi extends Api>(
-	loadModule: () => Promise<LazyProviderModule<TApi>>,
+	loadModule: () => Promise<LazyProviderModule<TApi>>, limits?: LazyStreamLimits,
 ): (model: Model<TApi>, context: Context, options: OptionsForApi<TApi>) => EventStreamImpl {
 	return (model, context, options) => {
 		const outer = new EventStreamImpl();
@@ -251,7 +261,7 @@ function createLazyStream<TApi extends Api>(
 				const abortTracker = createAbortSourceTracker(streamOptions.signal);
 				const providerOptions = { ...streamOptions, signal: abortTracker.requestSignal } as OptionsForApi<TApi>;
 				const inner = module.stream(model, context, providerOptions);
-				forwardStream(outer, inner, model, streamOptions, abortTracker);
+			forwardStream(outer, inner, model, streamOptions, abortTracker, limits);
 			})
 			.catch(error => {
 				const message = createLazyLoadErrorMessage(model, error);
@@ -369,7 +379,7 @@ function loadBedrockProviderModule(): Promise<LazyProviderModule<"bedrock-conver
 export const streamAnthropic = createLazyStream(loadAnthropicProviderModule);
 export const streamAzureOpenAIResponses = createLazyStream(loadAzureOpenAIResponsesProviderModule);
 export const streamGoogle = createLazyStream(loadGoogleProviderModule);
-export const streamGoogleGeminiCli = createLazyStream(loadGoogleGeminiCliProviderModule);
+export const streamGoogleGeminiCli = createLazyStream(loadGoogleGeminiCliProviderModule, GOOGLE_GEMINI_CLI_LAZY_STREAM_LIMITS);
 export const streamGoogleVertex = createLazyStream(loadGoogleVertexProviderModule);
 export const streamOpenAICodexResponses = createLazyStream(loadOpenAICodexResponsesProviderModule);
 export const streamOpenAICompletions = createLazyStream(loadOpenAICompletionsProviderModule);

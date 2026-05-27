@@ -73,7 +73,6 @@ function resolveBearerToken(options: BedrockOptions): string | undefined {
 	return options.bearerToken || apiKey || $env.AWS_BEARER_TOKEN_BEDROCK;
 }
 
-
 type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
 
 // ---------- Bedrock wire-format types ----------

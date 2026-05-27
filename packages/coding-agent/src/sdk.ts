@@ -49,8 +49,8 @@ import { CursorExecHandlers } from "./cursor";
 import "./discovery";
 import { resolveConfigValue } from "./config/resolve-config-value";
 import { initializeWithSettings } from "./discovery";
-import { defaultEvalSessionId } from "./eval/session-id";
 import { disposeAllKernelSessions, disposeKernelSessionsByOwner } from "./eval/py/executor";
+import { defaultEvalSessionId } from "./eval/session-id";
 import { TtsrManager } from "./export/ttsr";
 import {
 	type CustomCommandsLoadResult,
@@ -108,15 +108,15 @@ import {
 	loadProjectContextFiles as loadContextFilesInternal,
 } from "./system-prompt";
 import { AgentOutputManager } from "./task/output-manager";
+import { parseThinkingLevel, resolveThinkingLevelForModel, toReasoningEffort } from "./thinking";
 import {
 	collectDiscoverableTools,
+	type DiscoverableTool,
 	filterBySource,
 	formatDiscoverableToolServerSummary,
 	selectDiscoverableToolNamesByServer,
-	type DiscoverableTool,
 	summarizeDiscoverableTools,
 } from "./tool-discovery/tool-index";
-import { parseThinkingLevel, resolveThinkingLevelForModel, toReasoningEffort } from "./thinking";
 import {
 	BashTool,
 	BUILTIN_TOOLS,
@@ -1568,7 +1568,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			tools: Map<string, AgentTool>,
 		): Promise<BuildSystemPromptResult> => {
 			toolContextStore.setToolNames(toolNames);
-			const discoverableMCPTools = mcpDiscoveryEnabled ? filterBySource(collectDiscoverableTools(tools.values()), "mcp") : [];
+			const discoverableMCPTools = mcpDiscoveryEnabled
+				? filterBySource(collectDiscoverableTools(tools.values()), "mcp")
+				: [];
 			const activeToolNames = new Set(toolNames);
 			const discoverableBuiltinTools: DiscoverableTool[] =
 				effectiveDiscoveryMode === "all"
@@ -1579,10 +1581,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 							{ source: "builtin" },
 						)
 					: [];
-			const discoverableToolsForDesc: DiscoverableTool[] = [
-				...discoverableBuiltinTools,
-				...discoverableMCPTools,
-			];
+			const discoverableToolsForDesc: DiscoverableTool[] = [...discoverableBuiltinTools, ...discoverableMCPTools];
 			const discoverableToolSummary = summarizeDiscoverableTools(discoverableToolsForDesc);
 			const hasDiscoverableTools =
 				mcpDiscoveryEnabled && toolNames.includes("search_tool_bm25") && discoverableToolsForDesc.length > 0;

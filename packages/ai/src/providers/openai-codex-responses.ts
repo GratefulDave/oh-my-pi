@@ -47,7 +47,6 @@ import {
 } from "../utils";
 import { AssistantMessageEventStream } from "../utils/event-stream";
 import { finalizeErrorMessage, type RawHttpRequestDump } from "../utils/http-inspector";
-import { createSdkStreamRequestOptions, resolveSdkTimeoutMs } from "../utils/sdk-stream-timeout";
 import { getOpenAIStreamIdleTimeoutMs, iterateWithIdleTimeout } from "../utils/idle-iterator";
 import { parseStreamingJson } from "../utils/json-parse";
 import { adaptSchemaForStrict, NO_STRICT, sanitizeSchemaForOpenAIResponses, toolWireSchema } from "../utils/schema";
@@ -2597,8 +2596,6 @@ function formatCodexErrorEvent(rawEvent: Record<string, unknown>, code: string, 
 		return "Codex error event";
 	}
 }
-
-
 
 // ---------- WebSocket SSE debug frame helpers ----------
 

@@ -1,11 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import { Settings } from "../../src/config/settings";
-import { buildDiscoverableToolSearchIndex, type DiscoverableToolSearchIndex, type DiscoverableTool } from "../../src/tool-discovery/tool-index";
+import {
+	buildDiscoverableToolSearchIndex,
+	type DiscoverableTool,
+	type DiscoverableToolSearchIndex,
+} from "../../src/tool-discovery/tool-index";
 import type { ToolSession } from "../../src/tools/index";
 import { SearchToolBm25Tool } from "../../src/tools/search-tool-bm25";
 
 type TestDiscoverableTool = DiscoverableTool;
-
 
 type DiscoveryToolSession = ToolSession & {
 	isMCPDiscoveryEnabled: () => boolean;
@@ -99,14 +102,14 @@ describe("SearchToolBm25Tool", () => {
 		// Build via the legacy helper so documents expose `tool.description` (the legacy shape).
 		const searchIndex = buildDiscoverableToolSearchIndex(discoverableTools);
 		const session = createSession(discoverableTools, {
-		getDiscoverableTools: () => {
-			rawToolsCalls++;
-			return discoverableTools;
-		},
-		getDiscoverableToolSearchIndex: () => {
-			searchIndexCalls++;
-			return searchIndex;
-		},
+			getDiscoverableTools: () => {
+				rawToolsCalls++;
+				return discoverableTools;
+			},
+			getDiscoverableToolSearchIndex: () => {
+				searchIndexCalls++;
+				return searchIndex;
+			},
 		});
 		const tool = new SearchToolBm25Tool(session);
 		expect(rawToolsCalls).toBe(0);
@@ -213,5 +216,4 @@ describe("SearchToolBm25Tool", () => {
 		const names = result.details?.tools.map(t => t.name) ?? [];
 		expect(names).toContain("find");
 	});
-
 });

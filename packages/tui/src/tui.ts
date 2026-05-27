@@ -1151,7 +1151,7 @@ export class TUI extends Container {
 		widthChanged: boolean,
 		heightChanged: boolean,
 		prevViewportTop: number,
-		height: number,
+		_height: number,
 	): RenderIntent {
 		// Initial paint after start(): scrollback must keep its prior shell
 		// content, but the viewport must be cleared so stale rows do not bleed
@@ -1167,7 +1167,6 @@ export class TUI extends Container {
 		if (this.#previousLines.length === 0) return { kind: "viewportRepaint" };
 
 		const diff = this.#diffLines(newLines);
-
 
 		// Content shrank below previous scrollback high water: rebuild history so
 		// terminal scrollback reflects the new shorter content without snapshot
@@ -1311,7 +1310,14 @@ export class TUI extends Container {
 	 * Single state-transition point. Every emitter calls this exactly once at
 	 * the end so cursor/viewport/scrollback accounting stays consistent.
 	 */
-	#commit(lines: string[], width: number, height: number, viewportTop: number, hardwareCursorRow: number, clearScrollback = false): void {
+	#commit(
+		lines: string[],
+		width: number,
+		height: number,
+		viewportTop: number,
+		hardwareCursorRow: number,
+		clearScrollback = false,
+	): void {
 		this.#previousLines = lines;
 		this.#previousWidth = width;
 		this.#previousHeight = height;

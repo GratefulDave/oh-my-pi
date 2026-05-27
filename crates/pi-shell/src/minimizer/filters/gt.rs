@@ -24,10 +24,10 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		Some("submit" | "sync" | "restack" | "create") => compact_noisy_command(&cleaned, exit_code),
 		Some("diff" | "show" | "add" | "push" | "pull" | "fetch" | "stash" | "worktree") => {
 			let git_ctx = MinimizerCtx {
-				program: "git",
+				program:    "git",
 				subcommand: ctx.subcommand,
-				command: ctx.command,
-				config: ctx.config,
+				command:    ctx.command,
+				config:     ctx.config,
 			};
 			return git::filter(&git_ctx, input, exit_code);
 		},

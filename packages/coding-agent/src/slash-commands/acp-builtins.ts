@@ -1,9 +1,9 @@
 import type { AvailableCommand } from "@agentclientprotocol/sdk";
 import { BUILTIN_SLASH_COMMANDS_INTERNAL, lookupBuiltinSlashCommand } from "./builtin-registry";
 import { parseSlashCommand } from "./helpers/parse";
-import type { SlashCommandRuntime, AcpBuiltinSlashCommandResult } from "./types";
+import type { AcpBuiltinSlashCommandResult, SlashCommandRuntime } from "./types";
 
-export type { SlashCommandRuntime, AcpBuiltinSlashCommandResult } from "./types";
+export type { AcpBuiltinSlashCommandResult, SlashCommandRuntime } from "./types";
 
 /**
  * Commands advertised to ACP clients. Entries without a text-mode `handle`

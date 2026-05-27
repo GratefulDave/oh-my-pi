@@ -263,7 +263,6 @@ FROM model_usage_legacy
 		return settings as Settings;
 	}
 
-
 	/**
 	 * Records model usage, updating the last-used timestamp.
 	 * @param modelKey - Model key in "provider/modelId" format

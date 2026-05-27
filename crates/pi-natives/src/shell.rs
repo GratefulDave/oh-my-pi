@@ -131,27 +131,27 @@ pub struct ShellMinimizerApplyOptions {
 pub struct MinimizerResult {
 	/// Dispatch label produced by the minimizer (e.g. `"git"`,
 	/// `"pipeline:gradle"`, `"pipeline+builtin"`).
-	pub filter: String,
+	pub filter:        String,
 	/// The minimized replacement text. Callers that streamed raw chunks
 	/// during execution should clear and replace their accumulated output
 	/// with this text.
-	pub text: String,
+	pub text:          String,
 	/// The full original capture, before minimization.
 	pub original_text: String,
 	/// Captured byte length before minimization.
-	pub input_bytes: u32,
+	pub input_bytes:   u32,
 	/// Byte length of the minimized text the consumer received.
-	pub output_bytes: u32,
+	pub output_bytes:  u32,
 }
 
 impl From<CoreMinimizerResult> for MinimizerResult {
 	fn from(value: CoreMinimizerResult) -> Self {
 		Self {
-			filter: value.filter,
-			text: value.text,
+			filter:        value.filter,
+			text:          value.text,
 			original_text: value.original_text,
-			input_bytes: value.input_bytes,
-			output_bytes: value.output_bytes,
+			input_bytes:   value.input_bytes,
+			output_bytes:  value.output_bytes,
 		}
 	}
 }
@@ -294,10 +294,10 @@ pub fn apply_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<Mini
 		let original_text = output.original_text.unwrap_or_else(|| output.text.clone());
 		let output_bytes = u32::try_from(output.text.len()).unwrap_or(u32::MAX);
 		return Some(MinimizerResult {
-			filter:        output.filter.to_string(),
-			text:          output.text,
+			filter: output.filter.to_string(),
+			text: output.text,
 			original_text,
-			input_bytes:   u32::try_from(output.input_bytes).unwrap_or(u32::MAX),
+			input_bytes: u32::try_from(output.input_bytes).unwrap_or(u32::MAX),
 			output_bytes,
 		});
 	}
@@ -360,8 +360,8 @@ mod tests {
 	#[test]
 	fn apply_shell_minimizer_exposes_reason_without_rewrite() {
 		let result = super::apply_shell_minimizer(super::ShellMinimizerApplyOptions {
-			command: "git diff ; printf done".to_string(),
-			captured: "diff --git a/file.rs b/file.rs\n".to_string(),
+			command:   "git diff ; printf done".to_string(),
+			captured:  "diff --git a/file.rs b/file.rs\n".to_string(),
 			exit_code: Some(0),
 			minimizer: Some(super::MinimizerOptions { enabled: Some(true), ..Default::default() }),
 		})

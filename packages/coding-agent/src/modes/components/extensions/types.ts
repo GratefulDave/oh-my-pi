@@ -143,7 +143,6 @@ export interface DashboardState {
 	selected: Extension | null;
 }
 
-
 /**
  * Callbacks from dashboard to parent.
  */

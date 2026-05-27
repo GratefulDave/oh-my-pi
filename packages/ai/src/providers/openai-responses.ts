@@ -38,11 +38,11 @@ import {
 	getStreamFirstEventTimeoutMs,
 	iterateWithIdleTimeout,
 } from "../utils/idle-iterator";
-import { createSdkStreamRequestOptions, resolveSdkTimeoutMs } from "../utils/sdk-stream-timeout";
 import { parseGitHubCopilotApiKey } from "../utils/oauth/github-copilot";
 import { notifyProviderResponse } from "../utils/provider-response";
 import { callWithCopilotModelRetry } from "../utils/retry";
 import { adaptSchemaForStrict, NO_STRICT, sanitizeSchemaForOpenAIResponses, toolWireSchema } from "../utils/schema";
+import { createSdkStreamRequestOptions } from "../utils/sdk-stream-timeout";
 import { wrapFetchForSseDebug } from "../utils/sse-debug";
 import { mapToOpenAIResponsesToolChoice, type OpenAIResponsesToolChoice } from "../utils/tool-choice";
 import {
@@ -229,10 +229,10 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 			};
 			const openaiStream = await callWithCopilotModelRetry(
 				async () => {
-				const requestOptions = createSdkStreamRequestOptions(requestSignal, options?.streamFirstEventTimeoutMs);
-				const { data, response, request_id } = await client.responses
-					.create(params, requestOptions)
-					.withResponse();
+					const requestOptions = createSdkStreamRequestOptions(requestSignal, options?.streamFirstEventTimeoutMs);
+					const { data, response, request_id } = await client.responses
+						.create(params, requestOptions)
+						.withResponse();
 					await notifyProviderResponse(options, response, model, request_id);
 					return data;
 				},

@@ -22,19 +22,19 @@ const DEFAULT_MAX_CAPTURE_BYTES: u32 = 4 * 1024 * 1024;
 #[derive(Debug, Clone, Default)]
 pub struct MinimizerOptions {
 	/// Master switch. Absent / false = disabled.
-	pub enabled: Option<bool>,
+	pub enabled:           Option<bool>,
 	/// Optional path to a TOML settings file whose values override
 	/// field-level defaults. `~` is expanded.
-	pub settings_path: Option<String>,
+	pub settings_path:     Option<String>,
 	/// Optional xxHash64 digest (hex) of the settings file contents. When
 	/// supplied, the engine refuses to honor a settings file whose hash does
 	/// not match — a lightweight trust gate for agent-controllable paths.
-	pub settings_hash: Option<String>,
+	pub settings_hash:     Option<String>,
 	/// Opt-in allowlist of program names (e.g. `"git"`). When empty or
 	/// absent, all built-in filters are active.
-	pub only: Option<Vec<String>>,
+	pub only:              Option<Vec<String>>,
 	/// Program names explicitly excluded from minimization.
-	pub except: Option<Vec<String>>,
+	pub except:            Option<Vec<String>>,
 	/// Maximum captured bytes per command before the engine falls back to
 	/// the raw, un-minimized output. Default 4 MiB.
 	pub max_capture_bytes: Option<u32>,
@@ -43,25 +43,25 @@ pub struct MinimizerOptions {
 /// Resolved minimizer configuration used by the engine.
 #[derive(Debug, Clone)]
 pub struct MinimizerConfig {
-	pub enabled: bool,
-	pub only: HashSet<String>,
-	pub except: HashSet<String>,
+	pub enabled:           bool,
+	pub only:              HashSet<String>,
+	pub except:            HashSet<String>,
 	pub max_capture_bytes: u32,
-	pub per_command: HashMap<String, toml::Value>,
+	pub per_command:       HashMap<String, toml::Value>,
 	/// Compiled user-defined pipelines parsed from `settings_path`. Searched
 	/// before the built-in pipelines so user filters win.
-	pub user_pipelines: Option<Arc<PipelineRegistry>>,
+	pub user_pipelines:    Option<Arc<PipelineRegistry>>,
 }
 
 impl Default for MinimizerConfig {
 	fn default() -> Self {
 		Self {
-			enabled: false,
-			only: HashSet::new(),
-			except: HashSet::new(),
+			enabled:           false,
+			only:              HashSet::new(),
+			except:            HashSet::new(),
 			max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
-			per_command: HashMap::new(),
-			user_pipelines: None,
+			per_command:       HashMap::new(),
+			user_pipelines:    None,
 		}
 	}
 }
@@ -146,13 +146,13 @@ impl MinimizerConfig {
 #[derive(Debug, Default, Deserialize)]
 struct SettingsFile {
 	#[serde(default)]
-	schema_version: Option<u32>,
-	enabled: Option<bool>,
-	only: Option<Vec<String>>,
-	except: Option<Vec<String>>,
+	schema_version:    Option<u32>,
+	enabled:           Option<bool>,
+	only:              Option<Vec<String>>,
+	except:            Option<Vec<String>>,
 	max_capture_bytes: Option<u32>,
 	#[serde(flatten)]
-	tables: HashMap<String, toml::Value>,
+	tables:            HashMap<String, toml::Value>,
 }
 
 impl SettingsFile {

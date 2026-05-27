@@ -2,28 +2,28 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 
 import {
 	buildFactoryMemoryCandidate,
+	type FactoryConfig,
+	type FactoryMemoryCandidate,
+	type FactorySafetyRules,
 	loadFactoryAgentPrompt,
 	loadFactoryConfig,
 	loadFactoryPrompt,
 	loadFactorySafetyRules,
 	loadFactorySettings,
 	loadFactoryWorkflow,
-	type FactoryConfig,
-	type FactoryMemoryCandidate,
-	type FactorySafetyRules,
 } from "./config";
 import { getFactoryDir } from "./paths";
 import { evaluateSafetyEvent, validateRulePaths } from "./safety";
-import { createWorkflowLaunch, validateWorkflowDefinition } from "./workflow";
 import {
 	buildVerifierFollowUp,
 	collectDiffSummary,
+	type FactoryMessage,
+	type FactoryTurnSnapshot,
 	latestUserText,
 	runFactoryVerifier,
 	shouldRequestFollowUp,
-	type FactoryMessage,
-	type FactoryTurnSnapshot,
 } from "./verifier";
+import { createWorkflowLaunch, validateWorkflowDefinition } from "./workflow";
 
 interface FactoryRuntimeState {
 	config?: FactoryConfig;
@@ -46,7 +46,9 @@ function emptySnapshot(ctx: ExtensionContext): FactoryTurnSnapshot {
 }
 
 function readSessionMessages(ctx: ExtensionContext): FactoryMessage[] {
-	return ctx.sessionManager.getEntries().flatMap(entry => (entry.type === "message" ? [entry.message as FactoryMessage] : []));
+	return ctx.sessionManager
+		.getEntries()
+		.flatMap(entry => (entry.type === "message" ? [entry.message as FactoryMessage] : []));
 }
 
 async function loadState(state: FactoryRuntimeState, ctx: ExtensionContext): Promise<void> {
@@ -80,7 +82,10 @@ async function maybeStoreMemoryCandidate(
 	}
 	const keywords = candidate.keywords.length > 0 ? candidate.keywords.join(",") : `kind:${candidate.kind}`;
 	const summary = `${candidate.summary}${candidate.verification ? ` | verification: ${candidate.verification}` : ""}`;
-	const result = await pi.exec("icm-store-project", ["--keywords", keywords, summary], { cwd: ctx.cwd, timeout: 15_000 });
+	const result = await pi.exec("icm-store-project", ["--keywords", keywords, summary], {
+		cwd: ctx.cwd,
+		timeout: 15_000,
+	});
 	if (result.code === 0) {
 		return `Stored factory lesson in ICM and session cache.`;
 	}

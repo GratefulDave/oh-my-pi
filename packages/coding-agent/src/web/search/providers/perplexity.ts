@@ -8,8 +8,8 @@
  */
 
 import { getEnvApiKey } from "@oh-my-pi/pi-ai";
-import { $env, readSseJson } from "@oh-my-pi/pi-utils";
 import type { AuthStorage } from "@oh-my-pi/pi-ai/auth-storage";
+import { $env, readSseJson } from "@oh-my-pi/pi-utils";
 import type {
 	PerplexityMessageOutput,
 	PerplexityRequest,

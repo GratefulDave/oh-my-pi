@@ -288,11 +288,9 @@ function formatConsoleTable(value: unknown, properties?: readonly string[]): str
 	const renderRow = (cells: string[]): string =>
 		cells.map((cell, index) => cell.padEnd(widths.get(orderedColumns[index]!) ?? cell.length)).join(" | ");
 	const header = renderRow(orderedColumns);
-	const separator = orderedColumns
-		.map(column => "-".repeat(widths.get(column) ?? column.length))
-		.join("-|-");
+	const separator = orderedColumns.map(column => "-".repeat(widths.get(column) ?? column.length)).join("-|-");
 	const body = rows.map(row =>
-		renderRow(orderedColumns.map(column => (column === "(index)" ? row.index : row.values[column] ?? ""))),
+		renderRow(orderedColumns.map(column => (column === "(index)" ? row.index : (row.values[column] ?? "")))),
 	);
 	return [header, separator, ...body].join("\n");
 }
@@ -329,7 +327,6 @@ function normalizeConsoleTableRecord(entry: unknown, properties?: readonly strin
 function inspectConsoleValue(value: unknown): string {
 	return typeof value === "string" ? value : util.inspect(value, { depth: 3, colors: false, breakLength: 120 });
 }
-
 
 function buildRequire(cwd: string): NodeJS.Require {
 	return createRequire(pathToFileURL(path.join(cwd, "[eval]")).href);

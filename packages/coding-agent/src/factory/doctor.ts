@@ -90,7 +90,9 @@ export async function runFactoryDoctor(cwd: string): Promise<FactoryDoctorResult
 		checks.push({
 			kind: "path",
 			ok: insideRepo(cwd, resolved),
-			message: insideRepo(cwd, resolved) ? `Repo-scoped path OK: ${relativePath}` : `Path escapes repo: ${relativePath}`,
+			message: insideRepo(cwd, resolved)
+				? `Repo-scoped path OK: ${relativePath}`
+				: `Path escapes repo: ${relativePath}`,
 			path: resolved,
 		});
 	}
@@ -118,7 +120,9 @@ export async function runFactoryDoctor(cwd: string): Promise<FactoryDoctorResult
 				typeof workflow.name === "string" &&
 				typeof workflow.maxLoops === "number" &&
 				Array.isArray(workflow.steps) &&
-				workflow.steps.every(step => typeof step.id === "string" && typeof step.agent === "string" && typeof step.prompt === "string");
+				workflow.steps.every(
+					step => typeof step.id === "string" && typeof step.agent === "string" && typeof step.prompt === "string",
+				);
 			checks.push({
 				kind: "workflow",
 				ok: valid,

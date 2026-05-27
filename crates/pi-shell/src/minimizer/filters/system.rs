@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
 use super::git;
+use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
 
 pub fn supports(program: &str) -> bool {
 	matches!(
@@ -421,7 +421,9 @@ fn compact_failure_output(
 		}
 		if is_signal_line(trimmed) {
 			let start = idx.saturating_sub(keep_before);
-			let end = idx.saturating_add(keep_after).min(lines.len().saturating_sub(1));
+			let end = idx
+				.saturating_add(keep_after)
+				.min(lines.len().saturating_sub(1));
 			for slot in keep.iter_mut().take(end + 1).skip(start) {
 				*slot = true;
 			}
@@ -608,21 +610,18 @@ fn is_count_summary(trimmed: &str) -> bool {
 		if !total.chars().all(|ch| ch.is_ascii_digit()) {
 			return false;
 		}
-		return parts.next().map(|word| word.trim_matches(|ch: char| ch.is_ascii_punctuation()))
+		return parts
+			.next()
+			.map(|word| word.trim_matches(|ch: char| ch.is_ascii_punctuation()))
 			.is_some_and(|kind| {
 				matches!(
 					kind,
 					"failed"
-						| "passed"
-						| "skipped"
-						| "flaky"
-						| "pass"
-						| "fail"
-						| "error"
-						| "errors"
-						| "warning"
-						| "warnings"
-						| "information"
+						| "passed" | "skipped"
+						| "flaky" | "pass"
+						| "fail" | "error"
+						| "errors" | "warning"
+						| "warnings" | "information"
 						| "informations"
 				)
 			});
@@ -630,7 +629,6 @@ fn is_count_summary(trimmed: &str) -> bool {
 
 	false
 }
-
 
 fn push_important_lines(out: &mut String, input: &str, max: usize) {
 	let mut pushed = 0usize;
@@ -953,7 +951,10 @@ warning: unused import: `baz`
 		assert!(!out.text.contains("Compiling app v0.1.0"));
 		assert!(!out.text.contains("running 1 test"));
 		assert!(!out.text.contains("test pass ... ok"));
-		assert!(out.text.contains("src/main.rs:10:5: error: cannot find value `foo` in this scope"));
+		assert!(
+			out.text
+				.contains("src/main.rs:10:5: error: cannot find value `foo` in this scope")
+		);
 		assert!(out.text.contains("10 |     foo();"));
 		assert!(out.text.contains("note: required by a bound in `bar`"));
 		assert!(out.text.contains("warning: unused import: `baz`"));
@@ -974,7 +975,10 @@ warning: unused import: `baz`
 		let out = filter(&ctx, &input, 0);
 		assert!(out.changed);
 		assert!(out.text.contains("a.rs | 280"));
-		assert!(out.text.contains("1 file changed, 140 insertions(+), 140 deletions(-)"));
+		assert!(
+			out.text
+				.contains("1 file changed, 140 insertions(+), 140 deletions(-)")
+		);
 		assert!(out.text.contains("--- Changes ---"));
 		assert!(out.text.contains("-old 0"));
 		assert!(out.text.contains("+new 0"));

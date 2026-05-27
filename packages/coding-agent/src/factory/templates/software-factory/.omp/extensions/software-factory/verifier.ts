@@ -49,7 +49,10 @@ function extractText(message: FactoryMessage | undefined): string {
 	if (!message) return "";
 	if (typeof message.content === "string") return message.content;
 	const textBlocks = message.content
-		.filter((block: FactoryTextBlock): block is FactoryTextBlock & { text: string } => block.type === "text" && typeof block.text === "string")
+		.filter(
+			(block: FactoryTextBlock): block is FactoryTextBlock & { text: string } =>
+				block.type === "text" && typeof block.text === "string",
+		)
 		.map((block: FactoryTextBlock & { text: string }) => block.text);
 	return textBlocks.join("\n").trim();
 }
@@ -131,7 +134,8 @@ export function shouldRequestFollowUp(report: FactoryVerifierReport, loopCount: 
 }
 
 export function buildVerifierFollowUp(report: FactoryVerifierReport): string {
-	const correction = report.correction.length > 0 ? report.correction.join("\n") : "Review verifier report and fix concrete gaps.";
+	const correction =
+		report.correction.length > 0 ? report.correction.join("\n") : "Review verifier report and fix concrete gaps.";
 	const gaps = report.gaps.length > 0 ? `\nGaps:\n- ${report.gaps.join("\n- ")}` : "";
 	return `Verifier requested correction.\n${correction}${gaps}`.trim();
 }
@@ -158,10 +162,7 @@ export function renderVerifierPrompt(
 	);
 }
 
-export async function collectDiffSummary(
-	exec: FactoryVerifierRunOptions["exec"],
-	cwd: string,
-): Promise<string> {
+export async function collectDiffSummary(exec: FactoryVerifierRunOptions["exec"], cwd: string): Promise<string> {
 	const result = await exec("git", ["status", "--short"], { cwd, timeout: 5_000 });
 	const combined = `${result.stdout}\n${result.stderr}`.trim();
 	if (result.code !== 0) return combined || "git status unavailable";
@@ -203,6 +204,8 @@ export async function runFactoryVerifier(options: FactoryVerifierRunOptions): Pr
 		},
 	);
 	const text = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
-	const report = parseVerifierReport(text || "STATUS: unsure\nCONFIDENCE: PARTIAL\nGAPS:\n- verifier produced no output");
+	const report = parseVerifierReport(
+		text || "STATUS: unsure\nCONFIDENCE: PARTIAL\nGAPS:\n- verifier produced no output",
+	);
 	return report;
 }

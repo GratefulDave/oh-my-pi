@@ -165,7 +165,6 @@ describe("runSubprocess yield reminders", () => {
 		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.parentEvalSessionId).toBe("eval:parent-session");
 	});
 
-
 	it("renders shared task context in subagent system prompt before now", async () => {
 		let userPrompt = "";
 		const session = createMockSession(({ text, emit }) => {
@@ -207,7 +206,9 @@ describe("runSubprocess yield reminders", () => {
 	it("waits for session_start follow-up deliveries before prompting the subagent", async () => {
 		const promptOrder: string[] = [];
 		const deliveryGate = Promise.withResolvers<void>();
-		let runtime: { sendUserMessage: (content: string, options?: { deliverAs?: "steer" | "followUp" }) => void } | undefined;
+		let runtime:
+			| { sendUserMessage: (content: string, options?: { deliverAs?: "steer" | "followUp" }) => void }
+			| undefined;
 		const session = createMockSession(({ text, emit }) => {
 			promptOrder.push(text);
 			emit({
@@ -221,14 +222,18 @@ describe("runSubprocess yield reminders", () => {
 				isError: false,
 			});
 		});
-		(session as AgentSession & { sendUserMessage: (content: string) => Promise<void> }).sendUserMessage = vi.fn(async () => {
-			await deliveryGate.promise;
-			promptOrder.push("delivery");
-		});
+		(session as AgentSession & { sendUserMessage: (content: string) => Promise<void> }).sendUserMessage = vi.fn(
+			async () => {
+				await deliveryGate.promise;
+				promptOrder.push("delivery");
+			},
+		);
 		Object.defineProperty(session, "extensionRunner", {
 			configurable: true,
 			value: {
-				initialize(runtimeApi: { sendUserMessage: (content: string, options?: { deliverAs?: "steer" | "followUp" }) => void }) {
+				initialize(runtimeApi: {
+					sendUserMessage: (content: string, options?: { deliverAs?: "steer" | "followUp" }) => void;
+				}) {
 					runtime = runtimeApi;
 				},
 				onError() {
@@ -248,7 +253,6 @@ describe("runSubprocess yield reminders", () => {
 		expect(result.exitCode).toBe(0);
 		expect(promptOrder).toEqual(["delivery", "do work"]);
 	});
-
 
 	it("sends reminder prompt when subagent stops without yield", async () => {
 		const prompts: string[] = [];

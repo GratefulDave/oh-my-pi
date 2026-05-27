@@ -140,8 +140,11 @@ function guidanceReferenceLines(references: string[]): string {
 	return references.map(reference => `- ${reference}`).join("\n");
 }
 
-
-async function renderTemplateContent(source: string, repo: FactoryRepoContext, options: FactoryInitOptions): Promise<string> {
+async function renderTemplateContent(
+	source: string,
+	repo: FactoryRepoContext,
+	options: FactoryInitOptions,
+): Promise<string> {
 	const rendered = (await getSoftwareFactoryTemplateFile(source))
 		.split("__FACTORY_TEMPLATE_VERSION__")
 		.join(getSoftwareFactoryManifest().version)
@@ -180,7 +183,10 @@ async function loadExistingSettings(cwd: string): Promise<Record<string, unknown
 	return (await Bun.file(settingsPath).json()) as Record<string, unknown>;
 }
 
-function mergeSettings(existing: Record<string, unknown> | undefined, enableMemory: boolean): Record<string, unknown> | undefined {
+function mergeSettings(
+	existing: Record<string, unknown> | undefined,
+	enableMemory: boolean,
+): Record<string, unknown> | undefined {
 	if (!enableMemory) return existing;
 	const next = { ...(existing ?? {}) };
 	const memory = { ...((next.memory as Record<string, unknown> | undefined) ?? {}), backend: "icm" };
@@ -219,7 +225,9 @@ export async function buildFactoryScaffoldPlan(options: FactoryInitOptions): Pro
 	}
 	const warnings = [];
 	if (repo.hasExistingOmp && !options.existing) {
-		warnings.push("Existing .omp directory detected. Use --existing to import legacy workspace assets conservatively.");
+		warnings.push(
+			"Existing .omp directory detected. Use --existing to import legacy workspace assets conservatively.",
+		);
 	}
 	if (!options.enableMemory) {
 		warnings.push("Memory backend left off. Enable intentionally per repo when ready.");

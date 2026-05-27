@@ -25,8 +25,12 @@ describe("software-factory runtime templates", () => {
 	});
 
 	it("evaluates safety decisions for dangerous commands and protected paths", async () => {
-		const safetyModule = await import(pathToFileURL(path.join(cwd, ".omp", "extensions", "software-factory", "safety.ts")).href);
-		const configModule = await import(pathToFileURL(path.join(cwd, ".omp", "extensions", "software-factory", "config.ts")).href);
+		const safetyModule = await import(
+			pathToFileURL(path.join(cwd, ".omp", "extensions", "software-factory", "safety.ts")).href
+		);
+		const configModule = await import(
+			pathToFileURL(path.join(cwd, ".omp", "extensions", "software-factory", "config.ts")).href
+		);
 		const rules = await configModule.loadFactorySafetyRules(cwd, await configModule.loadFactoryConfig(cwd));
 		const bashDecision = safetyModule.evaluateSafetyEvent(
 			{ type: "tool_call", toolCallId: "1", toolName: "bash", input: { command: "rm -rf /tmp/demo" } },
@@ -44,18 +48,20 @@ describe("software-factory runtime templates", () => {
 
 	it("parses verifier reports and requests bounded follow-up on failures", async () => {
 		const verifierModule = await import(
-			pathToFileURL(path.join(cwd, ".omp", "extensions", "software-factory", "verifier.ts")).href,
+			pathToFileURL(path.join(cwd, ".omp", "extensions", "software-factory", "verifier.ts")).href
 		);
-		const report = verifierModule.parseVerifierReport([
-			"STATUS: failed",
-			"CONFIDENCE: FEEDBACK",
-			"CLAIMS:",
-			"- [failed] missing verification",
-			"GAPS:",
-			"- verify.sh still placeholder",
-			"CORRECTION:",
-			"- implement repo-specific oracle",
-		].join("\n"));
+		const report = verifierModule.parseVerifierReport(
+			[
+				"STATUS: failed",
+				"CONFIDENCE: FEEDBACK",
+				"CLAIMS:",
+				"- [failed] missing verification",
+				"GAPS:",
+				"- verify.sh still placeholder",
+				"CORRECTION:",
+				"- implement repo-specific oracle",
+			].join("\n"),
+		);
 		expect(report.status).toBe("failed");
 		expect(report.gaps).toEqual(["verify.sh still placeholder"]);
 		expect(verifierModule.shouldRequestFollowUp(report, 0, 2)).toBe(true);
@@ -64,7 +70,9 @@ describe("software-factory runtime templates", () => {
 	});
 
 	it("formats durable memory candidates without inventing verification", async () => {
-		const configModule = await import(pathToFileURL(path.join(cwd, ".omp", "extensions", "software-factory", "config.ts")).href);
+		const configModule = await import(
+			pathToFileURL(path.join(cwd, ".omp", "extensions", "software-factory", "config.ts")).href
+		);
 		const candidate = configModule.buildFactoryMemoryCandidate({
 			kind: "error",
 			summary: "Verifier caught missing oracle",

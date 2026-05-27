@@ -116,6 +116,5 @@ export interface SlashCommandSpec extends BuiltinSlashCommand {
 	) => Promise<SlashCommandResult> | SlashCommandResult;
 }
 
-
 /** Result returned by `executeAcpBuiltinSlashCommand`. */
 export type AcpBuiltinSlashCommandResult = false | { consumed: true } | { prompt: string };

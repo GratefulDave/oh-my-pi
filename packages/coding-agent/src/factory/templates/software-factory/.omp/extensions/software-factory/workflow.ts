@@ -25,11 +25,16 @@ export function validateWorkflowDefinition(workflow: FactoryWorkflowDefinition):
 
 export function buildWorkflowLaunchMessage(workflow: FactoryWorkflowDefinition, originalRequest: string): string {
 	const header = `Start workflow ${workflow.name}: ${workflow.description}`;
-	const steps = workflow.steps.map((step, index) => `${index + 1}. ${step.id} via ${step.agent} using ${step.prompt}`).join("\n");
+	const steps = workflow.steps
+		.map((step, index) => `${index + 1}. ${step.id} via ${step.agent} using ${step.prompt}`)
+		.join("\n");
 	return `${header}\n\nOriginal request:\n${originalRequest}\n\nSteps:\n${steps}`;
 }
 
-export function createWorkflowLaunch(workflow: FactoryWorkflowDefinition, originalRequest: string): FactoryWorkflowLaunch {
+export function createWorkflowLaunch(
+	workflow: FactoryWorkflowDefinition,
+	originalRequest: string,
+): FactoryWorkflowLaunch {
 	return {
 		workflow,
 		message: buildWorkflowLaunchMessage(workflow, originalRequest),

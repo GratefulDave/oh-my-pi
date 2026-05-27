@@ -2062,7 +2062,6 @@ function readCursorBlob(blobStore: Map<string, Uint8Array>, blobId: Uint8Array):
 	return data;
 }
 
-
 const CURSOR_NATIVE_TOOL_NAMES = new Set(["bash", "read", "write", "delete", "ls", "grep", "lsp", "todo_write"]);
 
 function buildMcpToolDefinitions(tools: Tool[] | undefined): McpToolDefinition[] {
@@ -2253,7 +2252,6 @@ function buildRootPromptMessagesJson(
 			});
 		}
 	}
-
 }
 
 /** Exported for tests: decodes Cursor history blobs built from conversation messages. */

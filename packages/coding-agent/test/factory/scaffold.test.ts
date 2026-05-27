@@ -39,9 +39,11 @@ describe("software-factory scaffold", () => {
 		expect(plan.memoryBackend).toBe("off");
 		expect(plan.files.length).toBeGreaterThan(10);
 		expect(plan.files.every(file => file.target.startsWith(cwd))).toBe(true);
-		expect(plan.files.some(file => file.target.includes(path.join(cwd, ".omp", "extensions", "software-factory", "index.ts")))).toBe(
-			true,
-		);
+		expect(
+			plan.files.some(file =>
+				file.target.includes(path.join(cwd, ".omp", "extensions", "software-factory", "index.ts")),
+			),
+		).toBe(true);
 		expect(plan.files.some(file => file.target.includes(path.join(cwd, ".omp", "settings.json")))).toBe(false);
 	});
 
@@ -83,7 +85,10 @@ describe("software-factory scaffold", () => {
 			force: false,
 			enableMemory: false,
 		});
-		await Bun.write(path.join(cwd, ".omp", "factory", "workflows", "piter.json"), JSON.stringify({ name: "broken", steps: [] }, null, 2));
+		await Bun.write(
+			path.join(cwd, ".omp", "factory", "workflows", "piter.json"),
+			JSON.stringify({ name: "broken", steps: [] }, null, 2),
+		);
 		const doctor = await runFactoryDoctor(cwd);
 		expect(doctor.ok).toBe(false);
 		expect(doctor.checks.some(check => check.kind === "workflow" && check.ok === false)).toBe(true);

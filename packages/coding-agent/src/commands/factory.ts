@@ -1,6 +1,6 @@
 import { Args, Command, Flags, renderCommandHelp } from "@oh-my-pi/pi-utils/cli";
 
-import { printFactoryHelp, runFactoryCommand, type FactoryAction, type FactoryCommandArgs } from "../cli/factory-cli";
+import { type FactoryAction, type FactoryCommandArgs, printFactoryHelp, runFactoryCommand } from "../cli/factory-cli";
 import { initTheme } from "../modes/theme/theme";
 
 const ACTIONS: FactoryAction[] = ["init", "status", "doctor"];

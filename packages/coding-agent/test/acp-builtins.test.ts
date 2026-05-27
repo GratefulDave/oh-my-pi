@@ -930,7 +930,10 @@ describe("wave 5 — adapters and polish", () => {
 	it("/profile create --preset openrouter scopes profile to OpenRouter models", async () => {
 		const { output, runtime } = createRuntime();
 
-		const result = await executeAcpBuiltinSlashCommand("/profile create openrouter --preset openrouter --no-activate", runtime);
+		const result = await executeAcpBuiltinSlashCommand(
+			"/profile create openrouter --preset openrouter --no-activate",
+			runtime,
+		);
 
 		expect(result).toEqual({ consumed: true });
 		expect(output[0]).toContain("Created profile openrouter.");
