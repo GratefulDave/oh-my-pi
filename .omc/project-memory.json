@@ -226,8 +226,8 @@
     },
     {
       "path": "crates/pi-shell/Cargo.toml",
-      "accessCount": 1,
-      "lastAccessed": 1779866977058,
+      "accessCount": 2,
+      "lastAccessed": 1779867332937,
       "type": "file"
     },
     {
@@ -252,6 +252,12 @@
       "path": "crates/pi-natives/src/shell.rs",
       "accessCount": 1,
       "lastAccessed": 1779867172445,
+      "type": "file"
+    },
+    {
+      "path": "crates/pi-shell/src/minimizer/filters/mod.rs",
+      "accessCount": 1,
+      "lastAccessed": 1779867349025,
       "type": "file"
     }
   ],
