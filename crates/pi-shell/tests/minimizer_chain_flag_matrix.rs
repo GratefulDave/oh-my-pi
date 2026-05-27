@@ -82,7 +82,7 @@ fn clang_chain_segments_filter_independently() {
 	);
 	let clangxx = apply(
 		"clang++ -c bar.cpp",
-		"bar.cpp:8:5: error: unknown type name 'Widget'\n    Widget w;\n    ^\n1 error generated.\n",
+		"bar.cpp:8:5: error: unknown type name 'Widget'\n    Widget w\n    ^\n1 error generated.\n",
 		1,
 		&cfg,
 	);
