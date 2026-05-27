@@ -35,7 +35,7 @@
   },
   "build": {
     "buildCommand": "cd /Users/davidandrews/PycharmProjects/lex/packages/natives && bun run build 2>&1 | rtk tail -10",
-    "testCommand": "bun test packages/coding-agent/test/core/hashline.test.ts 2>&1 | rtk tail -60",
+    "testCommand": "bun test packages/coding-agent/test/core/hashline.test.ts 2>&1 | grep -E \"^\\(fail\\)\" | rtk tail -20",
     "lintCommand": "npm run lint",
     "devCommand": "npm run dev",
     "scripts": {
@@ -230,8 +230,14 @@
   "hotPaths": [
     {
       "path": "packages/hashline/src/parser.ts",
-      "accessCount": 8,
-      "lastAccessed": 1779912218287,
+      "accessCount": 9,
+      "lastAccessed": 1779912222567,
+      "type": "file"
+    },
+    {
+      "path": "packages/coding-agent/test/core/hashline.test.ts",
+      "accessCount": 9,
+      "lastAccessed": 1779912487645,
       "type": "file"
     },
     {
@@ -283,15 +289,15 @@
       "type": "file"
     },
     {
-      "path": "packages/coding-agent/package.json",
-      "accessCount": 3,
-      "lastAccessed": 1779911130260,
+      "path": "packages/hashline/src/tokenizer.ts",
+      "accessCount": 4,
+      "lastAccessed": 1779912596266,
       "type": "file"
     },
     {
-      "path": "packages/hashline/src/tokenizer.ts",
+      "path": "packages/coding-agent/package.json",
       "accessCount": 3,
-      "lastAccessed": 1779911468566,
+      "lastAccessed": 1779911130260,
       "type": "file"
     },
     {
@@ -430,6 +436,24 @@
       "path": "biome.json",
       "accessCount": 1,
       "lastAccessed": 1779911566378,
+      "type": "file"
+    },
+    {
+      "path": "packages/hashline/src/index.ts",
+      "accessCount": 1,
+      "lastAccessed": 1779912300505,
+      "type": "file"
+    },
+    {
+      "path": "packages/hashline/src/patcher.ts",
+      "accessCount": 1,
+      "lastAccessed": 1779912301092,
+      "type": "file"
+    },
+    {
+      "path": "packages/hashline/src/input.ts",
+      "accessCount": 1,
+      "lastAccessed": 1779912308973,
       "type": "file"
     }
   ],
