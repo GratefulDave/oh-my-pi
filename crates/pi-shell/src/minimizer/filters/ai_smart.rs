@@ -354,7 +354,7 @@ mod tests {
 				{ "message": { "role": "assistant", "content": "ok\nsaved 3 files" } }
 			]
 		});
-		assert_eq!(extract_first_message(&payload).as_deref(), Some("ok,saved 3 files\n"));
+		assert_eq!(extract_first_message(&payload).as_deref(), Some("ok\nsaved 3 files\n"));
 	}
 
 	#[test]

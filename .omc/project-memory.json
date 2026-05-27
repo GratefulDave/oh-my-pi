@@ -35,7 +35,7 @@
   },
   "build": {
     "buildCommand": "rtk cargo build -p pi-shell --lib --features ai-smart 2>&1 | rtk tail -30",
-    "testCommand": "rtk cargo test -p pi-shell --lib shell::tests::embedded_external_command_runs_in_its_own_session 2>&1 | rtk tail -10",
+    "testCommand": "rtk cargo test -p pi-shell --lib --features ai-smart 2>&1 | rtk tail -30",
     "lintCommand": "npm run lint",
     "devCommand": "npm run dev",
     "scripts": {
@@ -267,15 +267,15 @@
       "type": "file"
     },
     {
-      "path": "crates/pi-shell/src/minimizer.rs",
-      "accessCount": 1,
-      "lastAccessed": 1779867006384,
+      "path": "crates/pi-shell/src/minimizer/filters/ai_smart.rs",
+      "accessCount": 2,
+      "lastAccessed": 1779867669222,
       "type": "file"
     },
     {
-      "path": "crates/pi-shell/src/minimizer/filters/ai_smart.rs",
+      "path": "crates/pi-shell/src/minimizer.rs",
       "accessCount": 1,
-      "lastAccessed": 1779867436042,
+      "lastAccessed": 1779867006384,
       "type": "file"
     },
     {
