@@ -10,10 +10,11 @@ use std::{
 
 use crate::minimizer::{
 	MinimizerConfig, MinimizerCtx, MinimizerOutput, detect, filters,
-	filters::ai_smart,
 	pipeline::{self, CompiledPipeline, PipelineRegistry},
 	plan,
 };
+#[cfg(feature = "ai-smart")]
+use crate::minimizer::filters::ai_smart;
 
 /// Minimization strategy for a shell command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,18 +154,6 @@ fn apply_ai_smart_overlay(
 	}
 }
 
-/// Synthesize an identity for the AI overlay when `detect::detect` returned
-/// `None` — the AI filter doesn't care about the program name beyond
-/// labeling, and an empty identity keeps the gate logic uniform.
-#[cfg(feature = "ai-smart")]
-fn identity_for_ai(program: &'static str) -> detect::CommandIdentity {
-	detect::CommandIdentity { program: program.to_string(), subcommand: None }
-}
-
-#[cfg(not(feature = "ai-smart"))]
-fn identity_for_ai(_program: &'static str) -> detect::CommandIdentity {
-	detect::CommandIdentity { program: String::new(), subcommand: None }
-}
 
 fn identity_has_filter(identity: &detect::CommandIdentity, config: &MinimizerConfig) -> bool {
 	if !config.is_program_enabled(&identity.program) {
