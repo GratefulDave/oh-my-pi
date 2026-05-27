@@ -2609,7 +2609,7 @@ function _notifyCodexWebSocketInbound(
 	observer({ event: payload.type, data: rawText, raw });
 }
 
-function notifyCodexWebSocketOutbound(
+function _notifyCodexWebSocketOutbound(
 	observer: ((event: { event: string | null; data: string; raw: string[] }) => void) | undefined,
 	request: Record<string, unknown>,
 	payload: string,

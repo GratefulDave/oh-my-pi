@@ -307,6 +307,12 @@
       "type": "file"
     },
     {
+      "path": "packages/ai/src/providers/openai-codex-responses.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779911305613,
+      "type": "file"
+    },
+    {
       "path": "packages/coding-agent/src/cli/gain-cli.ts",
       "accessCount": 1,
       "lastAccessed": 1779854484171,
@@ -388,12 +394,6 @@
       "path": "packages/hashline/src/tokenizer.ts",
       "accessCount": 1,
       "lastAccessed": 1779911236242,
-      "type": "file"
-    },
-    {
-      "path": "packages/ai/src/providers/openai-codex-responses.ts",
-      "accessCount": 1,
-      "lastAccessed": 1779911281546,
       "type": "file"
     },
     {
