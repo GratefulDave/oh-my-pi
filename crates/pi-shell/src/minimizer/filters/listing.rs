@@ -1272,4 +1272,82 @@ mod tests {
 		}
 		out
 	}
+
+	fn aggressive_cfg() -> MinimizerConfig {
+		MinimizerConfig {
+			enabled: true,
+			source_outline_level: OutlineLevel::Aggressive,
+			..Default::default()
+		}
+	}
+
+	#[test]
+	fn default_level_keeps_small_source_files_intact() {
+		// Default behavior: short source files pass through unchanged so
+		// existing callers (and `default_level_keeps_small_source_files_intact`)
+		// never see surprise body stripping.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx_command("cat", "cat src/foo.rs", &cfg);
+		let body = "fn foo() {\n    let x = 1;\n    x + 1\n}\n";
+		let out = filter(&ctx, body, 0);
+		assert!(!out.changed, "default level on tiny file must passthrough");
+	}
+
+	#[test]
+	fn aggressive_strips_rust_function_body() {
+		let cfg = aggressive_cfg();
+		let ctx = ctx_command("cat", "cat src/foo.rs", &cfg);
+		let body = "use std::io;\n\npub fn foo(x: i32) -> i32 {\n    let y = x + 1;\n    y * 2\n}\n";
+		let out = filter(&ctx, body, 0);
+		assert!(out.changed, "aggressive must rewrite");
+		assert!(out.text.contains("use std::io;"));
+		assert!(out.text.contains("pub fn foo(x: i32) -> i32 { ... }"));
+		assert!(!out.text.contains("y * 2"));
+	}
+
+	#[test]
+	fn aggressive_strips_typescript_method_body() {
+		let cfg = aggressive_cfg();
+		let ctx = ctx_command("cat", "cat src/foo.ts", &cfg);
+		let body = "import { z } from 'x';\n\nexport class Svc {\n    run(): number {\n        return 1;\n    }\n}\n";
+		let out = filter(&ctx, body, 0);
+		assert!(out.changed);
+		assert!(out.text.contains("import { z } from 'x';"));
+		assert!(out.text.contains("run(): number { ... }"));
+		assert!(!out.text.contains("return 1;"));
+	}
+
+	#[test]
+	fn aggressive_strips_python_function_body() {
+		let cfg = aggressive_cfg();
+		let ctx = ctx_command("cat", "cat src/foo.py", &cfg);
+		let body = "import os\n\ndef compute(x):\n    y = x + 1\n    return y * 2\n";
+		let out = filter(&ctx, body, 0);
+		assert!(out.changed);
+		assert!(out.text.contains("import os"));
+		assert!(out.text.contains("def compute(x):"));
+		assert!(out.text.contains("    ..."));
+		assert!(!out.text.contains("y * 2"));
+	}
+
+	#[test]
+	fn aggressive_unknown_extension_passes_through() {
+		let cfg = aggressive_cfg();
+		let ctx = ctx_command("cat", "cat src/foo.swift", &cfg);
+		let body = "func compute() {}\n";
+		let out = filter(&ctx, body, 0);
+		assert!(!out.changed, "aggressive must not touch unsupported langs");
+	}
+
+	#[test]
+	fn aggressive_output_has_no_chain_corrupting_chars() {
+		let cfg = aggressive_cfg();
+		let ctx = ctx_command("cat", "cat src/foo.ts", &cfg);
+		let body = "export function foo() {\n  const a = `template`;\n  return a;\n}\n";
+		let out = filter(&ctx, body, 0);
+		assert!(out.changed);
+		assert!(!out.text.contains('\x1b'));
+		// signature retained without dangling backtick from template body
+		assert!(!out.text.contains("template"));
+	}
 }

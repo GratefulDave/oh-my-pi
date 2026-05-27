@@ -35,7 +35,7 @@
   },
   "build": {
     "buildCommand": "rtk cargo build -p pi-shell --lib --features ai-smart 2>&1 | rtk tail -30",
-    "testCommand": "rtk cargo test -p pi-shell --lib --features ai-smart 2>&1 | rtk tail -30",
+    "testCommand": "rtk cargo test -p pi-shell --lib --features ai-smart minimizer::filters::ai_smart 2>&1 | rtk tail -20",
     "lintCommand": "npm run lint",
     "devCommand": "npm run dev",
     "scripts": {
@@ -214,8 +214,8 @@
   "hotPaths": [
     {
       "path": "crates/pi-shell/src/minimizer/filters/listing.rs",
-      "accessCount": 7,
-      "lastAccessed": 1779867317954,
+      "accessCount": 8,
+      "lastAccessed": 1779867704927,
       "type": "file"
     },
     {
@@ -234,6 +234,12 @@
       "path": "packages/coding-agent/src/config/settings-schema.ts",
       "accessCount": 4,
       "lastAccessed": 1779867531322,
+      "type": "file"
+    },
+    {
+      "path": "crates/pi-shell/src/minimizer/filters/ai_smart.rs",
+      "accessCount": 3,
+      "lastAccessed": 1779867686264,
       "type": "file"
     },
     {
@@ -264,12 +270,6 @@
       "path": "packages/coding-agent/src/exec/bash-executor.ts",
       "accessCount": 2,
       "lastAccessed": 1779867573687,
-      "type": "file"
-    },
-    {
-      "path": "crates/pi-shell/src/minimizer/filters/ai_smart.rs",
-      "accessCount": 2,
-      "lastAccessed": 1779867669222,
       "type": "file"
     },
     {
