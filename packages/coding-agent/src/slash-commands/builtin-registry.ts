@@ -288,11 +288,7 @@ function buildGainDiscoverLines(context: MinimizerGainContext): string[] {
 	return lines;
 }
 
-async function showGainOverlay(
-	runtime: TuiSlashCommandRuntime,
-	initialScope: 0 | 1 = 0,
-	days?: number,
-): Promise<void> {
+async function showGainOverlay(runtime: TuiSlashCommandRuntime, initialScope: 0 | 1 = 0, days?: number): Promise<void> {
 	const cwd = runtime.ctx.sessionManager.getCwd();
 	const dualContext: DualContext = {
 		current: await loadMinimizerGainContext({ cwd, all: false, days }),

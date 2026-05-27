@@ -2599,7 +2599,7 @@ function formatCodexErrorEvent(rawEvent: Record<string, unknown>, code: string, 
 
 // ---------- WebSocket SSE debug frame helpers ----------
 
-function notifyCodexWebSocketInbound(
+function _notifyCodexWebSocketInbound(
 	observer: ((event: { event: string | null; data: string; raw: string[] }) => void) | undefined,
 	payload: any,
 	rawText: string,

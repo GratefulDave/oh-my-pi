@@ -185,10 +185,13 @@ function forwardStream<TApi extends Api>(
 ): void {
 	(async () => {
 		try {
-		const idleTimeoutMs = options.streamIdleTimeoutMs ?? getStreamIdleTimeoutMs() ?? limits?.defaultIdleTimeoutMs;
+			const idleTimeoutMs = options.streamIdleTimeoutMs ?? getStreamIdleTimeoutMs() ?? limits?.defaultIdleTimeoutMs;
 			const watchedSource = iterateWithIdleTimeout(source, {
 				idleTimeoutMs,
-		firstItemTimeoutMs: options.streamFirstEventTimeoutMs ?? getStreamFirstEventTimeoutMs(idleTimeoutMs) ?? limits?.defaultFirstEventTimeoutMs,
+				firstItemTimeoutMs:
+					options.streamFirstEventTimeoutMs ??
+					getStreamFirstEventTimeoutMs(idleTimeoutMs) ??
+					limits?.defaultFirstEventTimeoutMs,
 				errorMessage: LAZY_STREAM_IDLE_TIMEOUT_ERROR,
 				firstItemErrorMessage: LAZY_STREAM_FIRST_EVENT_TIMEOUT_ERROR,
 				onIdle: () => abortTracker.abortLocally(new Error(LAZY_STREAM_IDLE_TIMEOUT_ERROR)),
@@ -250,7 +253,8 @@ function createLazyLoadErrorMessage<TApi extends Api>(
 // ---------------------------------------------------------------------------
 
 function createLazyStream<TApi extends Api>(
-	loadModule: () => Promise<LazyProviderModule<TApi>>, limits?: LazyStreamLimits,
+	loadModule: () => Promise<LazyProviderModule<TApi>>,
+	limits?: LazyStreamLimits,
 ): (model: Model<TApi>, context: Context, options: OptionsForApi<TApi>) => EventStreamImpl {
 	return (model, context, options) => {
 		const outer = new EventStreamImpl();
@@ -261,7 +265,7 @@ function createLazyStream<TApi extends Api>(
 				const abortTracker = createAbortSourceTracker(streamOptions.signal);
 				const providerOptions = { ...streamOptions, signal: abortTracker.requestSignal } as OptionsForApi<TApi>;
 				const inner = module.stream(model, context, providerOptions);
-			forwardStream(outer, inner, model, streamOptions, abortTracker, limits);
+				forwardStream(outer, inner, model, streamOptions, abortTracker, limits);
 			})
 			.catch(error => {
 				const message = createLazyLoadErrorMessage(model, error);
@@ -379,7 +383,10 @@ function loadBedrockProviderModule(): Promise<LazyProviderModule<"bedrock-conver
 export const streamAnthropic = createLazyStream(loadAnthropicProviderModule);
 export const streamAzureOpenAIResponses = createLazyStream(loadAzureOpenAIResponsesProviderModule);
 export const streamGoogle = createLazyStream(loadGoogleProviderModule);
-export const streamGoogleGeminiCli = createLazyStream(loadGoogleGeminiCliProviderModule, GOOGLE_GEMINI_CLI_LAZY_STREAM_LIMITS);
+export const streamGoogleGeminiCli = createLazyStream(
+	loadGoogleGeminiCliProviderModule,
+	GOOGLE_GEMINI_CLI_LAZY_STREAM_LIMITS,
+);
 export const streamGoogleVertex = createLazyStream(loadGoogleVertexProviderModule);
 export const streamOpenAICodexResponses = createLazyStream(loadOpenAICodexResponsesProviderModule);
 export const streamOpenAICompletions = createLazyStream(loadOpenAICompletionsProviderModule);
