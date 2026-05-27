@@ -1727,6 +1727,38 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"read.summarize.minTotalLines": {
+		type: "number",
+		default: 100,
+		ui: {
+			tab: "editing",
+			label: "Read Summary Minimum File Length",
+			description: "Files with fewer total lines are read verbatim instead of structurally summarized",
+		},
+	},
+
+	"read.summarize.unfoldUntil": {
+		type: "number",
+		default: 50,
+		ui: {
+			tab: "editing",
+			label: "Read Summary Unfold Target",
+			description:
+				"BFS-unfold elidable spans until the summary is at least this many visible lines. 0 keeps only the outermost elisions.",
+		},
+	},
+
+	"read.summarize.unfoldLimit": {
+		type: "number",
+		default: 100,
+		ui: {
+			tab: "editing",
+			label: "Read Summary Unfold Ceiling",
+			description:
+				"Hard ceiling on summary size while BFS-unfolding. An unfold that would exceed this is reverted and unfolding stops.",
+		},
+	},
+
 	"read.toolResultPreview": {
 		type: "boolean",
 		default: false,
@@ -2036,6 +2068,15 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"tts.enabled": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "tools",
+			label: "Text-to-Speech",
+			description: "Enable the tts tool for xAI Grok Voice speech synthesis",
+		},
+	},
 	"recipe.enabled": {
 		type: "boolean",
 		default: true,
@@ -2673,7 +2714,7 @@ export const SETTINGS_SCHEMA = {
 	},
 	"providers.image": {
 		type: "enum",
-		values: ["auto", "openai", "gemini", "openrouter"] as const,
+		values: ["auto", "openai", "antigravity", "xai", "gemini", "openrouter"] as const,
 		default: "auto",
 		ui: {
 			tab: "providers",
@@ -2683,9 +2724,19 @@ export const SETTINGS_SCHEMA = {
 				{
 					value: "auto",
 					label: "Auto",
-					description: "Priority: GPT model image tool > Antigravity > OpenRouter > Gemini",
+					description: "Priority: GPT model image tool > Antigravity > xAI > OpenRouter > Gemini",
 				},
 				{ value: "openai", label: "OpenAI", description: "Uses the active GPT Responses/Codex model" },
+				{
+					value: "antigravity",
+					label: "Antigravity",
+					description: "Requires google-antigravity OAuth",
+				},
+				{
+					value: "xai",
+					label: "xAI Grok Imagine",
+					description: "Requires xAI Grok OAuth or XAI_API_KEY",
+				},
 				{ value: "gemini", label: "Gemini", description: "Requires GEMINI_API_KEY" },
 				{ value: "openrouter", label: "OpenRouter", description: "Requires OPENROUTER_API_KEY" },
 			],
@@ -2723,6 +2774,28 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"providers.openrouterVariant": {
+		type: "enum",
+		values: ["default", "nitro", "floor", "online", "exacto"] as const,
+		default: "default",
+		ui: {
+			tab: "providers",
+			label: "OpenRouter Routing",
+			description:
+				"Default routing-variant suffix appended to OpenRouter model IDs (overridden when the selector already names a variant)",
+			options: [
+				{ value: "default", label: "Default", description: "No suffix; use OpenRouter's default routing" },
+				{ value: "nitro", label: ":nitro", description: "Prioritize throughput / lowest latency" },
+				{ value: "floor", label: ":floor", description: "Prioritize cheapest available provider" },
+				{ value: "online", label: ":online", description: "Enable OpenRouter's web-search plugin" },
+				{
+					value: "exacto",
+					label: ":exacto",
+					description: "Cherry-picked high-quality providers (only defined for select models)",
+				},
+			],
+		},
+	},
 	"providers.parallelFetch": {
 		type: "boolean",
 		default: true,

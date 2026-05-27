@@ -129,7 +129,10 @@ export default function softwareFactoryExtension(pi: ExtensionAPI) {
 				ctx.ui.notify("Factory verifier unavailable: missing agent prompt or verify-on-stop prompt.");
 				return;
 			}
-			const diffSummary = await collectDiffSummary((command, args, options) => pi.exec(command, args, options), ctx.cwd);
+			const diffSummary = await collectDiffSummary(
+				(command, args, options) => pi.exec(command, args, options),
+				ctx.cwd,
+			);
 			const report = await runFactoryVerifier({
 				cwd: ctx.cwd,
 				config: state.config,
@@ -146,7 +149,9 @@ export default function softwareFactoryExtension(pi: ExtensionAPI) {
 				promptTemplate,
 				exec: (command, args, options) => pi.exec(command, args, options),
 			});
-			ctx.ui.notify([`Verifier status: ${report.status}`, `Confidence: ${report.confidence}`, ...report.gaps].join("\n"));
+			ctx.ui.notify(
+				[`Verifier status: ${report.status}`, `Confidence: ${report.confidence}`, ...report.gaps].join("\n"),
+			);
 		},
 	});
 
@@ -272,7 +277,10 @@ export default function softwareFactoryExtension(pi: ExtensionAPI) {
 		const systemPrompt = await loadFactoryAgentPrompt(ctx.cwd, state.config.verifier.systemPrompt);
 		const promptTemplate = await loadFactoryPrompt(ctx.cwd, state.config.verifier.prompt);
 		if (!systemPrompt || !promptTemplate) return;
-		const diffSummary = await collectDiffSummary((command, args, options) => pi.exec(command, args, options), ctx.cwd);
+		const diffSummary = await collectDiffSummary(
+			(command, args, options) => pi.exec(command, args, options),
+			ctx.cwd,
+		);
 		const report = await runFactoryVerifier({
 			cwd: ctx.cwd,
 			config: state.config,
@@ -295,3 +303,4 @@ export default function softwareFactoryExtension(pi: ExtensionAPI) {
 		state.awaitingVerifierFollowUp = true;
 		pi.sendUserMessage(buildVerifierFollowUp(report), { deliverAs: "followUp" });
 	});
+}

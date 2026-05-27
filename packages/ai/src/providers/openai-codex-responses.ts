@@ -2599,7 +2599,7 @@ function formatCodexErrorEvent(rawEvent: Record<string, unknown>, code: string, 
 
 // ---------- WebSocket SSE debug frame helpers ----------
 
-function notifyCodexWebSocketInbound(
+function _notifyCodexWebSocketInbound(
 	observer: ((event: { event: string | null; data: string; raw: string[] }) => void) | undefined,
 	payload: any,
 	rawText: string,
@@ -2609,7 +2609,7 @@ function notifyCodexWebSocketInbound(
 	observer({ event: payload.type, data: rawText, raw });
 }
 
-function notifyCodexWebSocketOutbound(
+function _notifyCodexWebSocketOutbound(
 	observer: ((event: { event: string | null; data: string; raw: string[] }) => void) | undefined,
 	request: Record<string, unknown>,
 	payload: string,
@@ -2620,7 +2620,7 @@ function notifyCodexWebSocketOutbound(
 	observer({ event: type, data: payload, raw });
 }
 
-function notifyCodexWebSocketMalformed(
+function _notifyCodexWebSocketMalformed(
 	observer: ((event: { event: string | null; data: string; raw: string[] }) => void) | undefined,
 	data: string,
 	error: unknown,

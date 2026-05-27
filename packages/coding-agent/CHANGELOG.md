@@ -1,6 +1,58 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `providers.openrouterVariant` setting (Settings → Providers → "OpenRouter Routing") to default OpenRouter requests to a routing-variant suffix (`:nitro`, `:floor`, `:online`, `:exacto`). Selectors that already name a variant (e.g. `openrouter/anthropic/claude-haiku:nitro`) keep precedence.
+
+- `generate_image` supports xAI Grok Imagine via `providers.image=xai`. Supports `grok-imagine-image` (default) and `grok-imagine-image-quality` at aspect ratios `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `3:2`, `2:3`. Uses the xAI Grok OAuth credential when available, otherwise `XAI_API_KEY`.
+- New `tts` tool synthesises speech via xAI Grok Voice behind the disabled-by-default `tts.enabled` setting. Built-in voices `ara`, `eve` (default), `leo`, `rex`, `sal`; custom voice IDs also accepted. Output codec inferred from the `output_path` suffix (`.wav` → `wav`, else `mp3`). Up to 15,000 characters per request.
+
+### Fixed
+
+- Fixed plan-mode re-entry after approval reopening a fresh `local://PLAN.md` instead of the approved titled plan artifact, which could duplicate plan content and fail approval on an existing destination.
+- Fixed `read` URL reader mode aborting after a stalled Jina request instead of falling back to trafilatura/lynx/native: Jina (and Parallel extract) now have their own per-attempt sub-budget capped at 10s, the catch handler honours only real user cancellation, and the in-process native renderer is always attempted on already-loaded HTML ([#1449](https://github.com/can1357/oh-my-pi/issues/1449))
+
+## [15.5.6] - 2026-05-27
+### Added
+
+- Support for multi-range line selectors on URLs (e.g., `:5-10,20-30`) to fetch and display multiple non-contiguous sections
+- Support for combining `:raw` mode with line range selectors on URLs (e.g., `:raw:1-120` or `:1-120:raw`)
+- Support for line range selectors on directory listings (e.g., `:30-40` to view lines 30–40 of a directory tree)
+- Clear error message when requesting a line offset beyond the end of a directory listing
+
+### Changed
+
+- URL selector parsing now supports multiple trailing selector tokens (e.g., `:raw:N-M`), applying them left-to-right
+
+### Breaking Changes
+
+- Removed the package root `hashline` export so imports from the top-level entrypoint can no longer access `hashline` helpers directly
+
+### Added
+
+- Support for multi-range line selectors on URLs (e.g., `:5-10,20-30`) to fetch and display multiple non-contiguous sections
+- Support for combining `:raw` mode with line range selectors on URLs (e.g., `:raw:1-120` or `:1-120:raw`)
+- Support for line range selectors on directory listings (e.g., `:30-40` to view lines 30–40 of a directory tree)
+- Clear error message when requesting a line offset beyond the end of a directory listing
+
+### Changed
+
+- URL selector parsing now supports multiple trailing selector tokens (e.g., `:raw:N-M`), applying them left-to-right
+
+### Fixed
+
+- Fixed `:raw` selector being ignored for JSON and feed URLs, causing them to be pretty-printed or converted to markdown instead of returning raw content
+- Fixed directory listing line selectors silently dropping the offset parameter and only applying the limit
+### Added
+
+- Added `read.summarize.minTotalLines` setting (default 100) to set the minimum file length that triggers read summarization
+- Added `<file>:<lines>` support to `search` `paths`, allowing file-scoped constraints such as `:N-M`, `:N+K`, and comma-separated ranges
+
+### Changed
+
+- Changed multi-section hashline `edit` execution to defer LSP diagnostics flushing until the final section is written
+- Changed read to return verbatim contents for files shorter than `read.summarize.minTotalLines` instead of summarizing them
+- Changed `search` path line-range filtering to include only matches and context lines that fall inside the requested ranges
 
 ### Fixed
 
@@ -8,6 +60,18 @@
 - Fixed `/gain` TUI overlay ignoring `--days N`; the overlay now forwards the requested window to both the current-scope and all-scope context loads (and to the overlay's reload closure), matching the ACP/CLI behaviour.
 - Fixed `/gain` and `omp gain` scope filtering: `matchesCwd` now prefix-matches subdirectories instead of requiring exact `cwd` equality. A query at a parent directory now aggregates saved records from its subdirectories (e.g. running `/gain` at the repo root sees savings recorded in `packages/*`). Sibling directories are still excluded via a path-separator boundary check (`/repo` does not match `/repo-sibling`).
 - Fixed chain decomposition in the native minimizer for compound `&&` / `;` chains containing common shell utilities (`echo`, `printf`, `head`, `tail`, `sed`, `awk`, `cp`, `mv`, `rm`, `xargs`, `unzip`, `tar`, etc.). These now make the chain eligible for the segmented runner, so chains record `filter="chain"` / `"chain-noop"` instead of falling through to the JS-side `"missed"` default. Per-segment passthrough applies — piped segments (`ls | head` inside a chain) no longer break decomposition.
+
+### Fixed
+
+- Fixed `omp` startup and `/changelog` reading the host project's `CHANGELOG.md` as omp's — `getPackageDir()` no longer falls back to the user's `cwd` when no owning `package.json` is locatable, preventing spurious `lastChangelogVersion` writes ([#1423](https://github.com/can1357/oh-my-pi/issues/1423))
+
+### Fixed
+
+- Fixed `createAgentSession()` dropping the hidden `resolve` tool from the registry when no active tool sets `deferrable: true`, even though plan mode dispatches the plan-approval `resolve { action: "apply", ... }` call through a standing handler. Read-only plan-mode toolsets (e.g. `read`, `search`, `find`, `web_search`) silently activated plan mode without `resolve`, leaving the agent unable to submit the finalized plan and forcing the user to exit plan mode manually. `resolve` is now kept whenever `plan.enabled` is true, so the standing handler always has a callable tool ([#1428](https://github.com/can1357/oh-my-pi/issues/1428))
+
+### Fixed
+
+- Fixed multi-section hashline edits to reject duplicate canonical targets and preflight write guards before any section is committed
 
 ## [15.5.3] - 2026-05-27
 

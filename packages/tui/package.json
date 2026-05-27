@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/pi-tui",
-	"version": "15.5.3",
+	"version": "15.5.7",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"homepage": "https://omp.sh",
 	"author": "Can Boluk",
@@ -37,8 +37,8 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-natives": "15.5.3",
-		"@oh-my-pi/pi-utils": "15.5.3",
+		"@oh-my-pi/pi-natives": "15.5.7",
+		"@oh-my-pi/pi-utils": "15.5.7",
 		"lru-cache": "catalog:",
 		"marked": "catalog:"
 	},

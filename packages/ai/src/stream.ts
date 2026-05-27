@@ -7,6 +7,7 @@ import type { Effort } from "./model-thinking";
 import {
 	mapEffortToAnthropicAdaptiveEffort,
 	mapEffortToGoogleThinkingLevel,
+	modelOmitsReasoningEffort,
 	requireSupportedEffort,
 } from "./model-thinking";
 import type { BedrockOptions } from "./providers/amazon-bedrock";
@@ -42,6 +43,7 @@ import {
 	streamOpenAIResponses,
 } from "./providers/register-builtins";
 import { isSyntheticModel, streamSynthetic } from "./providers/synthetic";
+import { streamXAIResponses } from "./providers/xai-responses";
 import type {
 	Api,
 	AssistantMessage,
@@ -82,6 +84,7 @@ const serviceProviderMap: Record<string, KeyResolver> = {
 	groq: "GROQ_API_KEY",
 	cerebras: "CEREBRAS_API_KEY",
 	xai: "XAI_API_KEY",
+	"xai-oauth": () => $pickenv("XAI_OAUTH_TOKEN", "XAI_API_KEY"),
 	fireworks: "FIREWORKS_API_KEY",
 	firepass: "FIREPASS_API_KEY",
 	openrouter: "OPENROUTER_API_KEY",
@@ -238,8 +241,12 @@ export function stream<TApi extends Api>(
 		case "openai-completions":
 			return streamOpenAICompletions(model as Model<"openai-completions">, context, providerOptions as any);
 
-		case "openai-responses":
+		case "openai-responses": {
+			if (model.provider === "xai-oauth") {
+				return streamXAIResponses(model as Model<"openai-responses">, context, providerOptions as any);
+			}
 			return streamOpenAIResponses(model as Model<"openai-responses">, context, providerOptions as any);
+		}
 
 		case "azure-openai-responses":
 			return streamAzureOpenAIResponses(model as Model<"azure-openai-responses">, context, providerOptions as any);
@@ -539,6 +546,14 @@ function resolveOpenAiReasoningEffort<TApi extends Api>(
 ): Effort | undefined {
 	const reasoning = options?.reasoning;
 	if (!reasoning || !model.reasoning) return undefined;
+	// Models with compat.supportsReasoningEffort: false reason natively but
+	// reject the wire effort param. The wire-side omitReasoningEffort gate
+	// (providers/xai-responses.ts:78) is the actual strip; returning
+	// undefined here avoids a redundant requireSupportedEffort throw that
+	// would defeat the gate and surface a confusing
+	// "Compaction failed: Thinking effort high is not supported by..." to
+	// the user.
+	if (modelOmitsReasoningEffort(model)) return undefined;
 	return requireSupportedEffort(model, reasoning);
 }
 
@@ -688,6 +703,7 @@ function mapOptionsForApi<TApi extends Api>(
 				disableReasoning: options?.disableReasoning,
 				toolChoice: mapOpenAiToolChoice(options?.toolChoice),
 				serviceTier: options?.serviceTier,
+				openrouterVariant: options?.openrouterVariant,
 			});
 
 		case "openai-responses":

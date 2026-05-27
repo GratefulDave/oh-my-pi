@@ -4,17 +4,17 @@
 
 ## Source
 - Entry: `packages/coding-agent/src/edit/index.ts`
-- Model-facing prompt: `packages/coding-agent/src/prompts/tools/hashline.md`
+- Model-facing prompt: `packages/hashline/src/prompt.md`
 - Key collaborators:
   - `packages/coding-agent/src/utils/edit-mode.ts` — selects active edit mode
-  - `packages/coding-agent/src/hashline/grammar.lark` — custom-tool grammar for hashline mode
-  - `packages/coding-agent/src/hashline/input.ts` — splits `¶PATH` sections
-  - `packages/coding-agent/src/hashline/parser.ts` — parses op-prefixed edits and verbatim payload lines
-  - `packages/coding-agent/src/hashline/apply.ts` — validates anchors and applies edits
-  - `packages/coding-agent/src/hashline/anchors.ts` — stale-anchor mismatch formatting
-  - `packages/coding-agent/src/hashline/recovery.ts` — cache-based stale-anchor recovery
-  - `packages/coding-agent/src/hashline/hash.ts` — computes 4-hex file hashes and `LINE:TEXT` display lines shared with `read`/`search`
-  - `packages/coding-agent/src/edit/file-read-cache.ts` — per-session read snapshot cache
+  - `packages/hashline/src/grammar.lark` — custom-tool grammar for hashline mode
+  - `packages/hashline/src/input.ts` — splits `¶PATH` sections
+  - `packages/hashline/src/parser.ts` — parses op-prefixed edits and verbatim payload lines
+  - `packages/hashline/src/apply.ts` — validates anchors and applies edits
+  - `packages/hashline/src/mismatch.ts` — stale-anchor mismatch formatting
+  - `packages/hashline/src/recovery.ts` — cache-based stale-anchor recovery
+  - `packages/hashline/src/format.ts` — computes 4-hex file hashes and `LINE:TEXT` display lines shared with `read`/`search`
+  - `packages/coding-agent/src/edit/file-snapshot-store.ts` — per-session read snapshot cache
   - `packages/coding-agent/src/tools/read.ts` — emits anchored lines and records read snapshots
   - `packages/coding-agent/src/tools/search.ts` — records sparse snapshots from matches/context
   - `packages/coding-agent/src/tools/fs-cache-invalidation.ts` — invalidates FS scan caches after writes
@@ -51,7 +51,7 @@ Other edit modes exist (`replace`, `patch`, `apply_patch`) and are selected outs
 ## Outputs
 - Single-shot tool result; hashline mode does not use a `resolve` preview/apply handshake.
 - `content` contains one text block per call. For a successful single-file edit it is either:
-  - `<path>:` plus a compact diff preview from `packages/coding-agent/src/hashline/diff-preview.ts`, or
+  - `<path>:` plus a compact diff preview from `packages/hashline/src/diff-preview.ts`, or
   - `Updated <path>` / `Created <path>` when no compact preview text is emitted.
 - Parse or recovery warnings are appended as:
 
@@ -71,11 +71,11 @@ Warnings:
 - While the model is still typing arguments, the TUI can compute a diff preview with `packages/coding-agent/src/edit/streaming.ts`; that preview is not a deferred action and does not block execution.
 
 ## Flow
-1. `EditTool.execute()` in `packages/coding-agent/src/edit/index.ts` resolves the active mode. Default is `hashline`; `customFormat` exposes `packages/coding-agent/src/hashline/grammar.lark` with `$HFILE_HASH$` / `$HOP_INSERT_BEFORE$` / `$HOP_INSERT_AFTER$` / `$HOP_REPLACE$` / `$HOP_CHARS$` / `$HFILE$` placeholders filled from `packages/coding-agent/src/hashline/hash.ts`.
-2. `executeHashlineSingle()` in `packages/coding-agent/src/hashline/execute.ts` splits the raw `input` into `¶PATH#HASH` / `¶PATH` sections with `splitHashlineInputs()`.
+1. `EditTool.execute()` in `packages/coding-agent/src/edit/index.ts` resolves the active mode. Default is `hashline`; `customFormat` exposes `packages/hashline/src/grammar.lark` as a constant string with op sigils and the section-header `¶` inlined.
+2. `executeHashlineSingle()` in `packages/coding-agent/src/edit/hashline/execute.ts` splits the raw `input` into `¶PATH#HASH` / `¶PATH` sections with `splitHashlineInputs()`.
 3. If multiple sections target the same path, `mergeSamePathSections()` concatenates them before execution so every op still refers to the original file snapshot.
 4. Multi-section calls run a preflight pass (`preflightHashlineSection()`): parse ops, enforce plan-mode write rules, load the current file, reject anchor-scoped edits against missing files, reject auto-generated files, apply edits in memory, and fail if the result is a no-op. This prevents partial batches.
-5. `parseHashlineWithWarnings()` in `packages/coding-agent/src/hashline/parser.ts` tokenizes the diff body:
+5. `parseHashlineWithWarnings()` in `packages/hashline/src/parser.ts` tokenizes the diff body:
    - ignores blank lines and optional `*** Begin Patch`
    - stops at `*** End Patch`
    - stops at `*** Abort` and emits `ABORT_WARNING`
@@ -84,7 +84,7 @@ Warnings:
    - turns `A-B!` into one `delete` edit per line in the range; payload is forbidden
 6. `executeHashlineSingle()` computes the current file hash before applying anchored edits. If it differs from the section `#HASH`, recovery tries the read/search snapshot cache before any write.
 7. `applyHashlineEdits()` validates only line bounds, then applies the already hash-bound line-number edits.
-8. Recovery replays the edits against the cached snapshot for the section hash (`packages/coding-agent/src/edit/file-read-cache.ts`), then 3-way merges the result onto current disk content using `Diff.applyPatch(..., { fuzzFactor: 0 })` in `packages/coding-agent/src/hashline/recovery.ts`. On success the edit proceeds with a warning; on failure a `HashlineMismatchError` is surfaced.
+8. Recovery replays the edits against the cached snapshot for the section hash (`packages/coding-agent/src/edit/file-snapshot-store.ts`), then 3-way merges the result onto current disk content using `Diff.applyPatch(..., { fuzzFactor: 0 })` in `packages/hashline/src/recovery.ts`. On success the edit proceeds with a warning; on failure a `HashlineMismatchError` is surfaced.
 9. Before splicing lines, `absorbReplacementBoundaryDuplicates()` normalizes some malformed-but-recoverable ranges:
    - duplicate prefix/suffix lines adjacent to a replacement can be absorbed by widening the delete range
    - pure inserts can auto-drop duplicated leading/trailing payload lines when `edit.hashlineAutoDropPureInsertDuplicates` is enabled
@@ -187,12 +187,12 @@ Multi-file example:
 
 ## Limits & Caps
 - Default mode is `hashline` (`DEFAULT_EDIT_MODE`) in `packages/coding-agent/src/utils/edit-mode.ts`.
-- File hashes are 4 lowercase hex chars from `computeFileHash()` in `packages/coding-agent/src/hashline/hash.ts`.
-- The visible mismatch report shows 2 lines of context on each side (`MISMATCH_CONTEXT`) in `packages/coding-agent/src/hashline/constants.ts`.
-- Stale-anchor recovery uses `fuzzFactor: 0` (`HASHLINE_RECOVERY_FUZZ_FACTOR`) in `packages/coding-agent/src/hashline/recovery.ts`.
-- The per-session read cache keeps at most 30 paths (`MAX_PATHS_PER_SESSION`) in `packages/coding-agent/src/edit/file-read-cache.ts`.
-- Hashline streaming chunk defaults are 200 lines or 64 KiB per chunk (`packages/coding-agent/src/hashline/types.ts`, consumed by `packages/coding-agent/src/hashline/stream.ts`).
-- `HL_OP_INSERT_BEFORE` is `↑`, `HL_OP_INSERT_AFTER` is `↓`, `HL_OP_REPLACE` is `:`, `HL_OP_DELETE` is `!`, `HL_OP_CHARS` is `↑↓:!`, `HL_FILE_PREFIX` is `¶`, `HL_FILE_HASH_SEP` is `#`, and `HL_LINE_BODY_SEP` is `:` (`packages/coding-agent/src/hashline/hash.ts`).
+- File hashes are 4 lowercase hex chars from `computeFileHash()` in `packages/hashline/src/format.ts`.
+- The visible mismatch report shows 2 lines of context on each side (`MISMATCH_CONTEXT`) in `packages/hashline/src/format.ts`.
+- Stale-anchor recovery uses `fuzzFactor: 0` (`HASHLINE_RECOVERY_FUZZ_FACTOR`) in `packages/hashline/src/recovery.ts`.
+- The per-session read cache keeps at most 30 paths (`MAX_PATHS_PER_SESSION`) in `packages/coding-agent/src/edit/file-snapshot-store.ts`.
+- Hashline streaming chunk defaults are 200 lines or 64 KiB per chunk (`packages/hashline/src/types.ts`, consumed by `packages/hashline/src/stream.ts`).
+- `HL_OP_INSERT_BEFORE` is `↑`, `HL_OP_INSERT_AFTER` is `↓`, `HL_OP_REPLACE` is `:`, `HL_OP_DELETE` is `!`, `HL_OP_CHARS` is `↑↓:!`, `HL_FILE_PREFIX` is `¶`, `HL_FILE_HASH_SEP` is `#`, and `HL_LINE_BODY_SEP` is `:` (`packages/hashline/src/format.ts`).
 
 ## Errors
 - Missing section header:
@@ -233,5 +233,5 @@ Multi-file example:
 - `splitHashlineInputs()` normalizes absolute `¶PATH#HASH` headers back to a cwd-relative path when the file is inside the current working tree. Headers with any run of leading `¶` chars (e.g. `¶foo.ts`, `¶¶foo.ts`, `¶¶¶foo.ts`) are accepted; the canonical form is `¶PATH#HASH` for anchored edits.
 - Optional `*** Begin Patch` / `*** End Patch` markers are accepted in hashline mode, but the file sections are still `¶PATH#HASH`-based, not Codex `*** Update File:` hunks.
 - `*** Abort` terminates parsing early and returns `ABORT_WARNING`; ops parsed before the marker still apply.
-- File-read cache invalidation is conflict-based, not write-through invalidation. If `read` later records content for a line that disagrees with the cached snapshot, the entire snapshot for that path is replaced with the newly observed lines (`packages/coding-agent/src/edit/file-read-cache.ts`).
+- File-read cache invalidation is conflict-based, not write-through invalidation. If `read` later records content for a line that disagrees with the cached snapshot, the entire snapshot for that path is replaced with the newly observed lines (`packages/coding-agent/src/edit/file-snapshot-store.ts`).
 - There is no resolve-style apply/discard phase for hashline edits. The only preview path is the transient TUI diff preview in `packages/coding-agent/src/edit/streaming.ts`.

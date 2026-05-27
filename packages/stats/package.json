@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/omp-stats",
-	"version": "15.5.3",
+	"version": "15.5.7",
 	"description": "Local observability dashboard for pi AI usage statistics",
 	"homepage": "https://omp.sh",
 	"author": "Can Boluk",
@@ -37,8 +37,8 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-ai": "15.5.3",
-		"@oh-my-pi/pi-utils": "15.5.3",
+		"@oh-my-pi/pi-ai": "15.5.7",
+		"@oh-my-pi/pi-utils": "15.5.7",
 		"@tailwindcss/node": "catalog:",
 		"chart.js": "catalog:",
 		"date-fns": "catalog:",

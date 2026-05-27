@@ -203,5 +203,7 @@ export function printFactoryHelp(): void {
 	writeStdout(`  ${COMMAND_NAME} factory init --preset software-factory --existing`);
 	writeStdout(`  ${COMMAND_NAME} factory doctor`);
 	writeStdout("");
-	writeStdout(chalk.dim("Docs: read docs/software-factory.md for presets, generated files, onboarding, and troubleshooting."));
+	writeStdout(
+		chalk.dim("Docs: read docs/software-factory.md for presets, generated files, onboarding, and troubleshooting."),
+	);
 }

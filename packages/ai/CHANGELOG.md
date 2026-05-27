@@ -1,8 +1,27 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `SimpleStreamOptions.openrouterVariant` (`"nitro"`, `"floor"`, `"online"`, `"exacto"`, …) — when set, appends `:<variant>` to OpenRouter model IDs at request time, leaving ids that already carry an explicit `:suffix` untouched. Plumbed through `openai-completions` and the pi-native gateway forwarder.
 
 ## [15.5.3] - 2026-05-27
+- xAI Grok OAuth (SuperGrok Subscription) provider in `/login`. Loopback PKCE flow on `127.0.0.1:56121`; the token unlocks Grok-4.x chat. Ported from NousResearch/hermes-agent (MIT).
+- OpenRouter provider in `/login`. API-key paste flow validated against `https://openrouter.ai/api/v1/auth/key` (the `/models` endpoint is public and cannot validate auth). The pasted key is stored under the existing `openrouter` provider id used by `OPENROUTER_API_KEY`.
+- `XAI_OAUTH_TOKEN` environment variable accepted as a headless fallback for the xAI Grok OAuth provider.
+
+### Changed
+
+- `OpenAIResponsesOptions` gains four optional, provider-agnostic fields that adapter wrappers can use to compose provider-specific behavior on top of the generic transport: `includeEncryptedReasoning` (gates `include: ["reasoning.encrypted_content"]`; default `true`, preserves current behavior), `filterReasoningHistory` (strips replayed `type: "reasoning"` items from conversation history; default `false`), `headers` (merged onto the client's default headers), and `extraBody` (merged into the request payload).
+- The existing `XAI_API_KEY` path is unchanged — it continues to use the OpenAI-completions transport.
+
+### Fixed
+
+- Fixed OpenRouter DeepSeek V4 tool-call follow-up requests replaying normalized `reasoning` as-is instead of DeepSeek's required `reasoning_content`, which caused HTTP 400 errors in thinking mode. ([#1445](https://github.com/can1357/oh-my-pi/issues/1445))
+
+## [15.5.6] - 2026-05-27
+### Added
+
+- Added `PI_CODEX_WEBSOCKET_MAX_IDLE_REUSE_MS` to control how long an idle Codex WebSocket stays eligible for reuse, with `0` disabling the check
 
 ### Fixed
 

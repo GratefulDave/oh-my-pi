@@ -2,23 +2,84 @@ import { beforeAll, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import {
+	type ApplyOptions,
+	applyEdits,
+	buildCompactDiffPreview as buildCompactHashlineDiffPreview,
+	computeFileHash,
+	detectLineEnding,
+	type Edit,
+	InMemorySnapshotStore as FileReadCache,
+	Filesystem,
+	MismatchError as HashlineMismatchError,
+	NotFoundError,
+	Patch,
+	Patcher,
+	type PatchSection,
+	parsePatch as parseHashline,
+	Recovery,
+	type SplitOptions,
+	type WriteResult,
+} from "@oh-my-pi/hashline";
 import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import {
-	applyHashlineEdits,
-	buildCompactHashlineDiffPreview,
-	computeFileHash,
 	type ExecuteHashlineSingleOptions,
 	executeHashlineSingle,
-	FileReadCache,
 	generateDiffString,
-	getFileReadCache,
-	HashlineMismatchError,
+	getFileSnapshotStore as getFileReadCache,
 	hashlineEditParamsSchema,
-	parseHashline,
-	splitHashlineInput,
-	splitHashlineInputs,
-	tryRecoverHashlineWithCache,
 } from "@oh-my-pi/pi-coding-agent/edit";
+
+/**
+ * The test bodies were written against the legacy hashline API surface. The
+ * shims below project the new `@oh-my-pi/hashline` shapes onto the legacy
+ * names so production code can use the new names directly while we keep the
+ * pre-existing behavior assertions intact.
+ */
+function applyHashlineEdits(
+	text: string,
+	edits: readonly Edit[],
+	options: ApplyOptions = {},
+): { text: string; lines: string; firstChangedLine?: number; warnings?: string[] } {
+	const r = applyEdits(text, [...edits], options);
+	return { ...r, lines: r.text };
+}
+
+interface SectionView {
+	path: string;
+	fileHash?: string;
+	diff: string;
+}
+function toSectionView(section: PatchSection): SectionView {
+	return section.fileHash !== undefined
+		? { path: section.path, fileHash: section.fileHash, diff: section.diff }
+		: { path: section.path, diff: section.diff };
+}
+function splitHashlineInput(input: string, options: SplitOptions = {}): SectionView {
+	return toSectionView(Patch.parseSingle(input, options));
+}
+function splitHashlineInputs(input: string, options: SplitOptions = {}): SectionView[] {
+	return Patch.parse(input, options).sections.map(toSectionView);
+}
+
+function tryRecoverHashlineWithCache(args: {
+	cache: FileReadCache;
+	absolutePath: string;
+	currentText: string;
+	fileHash: string;
+	edits: readonly Edit[];
+	options?: ApplyOptions;
+}): { text: string; lines: string; firstChangedLine: number | undefined; warnings: string[] } | null {
+	const recovered = new Recovery(args.cache).tryRecover({
+		path: args.absolutePath,
+		currentText: args.currentText,
+		fileHash: args.fileHash,
+		edits: args.edits,
+		options: args.options,
+	});
+	return recovered ? { ...recovered, lines: recovered.text } : null;
+}
+
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 
 beforeAll(async () => {
@@ -27,6 +88,7 @@ beforeAll(async () => {
 });
 
 const pl = (text: string): string => text;
+const extra = (text: string): string => text;
 const outputSep = ":";
 const outputSepRe = ":";
 
@@ -84,7 +146,51 @@ function hashlineExecuteOptions(
 	};
 }
 
+class PolicyFilesystem extends Filesystem {
+	#files = new Map<string, string>();
+	#blocked = new Set<string>();
+
+	constructor(initial: Iterable<readonly [string, string]>, blocked: Iterable<string>) {
+		super();
+		for (const [filePath, content] of initial) this.#files.set(filePath, content);
+		for (const filePath of blocked) this.#blocked.add(filePath);
+	}
+
+	async readText(filePath: string): Promise<string> {
+		const content = this.#files.get(filePath);
+		if (content === undefined) throw new NotFoundError(filePath);
+		return content;
+	}
+
+	async preflightWrite(filePath: string): Promise<void> {
+		if (this.#blocked.has(filePath)) throw new Error(`blocked write: ${filePath}`);
+	}
+
+	async writeText(filePath: string, content: string): Promise<WriteResult> {
+		this.#files.set(filePath, content);
+		return { text: content };
+	}
+
+	get(filePath: string): string | undefined {
+		return this.#files.get(filePath);
+	}
+}
+
+describe("hashline normalization", () => {
+	it("preserves the first newline style when restoring mixed-ending files", () => {
+		expect(detectLineEnding("a\r\nb\nc")).toBe("\r\n");
+		expect(detectLineEnding("a\nb\r\nc")).toBe("\n");
+	});
+});
+
 describe("hashline parser — suffix-op syntax", () => {
+	it("keeps parsed edits reusable across different target snapshots", () => {
+		const section = Patch.parseSingle(["¶a.ts", `${tag(2, "bbb")}↓`, extra("tail")].join("\n"));
+
+		expect(section.applyTo("aaa\nbbb").text).toBe("aaa\nbbb\ntail");
+		expect(section.applyTo("aaa\nbbb\nccc").text).toBe("aaa\nbbb\ntail\nccc");
+	});
+
 	const content = "aaa\nbbb\nccc";
 
 	it("inserts payload before/after a Lid, and at BOF/EOF", () => {
@@ -472,6 +578,28 @@ describe("splitHashlineInput — ¶ headers", () => {
 	});
 });
 
+it("preflights write policy for every section before committing a batch", async () => {
+	const fixture = new PolicyFilesystem(
+		[
+			["a.ts", "aaa\n"],
+			["b.ts", "bbb\n"],
+		],
+		["b.ts"],
+	);
+	const input = [
+		header("a.ts", "aaa\n"),
+		`${sameLineRange(tag(1, "aaa"))}:`,
+		extra("AAA"),
+		header("b.ts", "bbb\n"),
+		`${sameLineRange(tag(1, "bbb"))}:`,
+		extra("BBB"),
+	].join("\n");
+
+	await expect(new Patcher({ fs: fixture }).apply(Patch.parse(input))).rejects.toThrow(/blocked write: b\.ts/);
+	expect(fixture.get("a.ts")).toBe("aaa\n");
+	expect(fixture.get("b.ts")).toBe("bbb\n");
+});
+
 describe("hashline executor", () => {
 	it("creates a missing file with a file-scoped insert", async () => {
 		await withTempDir(async tempDir => {
@@ -519,6 +647,27 @@ describe("hashline executor", () => {
 			);
 			expect(await Bun.file(aPath).text()).toBe("aaa\n");
 			expect(await Bun.file(bPath).text()).toBe("bbb\n");
+		});
+	});
+
+	it("rejects duplicate canonical targets before writing stale section results", async () => {
+		await withTempDir(async tempDir => {
+			const filePath = path.join(tempDir, "a.ts");
+			const source = "one\ntwo\n";
+			await Bun.write(filePath, source);
+			const input = [
+				header("a.ts", source),
+				`${sameLineRange(tag(1, "one"))}:`,
+				extra("ONE"),
+				header("./a.ts", source),
+				`${sameLineRange(tag(2, "two"))}:`,
+				extra("TWO"),
+			].join("\n");
+
+			await expect(executeHashlineSingle(hashlineExecuteOptions(tempDir, input))).rejects.toThrow(
+				/resolve to the same file/,
+			);
+			expect(await Bun.file(filePath).text()).toBe(source);
 		});
 	});
 
@@ -722,8 +871,8 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 		const b = new FileReadCache();
 		const fakePath = "/tmp/__hashline-cache-isolation__.ts";
 		a.recordContiguous(fakePath, 1, ["x", "y", "z"]);
-		expect(a.get(fakePath)).not.toBeNull();
-		expect(b.get(fakePath)).toBeNull();
+		expect(a.head(fakePath)).not.toBeNull();
+		expect(b.head(fakePath)).toBeNull();
 	});
 
 	it("captures the post-edit result so the next edit can recover from anchors against it", async () => {
@@ -746,7 +895,7 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 			await executeHashlineSingle(hashlineExecuteOptions(tempDir, firstInput, undefined, session));
 			const v1Lines = ["alpha", "BETA", "gamma", "delta", "epsilon"];
 			expect(await Bun.file(filePath).text()).toBe(`${v1Lines.join("\n")}\n`);
-			const snap = getFileReadCache(session).get(filePath);
+			const snap = getFileReadCache(session).head(filePath);
 			expect(snap?.lines.get(1)).toBe("alpha");
 			expect(snap?.lines.get(2)).toBe("BETA");
 			expect(snap?.lines.get(3)).toBe("gamma");
@@ -809,9 +958,9 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 				fileHash: computeFileHash(version),
 			});
 		}
-		expect(cache.get(fakePath)?.fileHash).toBe(computeFileHash("three\n"));
-		expect(cache.getByHash(fakePath, computeFileHash("one\n"))?.fullText).toBe("one\n");
-		expect(cache.getByHash(fakePath, computeFileHash("two\n"))?.fullText).toBe("two\n");
+		expect(cache.head(fakePath)?.fileHash).toBe(computeFileHash("three\n"));
+		expect(cache.byHash(fakePath, computeFileHash("one\n"))?.fullText).toBe("one\n");
+		expect(cache.byHash(fakePath, computeFileHash("two\n"))?.fullText).toBe("two\n");
 	});
 
 	it("drops a cached entry when newly recorded lines disagree on overlap", () => {
@@ -826,7 +975,7 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 			[7, "g"],
 		]);
 
-		const snap = cache.get(fakePath);
+		const snap = cache.head(fakePath);
 		expect(snap).not.toBeNull();
 		// Old entries dropped; only the divergent record's entries remain.
 		expect(snap?.lines.has(1)).toBe(false);
@@ -841,10 +990,10 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 		for (let i = 0; i < 32; i++) {
 			cache.recordContiguous(`/tmp/file-${i}.ts`, 1, ["x"]);
 		}
-		expect(cache.get("/tmp/file-0.ts")).toBeNull();
-		expect(cache.get("/tmp/file-1.ts")).toBeNull();
-		expect(cache.get("/tmp/file-2.ts")).not.toBeNull();
-		expect(cache.get("/tmp/file-31.ts")).not.toBeNull();
+		expect(cache.head("/tmp/file-0.ts")).toBeNull();
+		expect(cache.head("/tmp/file-1.ts")).toBeNull();
+		expect(cache.head("/tmp/file-2.ts")).not.toBeNull();
+		expect(cache.head("/tmp/file-31.ts")).not.toBeNull();
 	});
 });
 

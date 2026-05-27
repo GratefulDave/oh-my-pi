@@ -14,7 +14,7 @@
   - `packages/coding-agent/src/edit/notebook.ts` — convert `.ipynb` to editable `# %% [...] cell:N` text.
   - `packages/coding-agent/src/utils/file-display-mode.ts` — decide hashline vs line-number vs raw display.
   - `packages/coding-agent/src/workspace-tree.ts` — render directory trees.
-  - `packages/coding-agent/src/edit/file-read-cache.ts` — cache read lines for later hashline edit recovery.
+  - `packages/coding-agent/src/edit/file-snapshot-store.ts` — cache read lines for later hashline edit recovery.
   - `packages/coding-agent/src/tools/index.ts` — registers `read: s => new ReadTool(s)`.
 
 ## Inputs
@@ -104,7 +104,7 @@ URL selectors are parsed separately in `packages/coding-agent/src/tools/fetch.ts
     - hashline numbered output when edit mode is hashline, read is not raw, source is mutable, edit tool exists, and `readHashLines !== false`
     - otherwise optional line numbers when `readLineNumbers === true`
     - raw mode suppresses both
-- Prefix format in hashline mode is a `¶PATH#HASH` header followed by `LINE:TEXT`, e.g. `¶src/foo.ts#1a2b` and `41:def alpha():`, from `computeFileHash()` / `formatNumberedLine()` in `packages/coding-agent/src/hashline/hash.ts`.
+- Prefix format in hashline mode is a `¶PATH#HASH` header followed by `LINE:TEXT`, e.g. `¶src/foo.ts#1a2b` and `41:def alpha():`, from `computeFileHash()` / `formatNumberedLine()` in `packages/hashline/src/format.ts`.
 - The `edit`/hashline path consumes that header plus bare line numbers later; immutable sources and `:raw` intentionally suppress them.
 
 ### Directory listings

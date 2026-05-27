@@ -3574,9 +3574,17 @@ export class AgentSession {
 		const sessionOnResponse = this.#onResponse;
 		const sessionMetadata = this.agent.metadataForProvider(provider);
 		const sessionOnSseEvent = this.#onSseEvent;
-		if (!sessionOnPayload && !sessionOnResponse && !sessionMetadata && !sessionOnSseEvent) return options;
+		const openrouterRoutingPreset =
+			provider === "openrouter" ? this.settings.get("providers.openrouterVariant") : "default";
+		const openrouterVariant =
+			openrouterRoutingPreset !== "default" && options.openrouterVariant === undefined
+				? openrouterRoutingPreset
+				: undefined;
+		if (!sessionOnPayload && !sessionOnResponse && !sessionMetadata && !sessionOnSseEvent && !openrouterVariant)
+			return options;
 
-		const preparedOptions: SimpleStreamOptions = { ...options };
+		const preparedOptions: SimpleStreamOptions =
+			openrouterVariant === undefined ? { ...options } : { ...options, openrouterVariant };
 
 		// Stamp session metadata (e.g. user_id={session_id}) onto direct-call requests so
 		// they share the same session bucket as Agent.prompt-routed requests on Anthropic
@@ -3701,6 +3709,10 @@ export class AgentSession {
 
 	setPlanReferencePath(path: string): void {
 		this.#planReferencePath = path;
+	}
+
+	getPlanReferencePath(): string {
+		return this.#planReferencePath;
 	}
 
 	get clientBridge(): ClientBridge | undefined {
@@ -5579,6 +5591,11 @@ export class AgentSession {
 					initiatorOverride: "agent",
 					metadata: this.agent.metadataForProvider(model.provider),
 					telemetry: resolveTelemetry(this.agent.telemetry, this.sessionId),
+					// Honor the user's /model thinking selection on the handoff
+					// path. Clamped per-model inside generateHandoff via
+					// resolveCompactionEffort so unsupported-effort models don't
+					// trip requireSupportedEffort.
+					thinkingLevel: this.thinkingLevel,
 				},
 				handoffSignal,
 			);
@@ -6312,6 +6329,11 @@ export class AgentSession {
 					metadata: this.agent.metadataForProvider(candidate.provider),
 					convertToLlm,
 					telemetry,
+					// Honor the user's /model thinking selection (incl. `off`) on
+					// the manual `/compact` path. Clamped per-model inside compact()
+					// via resolveCompactionEffort so unsupported-effort models
+					// (xai-oauth/grok-build) don't trip requireSupportedEffort.
+					thinkingLevel: this.thinkingLevel,
 				});
 			} catch (error) {
 				if (!this.#isCompactionAuthFailure(error)) {
@@ -6567,6 +6589,11 @@ export class AgentSession {
 								initiatorOverride: "agent",
 								convertToLlm,
 								telemetry,
+								// Honor the user's /model thinking selection on the
+								// auto-compaction path — the most-fired compaction
+								// site. Clamped per-model inside compact() via
+								// resolveCompactionEffort.
+								thinkingLevel: this.thinkingLevel,
 							});
 							break;
 						} catch (error) {

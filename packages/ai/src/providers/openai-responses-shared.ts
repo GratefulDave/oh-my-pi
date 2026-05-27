@@ -33,6 +33,32 @@ import type { AssistantMessageEventStream } from "../utils/event-stream";
 import { parseStreamingJson } from "../utils/json-parse";
 import { joinTextWithImagePlaceholder, NON_VISION_IMAGE_PLACEHOLDER, partitionVisionContent } from "./vision-guard";
 
+export const OPENAI_RESPONSES_PROGRESS_EVENT_TYPES: ReadonlySet<string> = new Set([
+	"response.created",
+	"response.output_item.added",
+	"response.reasoning_summary_part.added",
+	"response.reasoning_summary_text.delta",
+	"response.reasoning_summary_part.done",
+	"response.reasoning_text.delta",
+	"response.content_part.added",
+	"response.output_text.delta",
+	"response.refusal.delta",
+	"response.function_call_arguments.delta",
+	"response.function_call_arguments.done",
+	"response.custom_tool_call_input.delta",
+	"response.custom_tool_call_input.done",
+	"response.output_item.done",
+	"response.completed",
+	"response.failed",
+	"error",
+]);
+
+export function isOpenAIResponsesProgressEvent(event: unknown): boolean {
+	if (!event || typeof event !== "object") return false;
+	const type = (event as { type?: unknown }).type;
+	return typeof type === "string" && OPENAI_RESPONSES_PROGRESS_EVENT_TYPES.has(type);
+}
+
 export function encodeTextSignatureV1(id: string, phase?: TextSignatureV1["phase"]): string {
 	const payload: TextSignatureV1 = { v: 1, id };
 	if (phase) payload.phase = phase;
@@ -286,6 +312,53 @@ export function appendResponsesToolResultMessages<TApi extends Api>(
 		}
 	}
 	messages.push({ role: "user", content: contentParts });
+}
+
+export function repairOrphanResponsesToolOutputs(input: ResponseInput): ResponseInput {
+	const knownCallIds = new Set<string>();
+	for (const item of input) {
+		const t = (item as { type?: string }).type;
+		const callId = (item as { call_id?: unknown }).call_id;
+		if (typeof callId !== "string") continue;
+		if (t === "function_call" || t === "custom_tool_call") knownCallIds.add(callId);
+	}
+	let hasOrphan = false;
+	for (const item of input) {
+		const t = (item as { type?: string }).type;
+		if (t !== "function_call_output" && t !== "custom_tool_call_output") continue;
+		const callId = (item as { call_id?: unknown }).call_id;
+		if (typeof callId === "string" && !knownCallIds.has(callId)) {
+			hasOrphan = true;
+			break;
+		}
+	}
+	if (!hasOrphan) return input;
+	return input.map(item => {
+		const t = (item as { type?: string }).type;
+		if (t !== "function_call_output" && t !== "custom_tool_call_output") return item;
+		const record = item as { call_id?: unknown; output?: unknown; name?: unknown };
+		const callId = record.call_id;
+		if (typeof callId !== "string" || knownCallIds.has(callId)) return item;
+		const toolName = typeof record.name === "string" && record.name.length > 0 ? record.name : "tool";
+		const rawOutput = record.output;
+		let text: string;
+		if (typeof rawOutput === "string") text = rawOutput;
+		else if (rawOutput == null) text = "";
+		else {
+			try {
+				text = JSON.stringify(rawOutput);
+			} catch {
+				text = String(rawOutput);
+			}
+		}
+		const ORPHAN_OUTPUT_LIMIT = 16_000;
+		if (text.length > ORPHAN_OUTPUT_LIMIT) text = `${text.slice(0, ORPHAN_OUTPUT_LIMIT)}\n...[truncated]`;
+		return {
+			type: "message",
+			role: "assistant",
+			content: `[Orphan ${toolName} result; call_id=${callId}]: ${text}`,
+		} as ResponseInput[number];
+	});
 }
 
 export interface ProcessResponsesStreamOptions {
@@ -675,23 +748,41 @@ export function applyResponsesReasoningParams<P extends OpenAI.Responses.Respons
 	options: ReasoningOptions | undefined,
 	messages: ResponseInput,
 	mapEffort?: (effort: string) => string,
+	includeEncryptedReasoning: boolean = true,
+	omitReasoningEffort: boolean = false,
 ): void {
 	if (!model.reasoning) return;
 	// Always request encrypted reasoning content so reasoning items can be replayed in
 	// multi-turn conversations when store is false (items aren't persisted server-side, so
 	// we must include the full content). See: https://github.com/can1357/oh-my-pi/issues/41
-	params.include = ["reasoning.encrypted_content"];
+	if (includeEncryptedReasoning) {
+		params.include = ["reasoning.encrypted_content"];
+	}
 
 	if (options?.reasoning || options?.reasoningSummary !== undefined) {
-		const requested = options?.reasoning || "medium";
-		type ReasoningParam = NonNullable<OpenAI.Responses.ResponseCreateParamsStreaming["reasoning"]>;
-		const reasoningParams: ReasoningParam = {
-			effort: (mapEffort ? mapEffort(requested) : requested) as ReasoningParam["effort"],
-		};
-		if (options?.reasoningSummary !== null) {
-			reasoningParams.summary = options?.reasoningSummary || "auto";
+		// Suppress the effort dial entirely when the upstream provider rejects
+		// `reasoning.effort` for this model (xAI Grok models outside the
+		// effort-capable allowlist 400 with "Model X does not support parameter
+		// reasoningEffort"). Default is false to preserve existing behavior for
+		// every non-xAI caller.
+		if (omitReasoningEffort) {
+			// Still honor reasoningSummary when explicitly requested; xAI
+			// accepts the summary field on every reasoning-capable model.
+			if (options?.reasoningSummary !== undefined && options?.reasoningSummary !== null) {
+				type ReasoningParam = NonNullable<OpenAI.Responses.ResponseCreateParamsStreaming["reasoning"]>;
+				params.reasoning = { summary: options.reasoningSummary || "auto" } as P["reasoning"] & ReasoningParam;
+			}
+		} else {
+			const requested = options?.reasoning || "medium";
+			type ReasoningParam = NonNullable<OpenAI.Responses.ResponseCreateParamsStreaming["reasoning"]>;
+			const reasoningParams: ReasoningParam = {
+				effort: (mapEffort ? mapEffort(requested) : requested) as ReasoningParam["effort"],
+			};
+			if (options?.reasoningSummary !== null) {
+				reasoningParams.summary = options?.reasoningSummary || "auto";
+			}
+			params.reasoning = reasoningParams as P["reasoning"];
 		}
-		params.reasoning = reasoningParams as P["reasoning"];
 	} else if (model.name.toLowerCase().startsWith("gpt-5")) {
 		// Jesus Christ, see https://community.openai.com/t/need-reasoning-false-option-for-gpt-5/1351588/7
 		messages.push({

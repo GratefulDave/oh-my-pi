@@ -30,11 +30,11 @@ const PERPLEXITY_OAUTH_ASK_URL = "https://www.perplexity.ai/rest/sse/perplexity_
 const DEFAULT_MAX_TOKENS = 8192;
 const DEFAULT_TEMPERATURE = 0.2;
 const DEFAULT_NUM_SEARCH_RESULTS = 10;
-const OAUTH_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
+const _OAUTH_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 const OAUTH_API_VERSION = "2.18";
 const OAUTH_USER_AGENT = "Perplexity/641 CFNetwork/1568 Darwin/25.2.0";
 
-interface PerplexityOAuthCredential {
+interface _PerplexityOAuthCredential {
 	type: "oauth";
 	access: string;
 	expires: number;
@@ -180,7 +180,7 @@ export function findApiKey(): string | null {
  * token has no `exp` (which is the common case — Perplexity sessions are
  * server-side and effectively non-expiring from the client's POV).
  */
-function jwtExpiryMs(token: string): number | undefined {
+function _jwtExpiryMs(token: string): number | undefined {
 	const parts = token.split(".");
 	if (parts.length !== 3) return undefined;
 	const payload = parts[1];

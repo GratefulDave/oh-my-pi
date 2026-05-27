@@ -12,7 +12,7 @@
   - `packages/coding-agent/src/tools/resolve.ts` — preview/apply queueing
   - `packages/coding-agent/src/tools/render-utils.ts` — parse-error dedupe and display caps
   - `packages/coding-agent/src/utils/file-display-mode.ts` — hashline vs line-number diff references
-  - `packages/coding-agent/src/hashline/hash.ts` — stable hashline diff anchors
+  - `packages/hashline/src/format.ts` — stable hashline diff anchors
   - `packages/natives/native/index.d.ts` — JS-visible native binding contract
 
 ## Inputs
