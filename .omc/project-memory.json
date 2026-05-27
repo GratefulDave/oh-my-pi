@@ -35,7 +35,7 @@
   },
   "build": {
     "buildCommand": "cd /Users/davidandrews/PycharmProjects/lex-w157 && bun run build:native 2>&1 | tail -10",
-    "testCommand": "bun test packages/coding-agent/test/core/hashline.test.ts 2>&1 | grep \"^\\(fail\\)\" | rtk tail -10",
+    "testCommand": "bun test packages/coding-agent/test/core/hashline.test.ts 2>&1 | rtk tail -40",
     "lintCommand": "npm run lint",
     "devCommand": "npm run dev",
     "scripts": {
@@ -230,14 +230,14 @@
   "hotPaths": [
     {
       "path": "packages/hashline/src/parser.ts",
-      "accessCount": 17,
-      "lastAccessed": 1779912929500,
+      "accessCount": 18,
+      "lastAccessed": 1779912933965,
       "type": "file"
     },
     {
       "path": "packages/coding-agent/test/core/hashline.test.ts",
-      "accessCount": 10,
-      "lastAccessed": 1779912771514,
+      "accessCount": 11,
+      "lastAccessed": 1779912953529,
       "type": "file"
     },
     {
