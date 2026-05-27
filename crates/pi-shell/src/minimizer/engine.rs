@@ -122,7 +122,34 @@ fn chain_has_eligible_segment(segments: &[plan::ChainSegment], config: &Minimize
 	segments.iter().any(|segment| {
 		detect::detect(&segment.command)
 			.is_some_and(|identity| identity_has_filter(&identity, config))
+			|| is_common_chain_utility(&segment.program)
 	})
+}
+
+/// Common shell utilities that on their own would not warrant whole-command
+/// minimization, but whose presence in a `&&` / `;` chain alongside other
+/// segments is enough to fire the segmented chain runner. Each such segment
+/// is captured and passes through `minimizer::apply` which will treat it as
+/// `Single` with no matching filter and stream the text unchanged.
+fn is_common_chain_utility(program: &str) -> bool {
+	matches!(
+		program,
+		"echo"
+			| "printf" | "head" | "tail"
+			| "file" | "which" | "type"
+			| "sed" | "awk" | "sleep"
+			| "seq" | "cp" | "mv" | "rm"
+			| "mkdir" | "rmdir" | "touch"
+			| "basename" | "dirname" | "realpath"
+			| "readlink" | "true" | "false"
+			| "yes" | "tr" | "tee" | "sort"
+			| "uniq" | "cut" | "paste" | "rev"
+			| "split" | "comm" | "patch"
+			| "xargs" | "unzip" | "zip"
+			| "tar" | "gzip" | "gunzip"
+			| "cd" | "pwd" | "export"
+			| "env" | "test"
+	)
 }
 
 fn apply_identity(
@@ -464,7 +491,13 @@ strip_lines_matching = [".*"]
 			MinimizerMode::SegmentedChain
 		);
 		assert_eq!(mode_for("git diff ; printf done", &cfg), MinimizerMode::SegmentedChain);
-		assert_eq!(mode_for("false && echo no ; echo yes", &cfg), MinimizerMode::None);
+		// Common shell utilities make a chain eligible for the segmented runner
+		// even when no segment has a dedicated filter — segments stream through
+		// per-segment passthrough so the chain itself is captured for telemetry.
+		assert_eq!(
+			mode_for("false && echo no ; echo yes", &cfg),
+			MinimizerMode::SegmentedChain
+		);
 		assert_eq!(mode_for("foo || bar", &cfg), MinimizerMode::None);
 		assert_eq!(mode_for("git status | cat", &cfg), MinimizerMode::None);
 		assert_eq!(mode_for("sleep 1 &", &cfg), MinimizerMode::None);

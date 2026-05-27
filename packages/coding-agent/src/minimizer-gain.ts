@@ -257,6 +257,9 @@ function isSavedRecord(record: MinimizerGainRecord): boolean {
 	return record.kind === undefined || record.kind === "saved";
 }
 
+// Records with kind="saved" but savedBytes===0 are intentionally excluded from totals:
+// they represent text-rewriting minimizations that did not shrink bytes (rare, e.g. pure
+// reordering). Legacy records (kind=undefined) are treated as saved for backward compat.
 function isSavingsRecord(record: MinimizerGainRecord): boolean {
 	return isSavedRecord(record) && record.savedBytes > 0;
 }
@@ -406,7 +409,14 @@ function matchesGainFilters(record: MinimizerGainRecord, cwd: string | undefined
 }
 
 function matchesCwd(record: MinimizerGainRecord, cwd: string | undefined): boolean {
-	return cwd === undefined || record.cwd === cwd;
+	if (cwd === undefined) return true;
+	if (!record.cwd) return false;
+	if (record.cwd === cwd) return true;
+	// Prefix-match so a scope query at a parent dir aggregates subdir activity.
+	// Guard against false prefixes like "/repo" matching "/repo-sibling" by
+	// requiring a path separator immediately after the prefix.
+	const sep = cwd.endsWith(path.sep) ? "" : path.sep;
+	return record.cwd.startsWith(cwd + sep);
 }
 
 function matchesCutoff(record: MinimizerGainRecord, cutoff: number | null): boolean {

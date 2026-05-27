@@ -278,6 +278,64 @@ describe("minimizer gain analytics", () => {
 		});
 	});
 
+	it("matchesCwd prefix-matches subdirectories without false sibling matches", async () => {
+		await withTempAgentDir(async agentDir => {
+			const records = [
+				{ command: "git status", cwd: "/repo", savedBytes: 100 },
+				{ command: "git diff", cwd: "/repo/sub", savedBytes: 200 },
+				{ command: "git log", cwd: "/repo/sub/deep", savedBytes: 50 },
+				{ command: "git fetch", cwd: "/repo-sibling", savedBytes: 999 },
+				{ command: "git pull", cwd: "/other", savedBytes: 999 },
+			];
+			for (const r of records) {
+				await recordMinimizerGain(
+					{
+						timestamp: new Date().toISOString(),
+						cwd: r.cwd,
+						command: r.command,
+						filter: "git",
+						inputBytes: r.savedBytes + 50,
+						outputBytes: 50,
+						savedBytes: r.savedBytes,
+						exitCode: 0,
+						kind: "saved",
+					},
+					{ agentDir },
+				);
+			}
+			const filtered = await readMinimizerGain({ agentDir, cwd: "/repo" });
+			const cmds = filtered.map(r => r.command).sort();
+			expect(cmds).toEqual(["git diff", "git log", "git status"]);
+			expect(cmds).not.toContain("git fetch");
+			expect(cmds).not.toContain("git pull");
+			const summary = summarizeMinimizerGain(filtered);
+			expect(summary.savedBytes).toBe(350);
+		});
+	});
+
+	it("matchesCwd handles trailing separator on scope without doubling it", async () => {
+		await withTempAgentDir(async agentDir => {
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/repo/sub",
+					command: "cargo build",
+					filter: "cargo",
+					inputBytes: 500,
+					outputBytes: 100,
+					savedBytes: 400,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+			const withSlash = await readMinimizerGain({ agentDir, cwd: "/repo/" });
+			const noSlash = await readMinimizerGain({ agentDir, cwd: "/repo" });
+			expect(withSlash).toHaveLength(1);
+			expect(noSlash).toHaveLength(1);
+		});
+	});
+
 	it("builds missed records without raw output", () => {
 		const record = buildMinimizerMissedRecord({
 			timestamp: "2026-05-20T00:00:00.000Z",
@@ -308,6 +366,109 @@ describe("minimizer gain analytics", () => {
 			}),
 		).toBeNull();
 	});
+	it("excludes kind=saved records with savedBytes=0 from summary totals", async () => {
+		await withTempAgentDir(async agentDir => {
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/repo",
+					command: "noop-rewrite",
+					filter: "rewrite",
+					inputBytes: 500,
+					outputBytes: 500,
+					savedBytes: 0,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/repo",
+					command: "real-saver",
+					filter: "git",
+					inputBytes: 1000,
+					outputBytes: 200,
+					savedBytes: 800,
+					savedTokens: 150,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+			const records = await readMinimizerGain({ agentDir });
+			const summary = summarizeMinimizerGain(records);
+			expect(summary.commands).toBe(1);
+			expect(summary.savedBytes).toBe(800);
+			expect(summary.byCommand.map(row => row.command)).toEqual(["real-saver"]);
+		});
+	});
+
+	it("includes legacy records (kind=undefined, savedBytes>0) in summary totals", async () => {
+		await withTempAgentDir(async agentDir => {
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/repo",
+					command: "legacy-tool",
+					filter: "legacy",
+					inputBytes: 900,
+					outputBytes: 300,
+					savedBytes: 600,
+					exitCode: 0,
+				},
+				{ agentDir },
+			);
+			const records = await readMinimizerGain({ agentDir });
+			expect(records[0].kind).toBeUndefined();
+			const summary = summarizeMinimizerGain(records);
+			expect(summary.commands).toBe(1);
+			expect(summary.savedBytes).toBe(600);
+			expect(summary.usesEstimatedTokensSaved).toBe(true);
+		});
+	});
+
+	it("loadMinimizerGainContext honors days at the readMinimizerGain boundary", async () => {
+		await withTempAgentDir(async agentDir => {
+			const now = Date.now();
+			const fresh = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString();
+			const stale = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+			await recordMinimizerGain(
+				{
+					timestamp: fresh,
+					cwd: "/repo",
+					command: "fresh",
+					filter: "git",
+					inputBytes: 400,
+					outputBytes: 100,
+					savedBytes: 300,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+			await recordMinimizerGain(
+				{
+					timestamp: stale,
+					cwd: "/repo",
+					command: "stale",
+					filter: "git",
+					inputBytes: 4000,
+					outputBytes: 1000,
+					savedBytes: 3000,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+			const ctx = await loadMinimizerGainContext({ cwd: "/repo", all: false, days: 7, agentDir });
+			expect(ctx.days).toBe(7);
+			expect(ctx.records.map(r => r.command)).toEqual(["fresh"]);
+			expect(ctx.summary.savedBytes).toBe(300);
+		});
+	});
+
 	it("builds missed records with explicit filter reasons", () => {
 		const record = buildMinimizerMissedRecord({
 			timestamp: "2026-05-20T00:00:00.000Z",

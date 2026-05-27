@@ -247,6 +247,151 @@ describe("ACP builtin slash commands", () => {
 		}
 	});
 
+	it("renders gain --all report with all repositories combined", async () => {
+		const previousAgentDir = getAgentDir();
+		const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-acp-gain-all-"));
+		try {
+			setAgentDir(agentDir);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/project",
+					command: "git diff",
+					filter: "git",
+					inputBytes: 1000,
+					outputBytes: 250,
+					savedBytes: 750,
+					savedTokens: 123,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/other",
+					command: "bun test",
+					filter: "bun",
+					inputBytes: 1200,
+					outputBytes: 400,
+					savedBytes: 800,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+
+			const current = createRuntime();
+			expect(await executeAcpBuiltinSlashCommand("/gain --all", current.runtime)).toEqual({ consumed: true });
+			expect(current.output[0]).toContain("Minimizer savings across all repos");
+			expect(current.output[0]).toContain("Saved Bytes: 1.6K");
+			expect(current.output[0]).toContain("Estimated Tokens Saved: 323");
+		} finally {
+			setAgentDir(previousAgentDir);
+			await fs.rm(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("renders gain --discover report with top savings by command", async () => {
+		const previousAgentDir = getAgentDir();
+		const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-acp-gain-discover-"));
+		try {
+			setAgentDir(agentDir);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/project",
+					command: "git diff",
+					filter: "git",
+					inputBytes: 1000,
+					outputBytes: 250,
+					savedBytes: 750,
+					savedTokens: 200,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/project",
+					command: "cargo test",
+					filter: "cargo",
+					inputBytes: 5000,
+					outputBytes: 1000,
+					savedBytes: 4000,
+					savedTokens: 900,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+
+			const current = createRuntime();
+			expect(await executeAcpBuiltinSlashCommand("/gain --discover", current.runtime)).toEqual({
+				consumed: true,
+			});
+			expect(current.output[0]).toContain("Minimizer discovery for /tmp/project");
+			expect(current.output[0]).toContain("cargo test");
+			expect(current.output[0]).toContain("4K bytes saved");
+			expect(current.output[0]).toContain("git diff");
+		} finally {
+			setAgentDir(previousAgentDir);
+			await fs.rm(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("renders gain --days 7 report filtering to recent records", async () => {
+		const previousAgentDir = getAgentDir();
+		const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-acp-gain-days-"));
+		try {
+			setAgentDir(agentDir);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+					cwd: "/tmp/project",
+					command: "git diff",
+					filter: "git",
+					inputBytes: 2000,
+					outputBytes: 500,
+					savedBytes: 1500,
+					savedTokens: 300,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
+					cwd: "/tmp/project",
+					command: "old command",
+					filter: "misc",
+					inputBytes: 9000,
+					outputBytes: 1000,
+					savedBytes: 8000,
+					savedTokens: 2000,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+
+			const current = createRuntime();
+			expect(await executeAcpBuiltinSlashCommand("/gain --days 7", current.runtime)).toEqual({
+				consumed: true,
+			});
+			expect(current.output[0]).toContain("7d");
+			expect(current.output[0]).toContain("Saved Bytes: 1.5K");
+			expect(current.output[0]).not.toContain("old command");
+		} finally {
+			setAgentDir(previousAgentDir);
+			await fs.rm(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("forces a tool and returns remaining prompt text", async () => {
 		const { output, runtime } = createRuntime();
 

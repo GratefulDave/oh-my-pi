@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `/gain` slash command to accept `--all`, `--days N`, `--discover`, and `--missed` arguments, matching the CLI `omp gain` interface. Previously, arguments were rejected by the TUI dispatcher and silently ignored by the ACP handler.
+- Fixed `/gain` TUI overlay ignoring `--days N`; the overlay now forwards the requested window to both the current-scope and all-scope context loads (and to the overlay's reload closure), matching the ACP/CLI behaviour.
+- Fixed `/gain` and `omp gain` scope filtering: `matchesCwd` now prefix-matches subdirectories instead of requiring exact `cwd` equality. A query at a parent directory now aggregates saved records from its subdirectories (e.g. running `/gain` at the repo root sees savings recorded in `packages/*`). Sibling directories are still excluded via a path-separator boundary check (`/repo` does not match `/repo-sibling`).
+- Fixed chain decomposition in the native minimizer for compound `&&` / `;` chains containing common shell utilities (`echo`, `printf`, `head`, `tail`, `sed`, `awk`, `cp`, `mv`, `rm`, `xargs`, `unzip`, `tar`, etc.). These now make the chain eligible for the segmented runner, so chains record `filter="chain"` / `"chain-noop"` instead of falling through to the JS-side `"missed"` default. Per-segment passthrough applies — piped segments (`ls | head` inside a chain) no longer break decomposition.
+
 ## [15.5.3] - 2026-05-27
 
 ### Breaking Changes

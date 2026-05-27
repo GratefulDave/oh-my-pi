@@ -214,12 +214,18 @@ fn io_redirect_is_safe(io: &IoRedirect) -> bool {
 }
 
 fn simple_segment(pipeline: &Pipeline) -> Option<(String, String)> {
-	if pipeline.timed.is_some() || pipeline.bang || pipeline.seq.len() != 1 {
+	if pipeline.timed.is_some() || pipeline.bang || pipeline.seq.is_empty() {
 		return None;
 	}
 
-	let single = pipeline.seq.first()?;
-	match single {
+	// For multi-stage pipes inside a chain segment, identify the segment by its
+	// first stage's program. The downstream per-segment minimizer::apply will
+	// detect the pipeline at runtime via plan::CommandPlan::Piped and pass it
+	// through unchanged — so a piped segment is safely captured but never
+	// rewritten. This keeps the chain decomposable when even one inner stage
+	// uses a pipe (e.g. `ls | head -10 && git status`).
+	let first = pipeline.seq.first()?;
+	match first {
 		Command::Simple(simple) => {
 			if simple.prefix.as_ref().is_some_and(|prefix| {
 				prefix
@@ -384,6 +390,20 @@ mod tests {
 				},
 			])
 		);
+	}
+
+	#[test]
+	fn chain_with_piped_segment_is_segmented() {
+		// A chain that contains a piped segment (`ls | head -5`) must still be
+		// classified as Chain so the segmented runner can decompose it. The
+		// piped segment is identified by its first stage's program; the
+		// per-segment minimizer::apply will treat that segment as Piped at
+		// runtime and pass it through unchanged.
+		let plan = analyze("ls -lh *.txt | head -5 && git status --short");
+		let segments = chain_of(plan).expect("expected Chain");
+		assert_eq!(segments.len(), 2);
+		assert_eq!(segments[0].program, "ls");
+		assert_eq!(segments[1].program, "git");
 	}
 
 	#[test]

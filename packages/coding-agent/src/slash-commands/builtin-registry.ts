@@ -45,7 +45,7 @@ import { buildContextSummary, buildExternalOrchestrationReport, runExternalAgent
 
 import { resolveMemoryBackend } from "../memory-backend";
 import type { MinimizerGainContext } from "../minimizer-gain";
-import { loadMinimizerGainContext } from "../minimizer-gain";
+import { discoverMinimizerGain, loadMinimizerGainContext } from "../minimizer-gain";
 import { ExternalOrchestrationMonitorComponent } from "../modes/components/external-orchestration-monitor";
 import { type DualContext, MinimizerGainOverlayComponent } from "../modes/components/minimizer-gain-overlay";
 import type { SkillsSkillToggle, SkillsSourceToggle } from "../modes/components/skills-overlay";
@@ -228,18 +228,75 @@ type GainSlashRow = {
 	usesEstimatedTokensSaved: boolean;
 };
 
-async function buildGainSlashReport(input: { cwd: string; all: boolean; days?: number }): Promise<string> {
-	const context = await loadMinimizerGainContext(input);
-	const lines = buildGainReportLines(context);
+type GainSlashMode = "summary" | "discover" | "missed";
+
+interface GainSlashArgs {
+	all: boolean;
+	days?: number;
+	mode: GainSlashMode;
+}
+
+function parseGainSlashArgs(args: string): GainSlashArgs {
+	const result: GainSlashArgs = { all: false, mode: "summary" };
+	const tokens = args.trim().split(/\s+/).filter(Boolean);
+	for (const token of tokens) {
+		const lower = token.toLowerCase();
+		if (lower === "--all") {
+			result.all = true;
+		} else if (lower === "--discover") {
+			result.mode = "discover";
+		} else if (lower === "--missed") {
+			result.mode = "missed";
+		} else if (lower === "--days" || lower === "-d") {
+			// next token is consumed below
+		}
+	}
+	// Handle --days N (two-token form)
+	for (let i = 0; i < tokens.length; i++) {
+		const lower = tokens[i].toLowerCase();
+		if ((lower === "--days" || lower === "-d") && i + 1 < tokens.length) {
+			const parsed = Number.parseInt(tokens[i + 1], 10);
+			if (Number.isFinite(parsed) && parsed > 0) result.days = parsed;
+			break;
+		}
+	}
+	return result;
+}
+
+async function buildGainSlashReport(cwd: string, parsed: GainSlashArgs): Promise<string> {
+	const context = await loadMinimizerGainContext({ cwd, all: parsed.all, days: parsed.days });
+	const lines = parsed.mode === "discover" ? buildGainDiscoverLines(context) : buildGainReportLines(context);
 	lines.push("", `Path: ${shortenPath(context.path)}`);
 	return lines.join("\n");
 }
 
-async function showGainOverlay(runtime: TuiSlashCommandRuntime, initialScope: 0 | 1 = 0): Promise<void> {
+function buildGainDiscoverLines(context: MinimizerGainContext): string[] {
+	const discovery = discoverMinimizerGain(context.records);
+	const label = context.all
+		? `Minimizer discovery across all repos (${context.days}d)`
+		: `Minimizer discovery for ${shortenPath(context.cwd ?? context.path)} (${context.days}d)`;
+	const lines = [label, "Highest observed savings by command/filter pair:", ""];
+	if (discovery.commands.length === 0) {
+		lines.push("No native minimizer savings recorded for this scope yet.");
+	} else {
+		for (const row of discovery.commands) {
+			lines.push(
+				`  ${row.command}: ${formatNumber(row.savedBytes)} bytes saved (${formatNumber(row.avgSavedBytes)} avg), ${formatNumber(row.commands)} cmds, filter=${row.filter}`,
+			);
+		}
+	}
+	return lines;
+}
+
+async function showGainOverlay(
+	runtime: TuiSlashCommandRuntime,
+	initialScope: 0 | 1 = 0,
+	days?: number,
+): Promise<void> {
 	const cwd = runtime.ctx.sessionManager.getCwd();
 	const dualContext: DualContext = {
-		current: await loadMinimizerGainContext({ cwd, all: false }),
-		all: await loadMinimizerGainContext({ cwd, all: true }),
+		current: await loadMinimizerGainContext({ cwd, all: false, days }),
+		all: await loadMinimizerGainContext({ cwd, all: true, days }),
 	};
 	runtime.ctx.editor.setText("");
 	void runtime.ctx
@@ -250,8 +307,8 @@ async function showGainOverlay(runtime: TuiSlashCommandRuntime, initialScope: 0 
 					() => tui.requestRender(),
 					() => done(undefined),
 					async () => ({
-						current: await loadMinimizerGainContext({ cwd, all: false }),
-						all: await loadMinimizerGainContext({ cwd, all: true }),
+						current: await loadMinimizerGainContext({ cwd, all: false, days }),
+						all: await loadMinimizerGainContext({ cwd, all: true, days }),
 					}),
 					initialScope,
 				),
@@ -480,12 +537,23 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 	{
 		name: "gain",
 		description: "Show native minimizer savings for current repo",
-		handle: async (_command, runtime) => {
-			await runtime.output(await buildGainSlashReport({ cwd: runtime.cwd, all: false }));
+		inlineHint: "[--all] [--days N] [--discover] [--missed]",
+		allowArgs: true,
+		subcommands: [
+			{ name: "--all", description: "Include entries from all working directories" },
+			{ name: "--discover", description: "Show highest observed savings by command/filter" },
+			{ name: "--missed", description: "Show largest unminimized outputs" },
+			{ name: "--days", description: "Limit records to the last N days (default 30)" },
+		],
+		handle: async (command, runtime) => {
+			const parsed = parseGainSlashArgs(command.args);
+			await runtime.output(await buildGainSlashReport(runtime.cwd, parsed));
 			return commandConsumed();
 		},
-		handleTui: async (_command, runtime) => {
-			await showGainOverlay(runtime, 0);
+		handleTui: async (command, runtime) => {
+			const parsed = parseGainSlashArgs(command.args);
+			const initialScope: 0 | 1 = parsed.all ? 1 : 0;
+			await showGainOverlay(runtime, initialScope, parsed.days);
 			return commandConsumed();
 		},
 	},
