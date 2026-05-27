@@ -252,14 +252,6 @@ export class Executor {
 
 	#handlePayload(text: string, lineNum: number): void {
 		if (this.#pending) {
-			// Lenient implicit-continuation fallback: a line that does not carry
-			// the canonical `+` prefix is still accepted as payload when a pending
-			// op exists, but we warn so the canonical form is preferred.
-			if (!text.startsWith(HL_PAYLOAD_PREFIX)) {
-				if (!this.#warnings.includes(IMPLICIT_CONTINUATION_WARNING)) {
-					this.#warnings.push(IMPLICIT_CONTINUATION_WARNING);
-				}
-			}
 			this.#pending.payload.push(text);
 			return;
 		}
