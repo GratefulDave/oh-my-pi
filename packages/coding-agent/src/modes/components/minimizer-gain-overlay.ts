@@ -4,12 +4,20 @@ import type { MinimizerGainContext } from "../../minimizer-gain";
 import { shortenPath } from "../../tools/render-utils";
 import { theme } from "../theme/theme";
 
-type LoadMinimizerGainContext = () => Promise<MinimizerGainContext>;
+type LoadMinimizerGainContext = () => Promise<DualContext>;
 
 const REFRESH_INTERVAL_MS = 1000;
 
 const TABS = ["Gain", "Missed"] as const;
 type TabIndex = 0 | 1;
+
+const SCOPES = ["Current", "All"] as const;
+type ScopeIndex = 0 | 1;
+
+interface DualContext {
+	current: MinimizerGainContext;
+	all: MinimizerGainContext;
+}
 
 function clean(text: string, width: number): string {
 	return truncateToWidth(replaceTabs(text), width);
@@ -25,7 +33,7 @@ function formatTokensSavedLabel(usesEstimatedTokensSaved: boolean): string {
 
 function formatExitCodes(exitCodes: Array<number | null>): string {
 	if (exitCodes.length === 0) return "-";
-	return exitCodes.map(code => (code === null ? "null" : String(code))).join(",");
+	return exitCodes.map(code => (code === null ? "?" : String(code))).join(",");
 }
 
 function formatTab(label: string, active: boolean): string {
@@ -40,7 +48,7 @@ function formatGainRow<
 	T extends { commands: number; savedBytes: number; estimatedTokensSaved: number; usesEstimatedTokensSaved: boolean },
 >(label: string, row: T, width: number): string {
 	return clean(
-		`  ${label}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}`,
+		`  ${label}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} saved, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}`,
 		width,
 	);
 }
@@ -51,31 +59,34 @@ function formatMissedRow(
 	width: number,
 ): string {
 	return clean(
-		`  ${label}: ${formatNumber(row.inputBytes)} bytes total, ${formatNumber(row.avgInputBytes)} avg, ${formatNumber(row.commands)} cmds, exit=${formatExitCodes(row.exitCodes)}`,
+		`  ${label}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.inputBytes)}B total (${formatNumber(row.avgInputBytes)} avg), exit=${formatExitCodes(row.exitCodes)}`,
 		width,
 	);
 }
 
 export class MinimizerGainOverlayComponent implements Component {
-	#context: MinimizerGainContext;
+	#dualContext: DualContext;
 	readonly #onClose: () => void;
 	readonly #requestRender: () => void;
 	readonly #loadContext: LoadMinimizerGainContext | undefined;
 	#activeTabIndex: TabIndex = 0;
+	#activeScopeIndex: ScopeIndex = 0;
 	#refreshInterval: ReturnType<typeof setInterval> | undefined;
 	#refreshing = false;
 	#disposed = false;
 
 	constructor(
-		context: MinimizerGainContext,
+		dualContext: DualContext,
 		requestRender: () => void,
 		onClose: () => void,
 		loadContext?: LoadMinimizerGainContext,
+		initialScope: ScopeIndex = 0,
 	) {
-		this.#context = context;
+		this.#dualContext = dualContext;
 		this.#requestRender = requestRender;
 		this.#onClose = onClose;
 		this.#loadContext = loadContext;
+		this.#activeScopeIndex = initialScope;
 		if (loadContext) {
 			this.#refreshInterval = setInterval(() => {
 				void this.refresh();
@@ -97,7 +108,7 @@ export class MinimizerGainOverlayComponent implements Component {
 		try {
 			const context = await this.#loadContext();
 			if (this.#disposed) return;
-			this.#context = context;
+			this.#dualContext = context;
 			this.#requestRender();
 		} catch {
 			// Keep rendering the last complete snapshot when best-effort analytics refresh fails.
@@ -116,30 +127,44 @@ export class MinimizerGainOverlayComponent implements Component {
 			this.#requestRender();
 			return;
 		}
+		if (matchesKey(data, "shift+tab") || data === "s" || data === "S") {
+			this.#activeScopeIndex = ((this.#activeScopeIndex + 1) % SCOPES.length) as ScopeIndex;
+			this.#requestRender();
+			return;
+		}
 		if (data === "r" || data === "R") {
 			void this.refresh();
 		}
+	}
+
+	#getActiveContext(): MinimizerGainContext {
+		return this.#activeScopeIndex === 0 ? this.#dualContext.current : this.#dualContext.all;
 	}
 
 	render(width: number): string[] {
 		const contentWidth = Math.max(24, width - 2);
 		const lines: string[] = [];
 		const activeTab = TABS[this.#activeTabIndex];
+		const activeScope = SCOPES[this.#activeScopeIndex];
+		const context = this.#getActiveContext();
 
 		lines.push(border(width));
 		lines.push(
 			clean(
-				`${theme.bold(" Minimizer Gain ")} ${formatTab("Gain", activeTab === "Gain")} ${theme.fg("dim", "│")} ${formatTab("Missed", activeTab === "Missed")}`,
+				`${theme.bold(" Minimizer Gain ")} ${formatTab("Current", activeScope === "Current")} ${theme.fg("dim", "│")} ${formatTab("All", activeScope === "All")}`,
+				width,
+			),
+		);
+		lines.push(
+			clean(
+				`${formatTab("Gain", activeTab === "Gain")} ${theme.fg("dim", "│")} ${formatTab("Missed", activeTab === "Missed")}`,
 				width,
 			),
 		);
 
 		lines.push(
 			clean(
-				theme.fg(
-					"muted",
-					`Scope: ${this.#context.all ? "all repos" : shortenPath(this.#context.cwd ?? process.cwd())}`,
-				),
+				theme.fg("muted", `Scope: ${context.all ? "all repos" : shortenPath(context.cwd ?? process.cwd())}`),
 				width,
 			),
 		);
@@ -147,61 +172,63 @@ export class MinimizerGainOverlayComponent implements Component {
 
 		if (activeTab === "Gain") {
 			lines.push(clean(theme.fg("accent", theme.bold("Positive minimizer savings")), width));
-			lines.push(formatRow("Commands", formatNumber(this.#context.summary.commands), width));
-			lines.push(formatRow("Input Bytes", formatNumber(this.#context.summary.inputBytes), width));
-			lines.push(formatRow("Output Bytes", formatNumber(this.#context.summary.outputBytes), width));
-			lines.push(formatRow("Saved Bytes", formatNumber(this.#context.summary.savedBytes), width));
+			lines.push(formatRow("Commands", formatNumber(context.summary.commands), width));
+			lines.push(formatRow("Input Bytes", formatNumber(context.summary.inputBytes), width));
+			lines.push(formatRow("Output Bytes", formatNumber(context.summary.outputBytes), width));
+			lines.push(formatRow("Saved Bytes", formatNumber(context.summary.savedBytes), width));
 			lines.push(
 				formatRow(
-					formatTokensSavedLabel(this.#context.summary.usesEstimatedTokensSaved),
-					formatNumber(this.#context.summary.estimatedTokensSaved),
+					formatTokensSavedLabel(context.summary.usesEstimatedTokensSaved),
+					formatNumber(context.summary.estimatedTokensSaved),
 					width,
 				),
 			);
 			lines.push("");
 			lines.push(clean(theme.fg("muted", "Top filters"), width));
-			if (this.#context.summary.byFilter.length === 0) {
+			if (context.summary.byFilter.length === 0) {
 				lines.push(clean(theme.fg("dim", "  (none)"), width));
 			} else {
-				for (const row of this.#context.summary.byFilter.slice(0, 5)) {
+				for (const row of context.summary.byFilter.slice(0, 5)) {
 					lines.push(formatGainRow(row.filter, row, contentWidth));
 				}
 			}
 			lines.push("");
 			lines.push(clean(theme.fg("muted", "Top commands"), width));
-			if (this.#context.summary.byCommand.length === 0) {
+			if (context.summary.byCommand.length === 0) {
 				lines.push(clean(theme.fg("dim", "  (none)"), width));
 			} else {
-				for (const row of this.#context.summary.byCommand.slice(0, 5)) {
+				for (const row of context.summary.byCommand.slice(0, 5)) {
 					lines.push(formatGainRow(row.command, row, contentWidth));
 				}
 			}
-			if (this.#context.all) {
+			if (context.all) {
 				lines.push("");
 				lines.push(clean(theme.fg("muted", "Repositories"), width));
-				if (this.#context.summary.byCwd.length === 0) {
+				if (context.summary.byCwd.length === 0) {
 					lines.push(clean(theme.fg("dim", "  (none)"), width));
 				} else {
-					for (const row of this.#context.summary.byCwd.slice(0, 5)) {
+					for (const row of context.summary.byCwd.slice(0, 5)) {
 						lines.push(formatGainRow(shortenPath(row.cwd), row, contentWidth));
 					}
 				}
 			}
 		} else {
 			lines.push(clean(theme.fg("accent", theme.bold("Largest unminimized shell outputs")), width));
-			if (this.#context.missed.commands.length === 0) {
+			if (context.missed.commands.length === 0) {
 				lines.push(clean(theme.fg("dim", "No unminimized shell output recorded for this scope yet."), width));
 			} else {
-				for (const row of this.#context.missed.commands.slice(0, 8)) {
+				for (const row of context.missed.commands.slice(0, 8)) {
 					lines.push(formatMissedRow(row.command, row, contentWidth));
 				}
 			}
 		}
 
 		lines.push("");
-		lines.push(clean(theme.fg("dim", "Tab switch tabs · R refresh · Esc close"), width));
-		lines.push(clean(theme.fg("dim", `Path: ${shortenPath(this.#context.path)}`), width));
+		lines.push(clean(theme.fg("dim", "Tab · S switch scope · R refresh · Esc close"), width));
+		lines.push(clean(theme.fg("dim", `Path: ${shortenPath(context.path)}`), width));
 		lines.push(border(width));
 		return lines;
 	}
 }
+
+export type { DualContext, LoadMinimizerGainContext, ScopeIndex };

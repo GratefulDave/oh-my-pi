@@ -149,7 +149,7 @@ describe("minimizer gain analytics", () => {
 		await withTempAgentDir(async agentDir => {
 			await recordMinimizerGain(
 				{
-					timestamp: "2026-05-20T00:00:00.000Z",
+					timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
 					cwd: "/repo",
 					command: "git status",
 					filter: "git",
@@ -163,7 +163,7 @@ describe("minimizer gain analytics", () => {
 			);
 			await recordMinimizerGain(
 				{
-					timestamp: "2026-05-20T00:04:00.000Z",
+					timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
 					cwd: "/repo",
 					command: "unknown-tool --verbose",
 					filter: "missed",

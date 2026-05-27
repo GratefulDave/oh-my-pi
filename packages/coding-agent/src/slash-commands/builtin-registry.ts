@@ -47,7 +47,7 @@ import { resolveMemoryBackend } from "../memory-backend";
 import type { MinimizerGainContext } from "../minimizer-gain";
 import { loadMinimizerGainContext } from "../minimizer-gain";
 import { ExternalOrchestrationMonitorComponent } from "../modes/components/external-orchestration-monitor";
-import { MinimizerGainOverlayComponent } from "../modes/components/minimizer-gain-overlay";
+import { type DualContext, MinimizerGainOverlayComponent } from "../modes/components/minimizer-gain-overlay";
 import type { SkillsSkillToggle, SkillsSourceToggle } from "../modes/components/skills-overlay";
 import { SkillsOverlayComponent } from "../modes/components/skills-overlay";
 import type { InteractiveModeContext } from "../modes/types";
@@ -235,17 +235,25 @@ async function buildGainSlashReport(input: { cwd: string; all: boolean; days?: n
 	return lines.join("\n");
 }
 
-async function showGainOverlay(runtime: TuiSlashCommandRuntime, all: boolean): Promise<void> {
-	const context = await loadMinimizerGainContext({ cwd: runtime.ctx.sessionManager.getCwd(), all });
+async function showGainOverlay(runtime: TuiSlashCommandRuntime, initialScope: 0 | 1 = 0): Promise<void> {
+	const cwd = runtime.ctx.sessionManager.getCwd();
+	const dualContext: DualContext = {
+		current: await loadMinimizerGainContext({ cwd, all: false }),
+		all: await loadMinimizerGainContext({ cwd, all: true }),
+	};
 	runtime.ctx.editor.setText("");
 	void runtime.ctx
 		.showHookCustom<void>(
 			async (tui, _theme, _keybindings, done) =>
 				new MinimizerGainOverlayComponent(
-					context,
+					dualContext,
 					() => tui.requestRender(),
 					() => done(undefined),
-					() => loadMinimizerGainContext({ cwd: runtime.ctx.sessionManager.getCwd(), all }),
+					async () => ({
+						current: await loadMinimizerGainContext({ cwd, all: false }),
+						all: await loadMinimizerGainContext({ cwd, all: true }),
+					}),
+					initialScope,
 				),
 			{ overlay: true },
 		)
@@ -477,19 +485,7 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 			return commandConsumed();
 		},
 		handleTui: async (_command, runtime) => {
-			await showGainOverlay(runtime, false);
-			return commandConsumed();
-		},
-	},
-	{
-		name: "gain-all",
-		description: "Show native minimizer savings across all repos",
-		handle: async (_command, runtime) => {
-			await runtime.output(await buildGainSlashReport({ cwd: runtime.cwd, all: true }));
-			return commandConsumed();
-		},
-		handleTui: async (_command, runtime) => {
-			await showGainOverlay(runtime, true);
+			await showGainOverlay(runtime, 0);
 			return commandConsumed();
 		},
 	},

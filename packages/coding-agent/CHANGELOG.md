@@ -32,6 +32,7 @@
 
 ### Removed
 
+- Removed the separate `/gain-all` slash command; its all-repos scope is now accessible via the scope tab in `/gain`.
 - Removed HTTP/2 fetch patching bootstrap (`installH2Fetch`, `h2-fetch.ts`). Callers now use the default Bun fetch transport.
 
 ### Added
@@ -41,7 +42,7 @@
 - Added named model profiles for model-selection defaults: `omp profile`, launch-time `--profile`, and interactive `/profile` can now create, list, switch, and persist alternate `modelRoles`, `defaultThinkingLevel`, `enabledModels`, `cycleOrder`, and `modelProviderOrder` sets without changing provider auth.
 - Added `lex factory init|status|doctor` plus bundled project-scoped software-factory templates for verifier loops, safety gates, repo-local prompts/workflows, and optional legacy-config import into `.omp/factory/`.
 - Added `omp profile create --preset openrouter`, plus `/profile create ... --preset openrouter`, to create an OpenRouter-scoped model profile that exposes all currently available OpenRouter models in selectors and `--list-models`.
-- Added `/gain` and `/gain-all` TUI overlays with Gain and Missed tabs for native minimizer savings and unminimized-output review.
+- Added `/gain` TUI overlay with Current/All scope tabs and Gain/Missed content tabs for native minimizer savings and unminimized-output review.
 
 ### Changed
 
@@ -59,7 +60,7 @@
 - Fixed native minimizer coverage for `git diff --name-only`, `--name-status`, and `--numstat`, plus direct and package-script lint/typecheck commands such as `eslint src/foo.ts`, `tsc --project`, `npm run lint`, and `bun run typecheck`.
 - Fixed minimizer miss telemetry to preserve native reason labels such as `git`, `compound`, and `pipeline-noop` instead of collapsing every non-rewrite to `missed`.
 - Fixed reviewer agent no longer fails JTD validation with `findings.0.priority: expected number, received string`; `report_finding` string priorities are coerced to numeric ordinals before auto-injecting `findings[]`. ([#1350](https://github.com/can1357/oh-my-pi/issues/1350))
-- Fixed `/gain` and `/gain-all` overlays to refresh their minimizer stats while open instead of rendering the snapshot captured at launch.
+- Fixed `/gain` overlay to refresh its minimizer stats while open and support switching between current-repo and all-repos scopes.
 
 ## [15.1.9] - 2026-05-21
 ### Fixed

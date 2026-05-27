@@ -208,14 +208,6 @@ describe("ACP builtin slash commands", () => {
 			expect(current.output[0]).toContain("Saved Bytes: 750");
 			expect(current.output[0]).toContain("Tokens Saved: 123");
 			expect(current.output[0]).not.toContain("/tmp/other");
-
-			const all = createRuntime();
-			expect(await executeAcpBuiltinSlashCommand("/gain-all", all.runtime)).toEqual({ consumed: true });
-			expect(all.output[0]).toContain("Minimizer savings across all repos");
-			expect(all.output[0]).toContain("Saved Bytes: 1.6K");
-			expect(all.output[0]).toContain("Estimated Tokens Saved:");
-			expect(all.output[0]).toContain("/tmp/project");
-			expect(all.output[0]).toContain("/tmp/other");
 		} finally {
 			setAgentDir(previousAgentDir);
 			await fs.rm(agentDir, { recursive: true, force: true });
