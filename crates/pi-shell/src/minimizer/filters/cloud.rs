@@ -106,8 +106,8 @@ fn compact_aws_service_json(ctx: &MinimizerCtx<'_>, root: &Value) -> Option<Stri
 					.iter()
 					.map(|bucket| {
 						vec![
-							string_field(bucket, &["Name", "Bucket", "bucket", "name"]),
-							string_field(bucket, &["CreationDate", "CreationDateTime", "date"]),
+							string_field_map(bucket, &["Name", "Bucket", "bucket", "name"]),
+							string_field_map(bucket, &["CreationDate", "CreationDateTime", "date"]),
 						]
 					})
 					.collect::<Vec<_>>(),
@@ -120,10 +120,10 @@ fn compact_aws_service_json(ctx: &MinimizerCtx<'_>, root: &Value) -> Option<Stri
 					.iter()
 					.map(|item| {
 						vec![
-							string_field(item, &["FunctionName", "Name"]),
-							string_field(item, &["Runtime"]),
-							string_field(item, &["MemorySize"]),
-							string_field(item, &["LastModified"]),
+							string_field_map(item, &["FunctionName", "Name"]),
+							string_field_map(item, &["Runtime"]),
+							string_field_map(item, &["MemorySize"]),
+							string_field_map(item, &["LastModified"]),
 						]
 					})
 					.collect::<Vec<_>>(),
@@ -136,9 +136,9 @@ fn compact_aws_service_json(ctx: &MinimizerCtx<'_>, root: &Value) -> Option<Stri
 					.iter()
 					.map(|item| {
 						vec![
-							string_field(item, &["UserName", "RoleName", "GroupName", "Name"]),
-							string_field(item, &["Arn"]),
-							string_field(item, &["CreateDate"]),
+							string_field_map(item, &["UserName", "RoleName", "GroupName", "Name"]),
+							string_field_map(item, &["Arn"]),
+							string_field_map(item, &["CreateDate"]),
 						]
 					})
 					.collect::<Vec<_>>(),
@@ -154,9 +154,9 @@ fn compact_aws_service_json(ctx: &MinimizerCtx<'_>, root: &Value) -> Option<Stri
 					.iter()
 					.map(|item| {
 						vec![
-							string_field(item, &["DBInstanceIdentifier"]),
-							string_field(item, &["Engine"]),
-							string_field(item, &["DBInstanceStatus"]),
+							string_field_map(item, &["DBInstanceIdentifier"]),
+							string_field_map(item, &["Engine"]),
+							string_field_map(item, &["DBInstanceStatus"]),
 							item
 								.get("Endpoint")
 								.and_then(Value::as_object)
@@ -173,9 +173,9 @@ fn compact_aws_service_json(ctx: &MinimizerCtx<'_>, root: &Value) -> Option<Stri
 					.iter()
 					.map(|item| {
 						vec![
-							string_field(item, &["StackName"]),
-							string_field(item, &["StackStatus"]),
-							string_field(item, &["LastUpdatedTime", "CreationTime"]),
+							string_field_map(item, &["StackName"]),
+							string_field_map(item, &["StackStatus"]),
+							string_field_map(item, &["LastUpdatedTime", "CreationTime"]),
 						]
 					})
 					.collect::<Vec<_>>(),
@@ -190,9 +190,9 @@ fn compact_aws_service_json(ctx: &MinimizerCtx<'_>, root: &Value) -> Option<Stri
 					.iter()
 					.map(|item| {
 						vec![
-							string_field(item, &["Name"]),
-							string_field(item, &["ARN", "Arn"]),
-							string_field(item, &["LastChangedDate", "LastAccessedDate"]),
+							string_field_map(item, &["Name"]),
+							string_field_map(item, &["ARN", "Arn"]),
+							string_field_map(item, &["LastChangedDate", "LastAccessedDate"]),
 						]
 					})
 					.collect::<Vec<_>>(),
