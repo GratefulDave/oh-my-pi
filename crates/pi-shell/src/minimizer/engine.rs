@@ -104,9 +104,67 @@ pub fn apply(
 
 	let Some(identity) = detect::detect(command) else {
 		record_unknown_command(command);
-		return MinimizerOutput::passthrough(captured).labeled("unknown");
+		let unknown = MinimizerOutput::passthrough(captured).labeled("unknown");
+		return apply_ai_smart_overlay(&identity_for_ai("unknown"), command, captured, config, unknown);
 	};
-	apply_identity(&identity, command, captured, exit_code, config)
+	let output = apply_identity(&identity, command, captured, exit_code, config);
+	apply_ai_smart_overlay(&identity, command, captured, config, output)
+}
+
+/// Optional AI-summary post-step (W4 / rtk smart). Gated by both the Cargo
+/// feature `ai-smart` and the runtime `ai_smart_enabled` config flag, and
+/// further gated inside [`ai_smart::maybe_summarize`] on input size, parent
+/// context (pipe/compound bypass), credential availability, and the per-
+/// `apply()` budget. On any gate failure or network error we return the
+/// upstream `output` untouched — this filter is fail-closed.
+#[cfg_attr(not(feature = "ai-smart"), allow(unused_variables, clippy::needless_pass_by_value))]
+fn apply_ai_smart_overlay(
+	identity: &detect::CommandIdentity,
+	command: &str,
+	captured: &str,
+	config: &MinimizerConfig,
+	output: MinimizerOutput,
+) -> MinimizerOutput {
+	#[cfg(feature = "ai-smart")]
+	{
+		if !config.ai_smart_enabled {
+			return output;
+		}
+		ai_smart::reset_apply_budget();
+		let subcommand = identity.subcommand.as_deref();
+		let ctx = MinimizerCtx { program: &identity.program, subcommand, command, config };
+		let candidate = if output.changed { output.text.as_str() } else { captured };
+		match ai_smart::maybe_summarize(&ctx, candidate) {
+			Some(summary) => {
+				let original_text = output
+					.original_text
+					.clone()
+					.unwrap_or_else(|| captured.to_string());
+				let input_bytes = output.input_bytes.max(captured.len());
+				let summarized = MinimizerOutput::transformed(summary, input_bytes).labeled("ai-smart");
+				summarized.with_original(original_text)
+			},
+			None => output,
+		}
+	}
+	#[cfg(not(feature = "ai-smart"))]
+	{
+		let _ = (identity, command, captured, config);
+		output
+	}
+}
+
+/// Synthesize an identity for the AI overlay when `detect::detect` returned
+/// `None` — the AI filter doesn't care about the program name beyond
+/// labeling, and an empty identity keeps the gate logic uniform.
+#[cfg(feature = "ai-smart")]
+fn identity_for_ai(program: &'static str) -> detect::CommandIdentity {
+	detect::CommandIdentity { program: program.to_string(), subcommand: None }
+}
+
+#[cfg(not(feature = "ai-smart"))]
+fn identity_for_ai(_program: &'static str) -> detect::CommandIdentity {
+	detect::CommandIdentity { program: String::new(), subcommand: None }
 }
 
 fn identity_has_filter(identity: &detect::CommandIdentity, config: &MinimizerConfig) -> bool {
