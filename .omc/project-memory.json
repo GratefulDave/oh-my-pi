@@ -214,14 +214,14 @@
   "hotPaths": [
     {
       "path": "crates/pi-shell/src/minimizer/config.rs",
-      "accessCount": 5,
-      "lastAccessed": 1779867252103,
+      "accessCount": 6,
+      "lastAccessed": 1779867258626,
       "type": "file"
     },
     {
       "path": "crates/pi-shell/src/minimizer/filters/listing.rs",
-      "accessCount": 2,
-      "lastAccessed": 1779867037979,
+      "accessCount": 3,
+      "lastAccessed": 1779867264675,
       "type": "file"
     },
     {
