@@ -161,11 +161,8 @@ export class Executor {
 				this.#flushPending();
 				this.#pending = {
 					op: { kind: "replace", range: token.range, lineNum: token.lineNum },
-					payload: [],
+					payload: [token.inlineBody ?? ""],
 				};
-				if (token.inlineBody !== undefined) {
-					this.#pending.payload.push(token.inlineBody);
-				}
 				return;
 		}
 	}
