@@ -289,6 +289,12 @@
       "type": "file"
     },
     {
+      "path": "packages/hashline/src/tokenizer.ts",
+      "accessCount": 3,
+      "lastAccessed": 1779911468566,
+      "type": "file"
+    },
+    {
       "path": "packages/coding-agent/CHANGELOG.md",
       "accessCount": 2,
       "lastAccessed": 1779855406691,
@@ -322,12 +328,6 @@
       "path": "packages/tui/test/render-regressions.test.ts",
       "accessCount": 2,
       "lastAccessed": 1779911313023,
-      "type": "file"
-    },
-    {
-      "path": "packages/hashline/src/tokenizer.ts",
-      "accessCount": 2,
-      "lastAccessed": 1779911446037,
       "type": "file"
     },
     {
