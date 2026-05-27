@@ -180,7 +180,7 @@ export function findApiKey(): string | null {
  * token has no `exp` (which is the common case — Perplexity sessions are
  * server-side and effectively non-expiring from the client's POV).
  */
-function jwtExpiryMs(token: string): number | undefined {
+function _jwtExpiryMs(token: string): number | undefined {
 	const parts = token.split(".");
 	if (parts.length !== 3) return undefined;
 	const payload = parts[1];
