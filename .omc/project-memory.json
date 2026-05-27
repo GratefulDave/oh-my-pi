@@ -259,6 +259,12 @@
       "type": "file"
     },
     {
+      "path": "packages/coding-agent/package.json",
+      "accessCount": 3,
+      "lastAccessed": 1779911130260,
+      "type": "file"
+    },
+    {
       "path": "packages/coding-agent/CHANGELOG.md",
       "accessCount": 2,
       "lastAccessed": 1779855406691,
@@ -286,6 +292,12 @@
       "path": "crates/pi-shell/src/minimizer/filters/mod.rs",
       "accessCount": 2,
       "lastAccessed": 1779865665573,
+      "type": "file"
+    },
+    {
+      "path": "packages/coding-agent/src/factory/templates/software-factory/.omp/extensions/software-factory/index.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779911125311,
       "type": "file"
     },
     {
@@ -322,12 +334,6 @@
       "path": "packages/coding-agent/src/config/settings.ts",
       "accessCount": 1,
       "lastAccessed": 1779864931698,
-      "type": "file"
-    },
-    {
-      "path": "packages/coding-agent/package.json",
-      "accessCount": 1,
-      "lastAccessed": 1779864954733,
       "type": "file"
     },
     {

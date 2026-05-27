@@ -60,12 +60,29 @@
         "@agentclientprotocol/sdk": "catalog:",
         "@babel/parser": "catalog:",
         "@mozilla/readability": "catalog:",
+<<<<<<< HEAD
         "@oh-my-pi/omp-stats": "15.5.3",
         "@oh-my-pi/pi-agent-core": "15.5.3",
         "@oh-my-pi/pi-ai": "15.5.3",
         "@oh-my-pi/pi-natives": "15.5.3",
         "@oh-my-pi/pi-tui": "15.5.3",
         "@oh-my-pi/pi-utils": "15.5.3",
+||||||| parent of b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling)
+        "@oh-my-pi/omp-stats": "catalog:",
+        "@oh-my-pi/pi-agent-core": "catalog:",
+        "@oh-my-pi/pi-ai": "catalog:",
+        "@oh-my-pi/pi-natives": "catalog:",
+        "@oh-my-pi/pi-tui": "catalog:",
+        "@oh-my-pi/pi-utils": "catalog:",
+=======
+        "@oh-my-pi/hashline": "catalog:",
+        "@oh-my-pi/omp-stats": "catalog:",
+        "@oh-my-pi/pi-agent-core": "catalog:",
+        "@oh-my-pi/pi-ai": "catalog:",
+        "@oh-my-pi/pi-natives": "catalog:",
+        "@oh-my-pi/pi-tui": "catalog:",
+        "@oh-my-pi/pi-utils": "catalog:",
+>>>>>>> b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling)
         "@puppeteer/browsers": "catalog:",
         "@types/turndown": "catalog:",
         "@xterm/headless": "catalog:",
@@ -80,6 +97,17 @@
         "turndown": "catalog:",
         "turndown-plugin-gfm": "catalog:",
         "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@types/bun": "catalog:",
+      },
+    },
+    "packages/hashline": {
+      "name": "@oh-my-pi/hashline",
+      "version": "15.5.3",
+      "dependencies": {
+        "diff": "catalog:",
+        "lru-cache": "catalog:",
       },
       "devDependencies": {
         "@types/bun": "catalog:",
@@ -231,6 +259,7 @@
     "@bufbuild/protoc-gen-es": "^2.12.0",
     "@mozilla/readability": "^0.6.0",
     "@napi-rs/cli": "3.6.2",
+    "@oh-my-pi/hashline": "15.5.3",
     "@oh-my-pi/omp-stats": "15.5.3",
     "@oh-my-pi/pi-agent-core": "15.5.3",
     "@oh-my-pi/pi-ai": "15.5.3",
@@ -667,6 +696,8 @@
     "@octokit/rest": ["@octokit/rest@22.0.1", "", { "dependencies": { "@octokit/core": "^7.0.6", "@octokit/plugin-paginate-rest": "^14.0.0", "@octokit/plugin-request-log": "^6.0.0", "@octokit/plugin-rest-endpoint-methods": "^17.0.0" } }, "sha512-Jzbhzl3CEexhnivb1iQ0KJ7s5vvjMWcmRtq5aUsKmKDrRW6z3r84ngmiFKFvpZjpiU/9/S6ITPFRpn5s/3uQJw=="],
 
     "@octokit/types": ["@octokit/types@16.0.0", "", { "dependencies": { "@octokit/openapi-types": "^27.0.0" } }, "sha512-sKq+9r1Mm4efXW1FCk7hFSeJo4QKreL/tTbR0rz/qx/r1Oa2VV83LTA/H/MuCOX7uCIJmQVRKBcbmWoySjAnSg=="],
+
+    "@oh-my-pi/hashline": ["@oh-my-pi/hashline@workspace:packages/hashline"],
 
     "@oh-my-pi/omp-stats": ["@oh-my-pi/omp-stats@workspace:packages/stats"],
 

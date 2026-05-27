@@ -303,3 +303,4 @@ export default function softwareFactoryExtension(pi: ExtensionAPI) {
 		state.awaitingVerifierFollowUp = true;
 		pi.sendUserMessage(buildVerifierFollowUp(report), { deliverAs: "followUp" });
 	});
+}
