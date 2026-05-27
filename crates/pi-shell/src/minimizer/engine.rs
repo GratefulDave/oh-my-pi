@@ -13,6 +13,8 @@ use crate::minimizer::{
 	pipeline::{self, CompiledPipeline, PipelineRegistry},
 	plan,
 };
+#[cfg(feature = "ai-smart")]
+use crate::minimizer::filters::ai_smart;
 
 /// Minimization strategy for a shell command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,8 +107,53 @@ pub fn apply(
 		record_unknown_command(command);
 		return MinimizerOutput::passthrough(captured).labeled("unknown");
 	};
-	apply_identity(&identity, command, captured, exit_code, config)
+	let output = apply_identity(&identity, command, captured, exit_code, config);
+	apply_ai_smart_overlay(&identity, command, captured, config, output)
 }
+
+/// Optional AI-summary post-step (W4 / rtk smart). Gated by both the Cargo
+/// feature `ai-smart` and the runtime `ai_smart_enabled` config flag, and
+/// further gated inside [`ai_smart::maybe_summarize`] on input size, parent
+/// context (pipe/compound bypass), credential availability, and the per-
+/// `apply()` budget. On any gate failure or network error we return the
+/// upstream `output` untouched — this filter is fail-closed.
+#[cfg_attr(not(feature = "ai-smart"), allow(unused_variables, clippy::needless_pass_by_value))]
+fn apply_ai_smart_overlay(
+	identity: &detect::CommandIdentity,
+	command: &str,
+	captured: &str,
+	config: &MinimizerConfig,
+	output: MinimizerOutput,
+) -> MinimizerOutput {
+	#[cfg(feature = "ai-smart")]
+	{
+		if !config.ai_smart_enabled {
+			return output;
+		}
+		ai_smart::reset_apply_budget();
+		let subcommand = identity.subcommand.as_deref();
+		let ctx = MinimizerCtx { program: &identity.program, subcommand, command, config };
+		let candidate = if output.changed { output.text.as_str() } else { captured };
+		match ai_smart::maybe_summarize(&ctx, candidate) {
+			Some(summary) => {
+				let original_text = output
+					.original_text
+					.clone()
+					.unwrap_or_else(|| captured.to_string());
+				let input_bytes = output.input_bytes.max(captured.len());
+				let summarized = MinimizerOutput::transformed(summary, input_bytes).labeled("ai-smart");
+				summarized.with_original(original_text)
+			},
+			None => output,
+		}
+	}
+	#[cfg(not(feature = "ai-smart"))]
+	{
+		let _ = (identity, command, captured, config);
+		output
+	}
+}
+
 
 fn identity_has_filter(identity: &detect::CommandIdentity, config: &MinimizerConfig) -> bool {
 	if !config.is_program_enabled(&identity.program) {

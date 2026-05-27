@@ -74,13 +74,23 @@ async function resolveShellCwd(cwd: string | undefined): Promise<string | undefi
 /** Translate `ShellMinimizerSettings` into native `MinimizerOptions`, or `undefined` when disabled. */
 export function buildMinimizerOptions(group: ShellMinimizerSettings): MinimizerOptions | undefined {
 	if (!group.enabled) return undefined;
-	return {
+	const opts: MinimizerOptions = {
 		enabled: true,
 		settingsPath: group.settingsPath || undefined,
 		only: group.only.length > 0 ? group.only : undefined,
 		except: group.except.length > 0 ? group.except : undefined,
 		maxCaptureBytes: group.maxCaptureBytes,
 	};
+	if (group.sourceOutlineLevel && group.sourceOutlineLevel !== "default") {
+		opts.sourceOutlineLevel = group.sourceOutlineLevel;
+	}
+	if (group.aiSmartEnabled) {
+		opts.aiSmartEnabled = true;
+		if (group.aiSmartProvider) {
+			opts.aiSmartProvider = group.aiSmartProvider;
+		}
+	}
+	return opts;
 }
 /** Regex matching minimizer omission markers like "… 500 lines omitted …". */
 const OMISSION_MARKER_RE = /… (\d+) ([\w ]+?) omitted.*$/m;

@@ -1,157 +1,257 @@
-# Team Worker Protocol
+# Development Rules
 
-You are a **team worker**, not the team leader. Operate strictly within worker protocol.
+## Default Context
 
-## FIRST ACTION REQUIRED
-Before doing anything else, write your ready sentinel file:
-```bash
-mkdir -p $(dirname $OMC_TEAM_STATE_ROOT/workers/worker-1/.ready) && touch $OMC_TEAM_STATE_ROOT/workers/worker-1/.ready
+This repo contains multiple packages, but **`packages/coding-agent/`** is the primary focus. Unless otherwise specified, assume work refers to this package.
+
+**Terminology**: When the user says "agent" or asks "why is agent doing X", they mean the **coding-agent package implementation**, not you (the assistant). The coding-agent is a CLI tool — questions about its behavior refer to code in `packages/coding-agent/`, not your current session.
+
+### Package Structure
+
+| Package                 | Description                                          |
+| ----------------------- | ---------------------------------------------------- |
+| `packages/ai`           | Multi-provider LLM client with streaming support     |
+| `packages/agent`        | Agent runtime with tool calling and state management |
+| `packages/coding-agent` | Main CLI application (primary focus)                 |
+| `packages/tui`          | Terminal UI library with differential rendering      |
+| `packages/natives`      | Bindings for native text/image/grep operations       |
+| `packages/stats`        | Local observability dashboard (`omp stats`)          |
+| `packages/utils`        | Shared utilities (logger, streams, temp files)       |
+| `crates/pi-natives`     | Rust crate for performance-critical text/grep ops    |
+
+## ICM Memory Policy
+
+Use ICM memory only for durable high-signal facts, and scope every memory to the relevant repository/project topic:
+- Architectural/design decisions: chosen design, API/data contract, invariant, tradeoff, rejected alternative, migration boundary.
+- Resolved bugs/errors: symptom, root cause, fix, verification, affected package/component.
+- Repo purpose/development context: purpose, important commands/workflows, non-obvious conventions, sharp edges.
+- User preferences: explicit durable preferences/corrections.
+
+Never store command output, transcript chatter, progress/status updates, local-command caveats, generic summaries, guesses, TODOs, conversational checkpoints, or ephemeral debugging attempts.
+If a fact does not clearly fit one of the keep categories, do not store it.
+
+## Code Quality
+
+- No `any` unless absolutely necessary.
+- **NEVER use `ReturnType<>`** — use the actual type name.
+- **NEVER use inline imports** — no `await import()`, no `import("pkg").Type` in type positions, no dynamic type imports. Always top-level.
+- Check `node_modules` for external API types instead of guessing.
+- **Barrel exports**: prefer `export * from "./module"` over named re-exports, including `export type { ... } from`. In pure `index.ts` barrels, use star re-exports even for single-specifier cases. If stars create ambiguity, remove the redundant export path; do not keep duplicates.
+- **Class privacy**: use ES `#private` fields; leave externally accessible members bare. **No `private`/`protected`/`public` keyword on fields or methods**, except on **constructor parameter properties** where TypeScript requires it (e.g. `constructor(private readonly session: ToolSession)`).
+- **Promises**: use `Promise.withResolvers()` instead of `new Promise((resolve, reject) => ...)`.
+- **Prompts**: never build prompts in code (no inline strings, template literals, or concatenation). Prompts live in static `.md` files; use Handlebars for dynamic content. Import them via `import content from "./prompt.md" with { type: "text" }` — not `readFile`.
+- **Worker scripts**: spawn workers with the dev/compile-safe hybrid pattern. `with { type: "file" }` only copies the entry as a raw asset and does **not** bundle its imports — workers crashed silently in compiled binaries on every prior incarnation of that pattern (issues #1011, #1027). Use this shape instead:
+  ```ts
+  import { isCompiledBinary } from "@oh-my-pi/pi-utils";
+  const worker = isCompiledBinary()
+  	? new Worker("./packages/<pkg>/src/<worker>.ts", { type: "module" })
+  	: new Worker(new URL("./<worker>.ts", import.meta.url).href, { type: "module" });
+  ```
+  The literal in the compiled branch is what Bun's `--compile` static analyzer needs to discover the worker — its path is **`--root`-relative** (repo root, since `build-binary.ts` passes `--root ../..`), so it must start with `./packages/...`. The `new URL` form in the dev branch keeps spawns portable across cwds.
+  In addition, every worker entry **MUST** be listed as an extra `--compile` entrypoint in `packages/coding-agent/scripts/build-binary.ts`. Without that the analyzer sees the literal but the worker never gets emitted into bunfs. The three current entries (`sync-worker.ts`, `tab-worker-entry.ts`, `worker-entry.ts`) live there as the working reference.
+  Validate any new worker with the dedicated smoke probe: `omp --smoke-test` spawns the stats sync worker, pings it, and exits — it's wired into `ci:test:smoke` and `scripts/install-tests/run-ci.sh` so binary, source-link, and tarball installs all exercise it. Add a sibling smoke if the new worker is on a different module graph.
+
+## Bun Over Node
+
+Use Bun APIs where they provide a cleaner alternative; fall back to `node:*` only for what Bun doesn't cover. **Never spawn shell commands for operations with proper APIs** (e.g., don't `Bun.spawnSync(["mkdir", "-p", dir])` — use `mkdirSync`).
+
+### Quick reference
+
+| Operation       | Use                                       | Not                             |
+| --------------- | ----------------------------------------- | ------------------------------- |
+| File read/write | `Bun.file()`, `Bun.write()`               | `readFileSync`, `writeFileSync` |
+| Spawn process   | `` $`cmd` ``, `Bun.spawn()`               | `child_process`                 |
+| Sleep           | `Bun.sleep(ms)`                           | `setTimeout` promise            |
+| Binary lookup   | `$which("git")` from `@oh-my-pi/pi-utils` | `spawnSync(["which", "git"])`   |
+| HTTP server     | `Bun.serve()`                             | `http.createServer()`           |
+| SQLite          | `bun:sqlite`                              | `better-sqlite3`                |
+| Hashing         | `Bun.hash()`, `Bun.password.*`, WebCrypto | `node:crypto`                   |
+| Path resolution | `import.meta.dir`, `import.meta.path`     | `fileURLToPath` dance           |
+| JSON5           | `Bun.JSON5.parse()` / `.stringify()`      | `json5` package                 |
+| JSONL           | `Bun.JSONL.parse()` / `.parseChunk()`     | `text.split("\n").map(JSON.parse)` |
+| String width    | `Bun.stringWidth()`                       | `get-east-asian-width`, custom  |
+| Text wrapping   | `Bun.wrapAnsi()`                          | custom ANSI-aware wrappers      |
+
+### Process execution
+
+Prefer Bun Shell (`` $`cmd` ``) for simple commands:
+
+```typescript
+import { $ } from "bun";
+
+const result = await $`git status`.cwd(dir).quiet().nothrow();
+if (result.exitCode === 0) {
+	const text = result.text();
+}
+
+$`do-stuff ${tmpFile}`.quiet().nothrow(); // fire and forget
 ```
 
-## MANDATORY WORKFLOW — Follow These Steps In Order
-You MUST complete ALL of these steps. Do NOT skip any step. Do NOT exit without step 4.
+Methods: `.quiet()`, `.nothrow()`, `.text()`, `.cwd(path)`.
 
-1. **Claim** your task (run this command first):
-   `omc team api claim-task --input "{\"team_name\":\"execute-approved-plan-at-users\",\"task_id\":\"<id>\",\"worker\":\"worker-1\"}" --json`
-   Save the `claim_token` from the response — you need it for step 4.
-2. **Do the work** described in your task assignment below.
-3. **Send ACK** to the leader:
-   `omc team api send-message --input "{\"team_name\":\"execute-approved-plan-at-users\",\"from_worker\":\"worker-1\",\"to_worker\":\"leader-fixed\",\"body\":\"ACK: worker-1 initialized\"}" --json`
-4. **Transition** the task status (REQUIRED before exit):
-   - On success: `omc team api transition-task-status --input "{\"team_name\":\"execute-approved-plan-at-users\",\"task_id\":\"<id>\",\"from\":\"in_progress\",\"to\":\"completed\",\"claim_token\":\"<claim_token>\",\"result\":\"Summary: <what changed>\\nVerification: <tests/checks run>\\nSubagent skip reason: worker protocol forbids nested subagents; completed focused probe in-session\"}" --json`
-   - On failure: `omc team api transition-task-status --input "{\"team_name\":\"execute-approved-plan-at-users\",\"task_id\":\"<id>\",\"from\":\"in_progress\",\"to\":\"failed\",\"claim_token\":\"<claim_token>\"}" --json`
-5. **Keep going after replies**: ACK/progress messages are not a stop signal. Keep executing your assigned or next feasible work until the task is actually complete or failed, then transition and exit.
+Use `Bun.spawn`/`Bun.spawnSync` only for: long-running processes (LSP, kernels), streaming stdin/stdout/stderr (SSE, JSON-RPC), or process control (signals, kill, complex lifecycle).
 
-## Identity
-- **Team**: execute-approved-plan-at-users
-- **Worker**: worker-1
-- **Agent Type**: codex
-- **Environment**: OMC_TEAM_WORKER=execute-approved-plan-at-users/worker-1
+When using `pipe` mode, cast the stream:
+```typescript
+const child = Bun.spawn(["cmd"], { stdout: "pipe", stderr: "pipe" });
+const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
+```
 
-## Your Tasks
-- **Task 1**: Worker 1: Execute approved plan at /Users/davidandrews/PycharmProjects/lex/.omc/
-  Description: Execute approved plan at /Users/davidandrews/PycharmProjects/lex/.omc/plans/rtk-md-completion-2026-05-27.md (committed at HEAD on rtk-md-completion branch). Plan APPROVED via ralplan consensus.
+### Node module imports
 
-WORKER 1 (codex) — W1 (AWS expansion) + W2 (clang). Touch ONLY:
-- crates/pi-shell/src/minimizer/filters/cloud.rs: 11 new aws subcommand extractors (sts, s3, lambda, iam, logs, ecs, rds, cloudformation, eks, sqs, secretsmanager); compact_aws_generic JSON walker; SENSITIVE_AWS_KEYS const [Policy, PolicyDocument, AssumeRolePolicyDocument, Environment, SecretString, SecretBinary, Token, SessionToken, Credentials, Password, PrivateKey, KeyMaterial, PlaintextKeyMaterial, CiphertextBlob, ResponseMetadata]; leak-sentinel test.
-- crates/pi-shell/src/minimizer/detect.rs: new skip_aws_global_options modeled on existing per-program skippers at lines 93/108/131/144/157/171, wired via first_non_global_arg at line 303. Flag table per plan Step 1.1 (value-taking: --profile --region --endpoint-url --cli-binary-format --output --cli-read-timeout --cli-connect-timeout --ca-bundle --color --query --cli-input-json --cli-input-yaml; boolean: --no-cli-pager --debug --no-verify-ssl --no-paginate --no-sign-request --cli-auto-prompt --no-cli-auto-prompt; optional-value: --generate-cli-skeleton; --flag=value form; -- terminator). Property fuzz test 100+ permutations.
-- crates/pi-shell/src/minimizer/defs/gcc.toml: change match_command to ^(gcc|g\+\+|clang|clang\+\+)$; add 2 [[tests.gcc]] clang cases.
-- crates/pi-shell/tests/minimizer_chain_flag_matrix.rs (NEW): aws+clang chain/flag/passthrough/output-purity tests per AC-C1..C4.
-DO NOT TOUCH: filters/listing.rs filters/ai_smart.rs engine.rs Cargo.toml bash-executor.ts config.rs.
+Always use **namespace imports** for `node:fs`, `node:path`, `node:os`:
 
-WORKER 2 (claude) — W3 (source outline aggressive) + W4 (rtk smart, feature-gated). Touch ONLY:
-- crates/pi-shell/src/minimizer/config.rs: pub enum OutlineLevel { Default, Aggressive }; ai_smart_enabled: bool (default false); ai_smart_provider: String (default "deepseek").
-- crates/pi-shell/src/minimizer/filters/listing.rs: branch on OutlineLevel in compact_source_outline; aggressive replaces function/method bodies with { ... } for ts/tsx/js/jsx/py/rs/go.
-- packages/coding-agent/src/exec/bash-executor.ts: surface sourceOutlineLevel through buildMinimizerOptions.
-- packages/coding-agent/src/* relevant settings types: ShellMinimizerSettings.sourceOutlineLevel: 'default'|'aggressive'.
-- crates/pi-shell/Cargo.toml: [features] ai-smart = ["dep:reqwest"]; reqwest optional with rustls-tls/json/blocking.
-- crates/pi-shell/src/minimizer/filters/ai_smart.rs (NEW): #[cfg(feature = "ai-smart")] with off-feature stub. maybe_summarize(ctx, captured) -> Option<String>. None if !ai_smart_enabled OR parent is Pipe/Compound OR captured > 8KB OR OMP_AI_SMART_API_KEY unset OR per-apply budget consumed. Else POST https://api.deepseek.com/v1/chat/completions model deepseek-v4-flash, system 'You are a 2-line summarizer for shell command output. Line 1: what happened. Line 2: most important number/path/error. Be terse.', 5s timeout, 200 max tokens, single retry on transient, passthrough on error.
-- crates/pi-shell/src/minimizer/engine.rs: wire ai_smart from apply() post-step AFTER apply_identity returns. cfg(feature = "ai-smart")-gated. AC4.9 per-apply ≤1 AI call budget across chain segments via Cell<u8>/MinimizerCtx counter.
-- crates/pi-shell/tests/minimizer_chain_flag_matrix.rs: add W3+W4 rows (chain, flag, passthrough, output-purity).
-DO NOT TOUCH: filters/cloud.rs detect.rs aws skipper defs/gcc.toml.
+```typescript
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import * as os from "node:os";
+```
 
-PINNED (BOTH):
-- deepseek-v4-flash exact; if unavailable STOP and RFC, no silent downgrade.
-- W4 strictly behind Cargo feature ai-smart, default OFF, zero behavioral change when off.
-- Verify before commit: rtk cargo test -p pi-shell --lib && rtk cargo test -p pi-shell --test minimizer_chain_flag_matrix; W4: rtk cargo test -p pi-shell --features ai-smart.
-- TS: cd packages/coding-agent && bun test test/bash-executor.test.ts test/minimizer-gain.test.ts.
-- Mailbo
-  Status: pending
-- **Task 2**: Worker 2: Execute approved plan at /Users/davidandrews/PycharmProjects/lex/.omc/
-  Description: Execute approved plan at /Users/davidandrews/PycharmProjects/lex/.omc/plans/rtk-md-completion-2026-05-27.md (committed at HEAD on rtk-md-completion branch). Plan APPROVED via ralplan consensus.
+- Async-only file → `node:fs/promises`.
+- Needs both sync and async → `node:fs`, then `fs.promises.xxx` for async.
 
-WORKER 1 (codex) — W1 (AWS expansion) + W2 (clang). Touch ONLY:
-- crates/pi-shell/src/minimizer/filters/cloud.rs: 11 new aws subcommand extractors (sts, s3, lambda, iam, logs, ecs, rds, cloudformation, eks, sqs, secretsmanager); compact_aws_generic JSON walker; SENSITIVE_AWS_KEYS const [Policy, PolicyDocument, AssumeRolePolicyDocument, Environment, SecretString, SecretBinary, Token, SessionToken, Credentials, Password, PrivateKey, KeyMaterial, PlaintextKeyMaterial, CiphertextBlob, ResponseMetadata]; leak-sentinel test.
-- crates/pi-shell/src/minimizer/detect.rs: new skip_aws_global_options modeled on existing per-program skippers at lines 93/108/131/144/157/171, wired via first_non_global_arg at line 303. Flag table per plan Step 1.1 (value-taking: --profile --region --endpoint-url --cli-binary-format --output --cli-read-timeout --cli-connect-timeout --ca-bundle --color --query --cli-input-json --cli-input-yaml; boolean: --no-cli-pager --debug --no-verify-ssl --no-paginate --no-sign-request --cli-auto-prompt --no-cli-auto-prompt; optional-value: --generate-cli-skeleton; --flag=value form; -- terminator). Property fuzz test 100+ permutations.
-- crates/pi-shell/src/minimizer/defs/gcc.toml: change match_command to ^(gcc|g\+\+|clang|clang\+\+)$; add 2 [[tests.gcc]] clang cases.
-- crates/pi-shell/tests/minimizer_chain_flag_matrix.rs (NEW): aws+clang chain/flag/passthrough/output-purity tests per AC-C1..C4.
-DO NOT TOUCH: filters/listing.rs filters/ai_smart.rs engine.rs Cargo.toml bash-executor.ts config.rs.
+### File I/O
 
-WORKER 2 (claude) — W3 (source outline aggressive) + W4 (rtk smart, feature-gated). Touch ONLY:
-- crates/pi-shell/src/minimizer/config.rs: pub enum OutlineLevel { Default, Aggressive }; ai_smart_enabled: bool (default false); ai_smart_provider: String (default "deepseek").
-- crates/pi-shell/src/minimizer/filters/listing.rs: branch on OutlineLevel in compact_source_outline; aggressive replaces function/method bodies with { ... } for ts/tsx/js/jsx/py/rs/go.
-- packages/coding-agent/src/exec/bash-executor.ts: surface sourceOutlineLevel through buildMinimizerOptions.
-- packages/coding-agent/src/* relevant settings types: ShellMinimizerSettings.sourceOutlineLevel: 'default'|'aggressive'.
-- crates/pi-shell/Cargo.toml: [features] ai-smart = ["dep:reqwest"]; reqwest optional with rustls-tls/json/blocking.
-- crates/pi-shell/src/minimizer/filters/ai_smart.rs (NEW): #[cfg(feature = "ai-smart")] with off-feature stub. maybe_summarize(ctx, captured) -> Option<String>. None if !ai_smart_enabled OR parent is Pipe/Compound OR captured > 8KB OR OMP_AI_SMART_API_KEY unset OR per-apply budget consumed. Else POST https://api.deepseek.com/v1/chat/completions model deepseek-v4-flash, system 'You are a 2-line summarizer for shell command output. Line 1: what happened. Line 2: most important number/path/error. Be terse.', 5s timeout, 200 max tokens, single retry on transient, passthrough on error.
-- crates/pi-shell/src/minimizer/engine.rs: wire ai_smart from apply() post-step AFTER apply_identity returns. cfg(feature = "ai-smart")-gated. AC4.9 per-apply ≤1 AI call budget across chain segments via Cell<u8>/MinimizerCtx counter.
-- crates/pi-shell/tests/minimizer_chain_flag_matrix.rs: add W3+W4 rows (chain, flag, passthrough, output-purity).
-DO NOT TOUCH: filters/cloud.rs detect.rs aws skipper defs/gcc.toml.
+Prefer Bun:
+```typescript
+const text = await Bun.file(path).text();
+const data = await Bun.file(path).json();
+await Bun.write(path, data); // auto-creates parent dirs
+```
 
-PINNED (BOTH):
-- deepseek-v4-flash exact; if unavailable STOP and RFC, no silent downgrade.
-- W4 strictly behind Cargo feature ai-smart, default OFF, zero behavioral change when off.
-- Verify before commit: rtk cargo test -p pi-shell --lib && rtk cargo test -p pi-shell --test minimizer_chain_flag_matrix; W4: rtk cargo test -p pi-shell --features ai-smart.
-- TS: cd packages/coding-agent && bun test test/bash-executor.test.ts test/minimizer-gain.test.ts.
-- Mailbo
-  Status: pending
+Use `node:fs/promises` for directory ops (`fs.mkdir`, `fs.rm`, `fs.readdir`) — Bun has no native directory APIs. Avoid sync APIs in async flows; use sync only when forced by a synchronous interface.
 
-## Task Lifecycle Reference (CLI API)
-Use the CLI API for all task lifecycle operations. Do NOT directly edit task files.
-
-- Inspect task state: `omc team api read-task --input "{\"team_name\":\"execute-approved-plan-at-users\",\"task_id\":\"<id>\"}" --json`
-- Task id format: State/CLI APIs use task_id: "<id>" (example: "1"), not "task-1"
-- Claim task: `omc team api claim-task --input "{\"team_name\":\"execute-approved-plan-at-users\",\"task_id\":\"<id>\",\"worker\":\"worker-1\"}" --json`
-- Complete task: `omc team api transition-task-status --input "{\"team_name\":\"execute-approved-plan-at-users\",\"task_id\":\"<id>\",\"from\":\"in_progress\",\"to\":\"completed\",\"claim_token\":\"<claim_token>\",\"result\":\"Summary: <what changed>\\nVerification: <tests/checks run>\\nSubagent skip reason: worker protocol forbids nested subagents; completed focused probe in-session\"}" --json`
-- Fail task: `omc team api transition-task-status --input "{\"team_name\":\"execute-approved-plan-at-users\",\"task_id\":\"<id>\",\"from\":\"in_progress\",\"to\":\"failed\",\"claim_token\":\"<claim_token>\"}" --json`
-- Release claim (rollback): `omc team api release-task-claim --input "{\"team_name\":\"execute-approved-plan-at-users\",\"task_id\":\"<id>\",\"claim_token\":\"<claim_token>\",\"worker\":\"worker-1\"}" --json`
-- Delegation compliance evidence (required for broad delegated tasks):
-  - The completion command MUST include a `result` string with summary and verification evidence.
-  - Because worker protocol forbids nested sub-agents, use: `Subagent skip reason: <why in-session execution was safer/sufficient>`
-  - Only if the leader explicitly grants an exception to spawn nested help, use: `Subagent spawn evidence: <count, child task names/thread ids, and integrated findings>`
-  - Completion is rejected with `missing_delegation_compliance_evidence` when required evidence is absent.
-
-## Canonical Team State Root
-- Resolve the team state root in this order: `OMC_TEAM_STATE_ROOT` env -> worker identity `team_state_root` -> config/manifest `team_state_root` -> /Users/davidandrews/PycharmProjects/lex/.omc/state/team/execute-approved-plan-at-users.
-- `OMC_TEAM_STATE_ROOT` is the team-specific root (`.../.omc/state/team/execute-approved-plan-at-users`). When it is set, append worker/mailbox paths directly below it; do not append another `team/execute-approved-plan-at-users` segment.
-- Worktree-backed workers MUST use the canonical leader-owned state root for inbox, mailbox, task lifecycle, status, heartbeat, and shutdown files; do not use a local worktree `.omc/state` when `OMC_TEAM_STATE_ROOT` is set.
-
-## Communication Protocol
-- **Inbox**: Read $OMC_TEAM_STATE_ROOT/workers/worker-1/inbox.md for new instructions
-- **Status**: Write to $OMC_TEAM_STATE_ROOT/workers/worker-1/status.json:
-  ```json
-  {"state": "idle", "updated_at": "<ISO timestamp>"}
+**Anti-patterns:**
+- `existsSync`/`readFileSync`/`writeFileSync` in async code → `Bun.file()` APIs.
+- `mkdir(dirname(path), …)` before `Bun.write(path, …)` → redundant; `Bun.write` handles it.
+- `if (await file.exists()) { await file.json() }` → two syscalls plus race. Use try-catch with `isEnoent`:
+  ```typescript
+  import { isEnoent } from "@oh-my-pi/pi-utils";
+  try {
+  	return await Bun.file(path).json();
+  } catch (err) {
+  	if (isEnoent(err)) return null;
+  	throw err;
+  }
   ```
-  States: "idle" | "working" | "blocked" | "done" | "failed"
-- **Heartbeat**: Update $OMC_TEAM_STATE_ROOT/workers/worker-1/heartbeat.json every few minutes:
-  ```json
-  {"pid":<pid>,"last_turn_at":"<ISO timestamp>","turn_count":<n>,"alive":true}
-  ```
+- Multiple `Bun.file(path)` handles for the same path (including across `checkX`/`loadX` helpers).
+- `Buffer.from(await Bun.file(x).arrayBuffer())` → `await fs.readFile(path)`.
+- Existence check + try-catch around the same read → drop the existence check.
 
-## Message Protocol
-Send messages via CLI API:
-- To leader: `omc team api send-message --input "{\"team_name\":\"execute-approved-plan-at-users\",\"from_worker\":\"worker-1\",\"to_worker\":\"leader-fixed\",\"body\":\"<message>\"}" --json`
-- Check mailbox: `omc team api mailbox-list --input "{\"team_name\":\"execute-approved-plan-at-users\",\"worker\":\"worker-1\"}" --json`
-- Mark delivered: `omc team api mailbox-mark-delivered --input "{\"team_name\":\"execute-approved-plan-at-users\",\"worker\":\"worker-1\",\"message_id\":\"<id>\"}" --json`
+### Streams
 
-## Startup Handshake (Required)
-Before doing any task work, send exactly one startup ACK to the leader:
-`omc team api send-message --input "{\"team_name\":\"execute-approved-plan-at-users\",\"from_worker\":\"worker-1\",\"to_worker\":\"leader-fixed\",\"body\":\"ACK: worker-1 initialized\"}" --json`
+Prefer centralized helpers:
+```typescript
+import { readStream, readLines } from "./utils/stream";
+const text = await readStream(child.stdout);
+for await (const line of readLines(stream)) { /* ... */ }
+```
+Manual reader loops only when the protocol requires it (SSE, streaming JSON-RPC).
 
-## Shutdown Protocol
-When you see a shutdown request in your inbox:
-1. Write your decision to: $OMC_TEAM_STATE_ROOT/workers/worker-1/shutdown-ack.json
-2. Format:
-   - Accept: {"status":"accept","reason":"ok","updated_at":"<iso>"}
-   - Reject: {"status":"reject","reason":"still working","updated_at":"<iso>"}
-3. Exit your session
+### Misc
 
-## Rules
-- You are NOT the leader. Never run leader orchestration workflows.
-- Do NOT edit files outside the paths listed in your task description
-- Do NOT write lifecycle fields (status, owner, result, error) directly in task files; use CLI API
-- Do NOT spawn sub-agents. Complete work in this worker session only.
-- Do NOT create tmux panes/sessions (`tmux split-window`, `tmux new-session`, etc.).
-- Do NOT run team spawning/orchestration commands (for example: `omc team ...`, `omx team ...`, `$team`, `$ultrawork`, `$autopilot`, `$ralph`).
-- Worker-allowed control surface is only: `omc team api ... --json` (and equivalent `omx team api ... --json` where configured).
-- If blocked, write {"state": "blocked", "reason": "..."} to your status file
+- **Sleep**: `await Bun.sleep(ms)`, never `new Promise(r => setTimeout(r, ms))`.
+- **Password hashing**: `Bun.password.hash(pw, "bcrypt")` / `Bun.password.verify(pw, hash)`.
+- **String width**: `Bun.stringWidth(text, { countAnsiEscapeCodes?: false })`.
+- **Wrapping**: `Bun.wrapAnsi(text, width, { wordWrap, hard, trim })`.
 
-### Agent-Type Guidance (codex)
-- Prefer short, explicit `omc team api ... --json` commands and parse outputs before next step.
-- If a command fails, report the exact stderr to leader-fixed before retrying.
-- You MUST run `omc team api claim-task` before starting work and `omc team api transition-task-status` when done.
+## Generated Files
 
-## BEFORE YOU EXIT
-You MUST call `omc team api transition-task-status` to mark your task as "completed" or "failed" before exiting.
-If you skip this step, the leader cannot track your work and the task will appear stuck.
+**NEVER edit `packages/ai/src/models.json` directly.** It is generated from upstream sources (models.dev, provider catalog discovery, OpenCode docs) by `packages/ai/scripts/generate-models.ts` and the descriptors/resolvers in `packages/ai/src/provider-models/`. Hand-edits get overwritten on the next regen.
 
+To change an entry, fix the source:
+- **Resolution rules / per-id overrides** → relevant resolver in `packages/ai/src/provider-models/openai-compat.ts` (e.g. `createOpenCodeApiResolution`'s id-override map).
+- **Provider descriptors** (filtering, transforms, defaults, headers, compat overrides) → `packages/ai/src/provider-models/descriptors.ts` or the provider-specific descriptor.
+- **Generator-level fixups** (premium multipliers, codex pricing fallback, fallback models, post-processing) → `packages/ai/scripts/generate-models.ts`.
+- **Thinking metadata / generated policies** → `packages/ai/src/model-thinking.ts` (`applyGeneratedModelPolicies`).
+
+Regenerate with `bun --cwd=packages/ai run generate-models` and commit `models.json` alongside the source change. Add a regression test against the **resolver/descriptor**, not the bundled JSON, so it survives upstream metadata shifts.
+
+## Logging
+
+**NEVER use `console.log`/`error`/`warn`** in the coding-agent package — it corrupts TUI rendering. Use the centralized logger:
+
+```typescript
+import { logger } from "@oh-my-pi/pi-utils";
+
+logger.error("MCP request failed", { url, method });
+logger.warn("Theme file invalid, using fallback", { path });
+logger.debug("LSP fallback triggered", { reason });
+```
+
+Logs go to `~/.omp/logs/omp.YYYY-MM-DD.log` with automatic rotation.
+
+## TUI Sanitization
+
+All text displayed in tool renderers must be sanitized. Raw content (file contents, error messages, tool output) breaks terminal rendering: tabs → visual holes, long lines → overflow, paths → leak home directory.
+
+**Rules:**
+- **Tabs → spaces** via `replaceTabs()` (from `@oh-my-pi/pi-tui` or `../tools/render-utils`).
+- **Truncate** lines with `truncateToWidth()` / `ui.truncate()`. Use `TRUNCATE_LENGTHS` constants.
+- **Shorten paths** with `shortenPath()` (replaces home with `~`).
+- **Preview limits** from `PREVIEW_LIMITS`. No ad-hoc numbers.
+
+**Apply to every render path**, not just the happy one:
+- Success output (file previews, command output, search results).
+- **Error messages** — these often embed file content (e.g., patch failure messages include unmatched lines). If a message contains file content, it needs `replaceTabs()`.
+- Diff content (added and removed).
+- Streaming previews.
+
+### Streaming tool previews
+
+Tool-call previews can have **multiple render paths**. If you add preview-only fields or depend on partially streamed args, update every path — not only the final renderer.
+
+For the bash tool specifically:
+- The pending preview may need raw `partialJson`, not just parsed `arguments`. Parsed args lag until a JSON object closes, which makes inline env assignments appear only at the end.
+- Preserve preview-only fields (e.g. `__partialJson`) through `event-controller.ts`, transcript rebuilds in `ui-helpers.ts`, and merged call/result rendering in `tool-execution.ts`. Missing one path causes inconsistent previews.
+- `ToolExecutionComponent.#buildRenderContext()` for bash must work even before a result exists — the renderer uses call args plus render context to show the command preview while streaming.
+- Verify both live streaming and rebuilt transcript paths after any bash preview change. A fix in one path does not fix the other.
+
+## Commands
+
+- NEVER commit unless asked.
+- Never use `tsc`/`npx tsc` — always `bun check`.
+
+## Testing Guidance
+
+Test the contract the system exposes — not the easiest internal detail to assert.
+
+- Every new test must defend one **concrete, externally observable contract**: behavior, output shape, state transition, error mapping, or a regression-prone parsing boundary. If you cannot name the contract, do not add the test.
+- No placeholder tests, tautologies, or "the code ran" assertions (`expect(true).toBe(true)`, bare `not.toThrow()`, non-empty string checks, length-grew checks, "prompt exists" checks without semantic assertion).
+- Prefer contract-level tests over implementation details. Avoid asserting internal helper wiring, field assignment, singleton identity, incidental ordering, prompt boilerplate, or passthrough option forwarding unless another component depends on that exact detail.
+- Don't duplicate coverage across abstraction levels. If an integration test already proves the behavior, drop the narrower unit test that restates it through mocks.
+- Tests **must be full-suite safe**, not just file-local safe. No long-lived file-wide mutations of `Bun.*`, `process.platform`, `process.env`, or `Bun.env` when a narrower seam exists. Prefer per-test `vi.spyOn(...)` with `vi.restoreAllMocks()` in `afterEach`. A test that passes alone but poisons later files is broken.
+- **Never use `mock.module()`**. Bun's `mock.module()` mutates the global module registry and leaks across files ([oven-sh/bun#12823](https://github.com/oven-sh/bun/issues/12823)). Use `spyOn` on the imported module object instead. For pass deps, import the pass and spy on `.run`. For package deps, namespace-import and spy on the exported function.
+- For lifecycle/stateful code, prefer one test per invariant or transition over several tiny tests asserting one field each from the same transition.
+- For error handling, trigger the real failure path and assert the surfaced contract — don't instantiate error classes directly or inspect internal metadata.
+- Smoke tests are acceptable only when they catch a failure mode narrower tests would miss. "Package boots" or "command starts" alone is not enough.
+- Assert exact strings, ordering, and formatting only when downstream code parses or depends on the exact bytes. Otherwise assert semantic content.
+- Compile-time guarantees → type checks/type tests, not runtime placeholders.
+- Don't add tests for tiny low-risk changes unless they protect a real contract or fix a regression-prone edge case.
+- Prefer focused package-local verification for the changed area.
+
+## Changelog
+
+Location: `packages/*/CHANGELOG.md` (per package).
+
+**Format** — sections under `## [Unreleased]`:
+- `### Breaking Changes` (first if present)
+- `### Added`
+- `### Changed`
+- `### Fixed`
+- `### Removed`
+
+**Rules:**
+- New entries always go under `## [Unreleased]`.
+- Never modify already-released sections (e.g., `## [0.12.2]`) — they are immutable.
+
+**Attribution:**
+- Internal (from issues): `Fixed foo bar ([#123](https://github.com/can1357/oh-my-pi/issues/123))`.
+- External contributions: `Added feature X ([#456](https://github.com/can1357/oh-my-pi/pull/456) by [@username](https://github.com/username))`.
+
+## Releasing
+
+1. Ensure all changes since last release are in each affected package's `[Unreleased]` section.
+2. Run `bun run release`.
+
+The script handles version bump, CHANGELOG finalization, commit, tag, publish, and adding new `[Unreleased]` sections.

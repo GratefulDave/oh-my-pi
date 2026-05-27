@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, path::Path};
 
-use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
+use crate::minimizer::{MinimizerCtx, MinimizerOutput, config::OutlineLevel, primitives};
 
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	let cleaned = primitives::strip_ansi(input);
@@ -411,7 +411,7 @@ fn compact_cat_output(ctx: &MinimizerCtx<'_>, input: &str) -> String {
 	if !is_source_path(&path) {
 		return input.to_string();
 	}
-	compact_source_outline(input)
+	compact_source_outline(input, &path, ctx.config.source_outline_level)
 }
 
 fn extract_single_path_arg(command: &str, program: &str) -> Option<String> {
@@ -656,7 +656,12 @@ fn is_source_path(path: &str) -> bool {
 	)
 }
 
-fn compact_source_outline(input: &str) -> String {
+fn compact_source_outline(input: &str, path: &str, level: OutlineLevel) -> String {
+	if level == OutlineLevel::Aggressive
+		&& let Some(stripped) = aggressive_strip_bodies(input, path)
+	{
+		return stripped;
+	}
 	let lines: Vec<&str> = input.lines().collect();
 	if lines.len() < 160 && input.len() < 12_000 {
 		return input.to_string();
@@ -750,6 +755,224 @@ fn render_source_declaration(trimmed: &str) -> String {
 		return out;
 	}
 	line
+}
+
+/// Aggressive source-outline body stripping for brace-based and indent-based
+/// languages. Returns `None` for languages we don't have a strip path for so
+/// the caller falls back to default outline rendering.
+fn aggressive_strip_bodies(input: &str, path: &str) -> Option<String> {
+	let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("");
+	match ext {
+		"rs" | "ts" | "tsx" | "js" | "jsx" | "go" => Some(strip_brace_bodies(input)),
+		"py" => Some(strip_python_bodies(input)),
+		_ => None,
+	}
+}
+
+/// Replace the body of every function/method declaration with `{ ... }`,
+/// keeping signatures, doc comments, attributes, imports, and container
+/// declarations (`class`/`struct`/`enum`/`trait`/`impl`/`interface`/
+/// `namespace`/`module`) intact. We descend into container bodies so inner
+/// method signatures stay visible.
+///
+/// Brace depth tracking handles nested braces inside string/macro content
+/// imperfectly but conservatively — when in doubt we re-emit the original
+/// line.
+fn strip_brace_bodies(input: &str) -> String {
+	let mut out = String::with_capacity(input.len() / 2);
+	let mut skip_depth: i32 = 0;
+	for line in input.lines() {
+		if skip_depth > 0 {
+			skip_depth += brace_delta(line);
+			if skip_depth <= 0 {
+				skip_depth = 0;
+			}
+			continue;
+		}
+		let trimmed = line.trim_start();
+		let delta = brace_delta(line);
+		if delta > 0 && is_function_body_starter(trimmed) {
+			let cut = match line.find('{') {
+				Some(i) => i,
+				None => {
+					out.push_str(line);
+					out.push('\n');
+					continue;
+				},
+			};
+			out.push_str(line[..cut].trim_end());
+			out.push_str(" { ... }\n");
+			if delta > 0 {
+				skip_depth = delta;
+			}
+			continue;
+		}
+		out.push_str(line);
+		out.push('\n');
+	}
+	out
+}
+
+fn brace_delta(line: &str) -> i32 {
+	let mut delta: i32 = 0;
+	let mut in_str: Option<char> = None;
+	let mut prev = '\0';
+	for ch in line.chars() {
+		match in_str {
+			Some(q) => {
+				if ch == q && prev != '\\' {
+					in_str = None;
+				}
+			},
+			None => match ch {
+				'"' | '\'' | '`' => in_str = Some(ch),
+				'{' => delta += 1,
+				'}' => delta -= 1,
+				_ => {},
+			},
+		}
+		prev = ch;
+	}
+	delta
+}
+
+/// Only function-like declarations whose body we want to strip. Container
+/// declarations (`class`/`struct`/`enum`/`trait`/`impl`/`interface`/
+/// `namespace`/`module`) are intentionally NOT in this set so we keep
+/// descending and strip the methods inside them.
+fn is_function_body_starter(trimmed: &str) -> bool {
+	let without_attr = trimmed.trim_start_matches(|c: char| c == '#' || c == '[' || c == ']');
+	let without_vis = strip_leading_keywords(without_attr.trim_start());
+	if without_vis.starts_with("fn ")
+		|| without_vis.starts_with("function ")
+		|| without_vis.starts_with("function(")
+		|| without_vis.starts_with("function*")
+		|| without_vis.starts_with("func ")
+		|| without_vis.starts_with("method ")
+		|| without_vis.starts_with("constructor(")
+		|| without_vis.starts_with("constructor ")
+	{
+		return true;
+	}
+	// Reject container keywords explicitly so the TS-method fallback below
+	// can't mistakenly latch onto `class Foo(...)`/`type Foo = (...) => …`.
+	for kw in [
+		"class ",
+		"struct ",
+		"enum ",
+		"trait ",
+		"impl ",
+		"impl<",
+		"interface ",
+		"type ",
+		"namespace ",
+		"module ",
+	] {
+		if without_vis.starts_with(kw) {
+			return false;
+		}
+	}
+	starts_with_ts_method(without_vis)
+}
+
+fn strip_leading_keywords(s: &str) -> &str {
+	let mut current = s;
+	loop {
+		let next = current
+			.strip_prefix("pub ")
+			.or_else(|| current.strip_prefix("pub(crate) "))
+			.or_else(|| current.strip_prefix("export "))
+			.or_else(|| current.strip_prefix("export default "))
+			.or_else(|| current.strip_prefix("async "))
+			.or_else(|| current.strip_prefix("default "))
+			.or_else(|| current.strip_prefix("static "))
+			.or_else(|| current.strip_prefix("private "))
+			.or_else(|| current.strip_prefix("protected "))
+			.or_else(|| current.strip_prefix("public "))
+			.or_else(|| current.strip_prefix("readonly "))
+			.or_else(|| current.strip_prefix("abstract "))
+			.or_else(|| current.strip_prefix("override "))
+			.or_else(|| current.strip_prefix("const "));
+		match next {
+			Some(rest) => current = rest,
+			None => break,
+		}
+	}
+	current
+}
+
+/// Heuristic for TypeScript-style class methods: `name(args): Ret {` or
+/// `name(args) {`. We accept any identifier-like token followed by `(`.
+fn starts_with_ts_method(s: &str) -> bool {
+	let mut chars = s.char_indices();
+	let Some((_, first)) = chars.next() else {
+		return false;
+	};
+	if !(first.is_ascii_alphabetic() || first == '_' || first == '$') {
+		return false;
+	}
+	let mut paren_idx = None;
+	for (idx, ch) in chars {
+		if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+			continue;
+		}
+		if ch == '(' {
+			paren_idx = Some(idx);
+		}
+		break;
+	}
+	paren_idx.is_some()
+}
+
+/// Strip Python function/class bodies. We detect a `def`, `async def`, or
+/// `class` line ending with `:`, emit the signature, then drop every following
+/// line whose indentation is strictly greater than the signature's, replacing
+/// the run with a single `    ...` placeholder.
+fn strip_python_bodies(input: &str) -> String {
+	let lines: Vec<&str> = input.lines().collect();
+	let mut out = String::with_capacity(input.len() / 2);
+	let mut i = 0;
+	while i < lines.len() {
+		let line = lines[i];
+		let indent = line.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+		let trimmed = line.trim_start();
+		let is_def = trimmed.starts_with("def ") || trimmed.starts_with("async def ");
+		let is_class = trimmed.starts_with("class ");
+		let ends_with_colon = trimmed.trim_end().ends_with(':');
+		if (is_def || is_class) && ends_with_colon {
+			out.push_str(line);
+			out.push('\n');
+			i += 1;
+			let mut stripped_any = false;
+			while i < lines.len() {
+				let body_line = lines[i];
+				let body_indent = body_line.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+				if body_line.trim().is_empty() {
+					if !stripped_any {
+						out.push_str(body_line);
+						out.push('\n');
+					}
+					i += 1;
+					continue;
+				}
+				if body_indent <= indent {
+					break;
+				}
+				stripped_any = true;
+				i += 1;
+			}
+			if stripped_any {
+				let pad: String = " ".repeat(indent + 4);
+				out.push_str(&pad);
+				out.push_str("...\n");
+			}
+			continue;
+		}
+		out.push_str(line);
+		out.push('\n');
+		i += 1;
+	}
+	out
 }
 
 fn compact_summary_output(input: &str) -> String {
@@ -1062,5 +1285,83 @@ mod tests {
 			out.push('\n');
 		}
 		out
+	}
+
+	fn aggressive_cfg() -> MinimizerConfig {
+		MinimizerConfig {
+			enabled: true,
+			source_outline_level: OutlineLevel::Aggressive,
+			..Default::default()
+		}
+	}
+
+	#[test]
+	fn default_level_keeps_small_source_files_intact() {
+		// Default behavior: short source files pass through unchanged so
+		// existing callers (and `default_level_keeps_small_source_files_intact`)
+		// never see surprise body stripping.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx_command("cat", "cat src/foo.rs", &cfg);
+		let body = "fn foo() {\n    let x = 1;\n    x + 1\n}\n";
+		let out = filter(&ctx, body, 0);
+		assert!(!out.changed, "default level on tiny file must passthrough");
+	}
+
+	#[test]
+	fn aggressive_strips_rust_function_body() {
+		let cfg = aggressive_cfg();
+		let ctx = ctx_command("cat", "cat src/foo.rs", &cfg);
+		let body = "use std::io;\n\npub fn foo(x: i32) -> i32 {\n    let y = x + 1;\n    y * 2\n}\n";
+		let out = filter(&ctx, body, 0);
+		assert!(out.changed, "aggressive must rewrite");
+		assert!(out.text.contains("use std::io;"));
+		assert!(out.text.contains("pub fn foo(x: i32) -> i32 { ... }"));
+		assert!(!out.text.contains("y * 2"));
+	}
+
+	#[test]
+	fn aggressive_strips_typescript_method_body() {
+		let cfg = aggressive_cfg();
+		let ctx = ctx_command("cat", "cat src/foo.ts", &cfg);
+		let body = "import { z } from 'x';\n\nexport class Svc {\n    run(): number {\n        return 1;\n    }\n}\n";
+		let out = filter(&ctx, body, 0);
+		assert!(out.changed);
+		assert!(out.text.contains("import { z } from 'x';"));
+		assert!(out.text.contains("run(): number { ... }"));
+		assert!(!out.text.contains("return 1;"));
+	}
+
+	#[test]
+	fn aggressive_strips_python_function_body() {
+		let cfg = aggressive_cfg();
+		let ctx = ctx_command("cat", "cat src/foo.py", &cfg);
+		let body = "import os\n\ndef compute(x):\n    y = x + 1\n    return y * 2\n";
+		let out = filter(&ctx, body, 0);
+		assert!(out.changed);
+		assert!(out.text.contains("import os"));
+		assert!(out.text.contains("def compute(x):"));
+		assert!(out.text.contains("    ..."));
+		assert!(!out.text.contains("y * 2"));
+	}
+
+	#[test]
+	fn aggressive_unknown_extension_passes_through() {
+		let cfg = aggressive_cfg();
+		let ctx = ctx_command("cat", "cat src/foo.swift", &cfg);
+		let body = "func compute() {}\n";
+		let out = filter(&ctx, body, 0);
+		assert!(!out.changed, "aggressive must not touch unsupported langs");
+	}
+
+	#[test]
+	fn aggressive_output_has_no_chain_corrupting_chars() {
+		let cfg = aggressive_cfg();
+		let ctx = ctx_command("cat", "cat src/foo.ts", &cfg);
+		let body = "export function foo() {\n  const a = `template`;\n  return a;\n}\n";
+		let out = filter(&ctx, body, 0);
+		assert!(out.changed);
+		assert!(!out.text.contains('\x1b'));
+		// signature retained without dangling backtick from template body
+		assert!(!out.text.contains("template"));
 	}
 }

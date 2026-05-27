@@ -1813,6 +1813,24 @@ export const SETTINGS_SCHEMA = {
 		type: "number",
 		default: 4 * 1024 * 1024,
 	},
+	"shellMinimizer.sourceOutlineLevel": {
+		type: "string",
+		default: "default",
+		ui: {
+			tab: "editing",
+			label: "Source outline level",
+			description:
+				"`default` keeps the current `cat <file>` outline behavior; `aggressive` strips function bodies for ts/tsx/js/jsx/py/rs/go.",
+		},
+	},
+	"shellMinimizer.aiSmartEnabled": {
+		type: "boolean",
+		default: false,
+	},
+	"shellMinimizer.aiSmartProvider": {
+		type: "string",
+		default: "deepseek",
+	},
 
 	// Eval (per-backend toggles; add more as new backends ship, e.g. eval.ts)
 	"eval.py": {
@@ -3056,6 +3074,9 @@ export interface ShellMinimizerSettings {
 	only: string[];
 	except: string[];
 	maxCaptureBytes: number;
+	sourceOutlineLevel: "default" | "aggressive";
+	aiSmartEnabled: boolean;
+	aiSmartProvider: string;
 }
 
 /** Map group prefix -> typed settings interface */

@@ -17,51 +17,91 @@ use serde::Deserialize;
 use crate::minimizer::pipeline::{self, PipelineRegistry, SUPPORTED_SCHEMA_VERSION};
 
 const DEFAULT_MAX_CAPTURE_BYTES: u32 = 4 * 1024 * 1024;
+const DEFAULT_AI_SMART_PROVIDER: &str = "deepseek";
+
+/// Source-outline aggressiveness for `cat <source-file>` minimization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutlineLevel {
+	/// Current behavior: only outline when input is large enough to warrant it.
+	#[default]
+	Default,
+	/// Strip function/method bodies regardless of size for supported source
+	/// languages (`ts`, `tsx`, `js`, `jsx`, `py`, `rs`, `go`).
+	Aggressive,
+}
+
+impl OutlineLevel {
+	fn parse(raw: &str) -> Option<Self> {
+		match raw.trim().to_ascii_lowercase().as_str() {
+			"default" | "" => Some(Self::Default),
+			"aggressive" => Some(Self::Aggressive),
+			_ => None,
+		}
+	}
+}
 
 /// N-API opt-in handle for the minimizer.
 #[derive(Debug, Clone, Default)]
 pub struct MinimizerOptions {
 	/// Master switch. Absent / false = disabled.
-	pub enabled: Option<bool>,
+	pub enabled:              Option<bool>,
 	/// Optional path to a TOML settings file whose values override
 	/// field-level defaults. `~` is expanded.
-	pub settings_path: Option<String>,
+	pub settings_path:        Option<String>,
 	/// Optional xxHash64 digest (hex) of the settings file contents. When
 	/// supplied, the engine refuses to honor a settings file whose hash does
 	/// not match — a lightweight trust gate for agent-controllable paths.
-	pub settings_hash: Option<String>,
+	pub settings_hash:        Option<String>,
 	/// Opt-in allowlist of program names (e.g. `"git"`). When empty or
 	/// absent, all built-in filters are active.
-	pub only: Option<Vec<String>>,
+	pub only:                 Option<Vec<String>>,
 	/// Program names explicitly excluded from minimization.
-	pub except: Option<Vec<String>>,
+	pub except:               Option<Vec<String>>,
 	/// Maximum captured bytes per command before the engine falls back to
 	/// the raw, un-minimized output. Default 4 MiB.
-	pub max_capture_bytes: Option<u32>,
+	pub max_capture_bytes:    Option<u32>,
+	/// Source-outline level for `cat <source-file>` minimization. Accepts
+	/// `"default"` (current behavior) or `"aggressive"` (strip function bodies).
+	pub source_outline_level: Option<String>,
+	/// Master switch for the AI-summary filter (W4 / rtk smart). Default off.
+	pub ai_smart_enabled:     Option<bool>,
+	/// Provider key for the AI summarizer (e.g. `"deepseek"`). Default
+	/// `"deepseek"` when [`Self::ai_smart_enabled`] is true.
+	pub ai_smart_provider:    Option<String>,
 }
 
 /// Resolved minimizer configuration used by the engine.
 #[derive(Debug, Clone)]
 pub struct MinimizerConfig {
-	pub enabled: bool,
-	pub only: HashSet<String>,
-	pub except: HashSet<String>,
-	pub max_capture_bytes: u32,
-	pub per_command: HashMap<String, toml::Value>,
+	pub enabled:              bool,
+	pub only:                 HashSet<String>,
+	pub except:               HashSet<String>,
+	pub max_capture_bytes:    u32,
+	pub per_command:          HashMap<String, toml::Value>,
 	/// Compiled user-defined pipelines parsed from `settings_path`. Searched
 	/// before the built-in pipelines so user filters win.
-	pub user_pipelines: Option<Arc<PipelineRegistry>>,
+	pub user_pipelines:       Option<Arc<PipelineRegistry>>,
+	/// Aggressiveness for source-outline body stripping in `compact_cat_output`.
+	pub source_outline_level: OutlineLevel,
+	/// Master switch for the AI summary filter (W4). When false, the filter
+	/// is a no-op passthrough.
+	pub ai_smart_enabled:     bool,
+	/// Provider key for the AI summarizer (defaults to `"deepseek"`).
+	pub ai_smart_provider:    String,
 }
 
 impl Default for MinimizerConfig {
 	fn default() -> Self {
 		Self {
-			enabled: false,
-			only: HashSet::new(),
-			except: HashSet::new(),
-			max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
-			per_command: HashMap::new(),
-			user_pipelines: None,
+			enabled:              false,
+			only:                 HashSet::new(),
+			except:               HashSet::new(),
+			max_capture_bytes:    DEFAULT_MAX_CAPTURE_BYTES,
+			per_command:          HashMap::new(),
+			user_pipelines:       None,
+			source_outline_level: OutlineLevel::Default,
+			ai_smart_enabled:     false,
+			ai_smart_provider:    DEFAULT_AI_SMART_PROVIDER.to_string(),
 		}
 	}
 }
@@ -82,6 +122,19 @@ impl MinimizerConfig {
 		}
 		if let Some(n) = opts.max_capture_bytes {
 			cfg.max_capture_bytes = n.max(1024);
+		}
+		if let Some(raw) = opts.source_outline_level.as_deref()
+			&& let Some(level) = OutlineLevel::parse(raw)
+		{
+			cfg.source_outline_level = level;
+		}
+		if let Some(v) = opts.ai_smart_enabled {
+			cfg.ai_smart_enabled = v;
+		}
+		if let Some(provider) = opts.ai_smart_provider.as_deref()
+			&& !provider.is_empty()
+		{
+			cfg.ai_smart_provider = provider.to_string();
 		}
 		if let Some(path) = opts.settings_path.as_deref()
 			&& !path.is_empty()
@@ -146,13 +199,16 @@ impl MinimizerConfig {
 #[derive(Debug, Default, Deserialize)]
 struct SettingsFile {
 	#[serde(default)]
-	schema_version: Option<u32>,
-	enabled: Option<bool>,
-	only: Option<Vec<String>>,
-	except: Option<Vec<String>>,
-	max_capture_bytes: Option<u32>,
+	schema_version:       Option<u32>,
+	enabled:              Option<bool>,
+	only:                 Option<Vec<String>>,
+	except:               Option<Vec<String>>,
+	max_capture_bytes:    Option<u32>,
+	source_outline_level: Option<String>,
+	ai_smart_enabled:     Option<bool>,
+	ai_smart_provider:    Option<String>,
 	#[serde(flatten)]
-	tables: HashMap<String, toml::Value>,
+	tables:               HashMap<String, toml::Value>,
 }
 
 impl SettingsFile {
@@ -177,6 +233,19 @@ impl SettingsFile {
 		}
 		if let Some(n) = self.max_capture_bytes {
 			cfg.max_capture_bytes = n.max(1024);
+		}
+		if let Some(raw) = self.source_outline_level.as_deref()
+			&& let Some(level) = OutlineLevel::parse(raw)
+		{
+			cfg.source_outline_level = level;
+		}
+		if let Some(v) = self.ai_smart_enabled {
+			cfg.ai_smart_enabled = v;
+		}
+		if let Some(provider) = self.ai_smart_provider
+			&& !provider.is_empty()
+		{
+			cfg.ai_smart_provider = provider;
 		}
 		for (k, v) in self.tables {
 			if v.is_table() && k != "filters" && k != "tests" {
