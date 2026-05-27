@@ -1,28 +1,3 @@
-<<<<<<< HEAD:packages/coding-agent/src/hashline/parser.ts
-export { parseHashline } from "./executor";
-export type { ParsedRange } from "./tokenizer";
-||||||| parent of b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/hashline/src/parser.ts
-=======
-<<<<<<<< HEAD:packages/coding-agent/src/hashline/executor.ts
-import { ABORT_WARNING } from "./constants";
-import { HL_OP_CHARS, HL_OP_DELETE, HL_OP_INSERT_AFTER, HL_OP_INSERT_BEFORE, HL_OP_REPLACE } from "./hash";
-|||||||| parent of b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/coding-agent/src/hashline/executor.ts
-import {
-	ABORT_WARNING,
-	IMPLICIT_CONTINUATION_WARNING,
-	INLINE_PAYLOAD_ACCEPTED_WARNING,
-	PAYLOAD_LINE_PREFIX_DEMOTED_WARNING,
-	REPLACE_PAIR_COALESCED_WARNING,
-} from "./constants";
-import {
-	HL_OP_CHARS,
-	HL_OP_DELETE,
-	HL_OP_INSERT_AFTER,
-	HL_OP_INSERT_BEFORE,
-	HL_OP_REPLACE,
-	HL_PAYLOAD_PREFIX,
-} from "./hash";
-========
 /**
  * Token-driven state machine that turns a stream of {@link Token}s into a
  * flat list of {@link Edit}s. Sits between the {@link Tokenizer} and the
@@ -46,7 +21,6 @@ import {
 	HL_OP_REPLACE,
 	HL_PAYLOAD_PREFIX,
 } from "./format";
->>>>>>>> b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/hashline/src/parser.ts
 import {
 	ABORT_WARNING,
 	IMPLICIT_CONTINUATION_WARNING,
@@ -159,22 +133,6 @@ export class Executor {
 	}
 
 	/**
-<<<<<<<< HEAD:packages/coding-agent/src/hashline/executor.ts
-	 * Flush any open pending op (with its full accumulated payload, blanks
-	 * included) and return the accumulated edits and warnings. The executor
-	 * is single-use; reset() is required for reuse.
-	 * Throws if two replace/delete ops target the same line — that pattern
-	 * means the diff is painting a before/after picture instead of stating
-	 * the final state, and applying both would silently duplicate content.
-|||||||| parent of b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/coding-agent/src/hashline/executor.ts
-	 * Flush any open pending op (with its full accumulated payload, including
-	 * explicit `+` blank lines) and return the accumulated edits and warnings.
-	 * The executor is single-use; reset() is required for reuse.
-	 * Throws if two replace/delete ops target the same line with non-identical
-	 * shapes (different ranges, replace+delete, delete+delete). Identical-range
-	 * `A-B:` pairs in the same hunk are coalesced last-wins by `feed()` with a
-	 * warning, so they never reach the validator.
-========
 	 * Flush any open pending op (with its full accumulated payload, including
 	 * explicit `+` blank lines) and return the accumulated edits and
 	 * warnings. The executor is single-use; {@link reset} is required for
@@ -184,7 +142,6 @@ export class Executor {
 	 * shapes (different ranges, replace+delete, delete+delete). Identical-range
 	 * `A-B:` pairs in the same hunk are coalesced last-wins by `feed()` with a
 	 * warning, so they never reach the validator.
->>>>>>>> b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/hashline/src/parser.ts
 	 */
 	end(): { edits: Edit[]; warnings: string[] } {
 		this.#flushPending();
@@ -237,33 +194,6 @@ export class Executor {
 			return;
 		}
 
-<<<<<<<< HEAD:packages/coding-agent/src/hashline/executor.ts
-		// Whitespace-only payload outside any pending op is silently dropped;
-|||||||| parent of b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/coding-agent/src/hashline/executor.ts
-		throw new Error(
-			`line ${lineNum}: payload line has no preceding ${HL_OP_INSERT_BEFORE}, ${HL_OP_INSERT_AFTER}, ${HL_OP_REPLACE}, or ${HL_OP_DELETE} operation. ` +
-				`Got ${JSON.stringify(`${HL_PAYLOAD_PREFIX}${text}`)}.`,
-		);
-	}
-
-	#handleRaw(text: string, lineNum: number): void {
-		if (this.#pending) {
-			if (text.trim().length === 0) return;
-			// Lenient legacy fallback: the tokenizer routes a line to `raw` only
-			// when it does not parse as an op, header, payload, or envelope
-			// marker. A `raw` token while a pending op exists is therefore an
-			// unambiguous continuation row that the model authored without the
-			// `+` prefix. Accept it as payload and warn so the canonical
-			// `+`-prefixed form remains preferred.
-			this.#pending.payload.push(text);
-			if (!this.#warnings.includes(IMPLICIT_CONTINUATION_WARNING)) {
-				this.#warnings.push(IMPLICIT_CONTINUATION_WARNING);
-			}
-			return;
-		}
-
-		// Whitespace-only raw lines outside any pending op are silently dropped;
-========
 		throw new Error(
 			`line ${lineNum}: payload line has no preceding ${HL_OP_INSERT_BEFORE}, ${HL_OP_INSERT_AFTER}, ${HL_OP_REPLACE}, or ${HL_OP_DELETE} operation. ` +
 				`Got ${JSON.stringify(`${HL_PAYLOAD_PREFIX}${text}`)}.`,
@@ -287,19 +217,10 @@ export class Executor {
 		}
 
 		// Whitespace-only raw lines outside any pending op are silently dropped;
->>>>>>>> b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/hashline/src/parser.ts
 		// fully empty lines arrive as `blank` tokens.
 		if (text.trim().length === 0) return;
-<<<<<<<< HEAD:packages/coding-agent/src/hashline/executor.ts
-		// Orphan payload outside any pending op: pick the most specific
-		// diagnostic so the model sees the actionable hint.
-|||||||| parent of b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/coding-agent/src/hashline/executor.ts
-		// Orphan raw text outside any pending op: pick the most specific
-		// diagnostic so the model sees the actionable hint.
-========
 		// Orphan raw text outside any pending op: pick the most specific
 		// diagnostic so the user sees the actionable hint.
->>>>>>>> b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/hashline/src/parser.ts
 		if (isDeleteOpWithPayload(text)) {
 			throw new Error(
 				`line ${lineNum}: ${HL_OP_DELETE} deletes only. Payload is forbidden after ${HL_OP_DELETE}; use ${HL_OP_REPLACE} to replace.`,
@@ -377,4 +298,3 @@ export function parsePatch(diff: string): { edits: Edit[]; warnings: string[] } 
 	drain(tokenizer.end());
 	return executor.end();
 }
->>>>>>> b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/hashline/src/parser.ts

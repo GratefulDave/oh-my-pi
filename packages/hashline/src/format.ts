@@ -34,22 +34,10 @@ function regexEscape(str: string): string {
 
 /**
  * Decoration prefix that may precede a line number in tool output:
-<<<<<<< HEAD:packages/coding-agent/src/hashline/hash.ts
  * `>` (context line in grep), `+` (added line in diff), `-` (removed line),
  * `*` (match line). Any combination, in any order, surrounded by optional
  * whitespace. Output formatters emit at most one decoration per line; the
  * parser stays liberal because it accepts whatever the model echoes back.
-||||||| parent of b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/coding-agent/src/hashline/hash.ts
- * `>` (context line in grep), `-` (removed line), `*` (match line).
- * Any combination, in any order, surrounded by optional
- * whitespace. Output formatters emit at most one decoration per line; the
- * parser stays liberal because it accepts whatever the model echoes back.
-=======
- * `>` (context line in grep), `-` (removed line), `*` (match line).
- * Any combination, in any order, surrounded by optional whitespace. Output
- * formatters emit at most one decoration per line; the parser stays liberal
- * because it accepts whatever the model echoes back.
->>>>>>> b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/hashline/src/format.ts
  */
 export const HL_ANCHOR_DECORATION_RE_RAW = `\\s*[>+\\-*]*\\s*`;
 
@@ -86,91 +74,6 @@ export function describeAnchorExamples(linePrefix = ""): string {
 	return examples.map(e => `"${e}"`).join(", ");
 }
 
-<<<<<<< HEAD:packages/coding-agent/src/hashline/hash.ts
-/**
- * Substitute every grammar placeholder with the value derived from its
- * TypeScript counterpart. Grammars that don't reference these placeholders
- * pass through unchanged.
- */
-export function resolveHashlineGrammarPlaceholders(grammar: string): string {
-	return grammar
-		.replaceAll("$HFMT$", "")
-		.replaceAll("$HFILE_HASH$", HL_FILE_HASH_RE_RAW)
-		.replaceAll("$HFILE_HASH_SEP$", HL_FILE_HASH_SEP)
-		.replaceAll("$HOP_INSERT_BEFORE$", HL_OP_INSERT_BEFORE)
-		.replaceAll("$HOP_INSERT_AFTER$", HL_OP_INSERT_AFTER)
-		.replaceAll("$HOP_REPLACE$", HL_OP_REPLACE)
-		.replaceAll("$HOP_DELETE$", HL_OP_DELETE)
-		.replaceAll("$HOP_CHARS$", HL_OP_CHARS)
-		.replaceAll("$HFILE$", HL_FILE_PREFIX);
-}
-
-/**
- * op lines have an `ANCHOR<SIGIL>[INLINE_PAYLOAD]` shape, where SIGIL is one of
- * {@link HL_OP_INSERT_BEFORE}, {@link HL_OP_INSERT_AFTER}, {@link HL_OP_REPLACE},
- * or {@link HL_OP_DELETE}.
- * Multi-line payloads follow on subsequent lines as verbatim file content with no
- * per-line marker.
- *
- * These constants are the single source of truth for the edit parser, grammar,
- * renderer, and prompt.
- */
-export const HL_OP_INSERT_BEFORE = "↑";
-export const HL_OP_INSERT_AFTER = "↓";
-export const HL_OP_REPLACE = ":";
-export const HL_OP_DELETE = "!";
-
-/** All hashline edit op sigils, concatenated for fast membership tests. */
-export const HL_OP_CHARS = `${HL_OP_INSERT_BEFORE}${HL_OP_INSERT_AFTER}${HL_OP_REPLACE}${HL_OP_DELETE}`;
-
-/** Hashline edit file section header marker. */
-export const HL_FILE_PREFIX = "¶";
-
-||||||| parent of b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/coding-agent/src/hashline/hash.ts
-/**
- * Substitute every grammar placeholder with the value derived from its
- * TypeScript counterpart. Grammars that don't reference these placeholders
- * pass through unchanged.
- */
-export function resolveHashlineGrammarPlaceholders(grammar: string): string {
-	return grammar
-		.replaceAll("$HFMT$", "")
-		.replaceAll("$HFILE_HASH$", HL_FILE_HASH_RE_RAW)
-		.replaceAll("$HFILE_HASH_SEP$", HL_FILE_HASH_SEP)
-		.replaceAll("$HOP_INSERT_BEFORE$", HL_OP_INSERT_BEFORE)
-		.replaceAll("$HOP_INSERT_AFTER$", HL_OP_INSERT_AFTER)
-		.replaceAll("$HOP_REPLACE$", HL_OP_REPLACE)
-		.replaceAll("$HOP_DELETE$", HL_OP_DELETE)
-		.replaceAll("$HOP_CHARS$", HL_OP_CHARS)
-		.replaceAll("$HFILE$", HL_FILE_PREFIX);
-}
-
-/**
- * op lines have an `ANCHOR<SIGIL>[INLINE_PAYLOAD]` shape, where SIGIL is one of
- * {@link HL_OP_INSERT_BEFORE}, {@link HL_OP_INSERT_AFTER}, {@link HL_OP_REPLACE},
- * or {@link HL_OP_DELETE}. Multi-line payloads follow on subsequent lines
- * prefixed with {@link HL_PAYLOAD_PREFIX}; that prefix is stripped before the
- * payload is written.
- *
- * These constants are the single source of truth for the edit parser, grammar,
- * renderer, and prompt.
- */
-export const HL_OP_INSERT_BEFORE = "↑";
-export const HL_OP_INSERT_AFTER = "↓";
-export const HL_OP_REPLACE = ":";
-export const HL_OP_DELETE = "!";
-
-/** Prefix for payload continuation lines. The prefix itself is not written. */
-export const HL_PAYLOAD_PREFIX = "+";
-
-/** All hashline edit op sigils, concatenated for fast membership tests. */
-export const HL_OP_CHARS = `${HL_OP_INSERT_BEFORE}${HL_OP_INSERT_AFTER}${HL_OP_REPLACE}${HL_OP_DELETE}`;
-
-/** Hashline edit file section header marker. */
-export const HL_FILE_PREFIX = "¶";
-
-=======
->>>>>>> b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/hashline/src/format.ts
 function normalizeFileHashText(text: string): string {
 	return text
 		.replace(/\r/g, "")
