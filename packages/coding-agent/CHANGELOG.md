@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [15.5.3] - 2026-05-27
+
 ### Breaking Changes
 
 - Removed the `href`, `hrefr`, and `hline` Handlebars prompt helpers along with the shared hashline anchor state; none were referenced by any built-in or user prompt template. Changed blank lines between hashline ops from silent separators to literal payload lines appended to the open op.

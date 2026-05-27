@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [15.5.3] - 2026-05-27
+
 ### Added
 
 - Added `applyShellMinimizer()` so callers can reuse native shell-output minimization for already-captured partial output, including timeout paths.
