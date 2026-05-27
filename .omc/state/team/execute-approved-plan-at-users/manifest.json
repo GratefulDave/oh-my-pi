@@ -1,0 +1,72 @@
+{
+  "schema_version": 2,
+  "name": "execute-approved-plan-at-users",
+  "task": "Worker 1: Execute approved plan at /Users/davidandrews/PycharmProjects/lex/.omc/; Worker 2: Execute approved plan at /Users/davidandrews/PycharmProjects/lex/.omc/",
+  "leader": {
+    "session_id": "73:1",
+    "worker_id": "leader-fixed",
+    "role": "leader"
+  },
+  "policy": {
+    "display_mode": "split_pane",
+    "worker_launch_mode": "interactive",
+    "dispatch_mode": "hook_preferred_with_fallback",
+    "dispatch_ack_timeout_ms": 15000
+  },
+  "governance": {
+    "delegation_only": false,
+    "plan_approval_required": false,
+    "nested_teams_allowed": false,
+    "one_team_per_leader_session": true,
+    "cleanup_requires_all_workers_inactive": true
+  },
+  "permissions_snapshot": {
+    "approval_mode": "default",
+    "sandbox_mode": "default",
+    "network_access": false
+  },
+  "tmux_session": "73:1",
+  "worker_count": 2,
+  "workers": [
+    {
+      "name": "worker-1",
+      "index": 1,
+      "role": "codex",
+      "assigned_tasks": [],
+      "working_dir": "/Users/davidandrews/PycharmProjects/lex/.omc/team/execute-approved-plan-at-users/worktrees/worker-1",
+      "team_state_root": "/Users/davidandrews/PycharmProjects/lex/.omc/state/team/execute-approved-plan-at-users",
+      "worktree_repo_root": "/Users/davidandrews/PycharmProjects/lex",
+      "worktree_path": "/Users/davidandrews/PycharmProjects/lex/.omc/team/execute-approved-plan-at-users/worktrees/worker-1",
+      "worktree_branch": "omc-team/execute-approved-plan-at-users/worker-1",
+      "worktree_detached": false,
+      "worktree_created": true,
+      "pane_id": "%311",
+      "worker_cli": "codex"
+    },
+    {
+      "name": "worker-2",
+      "index": 2,
+      "role": "claude",
+      "assigned_tasks": [],
+      "working_dir": "/Users/davidandrews/PycharmProjects/lex/.omc/team/execute-approved-plan-at-users/worktrees/worker-2",
+      "team_state_root": "/Users/davidandrews/PycharmProjects/lex/.omc/state/team/execute-approved-plan-at-users",
+      "worktree_repo_root": "/Users/davidandrews/PycharmProjects/lex",
+      "worktree_path": "/Users/davidandrews/PycharmProjects/lex/.omc/team/execute-approved-plan-at-users/worktrees/worker-2",
+      "worktree_branch": "omc-team/execute-approved-plan-at-users/worker-2",
+      "worktree_detached": false,
+      "worktree_created": true,
+      "pane_id": "%312",
+      "worker_cli": "claude"
+    }
+  ],
+  "next_task_id": 3,
+  "created_at": "2026-05-27T07:21:30.018Z",
+  "leader_cwd": "/Users/davidandrews/PycharmProjects/lex",
+  "team_state_root": "/Users/davidandrews/PycharmProjects/lex/.omc/state/team/execute-approved-plan-at-users",
+  "workspace_mode": "worktree",
+  "worktree_mode": "named",
+  "leader_pane_id": "%304",
+  "hud_pane_id": null,
+  "resize_hook_name": null,
+  "resize_hook_target": null
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "path": "/Users/davidandrews/PycharmProjects/lex/.omc/team/execute-approved-plan-at-users/worktrees/worker-1",
+    "branch": "omc-team/execute-approved-plan-at-users/worker-1",
+    "workerName": "worker-1",
+    "teamName": "execute-approved-plan-at-users",
+    "createdAt": "2026-05-27T07:21:28.805Z",
+    "repoRoot": "/Users/davidandrews/PycharmProjects/lex",
+    "mode": "named",
+    "detached": false,
+    "created": true,
+    "reused": false
+  },
+  {
+    "path": "/Users/davidandrews/PycharmProjects/lex/.omc/team/execute-approved-plan-at-users/worktrees/worker-2",
+    "branch": "omc-team/execute-approved-plan-at-users/worker-2",
+    "workerName": "worker-2",
+    "teamName": "execute-approved-plan-at-users",
+    "createdAt": "2026-05-27T07:21:29.544Z",
+    "repoRoot": "/Users/davidandrews/PycharmProjects/lex",
+    "mode": "named",
+    "detached": false,
+    "created": true,
+    "reused": false
+  }
+]
