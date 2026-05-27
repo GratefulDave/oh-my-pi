@@ -231,6 +231,12 @@
       "type": "file"
     },
     {
+      "path": "packages/coding-agent/src/config/settings-schema.ts",
+      "accessCount": 3,
+      "lastAccessed": 1779867524233,
+      "type": "file"
+    },
+    {
       "path": "crates/pi-shell/Cargo.toml",
       "accessCount": 2,
       "lastAccessed": 1779867332937,
@@ -270,12 +276,6 @@
       "path": "crates/pi-shell/src/minimizer/detect.rs",
       "accessCount": 1,
       "lastAccessed": 1779867471556,
-      "type": "file"
-    },
-    {
-      "path": "packages/coding-agent/src/config/settings-schema.ts",
-      "accessCount": 1,
-      "lastAccessed": 1779867509732,
       "type": "file"
     }
   ],

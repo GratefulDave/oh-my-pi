@@ -3074,6 +3074,9 @@ export interface ShellMinimizerSettings {
 	only: string[];
 	except: string[];
 	maxCaptureBytes: number;
+	sourceOutlineLevel: "default" | "aggressive";
+	aiSmartEnabled: boolean;
+	aiSmartProvider: string;
 }
 
 /** Map group prefix -> typed settings interface */
