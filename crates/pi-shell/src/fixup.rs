@@ -32,7 +32,7 @@ use regex::Regex;
 #[derive(Debug, Clone, Default)]
 pub struct BashFixupResult {
 	/// Possibly-rewritten command. Equal to the input when no fixup fired.
-	pub command:  String,
+	pub command: String,
 	/// Substrings removed, in source order. Suitable for a user-facing notice.
 	pub stripped: Vec<String>,
 }
@@ -403,10 +403,11 @@ mod tests {
 				"just build && just up && sleep 4 && just healthz",
 				&["| tail -3", "2>&1"],
 			),
-			("cmd1 | head -5 && cmd2 && cmd3 | tail -3", "cmd1 && cmd2 && cmd3", &[
-				"| head -5",
-				"| tail -3",
-			]),
+			(
+				"cmd1 | head -5 && cmd2 && cmd3 | tail -3",
+				"cmd1 && cmd2 && cmd3",
+				&["| head -5", "| tail -3"],
+			),
 			("echo a; cmd | head -5; echo b", "echo a; cmd; echo b", &["| head -5"]),
 			("cmd | head -5 || fallback | tail -3", "cmd || fallback", &["| head -5", "| tail -3"]),
 			("cmd1 | head -5 && cmd2 2>&1 | grep err", "cmd1 && cmd2 2>&1 | grep err", &["| head -5"]),

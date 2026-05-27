@@ -179,10 +179,10 @@ fn filter_uv_wrapper(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> Min
 	match uv_wrapper_tool(ctx) {
 		Some("pytest") => {
 			let routed = MinimizerCtx {
-				program:    "pytest",
+				program: "pytest",
 				subcommand: Some("pytest"),
-				command:    ctx.command,
-				config:     ctx.config,
+				command: ctx.command,
+				config: ctx.config,
 			};
 			python::filter(&routed, input, exit_code)
 		},
@@ -198,19 +198,19 @@ fn filter_uv_wrapper(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> Min
 		},
 		Some("mypy") => {
 			let routed = MinimizerCtx {
-				program:    "mypy",
+				program: "mypy",
 				subcommand: Some("mypy"),
-				command:    ctx.command,
-				config:     ctx.config,
+				command: ctx.command,
+				config: ctx.config,
 			};
 			python::filter(&routed, input, exit_code)
 		},
 		Some(tool @ ("tsc" | "eslint" | "biome" | "pyright" | "basedpyright" | "oxlint")) => {
 			let routed = MinimizerCtx {
-				program:    tool,
+				program: tool,
 				subcommand: Some(tool),
-				command:    ctx.command,
-				config:     ctx.config,
+				command: ctx.command,
+				config: ctx.config,
 			};
 			lint::filter(&routed, input, exit_code)
 		},
@@ -220,20 +220,23 @@ fn filter_uv_wrapper(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> Min
 }
 
 fn uv_wrapper_tool<'a>(ctx: &'a MinimizerCtx<'_>) -> Option<&'a str> {
-	wrapper_invoked_tool(ctx, &[
-		"pytest",
-		"ruff",
-		"mypy",
-		"tsc",
-		"eslint",
-		"biome",
-		"pyright",
-		"basedpyright",
-		"oxlint",
-		"jest",
-		"vitest",
-		"playwright",
-	])
+	wrapper_invoked_tool(
+		ctx,
+		&[
+			"pytest",
+			"ruff",
+			"mypy",
+			"tsc",
+			"eslint",
+			"biome",
+			"pyright",
+			"basedpyright",
+			"oxlint",
+			"jest",
+			"vitest",
+			"playwright",
+		],
+	)
 }
 
 fn wrapper_invokes(ctx: &MinimizerCtx<'_>, tools: &[&str]) -> bool {

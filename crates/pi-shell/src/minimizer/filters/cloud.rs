@@ -231,7 +231,10 @@ fn compact_aws_s3_ls_text(input: &str) -> Option<String> {
 			let mut parts = line.split_whitespace();
 			let first = parts.next()?;
 			if first == "PRE" {
-				return Some(vec![parts.next()?.trim_end_matches('/').to_string(), "prefix".to_string()]);
+				return Some(vec![
+					parts.next()?.trim_end_matches('/').to_string(),
+					"prefix".to_string(),
+				]);
 			}
 			let time = parts.next()?;
 			let third = parts.next()?;
@@ -334,7 +337,10 @@ fn compact_aws_sqs(root: &Value) -> Option<String> {
 fn extract_array<'a>(root: &'a Value, keys: &[&str]) -> Option<Vec<&'a Map<String, Value>>> {
 	for key in keys {
 		if let Some(values) = root.get(key).and_then(Value::as_array) {
-			let rows = values.iter().filter_map(Value::as_object).collect::<Vec<_>>();
+			let rows = values
+				.iter()
+				.filter_map(Value::as_object)
+				.collect::<Vec<_>>();
 			if !rows.is_empty() {
 				return Some(rows);
 			}
@@ -360,10 +366,8 @@ fn compact_aws_generic(root: &Value) -> Option<String> {
 					.collect::<Vec<_>>()
 			})
 			.collect::<Vec<_>>();
-		let mut out = compact_named_rows(
-			&columns.iter().map(String::as_str).collect::<Vec<_>>(),
-			&values,
-		);
+		let mut out =
+			compact_named_rows(&columns.iter().map(String::as_str).collect::<Vec<_>>(), &values);
 		if rows.len() > MAX_AWS_ROWS {
 			let _ = writeln!(out, "... +{} more {name}", rows.len() - MAX_AWS_ROWS);
 		}
@@ -396,7 +400,11 @@ fn first_object_array(root: &Value) -> Option<(&str, Vec<Map<String, Value>>)> {
 		let Some(values) = value.as_array() else {
 			continue;
 		};
-		let rows = values.iter().filter_map(Value::as_object).cloned().collect::<Vec<_>>();
+		let rows = values
+			.iter()
+			.filter_map(Value::as_object)
+			.cloned()
+			.collect::<Vec<_>>();
 		if !rows.is_empty() {
 			return Some((key.as_str(), rows));
 		}
@@ -411,8 +419,13 @@ fn generic_columns(rows: &[Map<String, Value>]) -> Vec<String> {
 			let lower = key.to_ascii_lowercase();
 			if matches!(
 				lower.as_str(),
-				"id" | "name" | "arn" | "status" | "state" | "created" | "modified" | "type"
-					| "engine" | "version"
+				"id"
+					| "name" | "arn"
+					| "status" | "state"
+					| "created"
+					| "modified"
+					| "type" | "engine"
+					| "version"
 			) || lower.ends_with("id")
 				|| lower.ends_with("name")
 				|| lower.ends_with("arn")
@@ -1106,7 +1119,11 @@ mod tests {
 		MinimizerCtx { program, subcommand: None, command: program, config: cfg }
 	}
 
-	fn aws_ctx<'a>(subcommand: &'a str, command: &'a str, cfg: &'a MinimizerConfig) -> MinimizerCtx<'a> {
+	fn aws_ctx<'a>(
+		subcommand: &'a str,
+		command: &'a str,
+		cfg: &'a MinimizerConfig,
+	) -> MinimizerCtx<'a> {
 		MinimizerCtx { program: "aws", subcommand: Some(subcommand), command, config: cfg }
 	}
 
@@ -1303,7 +1320,8 @@ mod tests {
 	fn aws_unknown_json_uses_generic_safe_table() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = ctx("aws", &cfg);
-		let input = r#"{"Things": [{"Name": "alpha", "Status": "ready", "Password": "LEAK_SENTINEL"}]}"#;
+		let input =
+			r#"{"Things": [{"Name": "alpha", "Status": "ready", "Password": "LEAK_SENTINEL"}]}"#;
 		let out = filter(&ctx, input, 0);
 		assert!(out.text.contains("Name\tStatus"));
 		assert!(out.text.contains("alpha\tready"));
