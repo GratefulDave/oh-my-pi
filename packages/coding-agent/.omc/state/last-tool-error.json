@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"rtk ls /Users/davidandrews/PycharmProjects/lex/.omc/team/execute-approved-plan-at-users/worktrees/worker-2/crates/pi-shell/tests/ 2>&1\",\"description\":\"Check tests dir\"}",
+  "error": "Exit code 1\nls: /Users/davidandrews/PycharmProjects/lex/.omc/team/execute-approved-plan-at-users/worktrees/worker-2/crates/pi-shell/tests/: No such file or directory",
+  "timestamp": "2026-05-27T07:44:13.666Z",
+  "retry_count": 1
+}

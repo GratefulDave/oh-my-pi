@@ -35,7 +35,7 @@
   },
   "build": {
     "buildCommand": "rtk cargo build -p pi-shell --lib --features ai-smart 2>&1 | rtk tail -30",
-    "testCommand": "rtk cargo test -p pi-shell --lib minimizer::filters::listing 2>&1 | rtk tail -30",
+    "testCommand": "rtk cargo test -p pi-shell --lib 2>&1 | rtk tail -10; echo \"---ai-smart---\"; rtk cargo test -p pi-shell --lib --features ai-smart 2>&1 | rtk tail -10",
     "lintCommand": "npm run lint",
     "devCommand": "npm run dev",
     "scripts": {
