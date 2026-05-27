@@ -88,6 +88,7 @@ beforeAll(async () => {
 });
 
 const pl = (text: string): string => text;
+const extra = (text: string): string => `+${text}`;
 const outputSep = ":";
 const outputSepRe = ":";
 
