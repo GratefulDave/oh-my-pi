@@ -1874,9 +1874,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				}
 				return key;
 			},
-			streamFn: (streamModel, context, streamOptions) =>
-				streamSimple(streamModel, context, {
+			streamFn: (streamModel, context, streamOptions) => {
+				const openrouterRoutingPreset = settings.get("providers.openrouterVariant");
+				const openrouterVariant =
+					openrouterRoutingPreset && openrouterRoutingPreset !== "default" ? openrouterRoutingPreset : undefined;
+				return streamSimple(streamModel, context, {
 					...streamOptions,
+					openrouterVariant: streamOptions?.openrouterVariant ?? openrouterVariant,
 					onAuthError: async (provider, oldKey, error) => {
 						await modelRegistry.authStorage.invalidateCredentialMatching(provider, oldKey, streamOptions?.signal);
 						logger.debug("Retrying provider request after credential invalidation", {
@@ -1885,7 +1889,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 						});
 						return modelRegistry.getApiKeyForProvider(provider, agent.sessionId);
 					},
-				}),
+				});
+			},
 			cursorExecHandlers,
 			transformToolCallArguments: (args, _toolName) => {
 				let result = args;
