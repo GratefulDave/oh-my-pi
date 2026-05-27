@@ -1106,6 +1106,10 @@ mod tests {
 		MinimizerCtx { program, subcommand: None, command: program, config: cfg }
 	}
 
+	fn aws_ctx<'a>(subcommand: &'a str, command: &'a str, cfg: &'a MinimizerConfig) -> MinimizerCtx<'a> {
+		MinimizerCtx { program: "aws", subcommand: Some(subcommand), command, config: cfg }
+	}
+
 	#[test]
 	fn strips_curl_progress_and_preserves_long_multiline_body() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
@@ -1296,13 +1300,146 @@ mod tests {
 	}
 
 	#[test]
-	fn aws_non_ec2_cw_json_returns_original() {
+	fn aws_unknown_json_uses_generic_safe_table() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = ctx("aws", &cfg);
-		// Valid JSON but not EC2 or CloudWatch schema
-		let input = r#"{"S3Bucket": "my-bucket", "Objects": [{"Key": "file.txt"}]}"#;
+		let input = r#"{"Things": [{"Name": "alpha", "Status": "ready", "Password": "LEAK_SENTINEL"}]}"#;
 		let out = filter(&ctx, input, 0);
-		// Should not crash; falls back to passthrough (no progress lines to strip)
-		assert!(out.changed || out.text == input);
+		assert!(out.text.contains("Name\tStatus"));
+		assert!(out.text.contains("alpha\tready"));
+		assert!(!out.text.contains("LEAK_SENTINEL"));
+	}
+
+	#[test]
+	fn compacts_new_aws_service_shapes() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let cases = [
+			(
+				"sts",
+				"aws sts get-caller-identity",
+				r#"{"UserId":"AIDA","Account":"123456789012","Arn":"arn:aws:iam::123456789012:user/alice","ResponseMetadata":{"RequestId":"LEAK_SENTINEL"}}"#,
+				"account=123456789012 arn=arn:aws:iam::123456789012:user/alice user-id=AIDA",
+			),
+			(
+				"s3api",
+				"aws s3api list-buckets",
+				r#"{"Buckets":[{"Name":"builds","CreationDate":"2026-05-27T00:00:00Z"}]}"#,
+				"builds\t2026-05-27T00:00:00Z",
+			),
+			(
+				"lambda",
+				"aws lambda list-functions",
+				r#"{"Functions":[{"FunctionName":"api","Runtime":"nodejs20.x","MemorySize":256,"LastModified":"today","Environment":{"Variables":{"SECRET":"LEAK_SENTINEL"}}}]}"#,
+				"api\tnodejs20.x\t256\ttoday",
+			),
+			(
+				"iam",
+				"aws iam list-roles",
+				r#"{"Roles":[{"RoleName":"deploy","Arn":"arn:role/deploy","CreateDate":"today","AssumeRolePolicyDocument":"LEAK_SENTINEL"}]}"#,
+				"deploy\tarn:role/deploy\ttoday",
+			),
+			(
+				"logs",
+				"aws logs get-log-events",
+				r#"{"events":[{"timestamp":1,"message":"ERROR failed"}]}"#,
+				"1\tERROR\tERROR failed",
+			),
+			(
+				"ecs",
+				"aws ecs list-clusters",
+				r#"{"clusterArns":["arn:aws:ecs:cluster/default"]}"#,
+				"arn:aws:ecs:cluster/default",
+			),
+			(
+				"rds",
+				"aws rds describe-db-instances",
+				r#"{"DBInstances":[{"DBInstanceIdentifier":"db1","Engine":"postgres","DBInstanceStatus":"available","Endpoint":{"Address":"db.local"}}]}"#,
+				"db1\tpostgres\tavailable\tdb.local",
+			),
+			(
+				"cloudformation",
+				"aws cloudformation describe-stacks",
+				r#"{"Stacks":[{"StackName":"app","StackStatus":"CREATE_COMPLETE","LastUpdatedTime":"today"}]}"#,
+				"app\tCREATE_COMPLETE\ttoday",
+			),
+			(
+				"eks",
+				"aws eks describe-cluster",
+				r#"{"cluster":{"name":"prod","status":"ACTIVE","version":"1.30","endpoint":"https://eks"}}"#,
+				"prod\tACTIVE\t1.30\thttps://eks",
+			),
+			(
+				"sqs",
+				"aws sqs list-queues",
+				r#"{"QueueUrls":["https://sqs.local/q"]}"#,
+				"https://sqs.local/q",
+			),
+			(
+				"secretsmanager",
+				"aws secretsmanager list-secrets",
+				r#"{"SecretList":[{"Name":"db","ARN":"arn:secret:db","LastChangedDate":"today","SecretString":"LEAK_SENTINEL"}]}"#,
+				"db\tarn:secret:db\ttoday",
+			),
+		];
+		for (service, command, input, expected) in cases {
+			let ctx = aws_ctx(service, command, &cfg);
+			let out = filter(&ctx, input, 0);
+			assert!(out.text.contains(expected), "{service}: {}", out.text);
+			assert!(!out.text.contains("LEAK_SENTINEL"), "{service}");
+			assert_output_pure(&out.text);
+		}
+	}
+
+	#[test]
+	fn compacts_s3_text_ls() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 ls", &cfg);
+		let out = filter(&ctx, "2026-05-27 01:02:03 builds\n2026-05-27 01:03:04 logs\n", 0);
+		assert!(out.text.contains("builds\t2026-05-27 01:02:03"));
+		assert_output_pure(&out.text);
+	}
+
+	#[test]
+	fn malformed_new_aws_service_json_passthroughs() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		for service in [
+			"sts",
+			"s3",
+			"lambda",
+			"iam",
+			"logs",
+			"ecs",
+			"rds",
+			"cloudformation",
+			"eks",
+			"sqs",
+			"secretsmanager",
+		] {
+			let ctx = aws_ctx(service, "aws service op", &cfg);
+			let input = "{not-json";
+			let out = filter(&ctx, input, 0);
+			assert_eq!(out.text, input, "{service}");
+		}
+	}
+
+	#[test]
+	fn sensitive_aws_keys_never_leak_from_generic() {
+		let mut fields = String::new();
+		for key in SENSITIVE_AWS_KEYS {
+			fields.push_str(&format!(r#""{key}":"LEAK_SENTINEL","#));
+		}
+		let input = format!(r#"{{"Items":[{{"Name":"safe",{fields}"Status":"ok"}}]}}"#);
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("aws", &cfg);
+		let out = filter(&ctx, &input, 0);
+		assert!(out.text.contains("safe"));
+		assert!(!out.text.contains("LEAK_SENTINEL"));
+	}
+
+	fn assert_output_pure(out: &str) {
+		assert!(!out.contains('\x1b'));
+		assert!(!out.contains("&&"));
+		assert!(!out.contains(';'));
+		assert!(!out.contains('`'));
 	}
 }
