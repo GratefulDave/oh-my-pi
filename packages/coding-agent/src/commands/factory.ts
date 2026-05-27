@@ -7,7 +7,14 @@ const ACTIONS: FactoryAction[] = ["init", "status", "doctor"];
 const PRESETS = ["minimal", "standard", "software-factory"] as const;
 
 export default class Factory extends Command {
-	static description = "Scaffold project-scoped software-factory workflows";
+	static description = "Scaffold project-scoped software-factory workflows (guide: docs/software-factory.md)";
+
+	static examples = [
+		"# Preview scaffold without writing files\n  lex factory init --dry-run",
+		"# Scaffold fuller repo-local workflow assets\n  lex factory init --preset software-factory --existing",
+		"# Validate current repo scaffold\n  lex factory doctor",
+		"# Full guide\n  docs/software-factory.md",
+	];
 
 	static args = {
 		action: Args.string({

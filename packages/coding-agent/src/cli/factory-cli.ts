@@ -189,10 +189,19 @@ export async function runFactoryCommand(cmd: FactoryCommandArgs): Promise<void> 
 
 export function printFactoryHelp(): void {
 	writeStdout(`${chalk.bold(`${COMMAND_NAME} factory`)} - project-scoped software-factory scaffolds\n`);
+	writeStdout(chalk.dim("Guide: docs/software-factory.md"));
+	writeStdout("");
 	writeStdout(`${chalk.bold("Usage:")}`);
 	writeStdout(
 		`  ${COMMAND_NAME} factory init [--preset minimal|standard|software-factory] [--dry-run] [--yes] [--existing] [--force] [--enable-memory]`,
 	);
 	writeStdout(`  ${COMMAND_NAME} factory status [--json]`);
 	writeStdout(`  ${COMMAND_NAME} factory doctor [--json]`);
+	writeStdout("");
+	writeStdout(`${chalk.bold("Examples:")}`);
+	writeStdout(`  ${COMMAND_NAME} factory init --dry-run`);
+	writeStdout(`  ${COMMAND_NAME} factory init --preset software-factory --existing`);
+	writeStdout(`  ${COMMAND_NAME} factory doctor`);
+	writeStdout("");
+	writeStdout(chalk.dim("Docs: read docs/software-factory.md for presets, generated files, onboarding, and troubleshooting."));
 }
