@@ -425,6 +425,12 @@
       "accessCount": 1,
       "lastAccessed": 1779911566378,
       "type": "file"
+    },
+    {
+      "path": "packages/coding-agent/src/config/hashline-prompt-helpers.ts",
+      "accessCount": 1,
+      "lastAccessed": 1779911915490,
+      "type": "file"
     }
   ],
   "userDirectives": []
