@@ -252,43 +252,24 @@ export class Executor {
 
 	#handlePayload(text: string, lineNum: number): void {
 		if (this.#pending) {
-			this.#pending.payload.push(text);
-			return;
-		}
-
-		throw new Error(
-			`line ${lineNum}: payload line has no preceding ${HL_OP_INSERT_BEFORE}, ${HL_OP_INSERT_AFTER}, ${HL_OP_REPLACE}, or ${HL_OP_DELETE} operation. ` +
-				`Got ${JSON.stringify(`${HL_PAYLOAD_PREFIX}${text}`)}.`,
-		);
-	}
-
-	#handleRaw(text: string, lineNum: number): void {
-		if (this.#pending) {
-			if (text.trim().length === 0) return;
-			// Lenient legacy fallback: the tokenizer routes a line to `raw` only
-			// when it does not parse as an op, header, payload, or envelope
-			// marker. A `raw` token while a pending op exists is therefore an
-			// unambiguous continuation row that the author wrote without the
-			// `+` prefix. Accept it as payload and warn so the canonical
-			// `+`-prefixed form remains preferred.
-			this.#pending.payload.push(text);
-			if (!this.#warnings.includes(IMPLICIT_CONTINUATION_WARNING)) {
-				this.#warnings.push(IMPLICIT_CONTINUATION_WARNING);
+			// Lenient implicit-continuation fallback: a line that does not carry
+			// the canonical `+` prefix is still accepted as payload when a pending
+			// op exists, but we warn so the canonical form is preferred.
+			if (!text.startsWith(HL_PAYLOAD_PREFIX)) {
+				if (!this.#warnings.includes(IMPLICIT_CONTINUATION_WARNING)) {
+					this.#warnings.push(IMPLICIT_CONTINUATION_WARNING);
+				}
 			}
+			this.#pending.payload.push(text);
 			return;
 		}
 
-		// Whitespace-only raw lines outside any pending op are silently dropped;
-		// fully empty lines arrive as `blank` tokens.
-		if (text.trim().length === 0) return;
-		// Orphan raw text outside any pending op: pick the most specific
-		// diagnostic so the user sees the actionable hint.
+		// Orphan line outside any pending op — emit the most actionable diagnostic.
 		if (isDeleteOpWithPayload(text)) {
 			throw new Error(
 				`line ${lineNum}: ${HL_OP_DELETE} deletes only. Payload is forbidden after ${HL_OP_DELETE}; use ${HL_OP_REPLACE} to replace.`,
 			);
 		}
-
 		const firstChar = text[0];
 		const startsWithOp = firstChar !== undefined && HL_OP_CHARS.includes(firstChar);
 		if (startsWithOp || firstChar === "-" || firstChar === "@" || firstChar === "«" || firstChar === "»") {
@@ -300,7 +281,7 @@ export class Executor {
 
 		throw new Error(
 			`line ${lineNum}: payload line has no preceding ${HL_OP_INSERT_BEFORE}, ${HL_OP_INSERT_AFTER}, ${HL_OP_REPLACE}, or ${HL_OP_DELETE} operation. ` +
-				`Got ${JSON.stringify(text)}.`,
+				`Got ${JSON.stringify(`${HL_PAYLOAD_PREFIX}${text}`)}.`,
 		);
 	}
 
