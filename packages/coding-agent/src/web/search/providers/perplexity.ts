@@ -30,7 +30,7 @@ const PERPLEXITY_OAUTH_ASK_URL = "https://www.perplexity.ai/rest/sse/perplexity_
 const DEFAULT_MAX_TOKENS = 8192;
 const DEFAULT_TEMPERATURE = 0.2;
 const DEFAULT_NUM_SEARCH_RESULTS = 10;
-const OAUTH_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
+const _OAUTH_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 const OAUTH_API_VERSION = "2.18";
 const OAUTH_USER_AGENT = "Perplexity/641 CFNetwork/1568 Darwin/25.2.0";
 
