@@ -8,8 +8,8 @@
  */
 
 import { getEnvApiKey } from "@oh-my-pi/pi-ai";
-import { $env, getAgentDbPath, readSseJson } from "@oh-my-pi/pi-utils";
-import { AgentStorage } from "../../../session/agent-storage";
+import { $env, readSseJson } from "@oh-my-pi/pi-utils";
+import type { AuthStorage } from "@oh-my-pi/pi-ai/auth-storage";
 import type {
 	PerplexityMessageOutput,
 	PerplexityRequest,
@@ -194,36 +194,33 @@ function jwtExpiryMs(token: string): number | undefined {
 	}
 }
 
-async function findOAuthToken(): Promise<string | null> {
-	const now = Date.now();
-	try {
-		const storage = await AgentStorage.open(getAgentDbPath());
-		const records = storage.listAuthCredentials("perplexity");
-		for (const record of records) {
-			if (record.credential.type !== "oauth") continue;
-			const credential = record.credential as PerplexityOAuthCredential;
-			if (!credential.access) continue;
-			// Trust the JWT's own `exp` claim if it has one; otherwise treat as
-			// non-expiring. The stored `expires` field is unreliable: older logins
-			// wrote `loginTime + 1h` even though Perplexity JWTs typically lack `exp`.
-			const jwtExpiry = jwtExpiryMs(credential.access);
-			if (jwtExpiry !== undefined && jwtExpiry <= now + OAUTH_EXPIRY_BUFFER_MS) continue;
-			return credential.access;
-		}
-	} catch {
-		return null;
-	}
-	return null;
+async function findOAuthToken(
+	authStorage: AuthStorage,
+	sessionId?: string,
+	signal?: AbortSignal,
+): Promise<string | null> {
+	// `getOAuthAccess` returns the raw OAuth bearer only — runtime/config
+	// api_key overrides and stored api_key credentials are intentionally
+	// suppressed so we don't POST an `api.perplexity.ai` key to the
+	// `www.perplexity.ai` session/SSE endpoint.
+	const access = await authStorage.getOAuthAccess("perplexity", sessionId, { signal });
+	const token = access?.accessToken;
+	if (!token) return null;
+	return token;
 }
 
-async function findPerplexityAuth(): Promise<PerplexityAuth | null> {
+async function findPerplexityAuth(
+	authStorage?: AuthStorage,
+	sessionId?: string,
+	signal?: AbortSignal,
+): Promise<PerplexityAuth | null> {
 	// 1. PERPLEXITY_COOKIES env var
 	const cookies = $env.PERPLEXITY_COOKIES?.trim();
 	if (cookies) {
 		return { type: "cookies", cookies };
 	}
 	// 2. OAuth token from agent.db
-	const oauthToken = await findOAuthToken();
+	const oauthToken = authStorage ? await findOAuthToken(authStorage, sessionId, signal) : null;
 	if (oauthToken) {
 		return { type: "oauth", token: oauthToken };
 	}

@@ -18,6 +18,8 @@ import { throwIfAborted } from "../../tools/tool-errors";
 import { getSearchProvider, getSearchProviderLabel, resolveProviderChain, type SearchProvider } from "./provider";
 import { renderSearchCall, renderSearchResult, type SearchRenderDetails } from "./render";
 import type { SearchProviderId, SearchResponse } from "./types";
+import { discoverAuthStorage } from "../../sdk";
+import type { AuthStorage } from "../../session/auth-storage";
 import { SearchProviderError } from "./types";
 
 /** Web search tool parameters schema */
@@ -129,12 +131,12 @@ function formatForLLM(response: SearchResponse): string {
 	return parts.join("\n");
 }
 
-/** Execute web search */
 async function executeSearch(
 	_toolCallId: string,
 	params: SearchQueryParams,
-	signal?: AbortSignal,
+	options?: { authStorage?: AuthStorage; sessionId?: string; signal?: AbortSignal },
 ): Promise<{ content: Array<{ type: "text"; text: string }>; details: SearchRenderDetails }> {
+	const signal = options?.signal;
 	const providers =
 		params.provider && params.provider !== "auto"
 			? await getSearchProvider(params.provider).then(provider =>
@@ -232,7 +234,7 @@ export class WebSearchTool implements AgentTool<typeof webSearchSchema, SearchRe
 		_onUpdate?: AgentToolUpdateCallback<SearchRenderDetails>,
 		_context?: AgentToolContext,
 	): Promise<AgentToolResult<SearchRenderDetails>> {
-		return executeSearch(_toolCallId, params, signal);
+		return executeSearch(_toolCallId, params, { signal });
 	}
 }
 
@@ -247,10 +249,12 @@ export const webSearchCustomTool: CustomTool<typeof webSearchSchema, SearchRende
 		toolCallId: string,
 		params: SearchToolParams,
 		_onUpdate,
-		_ctx: CustomToolContext,
+		ctx: CustomToolContext,
 		signal?: AbortSignal,
 	) {
-		return executeSearch(toolCallId, params, signal);
+		const authStorage = ctx.modelRegistry?.authStorage ?? (await discoverAuthStorage());
+		const sessionId = ctx.sessionManager.getSessionId();
+		return executeSearch(toolCallId, params, { authStorage, sessionId, signal });
 	},
 
 	renderCall(args: SearchToolParams, options: RenderResultOptions, theme: Theme) {

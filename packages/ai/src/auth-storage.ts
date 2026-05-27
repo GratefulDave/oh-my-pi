@@ -376,6 +376,25 @@ type AuthApiKeyOptions = {
 	signal?: AbortSignal;
 };
 
+
+type OAuthResolutionResult = { apiKey: string; credential: OAuthCredential };
+
+/**
+ * Refreshed OAuth access plus identity metadata returned by
+ * {@link AuthStorage.getOAuthAccess}. Callers that authenticate via a bearer
+ * AND need the credential's identity (Codex `chatgpt-account-id`, Google
+ * `projectId`, GitHub `enterpriseUrl`) consume this shape directly; the
+ * refresh slot is deliberately omitted because rotating refresh tokens never
+ * leave {@link AuthStorage}.
+ */
+export interface OAuthAccess {
+	accessToken: string;
+	accountId?: string;
+	email?: string;
+	projectId?: string;
+	enterpriseUrl?: string;
+}
+
 function requiresOpenAICodexProModel(provider: string, modelId: string | undefined): boolean {
 	return provider === "openai-codex" && typeof modelId === "string" && modelId.includes("-spark");
 }
@@ -2300,15 +2319,19 @@ export class AuthStorage {
 	}
 
 	/**
-	 * Resolves an OAuth API key, trying credentials in priority order.
+	 * Resolves an OAuth credential, trying credentials in priority order.
 	 * Skips blocked credentials and checks usage limits for providers with usage data.
 	 * Falls back to earliest-unblocking credential if all are blocked.
+	 *
+	 * Returns both the API key bytes for outbound requests AND the refreshed
+	 * {@link OAuthCredential} so callers needing identity metadata (account id,
+	 * project id, etc.) do not have to dereference the snapshot themselves.
 	 */
-	async #resolveOAuthApiKey(
+	async #resolveOAuthSelection(
 		provider: string,
 		sessionId?: string,
 		options?: AuthApiKeyOptions,
-	): Promise<string | undefined> {
+	): Promise<OAuthResolutionResult | undefined> {
 		const credentials = this.#getCredentialsForProvider(provider)
 			.map((credential, index) => ({ credential, index }))
 			.filter((entry): entry is { credential: OAuthCredential; index: number } => entry.credential.type === "oauth");
@@ -2380,14 +2403,14 @@ export class AuthStorage {
 		const fallback = candidates[0];
 
 		for (const candidate of candidates) {
-			const apiKey = await this.#tryOAuthCredential(provider, candidate.selection, providerKey, sessionId, options, {
+			const resolved = await this.#tryOAuthCredential(provider, candidate.selection, providerKey, sessionId, options, {
 				checkUsage,
 				allowBlocked: false,
 				prefetchedUsage: candidate.usage,
 				usagePrechecked: candidate.usageChecked,
 				enforceProRequirement,
 			});
-			if (apiKey) return apiKey;
+			if (resolved) return resolved;
 		}
 
 		if (fallback && this.#isCredentialBlocked(providerKey, fallback.selection.index)) {
@@ -2496,7 +2519,7 @@ export class AuthStorage {
 			usagePrechecked?: boolean;
 			enforceProRequirement?: boolean;
 		},
-	): Promise<string | undefined> {
+	): Promise<OAuthResolutionResult | undefined> {
 		const {
 			checkUsage,
 			allowBlocked,
@@ -2603,7 +2626,7 @@ export class AuthStorage {
 				}
 			}
 			this.#recordSessionCredential(provider, sessionId, "oauth", selection.index);
-			return result.apiKey;
+			return { apiKey: result.apiKey, credential: updated };
 		} catch (error) {
 			const errorMsg = String(error);
 			// Only remove credentials for definitive auth failures
@@ -2638,7 +2661,7 @@ export class AuthStorage {
 							credentialId,
 						});
 						await this.reload();
-						return this.getApiKey(provider, sessionId, options);
+						return this.#resolveOAuthSelection(provider, sessionId, options);
 					}
 				}
 				// Permanently disable invalid credentials with an explicit cause for inspection/debugging.
@@ -2657,10 +2680,10 @@ export class AuthStorage {
 						index: selection.index,
 					});
 					await this.reload();
-					return this.getApiKey(provider, sessionId, options);
+					return this.#resolveOAuthSelection(provider, sessionId, options);
 				}
 				if (this.#getCredentialsForProvider(provider).some(credential => credential.type === "oauth")) {
-					return this.getApiKey(provider, sessionId, options);
+					return this.#resolveOAuthSelection(provider, sessionId, options);
 				}
 			} else {
 				// Block temporarily for transient failures (5 minutes)
@@ -2747,9 +2770,9 @@ export class AuthStorage {
 			return this.#configValueResolver(apiKeySelection.credential.key);
 		}
 
-		const oauthKey = await this.#resolveOAuthApiKey(provider, sessionId, options);
-		if (oauthKey) {
-			return oauthKey;
+		const oauthResolved = await this.#resolveOAuthSelection(provider, sessionId, options);
+		if (oauthResolved) {
+			return oauthResolved.apiKey;
 		}
 
 		// Fall back to environment variable or custom resolver. If we reach here after
@@ -2763,6 +2786,45 @@ export class AuthStorage {
 		// Fall back to custom resolver (e.g., models.json custom providers)
 		return this.#fallbackResolver?.(provider) ?? undefined;
 	}
+
+	/**
+	 * Resolve the OAuth credential for `provider`, refreshing through the same
+	 * pipeline as {@link AuthStorage.getApiKey} but returning the refreshed
+	 * {@link OAuthAccess} (raw access token + identity metadata) instead of
+	 * the API-key bytes.
+	 *
+	 * Use this when the caller needs to inject identity headers alongside the
+	 * bearer (Codex `chatgpt-account-id`, Google `project`, GitHub
+	 * `enterpriseUrl`). For pure "give me the bytes for `Authorization`"
+	 * scenarios, prefer {@link AuthStorage.getApiKey}.
+	 *
+	 * Returns `undefined` when no OAuth credential is available, the
+	 * credential fails to refresh, or runtime/config overrides have replaced
+	 * OAuth with an explicit API key.
+	 */
+	async getOAuthAccess(
+		provider: string,
+		sessionId?: string,
+		options?: AuthApiKeyOptions,
+	): Promise<OAuthAccess | undefined> {
+		// Runtime / config overrides intentionally short-circuit OAuth: when the
+		// user has pinned an API key, they expect the OAuth identity to be
+		// suppressed (same contract as `getOAuthAccountId`).
+		if (this.#runtimeOverrides.has(provider) || this.#configOverrides.has(provider)) {
+			return undefined;
+		}
+		const resolved = await this.#resolveOAuthSelection(provider, sessionId, options);
+		if (!resolved) return undefined;
+		const { credential } = resolved;
+		return {
+			accessToken: credential.access,
+			accountId: credential.accountId,
+			email: credential.email,
+			projectId: credential.projectId,
+			enterpriseUrl: credential.enterpriseUrl,
+		};
+	}
+
 
 	#extractStructuredApiKeyToken(apiKey: string): string | undefined {
 		if (!apiKey.startsWith("{")) return undefined;
