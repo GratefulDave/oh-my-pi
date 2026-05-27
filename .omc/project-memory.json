@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1779422603072,
-  "projectRoot": "/Users/davidandrews/PycharmProjects/lex",
+  "lastScanned": 1779866508343,
+  "projectRoot": "/Users/davidandrews/PycharmProjects/lex/.omc/team/execute-approved-plan-at-users/worktrees/worker-2",
   "techStack": {
     "languages": [
       {
@@ -136,7 +136,7 @@
       "path": "assets",
       "purpose": "Static assets",
       "fileCount": 14,
-      "lastAccessed": 1779422603063,
+      "lastAccessed": 1779866508328,
       "keyFiles": [
         "arxiv.webp",
         "ask.webp",
@@ -149,14 +149,14 @@
       "path": "crates",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1779422603064,
+      "lastAccessed": 1779866508329,
       "keyFiles": []
     },
     "docs": {
       "path": "docs",
       "purpose": "Documentation",
-      "fileCount": 57,
-      "lastAccessed": 1779422603066,
+      "fileCount": 60,
+      "lastAccessed": 1779866508334,
       "keyFiles": [
         "ERRATA-GPT5-HARMONY.md",
         "ai-schema-normalize.md",
@@ -169,7 +169,7 @@
       "path": "packages",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1779422603067,
+      "lastAccessed": 1779866508335,
       "keyFiles": [
         "tsconfig.workspace.json"
       ]
@@ -178,21 +178,14 @@
       "path": "python",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1779422603067,
-      "keyFiles": []
-    },
-    "runs": {
-      "path": "runs",
-      "purpose": null,
-      "fileCount": 0,
-      "lastAccessed": 1779422603067,
+      "lastAccessed": 1779866508335,
       "keyFiles": []
     },
     "scripts": {
       "path": "scripts",
       "purpose": "Build/utility scripts",
-      "fileCount": 20,
-      "lastAccessed": 1779422603067,
+      "fileCount": 21,
+      "lastAccessed": 1779866508336,
       "keyFiles": [
         "__init__.py",
         "analyze_small_edits.py",
@@ -201,43 +194,66 @@
         "ci-build-native.ts"
       ]
     },
-    "target": {
-      "path": "target",
-      "purpose": null,
-      "fileCount": 2,
-      "lastAccessed": 1779422603068,
-      "keyFiles": [
-        "CACHEDIR.TAG"
-      ]
-    },
     "types": {
       "path": "types",
       "purpose": "Type definitions",
       "fileCount": 0,
-      "lastAccessed": 1779422603068,
+      "lastAccessed": 1779866508336,
       "keyFiles": []
-    },
-    "packages/utils": {
-      "path": "packages/utils",
-      "purpose": "Utility functions",
-      "fileCount": 3,
-      "lastAccessed": 1779422603069,
-      "keyFiles": [
-        "package.json",
-        "tsconfig.json",
-        "tsconfig.publish.json"
-      ]
     },
     "types/assets": {
       "path": "types/assets",
       "purpose": "Static assets",
       "fileCount": 1,
-      "lastAccessed": 1779422603070,
+      "lastAccessed": 1779866508337,
       "keyFiles": [
         "index.d.ts"
       ]
     }
   },
-  "hotPaths": [],
+  "hotPaths": [
+    {
+      "path": "crates/pi-shell/src/minimizer/filters/listing.rs",
+      "accessCount": 2,
+      "lastAccessed": 1779867037979,
+      "type": "file"
+    },
+    {
+      "path": "crates/pi-shell/src/minimizer/config.rs",
+      "accessCount": 1,
+      "lastAccessed": 1779866966466,
+      "type": "file"
+    },
+    {
+      "path": "crates/pi-shell/Cargo.toml",
+      "accessCount": 1,
+      "lastAccessed": 1779866977058,
+      "type": "file"
+    },
+    {
+      "path": "crates/pi-shell/src/minimizer/engine.rs",
+      "accessCount": 1,
+      "lastAccessed": 1779866986607,
+      "type": "file"
+    },
+    {
+      "path": "crates/pi-shell/src/minimizer.rs",
+      "accessCount": 1,
+      "lastAccessed": 1779867006384,
+      "type": "file"
+    },
+    {
+      "path": "packages/coding-agent/src/exec/bash-executor.ts",
+      "accessCount": 1,
+      "lastAccessed": 1779867017429,
+      "type": "file"
+    },
+    {
+      "path": "crates/pi-natives/src/shell.rs",
+      "accessCount": 1,
+      "lastAccessed": 1779867172445,
+      "type": "file"
+    }
+  ],
   "userDirectives": []
 }

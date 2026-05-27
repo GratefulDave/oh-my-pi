@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"CLAUDECODE= rtk omc --help 2>&1 | rtk grep -iE \\\"team|api|task\\\" && echo \\\"---v---\\\" && CLAUDECODE= rtk omc --version 2>&1\",\"description\":\"Check team subcommands\"}",
+  "error": "Exit code 1",
+  "timestamp": "2026-05-27T07:27:34.414Z",
+  "retry_count": 4
+}
