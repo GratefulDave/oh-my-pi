@@ -39,6 +39,10 @@
 - Fixed `/gain` and `omp gain` scope filtering: `matchesCwd` now prefix-matches subdirectories instead of requiring exact `cwd` equality. A query at a parent directory now aggregates saved records from its subdirectories (e.g. running `/gain` at the repo root sees savings recorded in `packages/*`). Sibling directories are still excluded via a path-separator boundary check (`/repo` does not match `/repo-sibling`).
 - Fixed chain decomposition in the native minimizer for compound `&&` / `;` chains containing common shell utilities (`echo`, `printf`, `head`, `tail`, `sed`, `awk`, `cp`, `mv`, `rm`, `xargs`, `unzip`, `tar`, etc.). These now make the chain eligible for the segmented runner, so chains record `filter="chain"` / `"chain-noop"` instead of falling through to the JS-side `"missed"` default. Per-segment passthrough applies — piped segments (`ls | head` inside a chain) no longer break decomposition.
 
+### Fixed
+
+- Fixed `omp` startup and `/changelog` reading the host project's `CHANGELOG.md` as omp's — `getPackageDir()` no longer falls back to the user's `cwd` when no owning `package.json` is locatable, preventing spurious `lastChangelogVersion` writes ([#1423](https://github.com/can1357/oh-my-pi/issues/1423))
+
 ## [15.5.3] - 2026-05-27
 
 ### Breaking Changes
