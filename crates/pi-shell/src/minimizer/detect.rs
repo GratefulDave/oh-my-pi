@@ -168,6 +168,64 @@ fn skip_time_options(tokens: &[String], mut index: usize) -> Option<usize> {
 	Some(index)
 }
 
+fn skip_aws_global_options(args: &[String]) -> Option<usize> {
+	const VALUE_FLAGS: &[&str] = &[
+		"--profile",
+		"--region",
+		"--endpoint-url",
+		"--cli-binary-format",
+		"--output",
+		"--cli-read-timeout",
+		"--cli-connect-timeout",
+		"--ca-bundle",
+		"--color",
+		"--query",
+		"--cli-input-json",
+		"--cli-input-yaml",
+	];
+	const BOOL_FLAGS: &[&str] = &[
+		"--no-cli-pager",
+		"--debug",
+		"--no-verify-ssl",
+		"--no-paginate",
+		"--no-sign-request",
+		"--cli-auto-prompt",
+		"--no-cli-auto-prompt",
+	];
+
+	let mut index = 0;
+	while let Some(arg) = args.get(index) {
+		if arg == "--" {
+			return args.get(index + 1).map(|_| index + 1);
+		}
+		if BOOL_FLAGS.contains(&arg.as_str()) {
+			index += 1;
+			continue;
+		}
+		if arg == "--generate-cli-skeleton" {
+			index += 1;
+			if args.get(index).is_some_and(|value| !value.starts_with('-')) {
+				index += 1;
+			}
+			continue;
+		}
+		if arg.starts_with("--generate-cli-skeleton=") {
+			index += 1;
+			continue;
+		}
+		if option_consumes_value(arg, VALUE_FLAGS) {
+			index = if option_has_inline_value(arg, VALUE_FLAGS) {
+				index + 1
+			} else {
+				index + 2
+			};
+			continue;
+		}
+		break;
+	}
+	if index > args.len() { None } else { Some(index) }
+}
+
 fn skip_option_value(tokens: &[String], index: usize) -> Option<usize> {
 	let token = tokens.get(index)?;
 	if token.starts_with("--") && token.contains('=') {
@@ -292,6 +350,9 @@ fn detect_subcommand(program: &str, args: &[String]) -> Option<String> {
 			&["--verbose", "--quiet", "--no-color"],
 			&[],
 		),
+		"aws" => skip_aws_global_options(args)
+			.and_then(|index| args.get(index))
+			.map(|arg| arg.to_lowercase()),
 		"jest" | "vitest" => first_non_global_arg(args, &[], &[], &[]),
 		_ => args
 			.iter()
