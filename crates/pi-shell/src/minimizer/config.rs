@@ -234,6 +234,19 @@ impl SettingsFile {
 		if let Some(n) = self.max_capture_bytes {
 			cfg.max_capture_bytes = n.max(1024);
 		}
+		if let Some(raw) = self.source_outline_level.as_deref()
+			&& let Some(level) = OutlineLevel::parse(raw)
+		{
+			cfg.source_outline_level = level;
+		}
+		if let Some(v) = self.ai_smart_enabled {
+			cfg.ai_smart_enabled = v;
+		}
+		if let Some(provider) = self.ai_smart_provider
+			&& !provider.is_empty()
+		{
+			cfg.ai_smart_provider = provider;
+		}
 		for (k, v) in self.tables {
 			if v.is_table() && k != "filters" && k != "tests" {
 				cfg.per_command.insert(k.to_lowercase(), v);
