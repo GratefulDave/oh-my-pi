@@ -199,13 +199,16 @@ impl MinimizerConfig {
 #[derive(Debug, Default, Deserialize)]
 struct SettingsFile {
 	#[serde(default)]
-	schema_version:    Option<u32>,
-	enabled:           Option<bool>,
-	only:              Option<Vec<String>>,
-	except:            Option<Vec<String>>,
-	max_capture_bytes: Option<u32>,
+	schema_version:       Option<u32>,
+	enabled:              Option<bool>,
+	only:                 Option<Vec<String>>,
+	except:               Option<Vec<String>>,
+	max_capture_bytes:    Option<u32>,
+	source_outline_level: Option<String>,
+	ai_smart_enabled:     Option<bool>,
+	ai_smart_provider:    Option<String>,
 	#[serde(flatten)]
-	tables:            HashMap<String, toml::Value>,
+	tables:               HashMap<String, toml::Value>,
 }
 
 impl SettingsFile {
