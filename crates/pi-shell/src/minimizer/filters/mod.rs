@@ -2,6 +2,7 @@
 
 use crate::minimizer::{MinimizerCtx, MinimizerOutput};
 
+pub mod ai_smart;
 pub mod cloud;
 pub mod cpp;
 

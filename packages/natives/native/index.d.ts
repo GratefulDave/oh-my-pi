@@ -1055,6 +1055,20 @@ export interface MinimizerOptions {
    * the raw, un-minimized output. Default 4 MiB.
    */
   maxCaptureBytes?: number
+  /**
+   * Source-outline aggressiveness for `cat <source-file>` minimization.
+   * Accepts `"default"` (current behavior) or `"aggressive"` (strip
+   * function/method bodies for ts/tsx/js/jsx/py/rs/go).
+   */
+  sourceOutlineLevel?: string
+  /**
+   * Master switch for the AI-summary filter (W4 / rtk smart). Defaults
+   * to off; only effective when the host crate is built with the
+   * `ai-smart` Cargo feature.
+   */
+  aiSmartEnabled?: boolean
+  /** Provider key for the AI summarizer. Defaults to `"deepseek"`. */
+  aiSmartProvider?: string
 }
 
 /**

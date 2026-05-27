@@ -25,33 +25,46 @@ use crate::task;
 #[derive(Debug, Clone, Default)]
 pub struct MinimizerOptions {
 	/// Master switch. Absent / false = disabled.
-	pub enabled:           Option<bool>,
+	pub enabled:              Option<bool>,
 	/// Optional path to a TOML settings file whose values override
 	/// field-level defaults. `~` is expanded.
-	pub settings_path:     Option<String>,
+	pub settings_path:        Option<String>,
 	/// Optional xxHash64 digest (hex) of the settings file contents. When
 	/// supplied, the engine refuses to honor a settings file whose hash does
 	/// not match — a lightweight trust gate for agent-controllable paths.
-	pub settings_hash:     Option<String>,
+	pub settings_hash:        Option<String>,
 	/// Opt-in allowlist of program names (e.g. `"git"`). When empty or
 	/// absent, all built-in filters are active.
-	pub only:              Option<Vec<String>>,
+	pub only:                 Option<Vec<String>>,
 	/// Program names explicitly excluded from minimization.
-	pub except:            Option<Vec<String>>,
+	pub except:               Option<Vec<String>>,
 	/// Maximum captured bytes per command before the engine falls back to
 	/// the raw, un-minimized output. Default 4 MiB.
-	pub max_capture_bytes: Option<u32>,
+	pub max_capture_bytes:    Option<u32>,
+	/// Source-outline aggressiveness for `cat <source-file>` minimization.
+	/// Accepts `"default"` (current behavior) or `"aggressive"` (strip
+	/// function/method bodies for ts/tsx/js/jsx/py/rs/go).
+	pub source_outline_level: Option<String>,
+	/// Master switch for the AI-summary filter (W4 / rtk smart). Defaults
+	/// to off; only effective when the host crate is built with the
+	/// `ai-smart` Cargo feature.
+	pub ai_smart_enabled:     Option<bool>,
+	/// Provider key for the AI summarizer. Defaults to `"deepseek"`.
+	pub ai_smart_provider:    Option<String>,
 }
 
 impl From<MinimizerOptions> for minimizer::MinimizerOptions {
 	fn from(value: MinimizerOptions) -> Self {
 		Self {
-			enabled:           value.enabled,
-			settings_path:     value.settings_path,
-			settings_hash:     value.settings_hash,
-			only:              value.only,
-			except:            value.except,
-			max_capture_bytes: value.max_capture_bytes,
+			enabled:              value.enabled,
+			settings_path:        value.settings_path,
+			settings_hash:        value.settings_hash,
+			only:                 value.only,
+			except:               value.except,
+			max_capture_bytes:    value.max_capture_bytes,
+			source_outline_level: value.source_outline_level,
+			ai_smart_enabled:     value.ai_smart_enabled,
+			ai_smart_provider:    value.ai_smart_provider,
 		}
 	}
 }

@@ -3,7 +3,7 @@
 /// Parsed command identity used for filter dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandIdentity {
-	pub program:    String,
+	pub program: String,
 	pub subcommand: Option<String>,
 }
 
@@ -168,6 +168,71 @@ fn skip_time_options(tokens: &[String], mut index: usize) -> Option<usize> {
 	Some(index)
 }
 
+fn skip_aws_global_options(args: &[String]) -> Option<usize> {
+	const VALUE_FLAGS: &[&str] = &[
+		"--profile",
+		"--region",
+		"--endpoint-url",
+		"--cli-binary-format",
+		"--output",
+		"--cli-read-timeout",
+		"--cli-connect-timeout",
+		"--ca-bundle",
+		"--color",
+		"--query",
+		"--cli-input-json",
+		"--cli-input-yaml",
+	];
+	const BOOL_FLAGS: &[&str] = &[
+		"--no-cli-pager",
+		"--debug",
+		"--no-verify-ssl",
+		"--no-paginate",
+		"--no-sign-request",
+		"--cli-auto-prompt",
+		"--no-cli-auto-prompt",
+	];
+
+	let mut index = 0;
+	while let Some(arg) = args.get(index) {
+		if arg == "--" {
+			return args.get(index + 1).map(|_| index + 1);
+		}
+		if BOOL_FLAGS.contains(&arg.as_str()) {
+			index += 1;
+			continue;
+		}
+		if arg == "--generate-cli-skeleton" {
+			index += 1;
+			if args
+				.get(index)
+				.is_some_and(|value| matches!(value.as_str(), "input" | "output" | "yaml-input"))
+			{
+				index += 1;
+			}
+			continue;
+		}
+		if arg.starts_with("--generate-cli-skeleton=") {
+			index += 1;
+			continue;
+		}
+		if option_consumes_value(arg, VALUE_FLAGS) {
+			index = if option_has_inline_value(arg, VALUE_FLAGS) {
+				index + 1
+			} else {
+				index + 2
+			};
+			continue;
+		}
+		break;
+	}
+	if index > args.len() {
+		None
+	} else {
+		Some(index)
+	}
+}
+
 fn skip_option_value(tokens: &[String], index: usize) -> Option<usize> {
 	let token = tokens.get(index)?;
 	if token.starts_with("--") && token.contains('=') {
@@ -292,6 +357,9 @@ fn detect_subcommand(program: &str, args: &[String]) -> Option<String> {
 			&["--verbose", "--quiet", "--no-color"],
 			&[],
 		),
+		"aws" => skip_aws_global_options(args)
+			.and_then(|index| args.get(index))
+			.map(|arg| arg.to_lowercase()),
 		"jest" | "vitest" => first_non_global_arg(args, &[], &[], &[]),
 		_ => args
 			.iter()
@@ -486,6 +554,63 @@ mod tests {
 		let command = detect("gt --repo=owner/repo sync").expect("gt command is detected");
 		assert_eq!(command.program, "gt");
 		assert_eq!(command.subcommand.as_deref(), Some("sync"));
+	}
+
+	#[test]
+	fn skips_aws_global_options() {
+		let command = detect(
+			"aws --profile foo --region=us-east-1 --endpoint-url http://localhost:4566 \
+			 --no-cli-pager --generate-cli-skeleton output s3 ls",
+		)
+		.expect("aws command is detected");
+		assert_eq!(command.program, "aws");
+		assert_eq!(command.subcommand.as_deref(), Some("s3"));
+	}
+
+	#[test]
+	fn aws_double_dash_terminates_global_options() {
+		let command = detect("aws -- --literal-service op").expect("aws command is detected");
+		assert_eq!(command.program, "aws");
+		assert_eq!(command.subcommand.as_deref(), Some("--literal-service"));
+	}
+
+	#[test]
+	fn aws_global_option_permutations_keep_service_subcommand() {
+		let flags = [
+			"--profile dev",
+			"--region us-east-1",
+			"--endpoint-url=http://localhost:4566",
+			"--cli-binary-format raw-in-base64-out",
+			"--output json",
+			"--cli-read-timeout=5",
+			"--cli-connect-timeout 5",
+			"--ca-bundle /tmp/ca.pem",
+			"--color off",
+			"--query Buckets[].Name",
+			"--cli-input-json file://input.json",
+			"--cli-input-yaml file://input.yaml",
+			"--no-cli-pager",
+			"--debug",
+			"--no-verify-ssl",
+			"--no-paginate",
+			"--no-sign-request",
+			"--cli-auto-prompt",
+			"--no-cli-auto-prompt",
+			"--generate-cli-skeleton",
+			"--generate-cli-skeleton=output",
+		];
+		for idx in 0..128 {
+			let mut command = String::from("aws");
+			for (bit, flag) in flags.iter().enumerate() {
+				if idx & (1 << (bit % 7)) != 0 && (idx + bit) % 3 == 0 {
+					command.push(' ');
+					command.push_str(flag);
+				}
+			}
+			command.push_str(" lambda list-functions");
+			let detected = detect(&command).expect("aws command is detected");
+			assert_eq!(detected.subcommand.as_deref(), Some("lambda"), "{command}");
+		}
 	}
 }
 
