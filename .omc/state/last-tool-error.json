@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cd /Users/davidandrews/PycharmProjects/lex-w157 && rtk proxy grep -rn \\\"export.*isOpenAIResponsesProgressEvent\\\\|^\\\\s*isOpenAIResponsesProgressEvent\\\\s*=\\\" packages/ai/src\"}",
-  "error": "Exit code 1",
-  "timestamp": "2026-05-27T20:14:23.782Z",
-  "retry_count": 5
-}
