@@ -836,27 +836,43 @@ fn brace_delta(line: &str) -> i32 {
 	delta
 }
 
-fn is_brace_body_starter(trimmed: &str) -> bool {
+/// Only function-like declarations whose body we want to strip. Container
+/// declarations (`class`/`struct`/`enum`/`trait`/`impl`/`interface`/
+/// `namespace`/`module`) are intentionally NOT in this set so we keep
+/// descending and strip the methods inside them.
+fn is_function_body_starter(trimmed: &str) -> bool {
 	let without_attr = trimmed.trim_start_matches(|c: char| c == '#' || c == '[' || c == ']');
 	let without_vis = strip_leading_keywords(without_attr.trim_start());
-	without_vis.starts_with("fn ")
+	if without_vis.starts_with("fn ")
 		|| without_vis.starts_with("function ")
 		|| without_vis.starts_with("function(")
 		|| without_vis.starts_with("function*")
-		|| without_vis.starts_with("struct ")
-		|| without_vis.starts_with("enum ")
-		|| without_vis.starts_with("trait ")
-		|| without_vis.starts_with("impl ")
-		|| without_vis.starts_with("impl<")
-		|| without_vis.starts_with("class ")
-		|| without_vis.starts_with("interface ")
-		|| without_vis.starts_with("type ")
-		|| without_vis.starts_with("namespace ")
-		|| without_vis.starts_with("module ")
 		|| without_vis.starts_with("func ")
 		|| without_vis.starts_with("method ")
-		|| without_vis.starts_with("constructor")
-		|| starts_with_ts_method(without_vis)
+		|| without_vis.starts_with("constructor(")
+		|| without_vis.starts_with("constructor ")
+	{
+		return true;
+	}
+	// Reject container keywords explicitly so the TS-method fallback below
+	// can't mistakenly latch onto `class Foo(...)`/`type Foo = (...) => …`.
+	for kw in [
+		"class ",
+		"struct ",
+		"enum ",
+		"trait ",
+		"impl ",
+		"impl<",
+		"interface ",
+		"type ",
+		"namespace ",
+		"module ",
+	] {
+		if without_vis.starts_with(kw) {
+			return false;
+		}
+	}
+	starts_with_ts_method(without_vis)
 }
 
 fn strip_leading_keywords(s: &str) -> &str {
