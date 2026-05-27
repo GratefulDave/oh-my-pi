@@ -2,12 +2,31 @@
 
 use std::fmt::Write as _;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
 
 const MAX_PSQL_ROWS: usize = 30;
 const MAX_LINE_CHARS: usize = 500;
+const MAX_AWS_ROWS: usize = 40;
+
+const SENSITIVE_AWS_KEYS: &[&str] = &[
+	"Policy",
+	"PolicyDocument",
+	"AssumeRolePolicyDocument",
+	"Environment",
+	"SecretString",
+	"SecretBinary",
+	"Token",
+	"SessionToken",
+	"Credentials",
+	"Password",
+	"PrivateKey",
+	"KeyMaterial",
+	"PlaintextKeyMaterial",
+	"CiphertextBlob",
+	"ResponseMetadata",
+];
 
 pub fn supports(program: &str, _subcommand: Option<&str>) -> bool {
 	matches!(program, "aws" | "curl" | "wget" | "psql")
@@ -16,7 +35,7 @@ pub fn supports(program: &str, _subcommand: Option<&str>) -> bool {
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	let cleaned = primitives::strip_ansi(input);
 	let text = match ctx.program {
-		"aws" => filter_aws(&cleaned, exit_code),
+		"aws" => filter_aws(ctx, &cleaned, exit_code),
 		"curl" | "wget" => filter_http_transfer(&cleaned, exit_code),
 		"psql" => filter_psql(&cleaned, exit_code),
 		_ => head_tail_dedup(&cleaned, 80, 40),
@@ -29,9 +48,14 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 	}
 }
 
-fn filter_aws(input: &str, _exit_code: i32) -> String {
+fn filter_aws(ctx: &MinimizerCtx<'_>, input: &str, _exit_code: i32) -> String {
 	let without_progress = strip_transfer_progress(input);
-	if let Some(compacted) = try_compact_aws_json(&without_progress) {
+	if ctx.subcommand == Some("s3")
+		&& let Some(compacted) = compact_aws_s3_ls_text(&without_progress)
+	{
+		return compacted;
+	}
+	if let Some(compacted) = try_compact_aws_json(ctx, &without_progress) {
 		return compacted;
 	}
 	if looks_like_table(&without_progress) {
@@ -43,12 +67,16 @@ fn filter_aws(input: &str, _exit_code: i32) -> String {
 
 /// Try to parse AWS CLI JSON output and produce a compact representation.
 /// Returns None if input is not recognized JSON or if schema is unexpected.
-fn try_compact_aws_json(input: &str) -> Option<String> {
+fn try_compact_aws_json(ctx: &MinimizerCtx<'_>, input: &str) -> Option<String> {
 	let trimmed = input.trim();
 	if !(trimmed.starts_with('{') || trimmed.starts_with('[')) {
 		return None;
 	}
 	let root: Value = serde_json::from_str(trimmed).ok()?;
+
+	if let Some(compacted) = compact_aws_service_json(ctx, &root) {
+		return Some(compacted);
+	}
 
 	// EC2 describe-instances: {"Reservations":[{"Instances":[...]}]}
 	if let Some(instances) = extract_aws_ec2_instances(&root) {
@@ -65,7 +93,399 @@ fn try_compact_aws_json(input: &str) -> Option<String> {
 		return Some(compact_aws_dynamodb_items(&items));
 	}
 
+	compact_aws_generic(&root)
+}
+
+fn compact_aws_service_json(ctx: &MinimizerCtx<'_>, root: &Value) -> Option<String> {
+	match ctx.subcommand {
+		Some("sts") => extract_aws_sts_caller(root).map(compact_aws_sts_caller),
+		Some("s3") | Some("s3api") => extract_aws_s3_buckets(root).map(|rows| {
+			compact_named_rows(
+				&["bucket", "date"],
+				&rows
+					.iter()
+					.map(|bucket| {
+						vec![
+							string_field(bucket, &["Name", "Bucket", "bucket", "name"]),
+							string_field(bucket, &["CreationDate", "CreationDateTime", "date"]),
+						]
+					})
+					.collect::<Vec<_>>(),
+			)
+		}),
+		Some("lambda") => extract_array(root, &["Functions"]).map(|rows| {
+			compact_named_rows(
+				&["function", "runtime", "memory", "modified"],
+				&rows
+					.iter()
+					.map(|item| {
+						vec![
+							string_field(item, &["FunctionName", "Name"]),
+							string_field(item, &["Runtime"]),
+							string_field(item, &["MemorySize"]),
+							string_field(item, &["LastModified"]),
+						]
+					})
+					.collect::<Vec<_>>(),
+			)
+		}),
+		Some("iam") => extract_aws_iam_entities(root).map(|rows| {
+			compact_named_rows(
+				&["name", "arn", "created"],
+				&rows
+					.iter()
+					.map(|item| {
+						vec![
+							string_field(item, &["UserName", "RoleName", "GroupName", "Name"]),
+							string_field(item, &["Arn"]),
+							string_field(item, &["CreateDate"]),
+						]
+					})
+					.collect::<Vec<_>>(),
+			)
+		}),
+		Some("logs") => extract_aws_logs_events(root).map(compact_aws_logs_events),
+		Some("ecs") => extract_aws_arn_list(root, &["clusterArns", "taskArns", "serviceArns"])
+			.map(|rows| compact_single_col("arn", &rows)),
+		Some("rds") => extract_array(root, &["DBInstances"]).map(|rows| {
+			compact_named_rows(
+				&["identifier", "engine", "status", "endpoint"],
+				&rows
+					.iter()
+					.map(|item| {
+						vec![
+							string_field(item, &["DBInstanceIdentifier"]),
+							string_field(item, &["Engine"]),
+							string_field(item, &["DBInstanceStatus"]),
+							item
+								.get("Endpoint")
+								.and_then(Value::as_object)
+								.map_or_else(|| "-".to_string(), |ep| string_field_map(ep, &["Address"])),
+						]
+					})
+					.collect::<Vec<_>>(),
+			)
+		}),
+		Some("cloudformation") => extract_array(root, &["Stacks"]).map(|rows| {
+			compact_named_rows(
+				&["stack", "status", "updated"],
+				&rows
+					.iter()
+					.map(|item| {
+						vec![
+							string_field(item, &["StackName"]),
+							string_field(item, &["StackStatus"]),
+							string_field(item, &["LastUpdatedTime", "CreationTime"]),
+						]
+					})
+					.collect::<Vec<_>>(),
+			)
+		}),
+		Some("eks") => compact_aws_eks(root),
+		Some("sqs") => compact_aws_sqs(root),
+		Some("secretsmanager") => extract_array(root, &["SecretList"]).map(|rows| {
+			compact_named_rows(
+				&["name", "arn", "changed"],
+				&rows
+					.iter()
+					.map(|item| {
+						vec![
+							string_field(item, &["Name"]),
+							string_field(item, &["ARN", "Arn"]),
+							string_field(item, &["LastChangedDate", "LastAccessedDate"]),
+						]
+					})
+					.collect::<Vec<_>>(),
+			)
+		}),
+		_ => None,
+	}
+}
+
+fn extract_aws_sts_caller(root: &Value) -> Option<&Map<String, Value>> {
+	let map = root.as_object()?;
+	if map.contains_key("Account") && map.contains_key("Arn") {
+		Some(map)
+	} else {
+		None
+	}
+}
+
+fn compact_aws_sts_caller(map: &Map<String, Value>) -> String {
+	format!(
+		"account={} arn={} user-id={}\n",
+		string_field_map(map, &["Account"]),
+		string_field_map(map, &["Arn"]),
+		string_field_map(map, &["UserId"])
+	)
+}
+
+fn extract_aws_s3_buckets(root: &Value) -> Option<Vec<&Map<String, Value>>> {
+	extract_array(root, &["Buckets", "buckets"])
+}
+
+fn compact_aws_s3_ls_text(input: &str) -> Option<String> {
+	let rows = input
+		.lines()
+		.filter_map(|line| {
+			let mut parts = line.split_whitespace();
+			let first = parts.next()?;
+			if first == "PRE" {
+				return Some(vec![parts.next()?.trim_end_matches('/').to_string(), "prefix".to_string()]);
+			}
+			let time = parts.next()?;
+			let third = parts.next()?;
+			if third == "0" && parts.clone().next().is_none() {
+				return None;
+			}
+			let name = parts.last().unwrap_or(third);
+			Some(vec![name.to_string(), format!("{first} {time}")])
+		})
+		.collect::<Vec<_>>();
+	if rows.is_empty() {
+		None
+	} else {
+		Some(compact_named_rows(&["bucket", "date"], &rows))
+	}
+}
+
+fn extract_aws_iam_entities(root: &Value) -> Option<Vec<&Map<String, Value>>> {
+	extract_array(root, &["Users", "Roles", "Groups", "Policies"])
+}
+
+fn extract_aws_logs_events(root: &Value) -> Option<Vec<&Map<String, Value>>> {
+	extract_array(root, &["events", "Events", "logEvents"])
+}
+
+fn compact_aws_logs_events(rows: Vec<&Map<String, Value>>) -> String {
+	compact_named_rows(
+		&["timestamp", "level", "message"],
+		&rows
+			.iter()
+			.map(|event| {
+				let msg = string_field_map(event, &["message", "Message"]);
+				vec![
+					string_field_map(event, &["timestamp", "eventTimestamp"]),
+					infer_level(&msg).to_string(),
+					primitives::truncate_line(&msg, MAX_LINE_CHARS),
+				]
+			})
+			.collect::<Vec<_>>(),
+	)
+}
+
+fn extract_aws_arn_list(root: &Value, keys: &[&str]) -> Option<Vec<String>> {
+	for key in keys {
+		if let Some(values) = root.get(key).and_then(Value::as_array) {
+			let rows = values
+				.iter()
+				.filter_map(Value::as_str)
+				.map(ToOwned::to_owned)
+				.collect::<Vec<_>>();
+			if !rows.is_empty() {
+				return Some(rows);
+			}
+		}
+	}
 	None
+}
+
+fn compact_aws_eks(root: &Value) -> Option<String> {
+	if let Some(values) = root.get("clusters").and_then(Value::as_array) {
+		let rows = values
+			.iter()
+			.filter_map(Value::as_str)
+			.map(|name| vec![name.to_string(), "-".to_string(), "-".to_string(), "-".to_string()])
+			.collect::<Vec<_>>();
+		return Some(compact_named_rows(&["cluster", "status", "version", "endpoint"], &rows));
+	}
+	let cluster = root.get("cluster")?.as_object()?;
+	Some(compact_named_rows(
+		&["cluster", "status", "version", "endpoint"],
+		&[vec![
+			string_field_map(cluster, &["name"]),
+			string_field_map(cluster, &["status"]),
+			string_field_map(cluster, &["version"]),
+			string_field_map(cluster, &["endpoint"]),
+		]],
+	))
+}
+
+fn compact_aws_sqs(root: &Value) -> Option<String> {
+	if let Some(values) = root.get("QueueUrls").and_then(Value::as_array) {
+		let rows = values
+			.iter()
+			.filter_map(Value::as_str)
+			.map(|url| vec![url.to_string(), "-".to_string(), "-".to_string()])
+			.collect::<Vec<_>>();
+		return Some(compact_named_rows(&["url", "visibility", "messages"], &rows));
+	}
+	let attrs = root.get("Attributes").and_then(Value::as_object)?;
+	Some(compact_named_rows(
+		&["url", "visibility", "messages"],
+		&[vec![
+			string_field(root, &["QueueUrl"]),
+			string_field_map(attrs, &["VisibilityTimeout"]),
+			string_field_map(attrs, &["ApproximateNumberOfMessages"]),
+		]],
+	))
+}
+
+fn extract_array<'a>(root: &'a Value, keys: &[&str]) -> Option<Vec<&'a Map<String, Value>>> {
+	for key in keys {
+		if let Some(values) = root.get(key).and_then(Value::as_array) {
+			let rows = values.iter().filter_map(Value::as_object).collect::<Vec<_>>();
+			if !rows.is_empty() {
+				return Some(rows);
+			}
+		}
+	}
+	None
+}
+
+fn compact_aws_generic(root: &Value) -> Option<String> {
+	let pruned = prune_aws_sensitive(root);
+	if let Some((name, rows)) = first_object_array(&pruned) {
+		let columns = generic_columns(&rows);
+		if columns.is_empty() {
+			return None;
+		}
+		let values = rows
+			.iter()
+			.take(MAX_AWS_ROWS)
+			.map(|row| {
+				columns
+					.iter()
+					.map(|column| string_field_map(row, &[column.as_str()]))
+					.collect::<Vec<_>>()
+			})
+			.collect::<Vec<_>>();
+		let mut out = compact_named_rows(
+			&columns.iter().map(String::as_str).collect::<Vec<_>>(),
+			&values,
+		);
+		if rows.len() > MAX_AWS_ROWS {
+			let _ = writeln!(out, "... +{} more {name}", rows.len() - MAX_AWS_ROWS);
+		}
+		return Some(out);
+	}
+	None
+}
+
+fn prune_aws_sensitive(value: &Value) -> Value {
+	match value {
+		Value::Object(map) => Value::Object(
+			map.iter()
+				.filter_map(|(key, value)| {
+					if SENSITIVE_AWS_KEYS.iter().any(|sensitive| sensitive == key) {
+						None
+					} else {
+						Some((key.clone(), prune_aws_sensitive(value)))
+					}
+				})
+				.collect(),
+		),
+		Value::Array(values) => Value::Array(values.iter().map(prune_aws_sensitive).collect()),
+		_ => value.clone(),
+	}
+}
+
+fn first_object_array(root: &Value) -> Option<(&str, Vec<Map<String, Value>>)> {
+	let map = root.as_object()?;
+	for (key, value) in map {
+		let Some(values) = value.as_array() else {
+			continue;
+		};
+		let rows = values.iter().filter_map(Value::as_object).cloned().collect::<Vec<_>>();
+		if !rows.is_empty() {
+			return Some((key.as_str(), rows));
+		}
+	}
+	None
+}
+
+fn generic_columns(rows: &[Map<String, Value>]) -> Vec<String> {
+	let mut columns = Vec::new();
+	for row in rows {
+		for key in row.keys() {
+			let lower = key.to_ascii_lowercase();
+			if matches!(
+				lower.as_str(),
+				"id" | "name" | "arn" | "status" | "state" | "created" | "modified" | "type"
+					| "engine" | "version"
+			) || lower.ends_with("id")
+				|| lower.ends_with("name")
+				|| lower.ends_with("arn")
+				|| lower.ends_with("status")
+				|| lower.ends_with("state")
+				|| lower.contains("created")
+				|| lower.contains("modified")
+			{
+				if !columns.contains(key) {
+					columns.push(key.clone());
+				}
+			}
+			if columns.len() >= 6 {
+				return columns;
+			}
+		}
+	}
+	columns
+}
+
+fn compact_named_rows(headers: &[&str], rows: &[Vec<String>]) -> String {
+	let mut out = String::new();
+	out.push_str(&headers.join("\t"));
+	out.push('\n');
+	for row in rows.iter().take(MAX_AWS_ROWS) {
+		out.push_str(&row.join("\t"));
+		out.push('\n');
+	}
+	if rows.len() > MAX_AWS_ROWS {
+		let _ = writeln!(out, "... +{} more rows", rows.len() - MAX_AWS_ROWS);
+	}
+	out
+}
+
+fn compact_single_col(header: &str, rows: &[String]) -> String {
+	let values = rows.iter().map(|row| vec![row.clone()]).collect::<Vec<_>>();
+	compact_named_rows(&[header], &values)
+}
+
+fn string_field(value: &Value, keys: &[&str]) -> String {
+	value
+		.as_object()
+		.map_or_else(|| "-".to_string(), |map| string_field_map(map, keys))
+}
+
+fn string_field_map(map: &Map<String, Value>, keys: &[&str]) -> String {
+	for key in keys {
+		if let Some(value) = map.get(*key) {
+			return value_to_cell(value);
+		}
+	}
+	"-".to_string()
+}
+
+fn value_to_cell(value: &Value) -> String {
+	match value {
+		Value::String(value) => value.clone(),
+		Value::Number(value) => value.to_string(),
+		Value::Bool(value) => value.to_string(),
+		Value::Null => "-".to_string(),
+		Value::Array(values) => format!("{} item(s)", values.len()),
+		Value::Object(_) => "{...}".to_string(),
+	}
+}
+
+fn infer_level(message: &str) -> &str {
+	let upper = message.to_ascii_uppercase();
+	for level in ["ERROR", "WARN", "INFO", "DEBUG", "TRACE"] {
+		if upper.contains(level) {
+			return level;
+		}
+	}
+	"-"
 }
 
 // ── AWS EC2 ──────────────────────────────────────────────────────────────────
