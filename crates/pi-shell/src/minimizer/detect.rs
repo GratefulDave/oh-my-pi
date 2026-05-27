@@ -548,6 +548,63 @@ mod tests {
 		assert_eq!(command.program, "gt");
 		assert_eq!(command.subcommand.as_deref(), Some("sync"));
 	}
+
+	#[test]
+	fn skips_aws_global_options() {
+		let command = detect(
+			"aws --profile foo --region=us-east-1 --endpoint-url http://localhost:4566 \
+			 --no-cli-pager --generate-cli-skeleton output s3 ls",
+		)
+		.expect("aws command is detected");
+		assert_eq!(command.program, "aws");
+		assert_eq!(command.subcommand.as_deref(), Some("s3"));
+	}
+
+	#[test]
+	fn aws_double_dash_terminates_global_options() {
+		let command = detect("aws -- --literal-service op").expect("aws command is detected");
+		assert_eq!(command.program, "aws");
+		assert_eq!(command.subcommand.as_deref(), Some("--literal-service"));
+	}
+
+	#[test]
+	fn aws_global_option_permutations_keep_service_subcommand() {
+		let flags = [
+			"--profile dev",
+			"--region us-east-1",
+			"--endpoint-url=http://localhost:4566",
+			"--cli-binary-format raw-in-base64-out",
+			"--output json",
+			"--cli-read-timeout=5",
+			"--cli-connect-timeout 5",
+			"--ca-bundle /tmp/ca.pem",
+			"--color off",
+			"--query Buckets[].Name",
+			"--cli-input-json file://input.json",
+			"--cli-input-yaml file://input.yaml",
+			"--no-cli-pager",
+			"--debug",
+			"--no-verify-ssl",
+			"--no-paginate",
+			"--no-sign-request",
+			"--cli-auto-prompt",
+			"--no-cli-auto-prompt",
+			"--generate-cli-skeleton",
+			"--generate-cli-skeleton=output",
+		];
+		for idx in 0..128 {
+			let mut command = String::from("aws");
+			for (bit, flag) in flags.iter().enumerate() {
+				if idx & (1 << (bit % 7)) != 0 && (idx + bit) % 3 == 0 {
+					command.push(' ');
+					command.push_str(flag);
+				}
+			}
+			command.push_str(" lambda list-functions");
+			let detected = detect(&command).expect("aws command is detected");
+			assert_eq!(detected.subcommand.as_deref(), Some("lambda"), "{command}");
+		}
+	}
 }
 
 #[test]
