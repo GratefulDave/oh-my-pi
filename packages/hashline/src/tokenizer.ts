@@ -21,19 +21,10 @@ import {
 	HL_OP_INSERT_AFTER,
 	HL_OP_INSERT_BEFORE,
 	HL_OP_REPLACE,
-<<<<<<< HEAD:packages/coding-agent/src/hashline/tokenizer.ts
-} from "./hash";
-import type { Anchor, HashlineCursor } from "./types";
-||||||| parent of b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/coding-agent/src/hashline/tokenizer.ts
-	HL_PAYLOAD_PREFIX,
-} from "./hash";
-import type { Anchor, HashlineCursor } from "./types";
-=======
 	HL_PAYLOAD_PREFIX,
 } from "./format";
 import { ABORT_MARKER, BEGIN_PATCH_MARKER, END_PATCH_MARKER } from "./messages";
 import type { Anchor, Cursor, ParsedRange } from "./types";
->>>>>>> b12e4698a (feat: added @oh-my-pi/hashline package and migrated hashline tooling):packages/hashline/src/tokenizer.ts
 
 const CHAR_LINE_FEED = 10;
 const CHAR_CARRIAGE_RETURN = 13;

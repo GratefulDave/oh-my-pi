@@ -235,6 +235,12 @@
       "type": "file"
     },
     {
+      "path": "packages/coding-agent/src/web/search/providers/perplexity.ts",
+      "accessCount": 5,
+      "lastAccessed": 1779911319750,
+      "type": "file"
+    },
+    {
       "path": "packages/coding-agent/src/slash-commands/builtin-registry.ts",
       "accessCount": 4,
       "lastAccessed": 1779855390997,
@@ -268,12 +274,6 @@
       "path": "packages/ai/src/providers/openai-codex-responses.ts",
       "accessCount": 4,
       "lastAccessed": 1779911307564,
-      "type": "file"
-    },
-    {
-      "path": "packages/coding-agent/src/web/search/providers/perplexity.ts",
-      "accessCount": 4,
-      "lastAccessed": 1779911316893,
       "type": "file"
     },
     {
@@ -322,6 +322,12 @@
       "path": "packages/tui/test/render-regressions.test.ts",
       "accessCount": 2,
       "lastAccessed": 1779911313023,
+      "type": "file"
+    },
+    {
+      "path": "packages/hashline/src/tokenizer.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779911446037,
       "type": "file"
     },
     {
@@ -400,12 +406,6 @@
       "path": "packages/hashline/src/messages.ts",
       "accessCount": 1,
       "lastAccessed": 1779911235115,
-      "type": "file"
-    },
-    {
-      "path": "packages/hashline/src/tokenizer.ts",
-      "accessCount": 1,
-      "lastAccessed": 1779911236242,
       "type": "file"
     },
     {
