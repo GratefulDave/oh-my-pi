@@ -35,7 +35,7 @@
   },
   "build": {
     "buildCommand": "cd /Users/davidandrews/PycharmProjects/lex-w157 && bun run build:native 2>&1 | tail -10",
-    "testCommand": "bun test packages/coding-agent/test/core/hashline.test.ts 2>&1 | rtk tail -40",
+    "testCommand": "cd /Users/davidandrews/PycharmProjects/lex-w157 && rtk git stash && bun test --cwd packages/coding-agent test/core/hashline.test.ts 2>&1 | tail -5 && rtk git stash pop",
     "lintCommand": "npm run lint",
     "devCommand": "npm run dev",
     "scripts": {
@@ -241,6 +241,12 @@
       "type": "file"
     },
     {
+      "path": "packages/hashline/src/tokenizer.ts",
+      "accessCount": 6,
+      "lastAccessed": 1779913077733,
+      "type": "file"
+    },
+    {
       "path": "packages/coding-agent/src/minimizer-gain.ts",
       "accessCount": 5,
       "lastAccessed": 1779864925455,
@@ -250,12 +256,6 @@
       "path": "packages/coding-agent/src/web/search/providers/perplexity.ts",
       "accessCount": 5,
       "lastAccessed": 1779911319750,
-      "type": "file"
-    },
-    {
-      "path": "packages/hashline/src/tokenizer.ts",
-      "accessCount": 5,
-      "lastAccessed": 1779913041411,
       "type": "file"
     },
     {
