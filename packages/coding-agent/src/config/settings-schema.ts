@@ -2068,6 +2068,15 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"tts.enabled": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "tools",
+			label: "Text-to-Speech",
+			description: "Enable the tts tool for xAI Grok Voice speech synthesis",
+		},
+	},
 	"recipe.enabled": {
 		type: "boolean",
 		default: true,

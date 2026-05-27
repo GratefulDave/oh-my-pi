@@ -1,6 +1,22 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+
+- `generate_image` accepts `provider=xai` (Grok Imagine). Supports `grok-imagine-image` (default) and `grok-imagine-image-quality` at aspect ratios `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `3:2`, `2:3`. Uses the xAI Grok OAuth credential when available, otherwise `XAI_API_KEY`.
+- New `tts` tool synthesises speech via xAI Grok Voice behind the disabled-by-default `tts.enabled` setting. Built-in voices `ara`, `eve` (default), `leo`, `rex`, `sal`; custom voice IDs also accepted. Output codec inferred from the `output_path` suffix (`.wav` → `wav`, else `mp3`). Up to 15,000 characters per request.
+
+## [15.5.6] - 2026-05-27
+### Added
+
+- Support for multi-range line selectors on URLs (e.g., `:5-10,20-30`) to fetch and display multiple non-contiguous sections
+- Support for combining `:raw` mode with line range selectors on URLs (e.g., `:raw:1-120` or `:1-120:raw`)
+- Support for line range selectors on directory listings (e.g., `:30-40` to view lines 30–40 of a directory tree)
+- Clear error message when requesting a line offset beyond the end of a directory listing
+
+### Changed
+
+- URL selector parsing now supports multiple trailing selector tokens (e.g., `:raw:N-M`), applying them left-to-right
 
 ### Breaking Changes
 
