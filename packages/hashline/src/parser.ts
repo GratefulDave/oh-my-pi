@@ -137,9 +137,6 @@ export class Executor {
 				};
 				if (token.inlineBody !== undefined) {
 					this.#pending.payload.push(token.inlineBody);
-					if (!this.#warnings.includes(INLINE_PAYLOAD_ACCEPTED_WARNING)) {
-						this.#warnings.push(INLINE_PAYLOAD_ACCEPTED_WARNING);
-					}
 				}
 				return;
 			case "op-replace":
