@@ -3703,6 +3703,10 @@ export class AgentSession {
 		this.#planReferencePath = path;
 	}
 
+	getPlanReferencePath(): string {
+		return this.#planReferencePath;
+	}
+
 	get clientBridge(): ClientBridge | undefined {
 		return this.#clientBridge;
 	}
