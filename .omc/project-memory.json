@@ -35,7 +35,7 @@
   },
   "build": {
     "buildCommand": "cd /Users/davidandrews/PycharmProjects/lex/packages/natives && bun run build 2>&1 | rtk tail -10",
-    "testCommand": "export OMC_TEAM_WORKTREE_MODE=branch\nexport OMC_RUNTIME_V2=1\ncd /Users/davidandrews/PycharmProjects/lex\nomc team \"1:codex,1:claude\" --no-decompose --auto-merge \"Execute approved plan at /Users/davidandrews/PycharmProjects/lex/.omc/plans/rtk-md-completion-2026-05-27.md. Plan APPROVED via ralplan consensus. Two parallel workers on file-boundary-split (no overlap):\n\nWORKER 1 (codex): Implement W1 (AWS expansion) + W2 (clang). Touch ONLY:\n  - crates/pi-shell/src/minimizer/filters/cloud.rs — 11 new aws subcommand extractors (sts, s3, lambda, iam, logs, ecs, rds, cloudformation, eks, sqs, secretsmanager); compact_aws_generic JSON walker; SENSITIVE_AWS_KEYS const ([Policy, PolicyDocument, AssumeRolePolicyDocument, Environment, SecretString, SecretBinary, Token, SessionToken, Credentials, Password, PrivateKey, KeyMaterial, PlaintextKeyMaterial, CiphertextBlob, ResponseMetadata]); leak-sentinel test\n  - crates/pi-shell/src/minimizer/detect.rs — new skip_aws_global_options modeled on existing per-program skippers at detect.rs:93,108,131,144,157,171 and wired via first_non_global_arg at detect.rs:303; full flag table per plan Step 1.1 (--profile, --region, --endpoint-url, --cli-binary-format, --output, --cli-read-timeout, --cli-connect-timeout, --ca-bundle, --color, --query, --cli-input-json, --cli-input-yaml [all value-taking]; --no-cli-pager, --debug, --no-verify-ssl, --no-paginate, --no-sign-request, --cli-auto-prompt, --no-cli-auto-prompt [boolean]; --generate-cli-skeleton [optional value]; also --flag=value form; -- terminator); add property fuzz test 100+ permutations of aws [random_globals] <service> <op>\n  - crates/pi-shell/src/minimizer/defs/gcc.toml — change match_command from ^(gcc|g\\\\+\\\\+)$ to ^(gcc|g\\\\+\\\\+|clang|clang\\\\+\\\\+)$; add 2 [[tests.gcc]] entries for clang variant errors\n  - crates/pi-shell/tests/minimizer_chain_flag_matrix.rs — NEW file; add aws+clang rows: chain (&&/;) per AC-C1, flag-rich invocation per AC-C2, malformed-input passthrough per AC-C3, output-purity (no \\\\x1b, &&, ;, backtick) per AC-C4\nDO NOT TOUCH: filters/listing.rs, filters/ai_smart.rs, engine.rs, Cargo.toml, bash-executor.ts, config.rs.\n\nWORKER 2 (claude): Implement W3 (source outline aggressive level) + W4 (rtk smart, feature-gated). Touch ONLY:\n  - crates/pi-shell/src/minimizer/config.rs — add pub enum OutlineLevel { Default, Aggressive } + field on MinimizerConfig; add ai_smart_enabled: bool (default false) and ai_smart_provider: String (default \\\"deepseek\\\")\n  - crates/pi-shell/src/minimizer/filters/listing.rs — branch on OutlineLevel in compact_source_outline; aggressive replaces function/method bodies with { ... } for ts/tsx/js/jsx/py/rs/go (reuse existing language scanners)\n  - packages/coding-agent/src/exec/bash-executor.ts — surface sourceOutlineLevel through buildMinimizerOptions\n  - packages/coding-agent/src/* — extend ShellMinimizerSettings type with sourceOutlineLevel: 'default'|'aggressive'\n  - crates/pi-shell/Cargo.toml — add [features] ai-smart = [\\\"dep:reqwest\\\"]; add reqwest = { version = \\\"*\\\", default-features = false, features = [\\\"rustls-tls\\\", \\\"json\\\", \\\"blocking\\\"], optional = true }\n  - crates/pi-shell/src/minimizer/filters/ai_smart.rs — NEW file; module gated #[cfg(feature = \\\"ai-smart\\\")] with stub fallback for off-feature; pub fn maybe_summarize(ctx, captured) -> Option<String> returning None when !ai_smart_enabled OR parent is Pipe/Compound OR captured > 8KB OR OMP_AI_SMART_API_KEY unset OR per-apply budget consumed; else call deepseek POST https://api.deepseek.com/v1/chat/completions with model deepseek-v4-flash, system prompt 'You are a 2-line summarizer for shell command output. Line 1: what happened. Line 2: most important number/path/error. Be terse.'; 5s total timeout, 200 max tokens, single retry on transient; passthrough on any error\n  - crates/pi-shell/src/minimizer/engine.rs — wire ai_smart from apply() as post-step AFTER apply_identity returns (NOT inside apply_identity); cfg(feature = \\\"ai-smart\\\")-gated; implements AC4.9 per-apply ≤1 AI call budget across chain segments via Cell<u8> or MinimizerCtx counter\n  - crates/pi-shell/tests/minimizer_chain_flag_matrix.rs — add W3 + W4 rows (chain, flag, passthrough, output-purity for compact_source_outline_aggressive output and ai_smart output)\nDO NOT TOUCH: filters/cloud.rs, detect.rs aws skipper, defs/gcc.toml.\n\nPINNED constraints (BOTH workers):\n  - deepseek-v4-flash exact model; if unavailable STOP and request RFC, NO silent downgrade\n  - W4 strictly behind Cargo feature ai-smart, default OFF; zero behavioral change when feature off\n  - All ACs C1-C4 must have at least one unit/integration test\n  - Verify before claiming done: rtk cargo test -p pi-shell --lib && rtk cargo test -p pi-shell --test minimizer_chain_flag_matrix; W4 also rtk cargo test -p pi-shell --features ai-smart\n  - TS verify: cd packages/coding-agent && bun test test/bash-executor.test.ts test/minimizer-gain.test.ts\n\nIf you need to touch a file outside your assigned set, send message via team mailbox FIRST and wait for ACK before commit.\" 2>&1 | rtk tail -80",
+    "testCommand": "bun test packages/coding-agent/test/core/hashline.test.ts 2>&1 | rtk tail -60",
     "lintCommand": "npm run lint",
     "devCommand": "npm run dev",
     "scripts": {
@@ -241,6 +241,12 @@
       "type": "file"
     },
     {
+      "path": "packages/hashline/src/parser.ts",
+      "accessCount": 5,
+      "lastAccessed": 1779912193023,
+      "type": "file"
+    },
+    {
       "path": "packages/coding-agent/src/slash-commands/builtin-registry.ts",
       "accessCount": 4,
       "lastAccessed": 1779855390997,
@@ -280,12 +286,6 @@
       "path": "packages/coding-agent/package.json",
       "accessCount": 3,
       "lastAccessed": 1779911130260,
-      "type": "file"
-    },
-    {
-      "path": "packages/hashline/src/parser.ts",
-      "accessCount": 3,
-      "lastAccessed": 1779911317823,
       "type": "file"
     },
     {
@@ -361,6 +361,12 @@
       "type": "file"
     },
     {
+      "path": "packages/coding-agent/src/config/hashline-prompt-helpers.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779911919351,
+      "type": "file"
+    },
+    {
       "path": "packages/coding-agent/src/cli/gain-cli.ts",
       "accessCount": 1,
       "lastAccessed": 1779854484171,
@@ -424,12 +430,6 @@
       "path": "biome.json",
       "accessCount": 1,
       "lastAccessed": 1779911566378,
-      "type": "file"
-    },
-    {
-      "path": "packages/coding-agent/src/config/hashline-prompt-helpers.ts",
-      "accessCount": 1,
-      "lastAccessed": 1779911915490,
       "type": "file"
     }
   ],

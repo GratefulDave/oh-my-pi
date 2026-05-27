@@ -69,6 +69,13 @@ export class Executor {
 	#editIndex = 0;
 	#pending: Pending | undefined;
 	#terminated = false;
+	/**
+	 * Count of blank tokens buffered since the last non-blank token. Blank lines
+	 * are only absorbed into the pending payload when followed by another `+`
+	 * payload line; when followed by an op or header they are dropped as
+	 * inter-op separators.
+	 */
+	#pendingBlanks = 0;
 
 	/** True once an `envelope-end` or `abort` token has been observed. */
 	get terminated(): boolean {
