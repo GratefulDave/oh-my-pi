@@ -134,16 +134,46 @@ export class Executor {
 				this.#flushPending();
 				this.#pending = {
 					op: { kind: "insert", cursor: token.cursor, lineNum: token.lineNum },
-					payload: [token.inlineBody ?? ""],
+					payload: [],
 				};
+				if (token.inlineBody !== undefined) {
+					this.#pending.payload.push(token.inlineBody);
+					if (!this.#warnings.includes(INLINE_PAYLOAD_ACCEPTED_WARNING)) {
+						this.#warnings.push(INLINE_PAYLOAD_ACCEPTED_WARNING);
+					}
+				}
 				return;
 			case "op-replace":
-				this.#flushPending();
 				validateRangeOrder(token.range, token.lineNum);
+				if (this.#pending !== undefined && this.#pending.op.kind === "replace") {
+					const outer = this.#pending.op.range;
+					const inner = token.range;
+					if (rangesEqual(outer, inner)) {
+						// Identical-range before/after pair — drop "before" payload, second op wins.
+						this.#pending = undefined;
+						if (!this.#warnings.includes(REPLACE_PAIR_COALESCED_WARNING)) {
+							this.#warnings.push(REPLACE_PAIR_COALESCED_WARNING);
+						}
+					} else if (rangeContains(outer, inner)) {
+						// Inner op is inside outer range — demote to payload continuation.
+						this.#pending.payload.push(token.inlineBody ?? "");
+						if (!this.#warnings.includes(PAYLOAD_LINE_PREFIX_DEMOTED_WARNING)) {
+							this.#warnings.push(PAYLOAD_LINE_PREFIX_DEMOTED_WARNING);
+						}
+						return;
+					}
+				}
+				this.#flushPending();
 				this.#pending = {
 					op: { kind: "replace", range: token.range, lineNum: token.lineNum },
-					payload: [token.inlineBody ?? ""],
+					payload: [],
 				};
+				if (token.inlineBody !== undefined) {
+					this.#pending.payload.push(token.inlineBody);
+					if (!this.#warnings.includes(INLINE_PAYLOAD_ACCEPTED_WARNING)) {
+						this.#warnings.push(INLINE_PAYLOAD_ACCEPTED_WARNING);
+					}
+				}
 				return;
 		}
 	}
