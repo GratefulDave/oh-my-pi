@@ -204,7 +204,10 @@ fn skip_aws_global_options(args: &[String]) -> Option<usize> {
 		}
 		if arg == "--generate-cli-skeleton" {
 			index += 1;
-			if args.get(index).is_some_and(|value| !value.starts_with('-')) {
+			if args
+				.get(index)
+				.is_some_and(|value| matches!(value.as_str(), "input" | "output" | "yaml-input"))
+			{
 				index += 1;
 			}
 			continue;
