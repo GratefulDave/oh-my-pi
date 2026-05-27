@@ -271,6 +271,12 @@
       "type": "file"
     },
     {
+      "path": "packages/ai/src/providers/openai-codex-responses.ts",
+      "accessCount": 3,
+      "lastAccessed": 1779911306647,
+      "type": "file"
+    },
+    {
       "path": "packages/coding-agent/CHANGELOG.md",
       "accessCount": 2,
       "lastAccessed": 1779855406691,
@@ -304,12 +310,6 @@
       "path": "packages/hashline/src/parser.ts",
       "accessCount": 2,
       "lastAccessed": 1779911300197,
-      "type": "file"
-    },
-    {
-      "path": "packages/ai/src/providers/openai-codex-responses.ts",
-      "accessCount": 2,
-      "lastAccessed": 1779911305613,
       "type": "file"
     },
     {

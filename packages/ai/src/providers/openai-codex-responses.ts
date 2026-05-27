@@ -2620,7 +2620,7 @@ function _notifyCodexWebSocketOutbound(
 	observer({ event: type, data: payload, raw });
 }
 
-function notifyCodexWebSocketMalformed(
+function _notifyCodexWebSocketMalformed(
 	observer: ((event: { event: string | null; data: string; raw: string[] }) => void) | undefined,
 	data: string,
 	error: unknown,
