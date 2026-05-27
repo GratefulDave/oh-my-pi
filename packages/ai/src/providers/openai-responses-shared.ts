@@ -314,6 +314,53 @@ export function appendResponsesToolResultMessages<TApi extends Api>(
 	messages.push({ role: "user", content: contentParts });
 }
 
+export function repairOrphanResponsesToolOutputs(input: ResponseInput): ResponseInput {
+	const knownCallIds = new Set<string>();
+	for (const item of input) {
+		const t = (item as { type?: string }).type;
+		const callId = (item as { call_id?: unknown }).call_id;
+		if (typeof callId !== "string") continue;
+		if (t === "function_call" || t === "custom_tool_call") knownCallIds.add(callId);
+	}
+	let hasOrphan = false;
+	for (const item of input) {
+		const t = (item as { type?: string }).type;
+		if (t !== "function_call_output" && t !== "custom_tool_call_output") continue;
+		const callId = (item as { call_id?: unknown }).call_id;
+		if (typeof callId === "string" && !knownCallIds.has(callId)) {
+			hasOrphan = true;
+			break;
+		}
+	}
+	if (!hasOrphan) return input;
+	return input.map(item => {
+		const t = (item as { type?: string }).type;
+		if (t !== "function_call_output" && t !== "custom_tool_call_output") return item;
+		const record = item as { call_id?: unknown; output?: unknown; name?: unknown };
+		const callId = record.call_id;
+		if (typeof callId !== "string" || knownCallIds.has(callId)) return item;
+		const toolName = typeof record.name === "string" && record.name.length > 0 ? record.name : "tool";
+		const rawOutput = record.output;
+		let text: string;
+		if (typeof rawOutput === "string") text = rawOutput;
+		else if (rawOutput == null) text = "";
+		else {
+			try {
+				text = JSON.stringify(rawOutput);
+			} catch {
+				text = String(rawOutput);
+			}
+		}
+		const ORPHAN_OUTPUT_LIMIT = 16_000;
+		if (text.length > ORPHAN_OUTPUT_LIMIT) text = `${text.slice(0, ORPHAN_OUTPUT_LIMIT)}\n...[truncated]`;
+		return {
+			type: "message",
+			role: "assistant",
+			content: `[Orphan ${toolName} result; call_id=${callId}]: ${text}`,
+		} as ResponseInput[number];
+	});
+}
+
 export interface ProcessResponsesStreamOptions {
 	onFirstToken?: () => void;
 	onOutputItemDone?: (item: ResponseOutputItem) => void;
