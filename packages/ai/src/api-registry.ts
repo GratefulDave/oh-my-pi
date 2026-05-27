@@ -25,7 +25,6 @@ const BUILTIN_APIS = new Set<KnownApi>([
 	"google-gemini-cli",
 	"google-vertex",
 	"ollama-chat",
-	"cursor-agent",
 ]);
 
 export type CustomStreamFn = (
