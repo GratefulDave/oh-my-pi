@@ -255,6 +255,12 @@
       "type": "file"
     },
     {
+      "path": "packages/natives/native/index.d.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779867563559,
+      "type": "file"
+    },
+    {
       "path": "crates/pi-shell/src/minimizer.rs",
       "accessCount": 1,
       "lastAccessed": 1779867006384,
@@ -276,12 +282,6 @@
       "path": "crates/pi-shell/src/minimizer/detect.rs",
       "accessCount": 1,
       "lastAccessed": 1779867471556,
-      "type": "file"
-    },
-    {
-      "path": "packages/natives/native/index.d.ts",
-      "accessCount": 1,
-      "lastAccessed": 1779867537278,
       "type": "file"
     }
   ],
