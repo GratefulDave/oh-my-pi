@@ -104,9 +104,10 @@ export class Executor {
 				this.#flushPending();
 				return;
 			case "blank":
-				if (this.#pending) this.#pending.payload.push("");
+				if (this.#pending) this.#pendingBlanks++;
 				return;
 			case "payload":
+				this.#flushPendingBlanks();
 				this.#handlePayload(token.text, token.lineNum);
 				return;
 			case "op-delete":
