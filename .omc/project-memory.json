@@ -232,8 +232,8 @@
     },
     {
       "path": "packages/coding-agent/src/config/settings-schema.ts",
-      "accessCount": 3,
-      "lastAccessed": 1779867524233,
+      "accessCount": 4,
+      "lastAccessed": 1779867531322,
       "type": "file"
     },
     {
@@ -249,6 +249,12 @@
       "type": "file"
     },
     {
+      "path": "crates/pi-natives/src/shell.rs",
+      "accessCount": 2,
+      "lastAccessed": 1779867555789,
+      "type": "file"
+    },
+    {
       "path": "crates/pi-shell/src/minimizer.rs",
       "accessCount": 1,
       "lastAccessed": 1779867006384,
@@ -261,12 +267,6 @@
       "type": "file"
     },
     {
-      "path": "crates/pi-natives/src/shell.rs",
-      "accessCount": 1,
-      "lastAccessed": 1779867172445,
-      "type": "file"
-    },
-    {
       "path": "crates/pi-shell/src/minimizer/filters/ai_smart.rs",
       "accessCount": 1,
       "lastAccessed": 1779867436042,
@@ -276,6 +276,12 @@
       "path": "crates/pi-shell/src/minimizer/detect.rs",
       "accessCount": 1,
       "lastAccessed": 1779867471556,
+      "type": "file"
+    },
+    {
+      "path": "packages/natives/native/index.d.ts",
+      "accessCount": 1,
+      "lastAccessed": 1779867537278,
       "type": "file"
     }
   ],
