@@ -411,7 +411,7 @@ fn compact_cat_output(ctx: &MinimizerCtx<'_>, input: &str) -> String {
 	if !is_source_path(&path) {
 		return input.to_string();
 	}
-	compact_source_outline(input)
+	compact_source_outline(input, &path, ctx.config.source_outline_level)
 }
 
 fn extract_single_path_arg(command: &str, program: &str) -> Option<String> {
