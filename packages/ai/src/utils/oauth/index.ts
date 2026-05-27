@@ -141,6 +141,11 @@ const builtInOAuthProviders: OAuthProviderInfo[] = [
 		available: true,
 	},
 	{
+		id: "openrouter",
+		name: "OpenRouter",
+		available: true,
+	},
+	{
 		id: "zai",
 		name: "Z.AI (GLM Coding Plan)",
 		available: true,
@@ -329,6 +334,7 @@ export async function refreshOAuthToken(
 		case "huggingface":
 		case "opencode-zen":
 		case "opencode-go":
+		case "openrouter":
 		case "cerebras":
 		case "fireworks":
 		case "firepass":
