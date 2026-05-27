@@ -34,7 +34,7 @@ const _OAUTH_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 const OAUTH_API_VERSION = "2.18";
 const OAUTH_USER_AGENT = "Perplexity/641 CFNetwork/1568 Darwin/25.2.0";
 
-interface PerplexityOAuthCredential {
+interface _PerplexityOAuthCredential {
 	type: "oauth";
 	access: string;
 	expires: number;

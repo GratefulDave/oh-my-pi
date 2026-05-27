@@ -313,6 +313,12 @@
       "type": "file"
     },
     {
+      "path": "packages/coding-agent/src/web/search/providers/perplexity.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779911311246,
+      "type": "file"
+    },
+    {
       "path": "packages/coding-agent/src/cli/gain-cli.ts",
       "accessCount": 1,
       "lastAccessed": 1779854484171,
@@ -394,12 +400,6 @@
       "path": "packages/hashline/src/tokenizer.ts",
       "accessCount": 1,
       "lastAccessed": 1779911236242,
-      "type": "file"
-    },
-    {
-      "path": "packages/coding-agent/src/web/search/providers/perplexity.ts",
-      "accessCount": 1,
-      "lastAccessed": 1779911290691,
       "type": "file"
     },
     {
