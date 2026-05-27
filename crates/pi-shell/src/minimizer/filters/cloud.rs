@@ -1428,7 +1428,7 @@ mod tests {
 		for key in SENSITIVE_AWS_KEYS {
 			fields.push_str(&format!(r#""{key}":"LEAK_SENTINEL","#));
 		}
-		let input = format!(r#"{{"Items":[{{"Name":"safe",{fields}"Status":"ok"}}]}}"#);
+		let input = format!(r#"{{"Unknowns":[{{"Name":"safe",{fields}"Status":"ok"}}]}}"#);
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = ctx("aws", &cfg);
 		let out = filter(&ctx, &input, 0);
