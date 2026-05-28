@@ -187,7 +187,7 @@ Multi-file example:
 
 ## Limits & Caps
 - Default mode is `hashline` (`DEFAULT_EDIT_MODE`) in `packages/coding-agent/src/utils/edit-mode.ts`.
-- File hashes are 4 lowercase hex chars from `computeFileHash()` in `packages/hashline/src/format.ts`.
+- Section tags are short opaque 3-hex values minted by `SnapshotStore.recordContiguous()` (or `recordSparse()`) in `packages/hashline/src/snapshots.ts` and stored in the session-scoped `InMemorySnapshotStore`. The tag is a slot pointer into a ring-permuted table, not a content hash.
 - The visible mismatch report shows 2 lines of context on each side (`MISMATCH_CONTEXT`) in `packages/hashline/src/format.ts`.
 - Stale-anchor recovery uses `fuzzFactor: 0` (`HASHLINE_RECOVERY_FUZZ_FACTOR`) in `packages/hashline/src/recovery.ts`.
 - The per-session read cache keeps at most 30 paths (`MAX_PATHS_PER_SESSION`) in `packages/coding-agent/src/edit/file-snapshot-store.ts`.
@@ -229,7 +229,7 @@ Multi-file example:
 - Failed hand-edits often come from sequentially shifting later anchors inside the same patch. Treat every op as using the line numbers from the original section header.
 - `A-B:` is not a primitive replace in the parser. With payload, it expands to inserts before `A` plus deletes for `A-B`. `A-B!` is the direct delete form. Bare `A:` / `A-B:` (no payload) replaces with a single blank line; bare `↑` / `↓` insert a blank line.
 - Inline payload tip: trailing whitespace on the op line is trimmed. To preserve trailing spaces in the inserted/replacement content, put that content on the next line instead of inline.
-- `computeFileHash()` normalizes CR characters and trailing whitespace before hashing. The section survives line-ending and trailing-space-only changes, but not substantive file edits.
+- The patcher resolves a section tag via `InMemorySnapshotStore.byHash(path, tag)` and then calls `matchesLiveFile()` on the recovered snapshot to verify the recorded lines against the live file before applying edits. Stale or mismatched tags surface as `HashlineMismatchError`; they do not silently apply.
 - `splitHashlineInputs()` normalizes absolute `¶PATH#HASH` headers back to a cwd-relative path when the file is inside the current working tree. Headers with any run of leading `¶` chars (e.g. `¶foo.ts`, `¶¶foo.ts`, `¶¶¶foo.ts`) are accepted; the canonical form is `¶PATH#HASH` for anchored edits.
 - Optional `*** Begin Patch` / `*** End Patch` markers are accepted in hashline mode, but the file sections are still `¶PATH#HASH`-based, not Codex `*** Update File:` hunks.
 - `*** Abort` terminates parsing early and returns `ABORT_WARNING`; ops parsed before the marker still apply.
