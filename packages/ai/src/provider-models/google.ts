@@ -1,4 +1,5 @@
 import type { ModelManagerOptions } from "../model-manager";
+import type { FetchImpl } from "../types";
 import { fetchAntigravityDiscoveryModels } from "../utils/discovery/antigravity";
 import { fetchGeminiModels } from "../utils/discovery/gemini";
 
@@ -8,6 +9,10 @@ export interface GoogleModelManagerConfig {
 
 export interface GoogleVertexModelManagerConfig {
 	apiKey?: string;
+	project?: string;
+	location?: string;
+	signal?: AbortSignal;
+	fetch?: FetchImpl;
 }
 
 export interface GoogleAntigravityModelManagerConfig {
