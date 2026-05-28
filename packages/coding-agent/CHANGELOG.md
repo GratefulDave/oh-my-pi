@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Added
+- Added `/drop-images` slash command that strips every `ImageContent` block from the current session's branch — `user`/`developer`/`custom`/`hookMessage`/`toolResult` content arrays plus `toolResult.details.images` and `fileMention.files[].image` — rewrites the session JSONL, rebuilds the agent's in-memory message list, tears down Codex Responses provider sessions, and rebuilds the TUI chat container so the change is visible immediately. ACP clients receive the same handler (returns `"Dropped N images …"` / `"No images found …"` through `runtime.output`). Stripping content that would leave a `toolResult` or `user` message with zero blocks inserts a single `[image removed]` placeholder so providers do not reject empty content arrays.
 - `providers.openrouterVariant` setting (Settings → Providers → "OpenRouter Routing") to default OpenRouter requests to a routing-variant suffix (`:nitro`, `:floor`, `:online`, `:exacto`). Selectors that already name a variant (e.g. `openrouter/anthropic/claude-haiku:nitro`) keep precedence.
 
 - `generate_image` supports xAI Grok Imagine via `providers.image=xai`. Supports `grok-imagine-image` (default) and `grok-imagine-image-quality` at aspect ratios `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `3:2`, `2:3`. Uses the xAI Grok OAuth credential when available, otherwise `XAI_API_KEY`.
@@ -9,6 +10,7 @@
 
 ### Fixed
 
+- Fixed compaction surfacing raw HTTP 401/403 envelopes (e.g. `Compaction failed: 401 {"type":"error","error":{"type":"authentication_error",…}}`) instead of routing to an authenticated fallback model. The compaction layer now attaches the provider-reported HTTP status onto the thrown error, and `AgentSession`'s auth-failure detector branches on `error.status === 401 || 403` in addition to the existing `auth_unavailable` regex. When a fallback model role (e.g. `modelRoles.smol`) is configured, compaction retries it transparently; otherwise the user sees the actionable "Compaction requires usable credentials for …" hint instead of the raw provider envelope.
 - Fixed plan-mode re-entry after approval reopening a fresh `local://PLAN.md` instead of the approved titled plan artifact, which could duplicate plan content and fail approval on an existing destination.
 - Fixed `read` URL reader mode aborting after a stalled Jina request instead of falling back to trafilatura/lynx/native: Jina (and Parallel extract) now have their own per-attempt sub-budget capped at 10s, the catch handler honours only real user cancellation, and the in-process native renderer is always attempted on already-loaded HTML ([#1449](https://github.com/can1357/oh-my-pi/issues/1449))
 
