@@ -70,11 +70,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [15.5.10] - 2026-05-28
 
-Selective upstream parity port against `can1357/oh-my-pi` v15.5.7..v15.5.9
-(~26 of 36 upstream commits applied; remainder are docs/CHANGELOG/codex-removed
-or non-applicable to this fork). All fork-specific divergence preserved — no
-blind `git merge upstream/main`. Each cherry-pick carries a
-`(cherry picked from commit <SHA>)` provenance trailer. Landed across PRs #5–#20.
+Selective upstream parity port against `can1357/oh-my-pi` v15.5.7..**v15.5.10**.
+All fork-specific divergence preserved — no blind `git merge upstream/main`.
+Each cherry-pick carries a `(cherry picked from commit <SHA>)` provenance
+trailer. Landed across PRs #5–#24. At parity with upstream v15.5.10; only
+non-applicable upstream commits skipped (codex-removed, docs/CHANGELOG, biome
+style, merge commits).
 
 ### Added
 
@@ -93,6 +94,30 @@ blind `git merge upstream/main`. Each cherry-pick carries a
   port of upstream `5053a6a4d`).
 - **Tier C / Auth-gateway** (PR #11) — strict-mode + completion-probe; 429
   usage-limit rotation (`markUsageLimitReached`).
+- **v15.5.10 / `/drop-images`** (PR #24, `5bed80785`) — slash command that strips
+  every `ImageContent` block from the current session branch (user/developer/
+  custom/hookMessage/toolResult content + `toolResult.details.images` +
+  `fileMention.files[].image`), rewrites the session JSONL, rebuilds the
+  in-memory message list, tears down Codex Responses provider sessions, rebuilds
+  the TUI chat container, and inserts an `[image removed]` placeholder where
+  stripping would empty a content array. ACP returns `"Dropped N images …"`.
+
+### Fixed
+
+- **v15.5.10 / compaction auth fallback** (PR #24, `c4f93eca2`) — compaction
+  summarizers route `stopReason === "error"` throws through
+  `createSummarizationError`, copying the provider's `errorStatus` onto the
+  thrown `Error.status`; `AgentSession.#isCompactionAuthFailure` now branches on
+  `error.status === 401 || 403` (not just the `auth_unavailable` regex), so real
+  provider auth failures retry an authenticated fallback model instead of
+  surfacing the raw HTTP envelope.
+- **v15.5.10 / shell pipe CPU** (PR #23, `3327d51b4`) — `pi-natives` coalesces
+  queued shell-output chunks into a single batched `ThreadsafeFunction` call
+  (64 KiB cap) instead of one napi dispatch per `read(2)`, fixing ~200%
+  main-thread CPU pinning on chatty bash jobs (printf progress, token streams).
+- **v15.5.10 / release tags** (PR #22, `1191fdedc`) — release git wrapper sets
+  `fetch.pruneTags=false` and uses an atomic push-with-retry to defend against
+  `git maintenance` pruning newly created tags.
 
 ### Changed
 
