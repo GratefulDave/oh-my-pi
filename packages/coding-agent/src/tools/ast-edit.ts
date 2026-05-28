@@ -1,5 +1,6 @@
 import * as path from "node:path";
-import { computeFileHash, formatHashlineHeader } from "@oh-my-pi/hashline";
+import { formatHashlineHeader } from "@oh-my-pi/hashline";
+import { getFileSnapshotStore } from "../edit/file-snapshot-store";
 import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
 import { type AstReplaceChange, type AstReplaceFileChange, astEdit } from "@oh-my-pi/pi-natives";
 import type { Component } from "@oh-my-pi/pi-tui";
@@ -263,7 +264,7 @@ export class AstEditTool implements AgentTool<typeof astEditSchema, AstEditToolD
 					const absolutePath = path.resolve(this.session.cwd, relativePath);
 					try {
 						const fullText = await Bun.file(absolutePath).text();
-						const fileHash = computeFileHash(fullText);
+						const fileHash = getFileSnapshotStore(this.session).recordContiguous(absolutePath, 1, fullText.split("\n"), { fullText });
 						hashContexts.set(relativePath, { fileHash });
 					} catch {
 						// Best-effort: if a file disappears between ast-edit and rendering, emit plain line output.
