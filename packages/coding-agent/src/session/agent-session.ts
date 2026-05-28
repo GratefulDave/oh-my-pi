@@ -206,7 +206,11 @@ import { YieldQueue } from "./yield-queue";
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
 	| AgentEvent
-	| { type: "auto_compaction_start"; reason: "threshold" | "overflow" | "idle"; action: "context-full" | "handoff" }
+	| {
+			type: "auto_compaction_start";
+			reason: "threshold" | "overflow" | "idle" | "incomplete";
+			action: "context-full" | "handoff";
+	  }
 	| {
 			type: "auto_compaction_end";
 			action: "context-full" | "handoff";
@@ -5667,10 +5671,14 @@ export class AgentSession {
 	 * Check if context maintenance or promotion is needed and run it.
 	 * Called after agent_end and before prompt submission.
 	 *
-	 * Three cases (in order):
-	 * 1. Overflow + promotion: promote to larger model, retry without maintenance
-	 * 2. Overflow + no promotion target: run context maintenance, auto-retry on same model
-	 * 3. Threshold: Context over threshold, run context maintenance (no auto-retry)
+	 * Four cases (in order):
+	 * 1. Input overflow + promotion: promote to larger model, retry without maintenance.
+	 * 2. Input overflow + no promotion target: run context maintenance, auto-retry on same model.
+	 * 3. Output incomplete (stopReason === "length", e.g. `response.incomplete`): the
+	 *    model burned its output budget without producing an actionable deliverable
+	 *    (reasoning-only or truncated). Drop the dead turn, try promotion, otherwise
+	 *    run compaction/handoff and retry.
+	 * 4. Threshold: context over threshold, run context maintenance (no auto-retry).
 	 *
 	 * @param assistantMessage The assistant message to check
 	 * @param skipAbortedCheck If false, include aborted messages (for pre-prompt check). Default: true
@@ -5716,10 +5724,49 @@ export class AgentSession {
 			}
 			return;
 		}
+
+		// Case 3: Output-side incomplete — `response.incomplete` from OpenAI Responses
+		// (and Codex) maps to stopReason === "length". The model burned its
+		// `max_output_tokens` budget on reasoning/text and emitted no actionable
+		// deliverable. Same recovery class as overflow: promotion if available,
+		// otherwise compaction/handoff. Unlike overflow, the *input* is fine, so we
+		// allow the handoff strategy to actually run.
+		if (sameModel && !errorIsFromBeforeCompaction && assistantMessage.stopReason === "length") {
+			const messages = this.agent.state.messages;
+			if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
+				this.agent.replaceMessages(messages.slice(0, -1));
+			}
+
+			const promoted = await this.#tryContextPromotion(assistantMessage);
+			if (promoted) {
+				logger.debug("Context promotion triggered by response.incomplete (length stop)", {
+					from: `${assistantMessage.provider}/${assistantMessage.model}`,
+				});
+				this.#scheduleAgentContinue({ delayMs: 100, generation });
+				return;
+			}
+
+			const incompleteCompactionSettings = this.settings.getGroup("compaction");
+			if (incompleteCompactionSettings.enabled && incompleteCompactionSettings.strategy !== "off") {
+				logger.debug("Compaction triggered by response.incomplete (length stop, no promotion target)", {
+					model: `${assistantMessage.provider}/${assistantMessage.model}`,
+					strategy: incompleteCompactionSettings.strategy,
+				});
+				await this.#runAutoCompaction("incomplete", true, false);
+			} else {
+				// Neither promotion nor compaction is available — surface the dead-end so
+				// the user understands why the turn yielded with nothing.
+				logger.warn("response.incomplete with no recovery path (promotion + compaction both unavailable)", {
+					model: `${assistantMessage.provider}/${assistantMessage.model}`,
+				});
+			}
+			return;
+		}
+
 		const compactionSettings = this.settings.getGroup("compaction");
 		if (!compactionSettings.enabled || compactionSettings.strategy === "off") return;
 
-		// Case 2: Threshold - turn succeeded but context is getting large
+		// Case 4: Threshold - turn succeeded but context is getting large
 		// Skip if this was an error (non-overflow errors don't have usage data)
 		if (assistantMessage.stopReason === "error") return;
 		const pruneResult = await this.#pruneToolOutputs();
@@ -6408,7 +6455,7 @@ export class AgentSession {
 	 * Internal: Run auto-compaction with events.
 	 */
 	async #runAutoCompaction(
-		reason: "overflow" | "threshold" | "idle",
+		reason: "overflow" | "threshold" | "idle" | "incomplete",
 		willRetry: boolean,
 		deferred = false,
 	): Promise<void> {
@@ -6416,7 +6463,10 @@ export class AgentSession {
 		if (compactionSettings.strategy === "off") return;
 		if (reason !== "idle" && !compactionSettings.enabled) return;
 		const generation = this.#promptGeneration;
-		if (!deferred && reason !== "overflow" && reason !== "idle" && compactionSettings.strategy === "handoff") {
+		// "overflow" and "incomplete" force inline execution because they are recovery
+		// paths the caller wants resolved before scheduling the next turn. "idle" is
+		// triggered by the idle loop and does its own scheduling.
+		if (!deferred && reason !== "overflow" && reason !== "incomplete" && reason !== "idle" && compactionSettings.strategy === "handoff") {
 			this.#schedulePostPromptTask(
 				async signal => {
 					await Promise.resolve();
@@ -6728,8 +6778,13 @@ export class AgentSession {
 			if (willRetry) {
 				const messages = this.agent.state.messages;
 				const lastMsg = messages[messages.length - 1];
-				if (lastMsg?.role === "assistant" && (lastMsg as AssistantMessage).stopReason === "error") {
-					this.agent.replaceMessages(messages.slice(0, -1));
+				if (lastMsg?.role === "assistant") {
+					const lastAssistant = lastMsg as AssistantMessage;
+					// Drop the prior turn if it was an error or an incomplete-length stop —
+					// both produce no actionable deliverable and should not be retried as-is.
+					if (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "length") {
+						this.agent.replaceMessages(messages.slice(0, -1));
+					}
 				}
 
 				this.#scheduleAgentContinue({ delayMs: 100, generation });
