@@ -6,8 +6,28 @@ const QUOTA_RESET_PATTERN = /reset after (?:(\d+)h)?(?:(\d+)m)?(\d+(?:\.\d+)?)s/
 const PLEASE_RETRY_PATTERN = /Please retry in ([0-9.]+)(ms|s)/i;
 // JSON field: "retryDelay": "34.074824224s"
 const RETRY_DELAY_FIELD_PATTERN = /"retryDelay":\s*"([0-9.]+)(ms|s)"/i;
-// "try again in 250ms" / "try again in 12s" / "try again in 12sec"
-const TRY_AGAIN_PATTERN = /try again in\s+(\d+(?:\.\d+)?)\s*(ms|s)(?:ec)?/i;
+// "try again in 250ms" / "try again in 12s" / "try again in 12sec" /
+// "try again in ~158 min" / "try again in 5 minutes" / "try again in 2 h" /
+// "try again in 1 hour" / "try again in 3 hours" / "try again in 30 mins"
+// Codex's `usage_limit_reached` text uses a leading `~` and minute/hour units;
+// the older `ms|s|sec` form is still on Anthropic's wire. The unit suffix is
+// matched longest-first so `min` does not silently capture as `m`.
+const TRY_AGAIN_PATTERN =
+	/try again in\s+~?\s*(\d+(?:\.\d+)?)\s*(minutes|minute|mins|min|hours|hour|hrs|hr|h|ms|sec|s)\b/i;
+const TRY_AGAIN_UNIT_MS: Record<string, number> = {
+	ms: 1,
+	s: 1000,
+	sec: 1000,
+	min: 60_000,
+	mins: 60_000,
+	minute: 60_000,
+	minutes: 60_000,
+	h: 60 * 60_000,
+	hr: 60 * 60_000,
+	hrs: 60 * 60_000,
+	hour: 60 * 60_000,
+	hours: 60 * 60_000,
+};
 
 /**
  * Server-suggested retry delay extraction. Merges the patterns historically used
@@ -63,13 +83,21 @@ export function extractRetryHint(source: Response | Headers | null | undefined, 
 			if (totalMs > 0) return totalMs;
 		}
 	}
-	for (const pattern of [PLEASE_RETRY_PATTERN, RETRY_DELAY_FIELD_PATTERN, TRY_AGAIN_PATTERN]) {
+	for (const pattern of [PLEASE_RETRY_PATTERN, RETRY_DELAY_FIELD_PATTERN]) {
 		const match = pattern.exec(body);
 		if (match?.[1]) {
 			const value = Number.parseFloat(match[1]);
 			if (Number.isFinite(value) && value > 0) {
 				return match[2]!.toLowerCase() === "ms" ? value : value * 1000;
 			}
+		}
+	}
+	const tryAgain = TRY_AGAIN_PATTERN.exec(body);
+	if (tryAgain?.[1] && tryAgain[2]) {
+		const value = Number.parseFloat(tryAgain[1]);
+		const unitMs = TRY_AGAIN_UNIT_MS[tryAgain[2].toLowerCase()];
+		if (Number.isFinite(value) && value > 0 && unitMs !== undefined) {
+			return value * unitMs;
 		}
 	}
 	return undefined;
