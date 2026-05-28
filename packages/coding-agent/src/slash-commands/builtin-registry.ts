@@ -160,6 +160,8 @@ type SkillsSettingsSnapshot = {
 	enableCodexUser: boolean;
 	enablePiUser: boolean;
 	enablePiProject: boolean;
+	enableLibraryUser: boolean;
+	enableLibraryProject: boolean;
 };
 
 function readSkillsSettingsSnapshot(sm: { get(path: SettingPath): unknown }): SkillsSettingsSnapshot {
@@ -170,6 +172,8 @@ function readSkillsSettingsSnapshot(sm: { get(path: SettingPath): unknown }): Sk
 		enableCodexUser: sm.get("skills.enableCodexUser" as SettingPath) as boolean,
 		enablePiUser: sm.get("skills.enablePiUser" as SettingPath) as boolean,
 		enablePiProject: sm.get("skills.enablePiProject" as SettingPath) as boolean,
+		enableLibraryUser: sm.get("skills.enableLibraryUser" as SettingPath) as boolean,
+		enableLibraryProject: sm.get("skills.enableLibraryProject" as SettingPath) as boolean,
 	};
 }
 
