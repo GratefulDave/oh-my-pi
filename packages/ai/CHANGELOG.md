@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 ### Added
+
+- Added `CheckCredentialsOptions.completionProbe` (and `completionTimeoutMs`) so `AuthStorage.checkCredentials` can additionally exercise each credential against the provider's chat-completion endpoint after refresh-on-expiry. Result lands on `CredentialHealthResult.completion` ({ok, reason?, modelId?, latencyMs?}) without disturbing the usage `ok` field. Public types: `CompletionProbe`, `CompletionProbeInput`, `CompletionProbeCredential`, `CredentialCompletionResult`. The probe is invoked even when no `UsageProvider` is registered for the row, and is skipped when OAuth refresh fails (the stale bytes would only mask the upstream failure).
+- Added Wafer Pass and Wafer Serverless providers (`wafer-pass`, `wafer-serverless`). OpenAI-compatible (`https://pass.wafer.ai/v1`), bearer auth, `wfr_…` keys. `/login wafer-pass` and `/login wafer-serverless` paste-and-validate the key against `/v1/models`. `WAFER_PASS_API_KEY` and `WAFER_SERVERLESS_API_KEY` environment variables wired into `getEnvApiKey`. Bundled catalog seeds `wafer-pass/{GLM-5.1, Qwen3.5-397B-A17B}` and `wafer-serverless/{GLM-5.1, Kimi-K2.6, Qwen3.5-397B-A17B, Qwen3.6-35B-A3B, qwen3.7-max, deepseek-v4-flash, deepseek-v4-pro}`; dynamic discovery via `/v1/models` overlays additional models at runtime. Pass-tier discovery filters `wafer.tier === "pass_included"`. Pass-SKU costs are seeded at `0` (flat-rate subscription, no per-token charge — matches `kimi-code`/`firepass`/`alibaba-coding-plan`). Serverless costs are the wafer.ai retail rate, derived from the `*_cents_per_million` envelope via `value × 125 / 10000` (e.g. GLM-5.1 `120` → $1.50/M, Kimi-K2.6 `88` → $1.10/M). Reasoning entries get a thinking compat picked from the `wafer.provider` envelope: `zai`/`moonshotai` → zai-style `thinking: { type }`, `qwen` → top-level `enable_thinking`, `deepseek` and unknown upstreams stay unset so `detectOpenAICompat` can pick `reasoning_effort` from the id pattern at request time.
+
+### Changed
+
+- Changed Anthropic prompt preparation to downscale image blocks over 2000px when a request includes 20+ images, reducing oversized payloads automatically
+- Changed OpenAI chat request parsing to accept `name` on `tool` messages and fall back to the matching assistant `tool_calls` name, so parsed tool results now carry a proper tool name when the wire omits it
+- Changed `checkCredentials` to skip running `completionProbe` when OAuth refresh fails, so stale bearer tokens are never probed and the refresh failure remains the returned `reason`
+- Changed completion reporting to return `completion: { ok: null, reason: ... }` when a credential has no usable bearer bytes instead of attempting the probe
+- Refactored `AuthStorage.checkCredentials` so OAuth refresh-on-expiry runs up-front and the refreshed credential is shared between the usage probe and the new completion probe; rows without a registered `UsageProvider` no longer short-circuit before the completion probe runs.
+
+### Fixed
+
+- Fixed DeepSeek DSML tool-call envelope leaks on Ollama Cloud and OpenAI-compatible streams by healing leaked envelopes into structured tool calls without displaying raw DSML markers. ([#1462](https://github.com/can1357/oh-my-pi/issues/1462))
+- Fixed auth-gateway to classify usage-limit messages such as `usage_limit_reached`, `resource_exhausted`, and Codex-style `Try again in ~X min` text as 429 `rate_limit_error` responses
+- Fixed auth-gateway usage-limit handling to honor parsed retry hints and switch to a sibling credential via `markUsageLimitReached` instead of invalidating the rate-limited credential
+- Fixed `streamSimple` to retry on usage-limit errors (including message-only error events) before any content is emitted, so `onAuthError` can rotate credentials automatically
+- Fixed auth-gateway error classification to extract embedded status codes and use word-boundary matching, so `GenerateContentRequest` and similar messages are no longer misreported as rate-limit errors
+- Fixed `checkCredentials` to handle `completionProbe` exceptions by recording the failure in `CredentialHealthResult.completion.reason` while still returning the usage probe result
+
+## [15.5.7] - 2026-05-27
+### Added
 - `SimpleStreamOptions.openrouterVariant` (`"nitro"`, `"floor"`, `"online"`, `"exacto"`, …) — when set, appends `:<variant>` to OpenRouter model IDs at request time, leaving ids that already carry an explicit `:suffix` untouched. Plumbed through `openai-completions` and the pi-native gateway forwarder.
 
 ## [15.5.3] - 2026-05-27
