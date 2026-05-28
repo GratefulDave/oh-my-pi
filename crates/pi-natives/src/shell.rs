@@ -51,6 +51,10 @@ pub struct MinimizerOptions {
 	pub ai_smart_enabled:     Option<bool>,
 	/// Provider key for the AI summarizer. Defaults to `"deepseek"`.
 	pub ai_smart_provider:    Option<String>,
+	/// Kill-switch to fall back to pre-PR legacy behavior for the
+	/// always-shrink filters (grep, find, pytest). When unset, defers to
+	/// the `OMP_MINIMIZER_LEGACY_FILTERS` env var; default `false`.
+	pub legacy_filters:       Option<bool>,
 }
 
 impl From<MinimizerOptions> for minimizer::MinimizerOptions {
@@ -65,6 +69,7 @@ impl From<MinimizerOptions> for minimizer::MinimizerOptions {
 			source_outline_level: value.source_outline_level,
 			ai_smart_enabled:     value.ai_smart_enabled,
 			ai_smart_provider:    value.ai_smart_provider,
+			legacy_filters:       value.legacy_filters,
 		}
 	}
 }

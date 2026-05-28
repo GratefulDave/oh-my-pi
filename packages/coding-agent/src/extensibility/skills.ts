@@ -107,6 +107,8 @@ export async function loadSkills(options: LoadSkillsOptions = {}): Promise<LoadS
 		enableClaudeProject = true,
 		enablePiUser = true,
 		enablePiProject = true,
+		enableLibraryUser = true,
+		enableLibraryProject = true,
 		customDirectories = [],
 		ignoredSkills = [],
 		includeSkills = [],
@@ -118,17 +120,42 @@ export async function loadSkills(options: LoadSkillsOptions = {}): Promise<LoadS
 		return { skills: [], warnings: [] };
 	}
 
+	// When ALL built-in toggles are explicitly false, treat that as "user wants nothing
+	// from built-in sources" and suppress providers that don't have their own dedicated
+	// toggle (claude-plugins, agents, opencode, codex:project). This preserves the
+	// existing "all sources disabled" invariant covered by skills.test.ts.
 	const anyBuiltInSkillSourceEnabled =
-		enableCodexUser || enableClaudeUser || enableClaudeProject || enablePiUser || enablePiProject;
-	// Helper to check if a source is enabled
+		enableCodexUser ||
+		enableClaudeUser ||
+		enableClaudeProject ||
+		enablePiUser ||
+		enablePiProject ||
+		enableLibraryUser ||
+		enableLibraryProject;
+
+	// Helper to check if a source is enabled. Each provider gets a deterministic
+	// gate so enumeration is consistent across loads regardless of provider
+	// registration order or unrelated toggles.
 	function isSourceEnabled(source: SourceMeta): boolean {
 		const { provider, level } = source;
-		if (provider === "codex" && level === "user") return enableCodexUser;
-		if (provider === "claude" && level === "user") return enableClaudeUser;
-		if (provider === "claude" && level === "project") return enableClaudeProject;
+		// Native (.omp) provider
 		if (provider === "native" && level === "user") return enablePiUser;
 		if (provider === "native" && level === "project") return enablePiProject;
-		// For other providers (agents, claude-plugins, etc.), treat them as built-in skill sources.
+		// Library hub provider
+		if (provider === "library" && level === "user") return enableLibraryUser;
+		if (provider === "library" && level === "project") return enableLibraryProject;
+		// Claude family (foreign — capability layer already gates on loadForeignConfig)
+		if (provider === "claude" && level === "user") return enableClaudeUser;
+		if (provider === "claude" && level === "project") return enableClaudeProject;
+		// Claude marketplace plugins share the claude toggles (foreign).
+		if (provider === "claude-plugins" && level === "user") return enableClaudeUser;
+		if (provider === "claude-plugins" && level === "project") return enableClaudeProject;
+		// Codex family (foreign). enableCodexUser gates both user and project skills
+		// because there is no dedicated project toggle in the schema today.
+		if (provider === "codex") return enableCodexUser;
+		// Other providers (agents, agents-md, opencode, gemini, etc.) follow the
+		// aggregate built-in toggle. They are NOT foreign-gated at capability
+		// level, so their visibility is decoupled from compatibility.loadForeignConfig.
 		return anyBuiltInSkillSourceEnabled;
 	}
 

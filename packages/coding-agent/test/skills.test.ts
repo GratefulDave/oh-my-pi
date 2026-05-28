@@ -139,6 +139,8 @@ describe("skills", () => {
 				enableClaudeProject: false,
 				enablePiUser: false,
 				enablePiProject: false,
+				enableLibraryUser: false,
+				enableLibraryProject: false,
 				customDirectories: [fixturesDir],
 			});
 			expect(skills.length).toBeGreaterThan(0);
@@ -153,6 +155,8 @@ describe("skills", () => {
 				enableClaudeProject: false,
 				enablePiUser: false,
 				enablePiProject: false,
+				enableLibraryUser: false,
+				enableLibraryProject: false,
 				customDirectories: [fixturesDir],
 			});
 
@@ -198,6 +202,8 @@ describe("skills", () => {
 				enableClaudeProject: false,
 				enablePiUser: false,
 				enablePiProject: false,
+				enableLibraryUser: false,
+				enableLibraryProject: false,
 				customDirectories: [fixturesDir],
 				ignoredSkills: ["valid-skill"],
 			});
@@ -211,6 +217,8 @@ describe("skills", () => {
 				enableClaudeProject: false,
 				enablePiUser: false,
 				enablePiProject: false,
+				enableLibraryUser: false,
+				enableLibraryProject: false,
 				customDirectories: [fixturesDir],
 				ignoredSkills: ["valid-*"],
 			});
@@ -255,6 +263,8 @@ enabled: false
 				enableClaudeProject: false,
 				enablePiUser: false,
 				enablePiProject: false,
+				enableLibraryUser: false,
+				enableLibraryProject: false,
 				customDirectories: [fixturesDir],
 				includeSkills: ["valid-*"],
 				ignoredSkills: ["valid-skill"],
@@ -312,6 +322,8 @@ description: Skill loaded from a tilde-expanded custom directory.
 				enableClaudeProject: false,
 				enablePiUser: false,
 				enablePiProject: false,
+				enableLibraryUser: false,
+				enableLibraryProject: false,
 			});
 			expect(skills).toHaveLength(0);
 		});
@@ -324,6 +336,8 @@ description: Skill loaded from a tilde-expanded custom directory.
 				enableClaudeProject: false,
 				enablePiUser: false,
 				enablePiProject: false,
+				enableLibraryUser: false,
+				enableLibraryProject: false,
 				customDirectories: [fixturesDir],
 			});
 			expect(allSkills.length).toBeGreaterThan(0);
@@ -335,6 +349,8 @@ description: Skill loaded from a tilde-expanded custom directory.
 				enableClaudeProject: false,
 				enablePiUser: false,
 				enablePiProject: false,
+				enableLibraryUser: false,
+				enableLibraryProject: false,
 				customDirectories: [fixturesDir],
 				includeSkills: ["valid-skill"],
 			});
@@ -349,6 +365,8 @@ description: Skill loaded from a tilde-expanded custom directory.
 				enableClaudeProject: false,
 				enablePiUser: false,
 				enablePiProject: false,
+				enableLibraryUser: false,
+				enableLibraryProject: false,
 				customDirectories: [fixturesDir],
 				includeSkills: ["valid-*"],
 			});
@@ -363,6 +381,8 @@ description: Skill loaded from a tilde-expanded custom directory.
 				enableClaudeProject: false,
 				enablePiUser: false,
 				enablePiProject: false,
+				enableLibraryUser: false,
+				enableLibraryProject: false,
 				customDirectories: [fixturesDir],
 				includeSkills: [],
 			});
@@ -372,6 +392,8 @@ description: Skill loaded from a tilde-expanded custom directory.
 				enableClaudeProject: false,
 				enablePiUser: false,
 				enablePiProject: false,
+				enableLibraryUser: false,
+				enableLibraryProject: false,
 				customDirectories: [fixturesDir],
 			});
 			expect(withEmpty.length).toBe(withoutOption.length);

@@ -4,12 +4,15 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import {
+	buildMinimizerGainDiagnostic,
 	buildMinimizerMissedRecord,
 	discoverMinimizerGain,
 	getMinimizerGainPath,
+	getMinimizerGainStatus,
 	loadMinimizerGainContext,
 	readMinimizerGain,
 	recordMinimizerGain,
+	resetMinimizerGainStatusForTesting,
 	resolveMinimizerGainCwd,
 	summarizeMinimizerGain,
 	summarizeMissedMinimizerGain,
@@ -483,6 +486,189 @@ describe("minimizer gain analytics", () => {
 			kind: "missed",
 			inputBytes: 128,
 			outputBytes: 128,
+		});
+	});
+
+	// -------------------------------------------------------------------
+	// Diagnostic (gain-slash-remediation T3) + Shape α (T2)
+	// -------------------------------------------------------------------
+
+	describe("buildMinimizerGainDiagnostic", () => {
+		it("returns zeros for missing records file (empty state)", async () => {
+			await withTempAgentDir(async agentDir => {
+				resetMinimizerGainStatusForTesting();
+				const diag = await buildMinimizerGainDiagnostic({ agentDir });
+				expect(diag.recordCount).toBe(0);
+				expect(diag.recordCountInScope).toBe(0);
+				expect(diag.mostRecentTimestamp).toBeNull();
+				expect(diag.recentMissedRatio).toBeNull();
+				expect(diag.avgSavedRatio).toBeNull();
+				expect(diag.exists).toBe(false);
+				expect(diag.minimizerAppearsInactive).toBe(false);
+				// ENOENT is not counted as a read error.
+				expect(getMinimizerGainStatus().readErrorCount).toBe(0);
+			});
+		});
+
+		it("counts saved + missed and computes avgSavedRatio in [0,1]", async () => {
+			await withTempAgentDir(async agentDir => {
+				resetMinimizerGainStatusForTesting();
+				await recordMinimizerGain(
+					{
+						timestamp: "2026-05-20T00:00:00.000Z",
+						cwd: "/repo",
+						command: "git status",
+						filter: "git",
+						inputBytes: 1000,
+						outputBytes: 250,
+						savedBytes: 750,
+						exitCode: 0,
+					},
+					{ agentDir },
+				);
+				await recordMinimizerGain(
+					{
+						timestamp: "2026-05-20T00:01:00.000Z",
+						cwd: "/repo",
+						command: "cargo test",
+						filter: "missed",
+						inputBytes: 2000,
+						outputBytes: 2000,
+						savedBytes: 0,
+						exitCode: 0,
+						kind: "missed",
+					},
+					{ agentDir },
+				);
+				const diag = await buildMinimizerGainDiagnostic({ agentDir });
+				expect(diag.recordCount).toBe(2);
+				expect(diag.savedCount).toBe(1);
+				expect(diag.missedCount).toBe(1);
+				expect(diag.mostRecentTimestamp).toBe("2026-05-20T00:01:00.000Z");
+				expect(diag.avgSavedRatio).toBeCloseTo(0.75, 2);
+				expect(diag.avgSavedRatio!).toBeGreaterThanOrEqual(0);
+				expect(diag.avgSavedRatio!).toBeLessThanOrEqual(1);
+				expect(diag.distinctCwdsCount).toBe(1);
+			});
+		});
+
+		it("marks minimizer inactive when recentMissedRatio crosses threshold", async () => {
+			await withTempAgentDir(async agentDir => {
+				resetMinimizerGainStatusForTesting();
+				for (let i = 0; i < 50; i++) {
+					await recordMinimizerGain(
+						{
+							timestamp: `2026-05-20T00:${i.toString().padStart(2, "0")}:00.000Z`,
+							cwd: "/repo",
+							command: "x",
+							filter: "missed",
+							inputBytes: 100,
+							outputBytes: 100,
+							savedBytes: 0,
+							exitCode: 0,
+							kind: "missed",
+						},
+						{ agentDir },
+					);
+				}
+				const diag = await buildMinimizerGainDiagnostic({ agentDir });
+				expect(diag.recentMissedRatio).toBe(1);
+				expect(diag.minimizerAppearsInactive).toBe(true);
+			});
+		});
+
+		it("caps distinctCwdsSample at 10", async () => {
+			await withTempAgentDir(async agentDir => {
+				resetMinimizerGainStatusForTesting();
+				for (let i = 0; i < 12; i++) {
+					await recordMinimizerGain(
+						{
+							timestamp: "2026-05-20T00:00:00.000Z",
+							cwd: `/repo-${i}`,
+							command: "x",
+							filter: "x",
+							inputBytes: 10,
+							outputBytes: 5,
+							savedBytes: 5,
+							exitCode: 0,
+						},
+						{ agentDir },
+					);
+				}
+				const diag = await buildMinimizerGainDiagnostic({ agentDir });
+				expect(diag.distinctCwdsCount).toBe(12);
+				expect(diag.distinctCwdsSample.length).toBe(10);
+			});
+		});
+
+		it("tolerates legacy records without kind field", async () => {
+			await withTempAgentDir(async agentDir => {
+				resetMinimizerGainStatusForTesting();
+				const filePath = getMinimizerGainPath(agentDir);
+				await fs.mkdir(path.dirname(filePath), { recursive: true });
+				await fs.writeFile(
+					filePath,
+					JSON.stringify({
+						timestamp: "2026-05-20T00:00:00.000Z",
+						cwd: "/repo",
+						command: "git status",
+						filter: "git",
+						inputBytes: 1000,
+						outputBytes: 250,
+						savedBytes: 750,
+						exitCode: 0,
+					}) + "\n",
+				);
+				const diag = await buildMinimizerGainDiagnostic({ agentDir });
+				expect(diag.recordCount).toBe(1);
+				expect(diag.savedCount).toBe(1);
+				expect(diag.missedCount).toBe(0);
+			});
+		});
+
+		it("surfaces parse errors via Shape α counters", async () => {
+			await withTempAgentDir(async agentDir => {
+				resetMinimizerGainStatusForTesting();
+				const filePath = getMinimizerGainPath(agentDir);
+				await fs.mkdir(path.dirname(filePath), { recursive: true });
+				await fs.writeFile(filePath, "not json\n");
+				const diag = await buildMinimizerGainDiagnostic({ agentDir });
+				expect(diag.parseErrorCount).toBeGreaterThan(0);
+				expect(diag.lastParseError).not.toBeNull();
+				expect(diag.lastParseError!.lineNumber).toBe(1);
+			});
+		});
+
+		it("surfaces write errors via Shape α counters", async () => {
+			resetMinimizerGainStatusForTesting();
+			// Force a write error by providing an unwritable agentDir path
+			// (a regular file used as a directory). This triggers fs.mkdir
+			// or fs.appendFile to fail.
+			const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "omp-gain-werr-"));
+			const blocker = path.join(tmp, "blocker");
+			await fs.writeFile(blocker, "x");
+			try {
+				await recordMinimizerGain(
+					{
+						timestamp: "2026-05-20T00:00:00.000Z",
+						cwd: "/repo",
+						command: "git",
+						filter: "git",
+						inputBytes: 10,
+						outputBytes: 5,
+						savedBytes: 5,
+						exitCode: 0,
+					},
+					// Use the blocker file as agentDir — it's a file, not a
+					// directory, so mkdir-as-target fails with ENOTDIR.
+					{ agentDir: blocker },
+				);
+				const status = getMinimizerGainStatus();
+				expect(status.writeErrorCount).toBeGreaterThan(0);
+				expect(status.lastWriteError).not.toBeNull();
+			} finally {
+				await fs.rm(tmp, { recursive: true, force: true });
+			}
 		});
 	});
 });

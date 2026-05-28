@@ -2,8 +2,10 @@ import * as path from "node:path";
 import { APP_NAME, formatNumber } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
 import {
+	buildMinimizerGainDiagnostic,
 	discoverMinimizerGain,
 	getMinimizerGainPath,
+	type MinimizerGainDiagnostic,
 	type MinimizerGainDiscovery,
 	type MinimizerGainRecord,
 	type MinimizerGainSummary,
@@ -21,9 +23,10 @@ export interface GainCommandArgs {
 	all: boolean;
 	discover: boolean;
 	missed: boolean;
+	diag: boolean;
 }
 
-type OutputMode = "json" | "missed" | "discover" | "summary";
+type OutputMode = "json" | "missed" | "discover" | "summary" | "diag" | "diag-json";
 
 type GainRow = {
 	commands: number;
@@ -45,7 +48,82 @@ type GainContext = {
 
 export async function runGainCommand(cmd: GainCommandArgs): Promise<void> {
 	validateDays(cmd.days);
-	writeGainOutput(selectOutputMode(cmd), await loadGainContext(cmd));
+	const mode = selectOutputMode(cmd);
+	if (mode === "diag" || mode === "diag-json") {
+		const cwd = await resolveCwdScope(cmd);
+		const diagnostic = await buildMinimizerGainDiagnostic({
+			cwd,
+			days: cmd.days,
+		});
+		writeDiagnosticOutput(mode, diagnostic);
+		exitCodeForDiagnostic(diagnostic);
+		return;
+	}
+	writeGainOutput(mode, await loadGainContext(cmd));
+}
+
+function exitCodeForDiagnostic(diag: MinimizerGainDiagnostic): void {
+	if (
+		diag.writeErrorCount > 0 ||
+		diag.readErrorCount > 0 ||
+		!diag.minimizerEnabled ||
+		!diag.nativeBindingLoaded
+	) {
+		process.exit(1);
+	}
+}
+
+function writeDiagnosticOutput(mode: "diag" | "diag-json", diagnostic: MinimizerGainDiagnostic): void {
+	if (mode === "diag-json") {
+		process.stdout.write(`${JSON.stringify(diagnostic, null, 2)}\n`);
+		return;
+	}
+	process.stdout.write(chalk.bold(`\n=== ${APP_NAME} Minimizer Gain — Diagnostic ===\n\n`));
+	process.stdout.write(`  Records File: ${diagnostic.recordsFilePath}\n`);
+	process.stdout.write(`  Exists: ${diagnostic.exists}\n`);
+	process.stdout.write(`  File Size: ${formatNumber(diagnostic.fileSizeBytes)} bytes\n`);
+	process.stdout.write(`  mtime: ${diagnostic.mtime ?? "-"}\n`);
+	process.stdout.write(`  Record Count (file-wide): ${formatNumber(diagnostic.recordCount)}\n`);
+	process.stdout.write(`  Record Count (in scope): ${formatNumber(diagnostic.recordCountInScope)}\n`);
+	process.stdout.write(`  Saved Records: ${formatNumber(diagnostic.savedCount)}\n`);
+	process.stdout.write(`  Missed Records: ${formatNumber(diagnostic.missedCount)}\n`);
+	process.stdout.write(`  Most Recent Timestamp: ${diagnostic.mostRecentTimestamp ?? "-"}\n`);
+	process.stdout.write(
+		`  Recent Missed Ratio (last 50): ${diagnostic.recentMissedRatio === null ? "-" : diagnostic.recentMissedRatio.toFixed(3)}\n`,
+	);
+	process.stdout.write(`  Minimizer Appears Inactive: ${diagnostic.minimizerAppearsInactive}\n`);
+	process.stdout.write(
+		`  Avg Saved Ratio: ${diagnostic.avgSavedRatio === null ? "-" : diagnostic.avgSavedRatio.toFixed(3)}\n`,
+	);
+	process.stdout.write(`  Load Duration: ${diagnostic.loadDurationMs}ms\n`);
+	process.stdout.write(`  Write Errors: ${diagnostic.writeErrorCount}\n`);
+	if (diagnostic.lastWriteError) {
+		process.stdout.write(
+			`    last: ${diagnostic.lastWriteError.error} @ ${diagnostic.lastWriteError.at}\n`,
+		);
+	}
+	process.stdout.write(`  Read Errors: ${diagnostic.readErrorCount}\n`);
+	if (diagnostic.lastReadError) {
+		process.stdout.write(
+			`    last: ${diagnostic.lastReadError.error} @ ${diagnostic.lastReadError.at}\n`,
+		);
+	}
+	process.stdout.write(`  Parse Errors: ${diagnostic.parseErrorCount}\n`);
+	if (diagnostic.lastParseError) {
+		process.stdout.write(
+			`    last: ${diagnostic.lastParseError.error} (line ${diagnostic.lastParseError.lineNumber}) @ ${diagnostic.lastParseError.at}\n`,
+		);
+	}
+	process.stdout.write(`  Minimizer Enabled: ${diagnostic.minimizerEnabled}\n`);
+	process.stdout.write(`  Native Binding Loaded: ${diagnostic.nativeBindingLoaded}\n`);
+	process.stdout.write(`  CWD Filter: ${diagnostic.cwdFilter ?? "(all)"}\n`);
+	process.stdout.write(`  Distinct CWDs Seen: ${formatNumber(diagnostic.distinctCwdsCount)}\n`);
+	if (diagnostic.distinctCwdsSample.length > 0) {
+		process.stdout.write(`  Distinct CWDs Sample:\n`);
+		for (const cwd of diagnostic.distinctCwdsSample) {
+			process.stdout.write(`    ${cwd}\n`);
+		}
+	}
 }
 function validateDays(days: number): void {
 	if (Number.isInteger(days) && days >= 1) return;
@@ -54,6 +132,7 @@ function validateDays(days: number): void {
 }
 
 function selectOutputMode(cmd: GainCommandArgs): OutputMode {
+	if (cmd.diag) return cmd.json ? "diag-json" : "diag";
 	if (cmd.json) return "json";
 	if (cmd.missed) return "missed";
 	if (cmd.discover) return "discover";
@@ -73,6 +152,11 @@ function writeGainOutput(mode: OutputMode, context: GainContext): void {
 			break;
 		case "missed":
 			printMissedSummary(context);
+			break;
+		case "diag":
+		case "diag-json":
+			// Handled before writeGainOutput in runGainCommand; this arm
+			// exists only to keep the exhaustiveness check happy.
 			break;
 	}
 }

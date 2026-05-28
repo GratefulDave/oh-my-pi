@@ -6,14 +6,27 @@ use crate::minimizer::{MinimizerCtx, MinimizerOutput, config::OutlineLevel, prim
 
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	let cleaned = primitives::strip_ansi(input);
+	let legacy = ctx.config.legacy_filters_active();
 	let text = if exit_code != 0 {
 		cleaned
 	} else {
 		match ctx.program {
-			"grep" | "rg" => compact_grep_output(&cleaned),
+			"grep" | "rg" => {
+				if legacy {
+					compact_grep_output_legacy(&cleaned)
+				} else {
+					compact_grep_output(&cleaned)
+				}
+			},
 			"ls" => compact_ls_output(&cleaned).unwrap_or_else(|| compact_listing_output(&cleaned)),
 			"tree" => compact_listing_output(&cleaned),
-			"find" => compact_find_output(&cleaned),
+			"find" => {
+				if legacy {
+					compact_find_output_legacy(&cleaned)
+				} else {
+					compact_find_output(&cleaned)
+				}
+			},
 			"cat" | "read" => compact_cat_output(ctx, &cleaned),
 			"stat" | "du" | "df" | "wc" => compact_summary_output(&cleaned),
 			"jq" | "json" => cleaned,
@@ -36,7 +49,10 @@ struct GrepMatch {
 	text: String,
 }
 
-fn compact_grep_output(input: &str) -> String {
+/// Legacy pre-PR behavior for grep/rg output: passthrough when
+/// `match_count <= 12 && grouped.len() <= 3` (or no recognized matches).
+/// Retained for the `legacy_filters_active` kill-switch.
+fn compact_grep_output_legacy(input: &str) -> String {
 	let mut grouped: BTreeMap<String, Vec<GrepMatch>> = BTreeMap::new();
 	let mut ungrouped = Vec::new();
 
@@ -56,10 +72,41 @@ fn compact_grep_output(input: &str) -> String {
 		return primitives::group_by_file(input, 12);
 	}
 
+	compact_grep_grouped(&grouped, &ungrouped, match_count)
+}
+
+fn compact_grep_output(input: &str) -> String {
+	let mut grouped: BTreeMap<String, Vec<GrepMatch>> = BTreeMap::new();
+	let mut ungrouped = Vec::new();
+
+	for line in input.lines() {
+		if let Some((file, line_no, text)) = split_grep_line(line) {
+			grouped
+				.entry(file.to_string())
+				.or_default()
+				.push(GrepMatch { line_no: line_no.to_string(), text: collapse_match_text(text) });
+		} else if !line.trim().is_empty() {
+			ungrouped.push(line.to_string());
+		}
+	}
+
+	let match_count: usize = grouped.values().map(Vec::len).sum();
+	if grouped.is_empty() {
+		return primitives::group_by_file(input, 12);
+	}
+
+	compact_grep_grouped(&grouped, &ungrouped, match_count)
+}
+
+fn compact_grep_grouped(
+	grouped: &BTreeMap<String, Vec<GrepMatch>>,
+	ungrouped: &[String],
+	match_count: usize,
+) -> String {
 	let mut out = format!("grep: {match_count} matches in {} files\n", grouped.len());
 	let mut shown_matches = 0usize;
 	let mut shown_files = 0usize;
-	for (file, matches) in &grouped {
+	for (file, matches) in grouped {
 		if shown_files >= 12 {
 			break;
 		}
@@ -96,7 +143,7 @@ fn compact_grep_output(input: &str) -> String {
 		out.push_str(" omitted\n");
 	}
 	for line in ungrouped {
-		out.push_str(&line);
+		out.push_str(line);
 		out.push('\n');
 	}
 	out
@@ -203,7 +250,9 @@ fn collapse_parenthesized_segment(text: &str, min_len: usize) -> String {
 	out
 }
 
-fn compact_find_output(input: &str) -> String {
+/// Legacy pre-PR behavior for find output: passthrough when `paths.len() <= 20`.
+/// Retained for the `legacy_filters_active` kill-switch.
+fn compact_find_output_legacy(input: &str) -> String {
 	let paths: Vec<&str> = input
 		.lines()
 		.filter(|line| !line.trim().is_empty())
@@ -211,10 +260,24 @@ fn compact_find_output(input: &str) -> String {
 	if paths.len() <= 20 {
 		return input.to_string();
 	}
+	compact_find_output_inner(input, &paths)
+}
 
+fn compact_find_output(input: &str) -> String {
+	let paths: Vec<&str> = input
+		.lines()
+		.filter(|line| !line.trim().is_empty())
+		.collect();
+	if paths.is_empty() {
+		return input.to_string();
+	}
+	compact_find_output_inner(input, &paths)
+}
+
+fn compact_find_output_inner(input: &str, paths: &[&str]) -> String {
 	let mut grouped: BTreeMap<String, Vec<String>> = BTreeMap::new();
 	let mut skipped_noise = 0usize;
-	for raw in &paths {
+	for raw in paths {
 		let normalized = normalize_listing_path(raw);
 		if normalized.is_empty() {
 			continue;
@@ -1027,12 +1090,19 @@ mod tests {
 		MinimizerCtx { program, subcommand: None, command, config: cfg }
 	}
 
+	// migrated for always-group: see T1a (minimizer-filter-remediation).
+	// Previously asserted passthrough-style `group_by_file` output. The
+	// Tier 1 unconditional grouping path now produces the `grep: N matches
+	// in M files` header even for small inputs.
 	#[test]
 	fn groups_grep_by_file() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = ctx("rg", &cfg);
 		let out = filter(&ctx, "a.rs:1:foo\na.rs:2:bar\n", 0);
-		assert_eq!(out.text, "a.rs:\n  1:foo\n  2:bar\n");
+		assert!(out.text.starts_with("grep: 2 matches in 1 files"), "{:?}", out.text);
+		assert!(out.text.contains("a.rs:"));
+		assert!(out.text.contains("1: foo"));
+		assert!(out.text.contains("2: bar"));
 	}
 
 	#[test]
@@ -1363,5 +1433,153 @@ mod tests {
 		assert!(!out.text.contains('\x1b'));
 		// signature retained without dangling backtick from template body
 		assert!(!out.text.contains("template"));
+	}
+
+	// ---------------------------------------------------------------
+	// Tier 1: always-group grep/find tests (minimizer-filter-remediation)
+	// ---------------------------------------------------------------
+
+	fn legacy_cfg() -> MinimizerConfig {
+		let mut cfg = MinimizerConfig::default();
+		cfg.enabled = true;
+		cfg.legacy_filters_active = true;
+		cfg
+	}
+
+	fn synthesize_grep(matches_per_file: usize, files: usize) -> String {
+		let mut out = String::new();
+		for f in 0..files {
+			for m in 0..matches_per_file {
+				out.push_str(&format!(
+					"src/module{f}/file{f}.rs:{ln}:    pub fn handler_{f}_{m}(req: Request) -> Result<Response, AppError> {{ /* body */ }}\n",
+					ln = m * 7 + 1,
+					f = f,
+					m = m,
+				));
+			}
+		}
+		out
+	}
+
+	fn synthesize_find_paths(per_dir: usize, dirs: usize) -> String {
+		let mut out = String::new();
+		for d in 0..dirs {
+			for f in 0..per_dir {
+				out.push_str(&format!(
+					"./crates/pi-shell/src/minimizer/filters/category{d}/handler_{f}_with_descriptive_name.rs\n",
+				));
+			}
+		}
+		out
+	}
+
+	fn ratio(input: &str, output: &str) -> f64 {
+		1.0 - (output.len() as f64 / input.len() as f64)
+	}
+
+	#[test]
+	fn grep_small_1m1f_always_groups() {
+		// 1 match in 1 file. Pre-PR: passthrough. Post: grouped header.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("grep", &cfg);
+		let input = synthesize_grep(1, 1);
+		let out = filter(&ctx, &input, 0);
+		assert!(out.text.contains("grep: 1 matches in 1 files"));
+	}
+
+	#[test]
+	fn grep_medium_3m1f_always_groups() {
+		// 3 matches in 1 file. Pre-PR: passthrough (was within thresholds).
+		// Post: grouped header.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("grep", &cfg);
+		let input = synthesize_grep(3, 1);
+		let out = filter(&ctx, &input, 0);
+		assert!(
+			out.text.contains("grep: 3 matches in 1 files"),
+			"expected always-group header, got: {}",
+			out.text
+		);
+	}
+
+	#[test]
+	fn grep_large_100m10f_savedratio_threshold() {
+		// 100 matches × 10 files: pre-existing grouping path. SavedRatio
+		// must be substantial (≥0.50 from m3 acceptance; we assert ≥0.50).
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("grep", &cfg);
+		let input = synthesize_grep(10, 10);
+		let out = filter(&ctx, &input, 0);
+		assert!(out.text.starts_with("grep: 100 matches in 10 files"));
+		let r = ratio(&input, &out.text);
+		assert!(r >= 0.50, "savedRatio={r}");
+	}
+
+	#[test]
+	fn find_shallow_5p1d_always_groups() {
+		// 5 paths in 1 dir. Pre-PR: passthrough. Post: grouped.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("find", &cfg);
+		let input = synthesize_find_paths(5, 1);
+		let out = filter(&ctx, &input, 0);
+		assert!(
+			out.text.contains("find: 5 paths in 1 dirs"),
+			"expected always-group header, got: {}",
+			out.text
+		);
+	}
+
+	#[test]
+	fn find_deep_50p8d_savedratio_threshold() {
+		// 50 paths × 8 dirs. Was already grouped pre-PR; regression guard
+		// + savedRatio threshold per m3 (≥0.60 deep fixture).
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("find", &cfg);
+		let input = synthesize_find_paths(50, 8);
+		let out = filter(&ctx, &input, 0);
+		assert!(out.text.starts_with("find: 400 paths in 8 dirs"));
+		let r = ratio(&input, &out.text);
+		assert!(r >= 0.60, "savedRatio={r}");
+	}
+
+	#[test]
+	fn find_wide_200p1d_grouped() {
+		// 200 paths in 1 dir. Was already grouped pre-PR.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("find", &cfg);
+		let input = synthesize_find_paths(200, 1);
+		let out = filter(&ctx, &input, 0);
+		assert!(out.text.starts_with("find: 200 paths in 1 dirs"));
+	}
+
+	#[test]
+	fn grep_legacy_filters_active_passes_through_small_input() {
+		// Kill-switch parity (M2): with legacy_filters_active=true, the
+		// pre-PR "small input passthrough" path is preserved byte-for-byte.
+		let cfg = legacy_cfg();
+		let ctx = ctx("grep", &cfg);
+		let input = synthesize_grep(2, 1);
+		let out = filter(&ctx, &input, 0);
+		// Legacy path: group_by_file primitive style for inputs at/below
+		// 12 matches × 3 files. Compare against direct invocation.
+		let expected = compact_grep_output_legacy(&primitives::strip_ansi(&input));
+		assert_eq!(out.text, expected);
+		assert!(
+			!out.text.starts_with("grep: 2 matches"),
+			"legacy path must NOT emit always-group header"
+		);
+	}
+
+	#[test]
+	fn find_legacy_filters_active_passes_through_under_threshold() {
+		// Kill-switch parity (M2): legacy_filters_active=true reverts to
+		// the pre-PR `paths.len() <= 20` passthrough.
+		let cfg = legacy_cfg();
+		let ctx = ctx("find", &cfg);
+		let input = synthesize_find_paths(5, 1);
+		let out = filter(&ctx, &input, 0);
+		// Legacy: small input passes through unchanged.
+		assert_eq!(out.text, input);
+		assert!(!out.changed);
 	}
 }

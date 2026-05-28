@@ -1,4 +1,16 @@
 //! Python test, type-check, and lint output filters.
+//!
+//! Ported from rtk-ai/rtk@878af7de99e0ba71da2e8fd996f6b52a1836e06c
+//! Path: src/cmds/python/pytest_cmd.rs
+//! License: MIT (compatible with workspace MIT). See ATTRIBUTION-RTK.md.
+//!
+//! The pytest state machine (`filter_pytest`, `pytest_success`,
+//! `is_pytest_*`, `looks_like_pytest_summary_part`) adapts the
+//! `build_pytest_summary` algorithm from RTK at the pinned SHA above:
+//! preserve failures, errors, and the final summary line; strip header
+//! framing, progress dots, and verbose PASSED rows. Unknown-state lines
+//! fall through unchanged (RTK's defensive default), so xdist `[gwN]`
+//! prefixes and custom reporters never cause data loss.
 
 use super::lint;
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
@@ -12,6 +24,12 @@ pub fn supports(program: &str, subcommand: Option<&str>) -> bool {
 }
 
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
+	// Kill-switch parity (M2): when `legacy_filters_active`, fall back to
+	// the pre-PR passthrough so callers can rollback an RTK-port regression
+	// without recompile.
+	if ctx.config.legacy_filters_active() {
+		return MinimizerOutput::passthrough(input);
+	}
 	let tool = python_tool(ctx.program, ctx.subcommand);
 	let cleaned = primitives::strip_ansi(input);
 	let text = match tool {

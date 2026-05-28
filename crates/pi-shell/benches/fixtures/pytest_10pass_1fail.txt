@@ -1,0 +1,46 @@
+============================= test session starts =============================
+platform darwin -- Python 3.12.0, pytest-8.0.0, pluggy-1.4.0
+rootdir: /repo
+collected 11 items
+
+tests/test_module_a.py ........... [ 90%]
+tests/test_module_b.py F          [100%]
+
+=================================== FAILURES ===================================
+___________________________ test_module_b.test_fail ___________________________
+
+def test_fail():
+>       assert 1 == 2
+E       assert 1 == 2
+
+tests/test_module_b.py:4: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_module_b.py::test_fail - assert 1 == 2
+========================= 1 failed, 10 passed in 0.12s =========================
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor
+# noise line for padding to meet 2 KB fixture floor

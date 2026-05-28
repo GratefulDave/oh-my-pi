@@ -45,7 +45,7 @@ import { buildContextSummary, buildExternalOrchestrationReport, runExternalAgent
 
 import { resolveMemoryBackend } from "../memory-backend";
 import type { MinimizerGainContext } from "../minimizer-gain";
-import { discoverMinimizerGain, loadMinimizerGainContext } from "../minimizer-gain";
+import { buildMinimizerGainDiagnostic, discoverMinimizerGain, loadMinimizerGainContext } from "../minimizer-gain";
 import { ExternalOrchestrationMonitorComponent } from "../modes/components/external-orchestration-monitor";
 import { type DualContext, MinimizerGainOverlayComponent } from "../modes/components/minimizer-gain-overlay";
 import type { SkillsSkillToggle, SkillsSourceToggle } from "../modes/components/skills-overlay";
@@ -160,6 +160,8 @@ type SkillsSettingsSnapshot = {
 	enableCodexUser: boolean;
 	enablePiUser: boolean;
 	enablePiProject: boolean;
+	enableLibraryUser: boolean;
+	enableLibraryProject: boolean;
 };
 
 function readSkillsSettingsSnapshot(sm: { get(path: SettingPath): unknown }): SkillsSettingsSnapshot {
@@ -170,6 +172,8 @@ function readSkillsSettingsSnapshot(sm: { get(path: SettingPath): unknown }): Sk
 		enableCodexUser: sm.get("skills.enableCodexUser" as SettingPath) as boolean,
 		enablePiUser: sm.get("skills.enablePiUser" as SettingPath) as boolean,
 		enablePiProject: sm.get("skills.enablePiProject" as SettingPath) as boolean,
+		enableLibraryUser: sm.get("skills.enableLibraryUser" as SettingPath) as boolean,
+		enableLibraryProject: sm.get("skills.enableLibraryProject" as SettingPath) as boolean,
 	};
 }
 
@@ -290,9 +294,19 @@ function buildGainDiscoverLines(context: MinimizerGainContext): string[] {
 
 async function showGainOverlay(runtime: TuiSlashCommandRuntime, initialScope: 0 | 1 = 0, days?: number): Promise<void> {
 	const cwd = runtime.ctx.sessionManager.getCwd();
+	const buildDiagnosticForCwd = async (
+		scopeCwd: string | undefined,
+	): Promise<DualContext["diagnostic"]> => {
+		try {
+			return await buildMinimizerGainDiagnostic({ cwd: scopeCwd, days });
+		} catch (err) {
+			return { buildError: err instanceof Error ? err.message : String(err) };
+		}
+	};
 	const dualContext: DualContext = {
 		current: await loadMinimizerGainContext({ cwd, all: false, days }),
 		all: await loadMinimizerGainContext({ cwd, all: true, days }),
+		diagnostic: await buildDiagnosticForCwd(initialScope === 0 ? cwd : undefined),
 	};
 	runtime.ctx.editor.setText("");
 	void runtime.ctx
@@ -305,6 +319,7 @@ async function showGainOverlay(runtime: TuiSlashCommandRuntime, initialScope: 0 
 					async () => ({
 						current: await loadMinimizerGainContext({ cwd, all: false, days }),
 						all: await loadMinimizerGainContext({ cwd, all: true, days }),
+						diagnostic: await buildDiagnosticForCwd(initialScope === 0 ? cwd : undefined),
 					}),
 					initialScope,
 				),
@@ -2345,11 +2360,12 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 						provider: "native",
 					},
 				];
-				const skills: SkillsSkillToggle[] = state.skills.map(skill => ({
-					name: skill.name,
-					source: `${skill._source?.providerName ?? "?"} (${skill._source?.level ?? "?"})`,
-					enabled: !disabledSkillNames.has(skill.name),
-				}));
+				// `/skills` overlay shows provider toggles only.
+				// Per-skill enable/disable lives elsewhere: slash discovery
+				// (/<name>) and the `library on/off` CLI. Avoid duplicating
+				// the picker inside the provider-config dialog.
+				const skills: SkillsSkillToggle[] = [];
+				void state; // skills list intentionally unused here
 				return { sources, skills };
 			};
 

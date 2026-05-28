@@ -2616,6 +2616,10 @@ export const SETTINGS_SCHEMA = {
 
 	"skills.enablePiProject": { type: "boolean", default: true },
 
+	"skills.enableLibraryUser": { type: "boolean", default: true },
+
+	"skills.enableLibraryProject": { type: "boolean", default: true },
+
 	"skills.customDirectories": { type: "array", default: [] as string[] },
 
 	"skills.ignoredSkills": { type: "array", default: [] as string[] },
@@ -3074,6 +3078,8 @@ export interface SkillsSettings {
 	enableClaudeProject?: boolean;
 	enablePiUser?: boolean;
 	enablePiProject?: boolean;
+	enableLibraryUser?: boolean;
+	enableLibraryProject?: boolean;
 	customDirectories?: string[];
 	ignoredSkills?: string[];
 	includeSkills?: string[];
