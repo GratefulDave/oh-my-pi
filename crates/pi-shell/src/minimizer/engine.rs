@@ -89,8 +89,8 @@ pub fn apply(
 	// combined output is a correctness bug.
 	match plan::analyze(command) {
 		plan::CommandPlan::Single { .. } => {},
-		plan::CommandPlan::Chain { .. } => {
-			return MinimizerOutput::passthrough(captured).labeled("compound");
+		plan::CommandPlan::Chain { segments } => {
+			return apply_chain(command, &segments, captured, exit_code, config);
 		},
 		plan::CommandPlan::Piped => {
 			return MinimizerOutput::passthrough(captured).labeled("piped");
@@ -152,6 +152,82 @@ fn apply_ai_smart_overlay(
 		let _ = (identity, command, captured, config);
 		output
 	}
+}
+
+
+/// Apply the per-segment dispatch path for a `Chain { segments }` plan.
+///
+/// The FFI whole-buffer entry point sees the entire chain's captured stdout
+/// (interleaved across segments) — we cannot split it per-segment. Instead we
+/// recurse into a single filter chosen heuristically (Mode α resolution from
+/// T0-OBSERVATION):
+///
+/// 1. If every segment program is `git`/`yadm`, treat the chain as one big git
+///    invocation and route through the git filter. Captures the dominant
+///    real-data pattern (`git A && git B && git C` chains).
+/// 2. Otherwise route through the first segment's filter when that filter is
+///    supported. This recovers bytes when the first segment dominates the
+///    captured output.
+/// 3. Kill-switch parity (M2): if `legacy_filters_active` is set, return
+///    passthrough.labeled("compound") regardless of segment shape so callers
+///    can rollback this change without recompile.
+fn apply_chain(
+	command: &str,
+	segments: &[plan::ChainSegment],
+	captured: &str,
+	exit_code: i32,
+	config: &MinimizerConfig,
+) -> MinimizerOutput {
+	if config.legacy_filters_active() {
+		return MinimizerOutput::passthrough(captured).labeled("compound");
+	}
+
+	// (d) git-only chain: route through the git filter using the first
+	// segment's subcommand as the routing key. The git filter requires
+	// a concrete subcommand (status/diff/log/...) so we cannot dispatch
+	// with `subcommand=None` here — fall back to chain-first when no
+	// dispatchable subcommand is detected.
+	if !segments.is_empty()
+		&& segments
+			.iter()
+			.all(|seg| matches!(seg.program.as_str(), "git" | "yadm"))
+		&& config.is_program_enabled("git")
+		&& let Some(identity) = detect::detect(&segments[0].command)
+		&& filters::supports(&identity.program, identity.subcommand.as_deref())
+	{
+		let subcommand = identity.subcommand.as_deref();
+		let ctx = MinimizerCtx { program: &identity.program, subcommand, command, config };
+		let out = match catch_unwind(AssertUnwindSafe(|| filters::filter(&ctx, captured, exit_code))) {
+			Ok(out) => out,
+			Err(_) => MinimizerOutput::passthrough(captured),
+		};
+		return ensure_success_visible(out.labeled("chain-git"), exit_code).with_original(captured);
+	}
+
+	// (b) Mixed chain: recurse into the first segment's filter when supported.
+	if let Some(first) = segments.first()
+		&& let Some(identity) = detect::detect(&first.command)
+	{
+		let subcommand = identity.subcommand.as_deref();
+		if config.is_program_enabled(&identity.program)
+			&& filters::supports(&identity.program, subcommand)
+		{
+			let ctx = MinimizerCtx {
+				program: &identity.program,
+				subcommand,
+				command,
+				config,
+			};
+			let out = match catch_unwind(AssertUnwindSafe(|| filters::filter(&ctx, captured, exit_code)))
+			{
+				Ok(out) => out,
+				Err(_) => MinimizerOutput::passthrough(captured),
+			};
+			return ensure_success_visible(out.labeled("chain-first"), exit_code).with_original(captured);
+		}
+	}
+
+	MinimizerOutput::passthrough(captured).labeled("compound")
 }
 
 
@@ -575,7 +651,11 @@ strip_lines_matching = [".*"]
 	}
 
 	#[test]
-	fn segmented_chain_supported_command_is_passthrough_without_unknown_record() {
+	fn segmented_chain_supported_command_does_not_record_unknown() {
+		// Phase 7 (Mode α resolution): supported chains route through
+		// filters::dispatch via the chain decomposer instead of falling
+		// back to passthrough. The unknown-command counter must remain
+		// stable — the chain entry point is structurally known.
 		reset_unknown_command_count();
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let input = "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n";
@@ -584,9 +664,10 @@ strip_lines_matching = [".*"]
 		assert_eq!(mode_for("git diff ; printf done", &cfg), MinimizerMode::SegmentedChain);
 		let out = apply("git diff ; printf done", input, 0, &cfg);
 
-		assert!(!out.changed);
-		assert_eq!(out.text, input);
-		assert_eq!(out.filter, "compound");
+		// First segment is `git diff`, second is `printf`. Not all-git, so
+		// route via chain-first (git filter on the captured diff).
+		assert!(out.changed, "git-led chain should be rewritten by chain-first dispatch");
+		assert_eq!(out.filter, "chain-first");
 		assert_eq!(unknown_command_count(), before);
 	}
 
@@ -619,6 +700,60 @@ strip_lines_matching = [".*"]
 		assert_eq!(gtest.filter, "gtest");
 		assert!(!gtest.text.contains("Foo.Pass"));
 		assert!(gtest.text.contains("foo_test.cc:42: Failure"));
+	}
+
+	#[test]
+	fn git_only_chain_routes_through_git_filter() {
+		// Phase 7 (Mode α resolution): `git A && git B` chains route through
+		// the git filter on the whole captured buffer.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let command = "git status && git log -1";
+		let input = "## main\n M file.rs\n";
+		let out = apply(command, input, 0, &cfg);
+		assert!(out.changed, "git-only chain should be rewritten by the git filter");
+		assert_eq!(out.filter, "chain-git");
+		assert!(
+			out.text.contains("unstaged 1") || out.text.contains("OK"),
+			"chain-git output should resemble git filter output: {:?}",
+			out.text
+		);
+	}
+
+	#[test]
+	fn mixed_chain_routes_through_first_program() {
+		// Phase 7: a chain whose first segment is git routes through the git
+		// filter even when later segments are unrelated. The captured buffer
+		// is interleaved, but routing via the dominant first segment still
+		// recovers bytes most of the time.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let command = "git status && ls -la";
+		let input = "## main\n M file.rs\n";
+		let out = apply(command, input, 0, &cfg);
+		assert!(out.changed);
+		assert_eq!(out.filter, "chain-first");
+	}
+
+	#[test]
+	fn unsupported_first_segment_chain_is_passthrough() {
+		// Phase 7: chains whose first segment has no filter fall back to
+		// passthrough labeled "compound" (preserves legacy behavior).
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let out = apply("zzzobscure && zzznever", "noise\n", 0, &cfg);
+		assert!(!out.changed);
+		assert_eq!(out.filter, "compound");
+	}
+
+	#[test]
+	fn chain_legacy_filters_active_passes_through() {
+		// Phase 7 kill-switch parity (M2): legacy_filters_active=true returns
+		// passthrough.labeled("compound") regardless of segment shape.
+		let mut cfg = MinimizerConfig::default();
+		cfg.enabled = true;
+		cfg.legacy_filters_active = true;
+		let input = "## main\n M file.rs\n";
+		let out = apply("git status && git log -1", input, 0, &cfg);
+		assert!(!out.changed);
+		assert_eq!(out.filter, "compound");
 	}
 }
 
