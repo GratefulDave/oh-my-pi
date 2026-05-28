@@ -3,7 +3,6 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
-	type ApplyOptions,
 	applyEdits,
 	buildCompactDiffPreview as buildCompactHashlineDiffPreview,
 	detectLineEnding,
@@ -38,9 +37,8 @@ import {
 function applyHashlineEdits(
 	text: string,
 	edits: readonly Edit[],
-	options: ApplyOptions = {},
 ): { text: string; lines: string; firstChangedLine?: number; warnings?: string[] } {
-	const r = applyEdits(text, [...edits], options);
+	const r = applyEdits(text, [...edits]);
 	return { ...r, lines: r.text };
 }
 
@@ -67,14 +65,12 @@ function tryRecoverHashlineWithCache(args: {
 	currentText: string;
 	fileHash: string;
 	edits: readonly Edit[];
-	options?: ApplyOptions;
 }): { text: string; lines: string; firstChangedLine: number | undefined; warnings: string[] } | null {
 	const recovered = new Recovery(args.cache).tryRecover({
 		path: args.absolutePath,
 		currentText: args.currentText,
 		fileHash: args.fileHash,
 		edits: args.edits,
-		options: args.options,
 	});
 	return recovered ? { ...recovered, lines: recovered.text } : null;
 }
@@ -455,7 +451,7 @@ describe("hashline parser — suffix-op syntax", () => {
 			{ kind: "insert", cursor: { kind: "before_anchor", anchor: upAnchor }, text: "", lineNum: 1, index: 0 },
 		]);
 		expect(parseHashline(`${tag(1, "aaa")}↓`).edits).toEqual([
-			{ kind: "insert", cursor: { kind: "after_anchor", anchor: upAnchor }, text: "", lineNum: 1, index: 0 },
+			{ kind: "insert", cursor: { kind: "before_anchor", anchor: { line: 2 } }, text: "", lineNum: 1, index: 0 },
 		]);
 	});
 
@@ -601,7 +597,9 @@ it("preflights write policy for every section before committing a batch", async 
 		extra("BBB"),
 	].join("\n");
 
-	await expect(new Patcher({ fs: fixture }).apply(Patch.parse(input))).rejects.toThrow(/blocked write: b\.ts/);
+	await expect(new Patcher({ fs: fixture, snapshots: new FileReadCache() }).apply(Patch.parse(input))).rejects.toThrow(
+		/blocked write: b\.ts/,
+	);
 	expect(fixture.get("a.ts")).toBe("aaa\n");
 	expect(fixture.get("b.ts")).toBe("bbb\n");
 });
@@ -985,10 +983,10 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 		const snap = cache.head(fakePath);
 		expect(snap).not.toBeNull();
 		// Old entries dropped; only the divergent record's entries remain.
-		expect(snap?.lines.has(1)).toBe(false);
-		expect(snap?.lines.has(2)).toBe(false);
-		expect(snap?.lines.get(4)).toBe("D-CHANGED");
-		expect(snap?.lines.get(7)).toBe("g");
+		expect(snap?.get(1)).toBeUndefined();
+		expect(snap?.get(2)).toBeUndefined();
+		expect(snap?.get(4)).toBe("D-CHANGED");
+		expect(snap?.get(7)).toBe("g");
 	});
 
 	it("evicts old paths past the per-session LRU cap", () => {
