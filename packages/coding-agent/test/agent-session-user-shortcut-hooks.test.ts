@@ -177,4 +177,21 @@ describe("AgentSession user shortcut hooks", () => {
 			session.messages.some(message => message.role === "pythonExecution" && message.excludeFromContext === false),
 		).toBe(true);
 	});
+
+	it("shares Python state between eval and user shortcut execution", async () => {
+		createSession();
+		const evalSessionId = session.getEvalSessionId();
+		if (!evalSessionId) throw new Error("Expected eval session ID");
+
+		await pythonExecutor.executePython("shared_value = 123", {
+			cwd: tempDir.path(),
+			sessionId: `python:${evalSessionId}`,
+			kernelMode: "session",
+		});
+
+		const result = await session.executePython("print(shared_value)");
+
+		expect(result.exitCode).toBe(0);
+		expect(result.output.trim()).toBe("123");
+	});
 });
