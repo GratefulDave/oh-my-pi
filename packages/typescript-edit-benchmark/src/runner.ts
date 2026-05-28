@@ -9,7 +9,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentMessage, ResolvedThinkingLevel, ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { Model } from "@oh-my-pi/pi-ai";
-import { computeFileHash, formatSessionDumpText, RpcClient } from "@oh-my-pi/pi-coding-agent";
+import { InMemorySnapshotStore } from "@oh-my-pi/hashline";
+import { formatSessionDumpText, RpcClient } from "@oh-my-pi/pi-coding-agent";
 import { prompt } from "@oh-my-pi/pi-utils";
 import { diffLines } from "diff";
 import { formatDirectory } from "./formatter";
@@ -602,7 +603,8 @@ function buildGuidedHashlinePatch(file: string, actual: string, expected: string
 	flush();
 
 	if (ops.length === 0) return null;
-	const header = `¶${file}#${computeFileHash(actual)}`;
+	const tag = new InMemorySnapshotStore().recordContiguous(file, 1, actual.split("\n"), { fullText: actual });
+	const header = `¶${file}#${tag}`;
 	return `${header}\n${ops.join("\n")}`;
 }
 

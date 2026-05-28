@@ -31,6 +31,7 @@
 		"@babel/traverse": "catalog:",
 		"@babel/types": "catalog:",
 		"@oh-my-pi/pi-agent-core": "catalog:",
+		"@oh-my-pi/hashline": "workspace:*",
 		"@oh-my-pi/pi-coding-agent": "catalog:",
 		"@oh-my-pi/pi-utils": "catalog:",
 		"diff": "catalog:",
