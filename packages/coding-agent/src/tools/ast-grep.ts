@@ -267,9 +267,7 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 					fileMatchCounts.set(relativePath, (fileMatchCounts.get(relativePath) ?? 0) + 1);
 				}
 				if (hashContext && cacheEntries.length > 0) {
-					getFileSnapshotStore(this.session).recordSparse(hashContext.absolutePath, cacheEntries, {
-						fileHash: hashContext.fileHash,
-					});
+					getFileSnapshotStore(this.session).recordSparse(hashContext.absolutePath, cacheEntries);
 				}
 				return { model: modelOut, display: displayOut };
 			};
