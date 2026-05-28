@@ -25,6 +25,7 @@ import { processFileArguments } from "./cli/file-processor";
 import { buildInitialMessage } from "./cli/initial-message";
 import { runListModelsCommand } from "./cli/list-models";
 import { selectSession } from "./cli/session-picker";
+import { EventLoopKeepalive } from "@oh-my-pi/pi-agent-core/utils/yield";
 import { findConfigFile } from "./config";
 import { ModelRegistry, ModelsConfigFile } from "./config/model-registry";
 import { resolveCliModel, resolveModelRoleValue, resolveModelScope, type ScopedModel } from "./config/model-resolver";
@@ -336,6 +337,7 @@ async function runInteractiveMode(
 		}
 	}
 
+	using _keepalive = new EventLoopKeepalive();
 	while (true) {
 		const input = await mode.getUserInput();
 		await submitInteractiveInput(mode, session, input);

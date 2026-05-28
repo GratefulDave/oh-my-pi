@@ -22,6 +22,7 @@ import {
 	type ToolResultMessage,
 } from "@oh-my-pi/pi-ai";
 import { agentLoop, agentLoopContinue } from "./agent-loop";
+import { EventLoopKeepalive } from "./utils/yield";
 import type { HarmonyAuditEvent } from "./harmony-leak";
 import type {
 	AgentContext,
@@ -843,6 +844,7 @@ export class Agent {
 
 		let skipInitialSteeringPoll = options?.skipInitialSteeringPoll === true;
 
+		using _ = new EventLoopKeepalive();
 		const { promise, resolve } = Promise.withResolvers<void>();
 		this.#runningPrompt = promise;
 		this.#resolveRunningPrompt = resolve;
