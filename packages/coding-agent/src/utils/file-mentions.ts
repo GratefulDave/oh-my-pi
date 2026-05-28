@@ -7,7 +7,7 @@
  */
 import * as fs from "node:fs/promises";
 import path from "node:path";
-import { computeFileHash, formatHashlineHeader, formatNumberedLines } from "@oh-my-pi/hashline";
+import { formatHashlineHeader, formatNumberedLines, InMemorySnapshotStore } from "@oh-my-pi/hashline";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { glob } from "@oh-my-pi/pi-natives";
@@ -355,8 +355,10 @@ export async function generateFileMentionMessages(
 
 			const content = await Bun.file(absolutePath).text();
 			let { output, lineCount } = buildTextOutput(content);
+			// Ephemeral store: file-mention hashline tags are display-only and not patch-resolvable (matches prior shim behavior). Resolvable @-mention anchoring tracked as a follow-up.
 			if (options?.useHashLines) {
-				output = `${formatHashlineHeader(resolvedPath, computeFileHash(content))}\n${formatNumberedLines(output)}`;
+				const fileHash = new InMemorySnapshotStore().recordContiguous(resolvedPath, 1, content.split("\n"), { fullText: content });
+				output = `${formatHashlineHeader(resolvedPath, fileHash)}\n${formatNumberedLines(output)}`;
 			}
 			files.push({ path: resolvedPath, content: output, lineCount });
 		} catch {
