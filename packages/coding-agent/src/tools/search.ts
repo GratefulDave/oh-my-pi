@@ -1,7 +1,7 @@
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { computeFileHash, formatHashlineHeader } from "@oh-my-pi/hashline";
+import { formatHashlineHeader } from "@oh-my-pi/hashline";
 import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
 import { type GrepMatch, GrepOutputMode, type GrepResult, grep } from "@oh-my-pi/pi-natives";
 import type { Component } from "@oh-my-pi/pi-tui";
@@ -616,7 +616,12 @@ export class SearchTool implements AgentTool<typeof searchSchema, SearchToolDeta
 						if (immutableSourcePaths.has(absoluteFilePath)) continue;
 						try {
 							const fullText = await Bun.file(absoluteFilePath).text();
-							const fileHash = computeFileHash(fullText);
+							const fileHash = getFileSnapshotStore(this.session).recordContiguous(
+								absoluteFilePath,
+								1,
+								fullText.split("\n"),
+								{ fullText },
+							);
 							hashContexts.set(relativePath, { absolutePath: absoluteFilePath, fileHash });
 						} catch {
 							// Best-effort: if the file disappeared between grep and render, fall back to plain line output.
@@ -670,9 +675,7 @@ export class SearchTool implements AgentTool<typeof searchSchema, SearchToolDeta
 						fileMatchCounts.set(relativePath, (fileMatchCounts.get(relativePath) ?? 0) + 1);
 					}
 					if (cacheEntries.length > 0 && hashContext) {
-						getFileSnapshotStore(this.session).recordSparse(hashContext.absolutePath, cacheEntries, {
-							fileHash: hashContext.fileHash,
-						});
+						getFileSnapshotStore(this.session).recordSparse(hashContext.absolutePath, cacheEntries);
 					}
 					return { model: modelOut, display: displayOut };
 				};
