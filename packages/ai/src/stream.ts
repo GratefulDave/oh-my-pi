@@ -708,7 +708,6 @@ function mapOptionsForApi<TApi extends Api>(
 		onPayload: options?.onPayload,
 		onResponse: options?.onResponse,
 		onSseEvent: options?.onSseEvent,
-		execHandlers: options?.execHandlers,
 	};
 
 	switch (model.api) {
