@@ -385,9 +385,8 @@ function buildHashlineNaturalOrderPreviews(
 			case "envelope-begin":
 			case "envelope-end":
 			case "abort":
-			case "op-insert":
-			case "op-replace":
-			case "op-delete":
+			case "op-block":
+			case "raw":
 				continue;
 			case "header":
 				currentPath = token.path;
@@ -397,9 +396,11 @@ function buildHashlineNaturalOrderPreviews(
 				if (!currentPath) continue;
 				ensure(currentPath).push("+");
 				continue;
-			case "payload":
+			case "payload-literal":
 				if (!currentPath) continue;
 				ensure(currentPath).push(`+${token.text}`);
+				continue;
+			case "payload-repeat":
 				continue;
 		}
 	}

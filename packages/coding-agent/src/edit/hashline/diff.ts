@@ -5,13 +5,16 @@
  * pair to {@link generateDiffString} so the renderer can show the diff
  * while the tool call is still streaming.
  *
- * Validation is intentionally light: only the section file hash is checked
- * (so the preview goes red when anchors are stale), no plan-mode guards
- * and no auto-generated-file refusal — those belong on the write path.
+ * Validation is intentionally light: no snapshot-tag verification (the
+ * preview path has no SnapshotStore — tags are opaque store pointers that
+ * the apply path verifies via Recovery), no plan-mode guards, and no
+ * auto-generated-file refusal — those belong on the write path.
+ *
+ * Migrated to the upstream v15.5.9 hashline API: `applyEdits(text, edits)`
+ * with no options object; `PatchSection.parse()` to lazily access edits.
  */
 import {
 	applyEdits,
-	computeFileHash,
 	Patch as HashlinePatch,
 	normalizeToLF,
 	type Patch,
@@ -22,7 +25,13 @@ import { resolveToCwd } from "../../tools/path-utils";
 import { generateDiffString } from "../diff";
 import { readEditFileText } from "../read-file";
 
+/**
+ * Preview-path options. Upstream v15.5.9 dropped `autoDropPureInsertDuplicates`
+ * from `applyEdits`; the field is kept here so call sites in `streaming.ts`
+ * remain source-compatible during the consumer-migration window.
+ */
 export interface HashlineDiffOptions {
+	/** @deprecated Removed upstream in v15.5.9; ignored by the preview path. */
 	autoDropPureInsertDuplicates?: boolean;
 }
 
@@ -35,34 +44,19 @@ async function readSectionText(absolutePath: string, sectionPath: string): Promi
 	}
 }
 
-function hasAnchorScoped(section: PatchSection): boolean {
-	return section.hasAnchorScopedEdit;
-}
-
-function validateSectionHash(section: PatchSection, text: string): string | null {
-	if (section.fileHash === undefined) {
-		return hasAnchorScoped(section)
-			? `Missing hashline file hash for anchored edit to ${section.path}; use \`¶${section.path}#hash\` from your latest read.`
-			: null;
-	}
-	const currentHash = computeFileHash(text);
-	if (currentHash === section.fileHash) return null;
-	return `Hashline file hash mismatch for ${section.path}: section is bound to #${section.fileHash}, but current file hashes to #${currentHash}; re-read and try again.`;
-}
-
 export async function computeHashlineSectionDiff(
 	section: PatchSection,
 	cwd: string,
-	options: HashlineDiffOptions = {},
+	_options: HashlineDiffOptions = {},
 ): Promise<{ diff: string; firstChangedLine: number | undefined } | { error: string }> {
 	try {
 		const absolutePath = resolveToCwd(section.path, cwd);
 		const rawContent = await readSectionText(absolutePath, section.path);
 		const { text: content } = stripBom(rawContent);
 		const normalized = normalizeToLF(content);
-		const hashError = validateSectionHash(section, normalized);
-		if (hashError) return { error: hashError };
-		const result = applyEdits(normalized, [...section.edits], options);
+		const { edits, warnings } = section.parse();
+		if (warnings.length > 0) return { error: warnings.join("\n") };
+		const result = applyEdits(normalized, [...edits]);
 		if (normalized === result.text) return { error: `No changes would be made to ${section.path}.` };
 		return generateDiffString(normalized, result.text);
 	} catch (err) {

@@ -38,12 +38,6 @@ export interface ExecuteHashlineSingleOptions {
 	beginDeferredDiagnosticsForPath: (path: string) => WritethroughDeferredHandle;
 }
 
-function getHashlineApplyOptions(session: ToolSession): { autoDropPureInsertDuplicates: boolean } {
-	return {
-		autoDropPureInsertDuplicates: session.settings.get("edit.hashlineAutoDropPureInsertDuplicates"),
-	};
-}
-
 function noChangeDiagnostic(path: string): string {
 	return `Edits to ${path} resulted in no changes being made.`;
 }
@@ -135,8 +129,7 @@ export async function executeHashlineSingle(
 		batchRequest: options.batchRequest,
 	});
 	const snapshots = getFileSnapshotStore(options.session);
-	const applyOptions = getHashlineApplyOptions(options.session);
-	const patcher = new Patcher({ fs, snapshots, applyOptions });
+	const patcher = new Patcher({ fs, snapshots });
 
 	// Single-section fast path: prepare, commit, render.
 	if (patch.sections.length === 1) {
