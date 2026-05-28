@@ -131,6 +131,12 @@ export interface OpenAIResponsesOptions extends StreamOptions {
 	 * prompt_cache_key for prompt-cache routing).
 	 */
 	extraBody?: Record<string, unknown>;
+	/**
+	 * Stable prompt-cache key to use for this request. When set, takes
+	 * precedence over `sessionId` for cache routing. Allows side-channel
+	 * calls to pin a specific cache key without perturbing the session ID.
+	 */
+	promptCacheKey?: string;
 }
 
 const OPENAI_RESPONSES_PROVIDER_SESSION_STATE_PREFIX = "openai-responses:";
