@@ -105,6 +105,7 @@ import {
 	executePython as executePythonCommand,
 	type PythonResult,
 } from "../eval/py/executor";
+import { namespaceSessionId as namespacePythonSessionId } from "../eval/py";
 import { defaultEvalSessionId } from "../eval/session-id";
 import { type BashResult, executeBash as executeBashCommand } from "../exec/bash-executor";
 import { exportSessionToHtml } from "../export/html";
@@ -7438,7 +7439,7 @@ export class AgentSession {
 			const sessionId = this.getEvalSessionId();
 			const result = await executePythonCommand(code, {
 				cwd,
-				sessionId,
+				sessionId: namespacePythonSessionId(sessionId),
 				kernelOwnerId: this.#evalKernelOwnerId,
 				kernelMode: this.settings.get("python.kernelMode"),
 				onChunk,
