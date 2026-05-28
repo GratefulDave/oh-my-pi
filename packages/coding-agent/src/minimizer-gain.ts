@@ -2,6 +2,62 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { getAgentDir, logger } from "@oh-my-pi/pi-utils";
 
+// ----------------------------------------------------------------------------
+// Shape α — module-level error counters (gain-slash-remediation T2, M3 locked)
+// ----------------------------------------------------------------------------
+
+interface ErrorStamp {
+	error: string;
+	at: string;
+}
+
+interface ParseErrorStamp extends ErrorStamp {
+	lineNumber: number;
+}
+
+let writeErrorCount = 0;
+let readErrorCount = 0;
+let parseErrorCount = 0;
+let lastWriteError: ErrorStamp | null = null;
+let lastReadError: ErrorStamp | null = null;
+let lastParseError: ParseErrorStamp | null = null;
+
+export interface MinimizerGainStatus {
+	writeErrorCount: number;
+	readErrorCount: number;
+	parseErrorCount: number;
+	lastWriteError: ErrorStamp | null;
+	lastReadError: ErrorStamp | null;
+	lastParseError: ParseErrorStamp | null;
+}
+
+export function getMinimizerGainStatus(): MinimizerGainStatus {
+	return {
+		writeErrorCount,
+		readErrorCount,
+		parseErrorCount,
+		lastWriteError,
+		lastReadError,
+		lastParseError,
+	};
+}
+
+/** Test-only reset for Shape α counters. */
+export function resetMinimizerGainStatusForTesting(): void {
+	writeErrorCount = 0;
+	readErrorCount = 0;
+	parseErrorCount = 0;
+	lastWriteError = null;
+	lastReadError = null;
+	lastParseError = null;
+}
+
+/** Test-only / overlay write-side counter increment for the gain pipeline. */
+export function incrementMinimizerGainReadError(error: unknown): void {
+	readErrorCount += 1;
+	lastReadError = { error: String(error), at: new Date().toISOString() };
+}
+
 export type MinimizerGainKind = "saved" | "missed";
 
 export interface MinimizerGainRecord {
@@ -162,6 +218,8 @@ export async function recordMinimizerGain(
 		await fs.mkdir(path.dirname(filePath), { recursive: true });
 		await fs.appendFile(filePath, `${JSON.stringify(record)}\n`, "utf-8");
 	} catch (err) {
+		writeErrorCount += 1;
+		lastWriteError = { error: String(err), at: new Date().toISOString() };
 		logger.warn("Failed to record minimizer gain", { error: String(err) });
 	}
 }
@@ -194,12 +252,18 @@ export async function readMinimizerGain(options: ReadMinimizerGainOptions = {}):
 		const cutoff = resolveCutoff(options.sinceDays);
 		return content
 			.split("\n")
-			.map(parseMinimizerGainRecord)
+			.map((line, idx) => parseMinimizerGainRecord(line, idx + 1))
 			.filter(
 				(record): record is MinimizerGainRecord =>
 					record !== null && matchesGainFilters(record, options.cwd, cutoff),
 			);
-	} catch {
+	} catch (err) {
+		// Missing file (ENOENT) is the empty-state happy path; do not count
+		// it as a read error. Anything else is surfaced via Shape α.
+		if (!(err instanceof Error && "code" in err && (err as { code?: string }).code === "ENOENT")) {
+			readErrorCount += 1;
+			lastReadError = { error: String(err), at: new Date().toISOString() };
+		}
 		return [];
 	}
 }
@@ -326,9 +390,21 @@ function compareExitCodes(a: number | null, b: number | null): number {
 	return a - b;
 }
 
-function parseMinimizerGainRecord(line: string): MinimizerGainRecord | null {
+function parseMinimizerGainRecord(line: string, lineNumber = 0): MinimizerGainRecord | null {
+	// Empty lines (trailing newline after appendFile) are not errors.
+	if (line.trim() === "") return null;
 	const value = parseJsonObject(line);
-	return value ? parseRecordFields(value) : null;
+	if (!value) {
+		parseErrorCount += 1;
+		lastParseError = { error: "invalid JSON", lineNumber, at: new Date().toISOString() };
+		return null;
+	}
+	const record = parseRecordFields(value);
+	if (!record) {
+		parseErrorCount += 1;
+		lastParseError = { error: "missing required fields", lineNumber, at: new Date().toISOString() };
+	}
+	return record;
 }
 
 function parseRecordFields(value: JsonObject): MinimizerGainRecord | null {
@@ -482,4 +558,169 @@ function finalizeGroups<T extends MinimizerGainTotals>(groups: Map<string, T>): 
 
 function compareSavedBytesDesc<T extends MinimizerGainTotals>(a: T, b: T): number {
 	return b.savedBytes - a.savedBytes;
+}
+
+// ----------------------------------------------------------------------------
+// Diagnostic builder (gain-slash-remediation T3) — surfaces pipeline health
+// for the overlay Status tab and the `omp gain --diag` CLI flag.
+// ----------------------------------------------------------------------------
+
+export interface MinimizerGainDiagnostic {
+	recordsFilePath: string;
+	exists: boolean;
+	fileSizeBytes: number;
+	mtime: string | null;
+	recordCount: number;
+	recordCountInScope: number;
+	savedCount: number;
+	missedCount: number;
+	mostRecentTimestamp: string | null;
+	recentMissedRatio: number | null;
+	minimizerAppearsInactive: boolean;
+	avgSavedRatio: number | null;
+	loadDurationMs: number;
+	writeErrorCount: number;
+	lastWriteError: ErrorStamp | null;
+	readErrorCount: number;
+	lastReadError: ErrorStamp | null;
+	parseErrorCount: number;
+	lastParseError: ParseErrorStamp | null;
+	minimizerEnabled: boolean;
+	nativeBindingLoaded: boolean;
+	cwdFilter: string | null;
+	distinctCwdsCount: number;
+	distinctCwdsSample: string[];
+}
+
+export interface BuildMinimizerGainDiagnosticInput {
+	cwd?: string;
+	days?: number;
+	recordsFilePath?: string;
+	agentDir?: string;
+}
+
+const RECENT_MISSED_WINDOW = 50;
+const RECENT_MISSED_THRESHOLD = 0.98;
+const DISTINCT_CWD_SAMPLE_LIMIT = 10;
+
+export async function buildMinimizerGainDiagnostic(
+	input: BuildMinimizerGainDiagnosticInput = {},
+): Promise<MinimizerGainDiagnostic> {
+	const start = Date.now();
+	const recordsFilePath = input.recordsFilePath ?? getMinimizerGainPath(input.agentDir);
+
+	let exists = false;
+	let fileSizeBytes = 0;
+	let mtime: string | null = null;
+	try {
+		const stat = await fs.stat(recordsFilePath);
+		exists = true;
+		fileSizeBytes = stat.size;
+		mtime = stat.mtime.toISOString();
+	} catch (err) {
+		if (!(err instanceof Error && "code" in err && (err as { code?: string }).code === "ENOENT")) {
+			readErrorCount += 1;
+			lastReadError = { error: String(err), at: new Date().toISOString() };
+		}
+	}
+
+	// Read full file (filter-free) for the file-wide recordCount + distinct-
+	// cwd metrics; then apply scope-aware filters for *InScope counters.
+	const allRecords = exists
+		? await readMinimizerGain({ agentDir: input.agentDir })
+		: [];
+	const recordCount = allRecords.length;
+
+	const scopedRecords = await readMinimizerGain({
+		agentDir: input.agentDir,
+		cwd: input.cwd,
+		sinceDays: input.days,
+	});
+	const recordCountInScope = scopedRecords.length;
+
+	let savedCount = 0;
+	let missedCount = 0;
+	let savedSumInput = 0;
+	let savedSumSaved = 0;
+	let mostRecentTimestamp: string | null = null;
+	for (const r of scopedRecords) {
+		if (isSavingsRecord(r)) {
+			savedCount += 1;
+			savedSumInput += r.inputBytes;
+			savedSumSaved += r.savedBytes;
+		} else if (r.kind === "missed") {
+			missedCount += 1;
+		}
+		if (!mostRecentTimestamp || r.timestamp > mostRecentTimestamp) {
+			mostRecentTimestamp = r.timestamp;
+		}
+	}
+
+	const avgSavedRatio = savedCount > 0 && savedSumInput > 0 ? savedSumSaved / savedSumInput : null;
+
+	let recentMissedRatio: number | null = null;
+	if (scopedRecords.length >= RECENT_MISSED_WINDOW) {
+		const window = scopedRecords.slice(-RECENT_MISSED_WINDOW);
+		let s = 0;
+		let m = 0;
+		for (const r of window) {
+			if (isSavingsRecord(r)) s += 1;
+			else if (r.kind === "missed") m += 1;
+		}
+		const denom = s + m;
+		recentMissedRatio = denom === 0 ? null : m / denom;
+	}
+	const minimizerAppearsInactive =
+		recentMissedRatio !== null && recentMissedRatio >= RECENT_MISSED_THRESHOLD;
+
+	const distinctCwds = new Set<string>();
+	for (const r of allRecords) {
+		if (r.cwd) distinctCwds.add(r.cwd);
+	}
+	const distinctCwdsSample = [...distinctCwds].slice(0, DISTINCT_CWD_SAMPLE_LIMIT);
+
+	const cwdFilter = input.cwd ?? null;
+
+	const status = getMinimizerGainStatus();
+	const loadDurationMs = Date.now() - start;
+
+	// minimizerEnabled: we cannot directly inspect the settings group from
+	// this module without import cycles; surface a best-effort indicator
+	// based on whether the native binding is reachable (the binding is the
+	// gate the rest of the pipeline depends on).
+	let nativeBindingLoaded = false;
+	try {
+		const piNatives = await import("@oh-my-pi/pi-natives");
+		nativeBindingLoaded = typeof piNatives.applyShellMinimizer === "function";
+	} catch {
+		nativeBindingLoaded = false;
+	}
+	const minimizerEnabled = nativeBindingLoaded;
+
+	return {
+		recordsFilePath,
+		exists,
+		fileSizeBytes,
+		mtime,
+		recordCount,
+		recordCountInScope,
+		savedCount,
+		missedCount,
+		mostRecentTimestamp,
+		recentMissedRatio,
+		minimizerAppearsInactive,
+		avgSavedRatio,
+		loadDurationMs,
+		writeErrorCount: status.writeErrorCount,
+		lastWriteError: status.lastWriteError,
+		readErrorCount: status.readErrorCount,
+		lastReadError: status.lastReadError,
+		parseErrorCount: status.parseErrorCount,
+		lastParseError: status.lastParseError,
+		minimizerEnabled,
+		nativeBindingLoaded,
+		cwdFilter,
+		distinctCwdsCount: distinctCwds.size,
+		distinctCwdsSample,
+	};
 }

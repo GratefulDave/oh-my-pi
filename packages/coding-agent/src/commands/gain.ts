@@ -21,6 +21,11 @@ export default class Gain extends Command {
 			description: "Show largest unminimized shell outputs for filter prioritization",
 			default: false,
 		}),
+		diag: Flags.boolean({
+			description: "Output diagnostic info instead of analytics",
+			default: false,
+			exclusive: ["discover", "missed", "all"],
+		}),
 	};
 
 	async run(): Promise<void> {
@@ -32,6 +37,7 @@ export default class Gain extends Command {
 			all: flags.all,
 			discover: flags.discover,
 			missed: flags.missed,
+			diag: flags.diag,
 		};
 
 		await initTheme();

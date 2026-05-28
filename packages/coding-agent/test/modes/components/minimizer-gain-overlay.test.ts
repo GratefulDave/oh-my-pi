@@ -102,6 +102,10 @@ describe("MinimizerGainOverlayComponent", () => {
 
 		component.handleInput("s");
 		expect(render(component)).toContain("[ All ]");
+		// Tab cycle was Gain→Missed. Status tab added (Tier 1 plan T4)
+		// extends the cycle to Gain→Missed→Status→Gain. We're currently
+		// on Missed; two more Tabs lands us back on Gain.
+		component.handleInput("\t");
 		component.handleInput("\t");
 		expect(render(component)).toContain("Repositories");
 		component.handleInput("\x1b");
@@ -169,5 +173,61 @@ describe("MinimizerGainOverlayComponent", () => {
 		} finally {
 			component.dispose();
 		}
+	});
+
+	it("renders Status tab from diagnostic payload", () => {
+		const dual: DualContext = {
+			...makeDualContext(),
+			diagnostic: {
+				recordsFilePath: "/agent/minimizer-gain.jsonl",
+				exists: true,
+				fileSizeBytes: 12345,
+				mtime: "2026-05-28T00:00:00.000Z",
+				recordCount: 100,
+				recordCountInScope: 42,
+				savedCount: 30,
+				missedCount: 12,
+				mostRecentTimestamp: "2026-05-28T00:00:00.000Z",
+				recentMissedRatio: 0.25,
+				minimizerAppearsInactive: false,
+				avgSavedRatio: 0.85,
+				loadDurationMs: 7,
+				writeErrorCount: 0,
+				lastWriteError: null,
+				readErrorCount: 0,
+				lastReadError: null,
+				parseErrorCount: 0,
+				lastParseError: null,
+				minimizerEnabled: true,
+				nativeBindingLoaded: true,
+				cwdFilter: "/repo",
+				distinctCwdsCount: 3,
+				distinctCwdsSample: ["/repo", "/other"],
+			},
+		};
+		const component = new MinimizerGainOverlayComponent(dual, () => {}, () => {});
+		// Tab to Status (Gain→Missed→Status).
+		component.handleInput("\t");
+		component.handleInput("\t");
+		const output = render(component);
+		expect(output).toContain("Diagnostic");
+		expect(output).toContain("Records (file-wide): 100");
+		expect(output).toContain("Records (in scope): 42");
+		expect(output).toContain("Saved: 30");
+		expect(output).toContain("Missed: 12");
+		expect(output).toContain("Avg saved ratio: 0.850");
+		expect(output).toContain("Native binding loaded: true");
+	});
+
+	it("renders Status tab buildError sentinel", () => {
+		const dual: DualContext = {
+			...makeDualContext(),
+			diagnostic: { buildError: "stat ENOENT" },
+		};
+		const component = new MinimizerGainOverlayComponent(dual, () => {}, () => {});
+		component.handleInput("\t");
+		component.handleInput("\t");
+		const output = render(component);
+		expect(output).toContain("Diagnostic error: stat ENOENT");
 	});
 });

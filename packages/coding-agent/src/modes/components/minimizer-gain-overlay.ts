@@ -1,6 +1,10 @@
 import { type Component, matchesKey, replaceTabs, truncateToWidth } from "@oh-my-pi/pi-tui";
 import { formatNumber } from "@oh-my-pi/pi-utils";
-import type { MinimizerGainContext } from "../../minimizer-gain";
+import {
+	incrementMinimizerGainReadError,
+	type MinimizerGainContext,
+	type MinimizerGainDiagnostic,
+} from "../../minimizer-gain";
 import { shortenPath } from "../../tools/render-utils";
 import { theme } from "../theme/theme";
 
@@ -8,15 +12,21 @@ type LoadMinimizerGainContext = () => Promise<DualContext>;
 
 const REFRESH_INTERVAL_MS = 1000;
 
-const TABS = ["Gain", "Missed"] as const;
-type TabIndex = 0 | 1;
+const TABS = ["Gain", "Missed", "Status"] as const;
+type TabIndex = 0 | 1 | 2;
 
 const SCOPES = ["Current", "All"] as const;
 type ScopeIndex = 0 | 1;
 
+/** Sentinel injected into DualContext when buildMinimizerGainDiagnostic throws. */
+export interface DiagnosticErrorSentinel {
+	buildError: string;
+}
+
 interface DualContext {
 	current: MinimizerGainContext;
 	all: MinimizerGainContext;
+	diagnostic?: MinimizerGainDiagnostic | DiagnosticErrorSentinel;
 }
 
 function clean(text: string, width: number): string {
@@ -110,8 +120,10 @@ export class MinimizerGainOverlayComponent implements Component {
 			if (this.#disposed) return;
 			this.#dualContext = context;
 			this.#requestRender();
-		} catch {
-			// Keep rendering the last complete snapshot when best-effort analytics refresh fails.
+		} catch (err) {
+			// Surface refresh failure via Shape α so the Status tab + `omp gain --diag`
+			// reflect it; keep rendering the last complete snapshot for Gain/Missed.
+			incrementMinimizerGainReadError(err);
 		} finally {
 			this.#refreshing = false;
 		}
@@ -141,6 +153,69 @@ export class MinimizerGainOverlayComponent implements Component {
 		return this.#activeScopeIndex === 0 ? this.#dualContext.current : this.#dualContext.all;
 	}
 
+	#renderStatus(width: number): string[] {
+		const lines: string[] = [];
+		const diag = this.#dualContext.diagnostic;
+		if (!diag) {
+			lines.push(clean(theme.fg("dim", "  (diagnostic not loaded)"), width));
+			return lines;
+		}
+		if ("buildError" in diag) {
+			lines.push(clean(theme.fg("accent", `  Diagnostic error: ${diag.buildError}`), width));
+			return lines;
+		}
+		lines.push(clean(theme.fg("accent", theme.bold("Diagnostic")), width));
+		lines.push(clean(`  Records (file-wide): ${formatNumber(diag.recordCount)}`, width));
+		lines.push(clean(`  Records (in scope): ${formatNumber(diag.recordCountInScope)}`, width));
+		lines.push(clean(`  Saved: ${formatNumber(diag.savedCount)}  Missed: ${formatNumber(diag.missedCount)}`, width));
+		lines.push(clean(`  Most recent: ${diag.mostRecentTimestamp ?? "-"}`, width));
+		lines.push(
+			clean(
+				`  Avg saved ratio: ${diag.avgSavedRatio === null ? "-" : diag.avgSavedRatio.toFixed(3)}`,
+				width,
+			),
+		);
+		lines.push(
+			clean(
+				`  Recent missed ratio (last 50): ${diag.recentMissedRatio === null ? "-" : diag.recentMissedRatio.toFixed(3)}`,
+				width,
+			),
+		);
+		if (diag.minimizerAppearsInactive) {
+			lines.push(clean(theme.fg("accent", "  ⚠ Minimizer appears inactive"), width));
+		}
+		lines.push(clean(`  Load duration: ${diag.loadDurationMs}ms`, width));
+		lines.push(clean(`  File size: ${formatNumber(diag.fileSizeBytes)} bytes`, width));
+		lines.push(clean(`  Write errors: ${diag.writeErrorCount}`, width));
+		if (diag.lastWriteError) {
+			lines.push(clean(theme.fg("dim", `    last: ${diag.lastWriteError.error}`), width));
+		}
+		lines.push(clean(`  Read errors: ${diag.readErrorCount}`, width));
+		if (diag.lastReadError) {
+			lines.push(clean(theme.fg("dim", `    last: ${diag.lastReadError.error}`), width));
+		}
+		lines.push(clean(`  Parse errors: ${diag.parseErrorCount}`, width));
+		if (diag.lastParseError) {
+			lines.push(
+				clean(
+					theme.fg("dim", `    last: ${diag.lastParseError.error} (line ${diag.lastParseError.lineNumber})`),
+					width,
+				),
+			);
+		}
+		lines.push(clean(`  Minimizer enabled: ${diag.minimizerEnabled}`, width));
+		lines.push(clean(`  Native binding loaded: ${diag.nativeBindingLoaded}`, width));
+		lines.push(clean(`  CWD filter: ${diag.cwdFilter ?? "(all)"}`, width));
+		lines.push(clean(`  Distinct cwds: ${formatNumber(diag.distinctCwdsCount)}`, width));
+		if (diag.recordCountInScope === 0 && diag.distinctCwdsCount > 0) {
+			lines.push(clean(theme.fg("dim", "  (scope empty but file has records under other cwds)"), width));
+			for (const cwd of diag.distinctCwdsSample) {
+				lines.push(clean(theme.fg("dim", `    ${shortenPath(cwd)}`), width));
+			}
+		}
+		return lines;
+	}
+
 	render(width: number): string[] {
 		const contentWidth = Math.max(24, width - 2);
 		const lines: string[] = [];
@@ -157,7 +232,7 @@ export class MinimizerGainOverlayComponent implements Component {
 		);
 		lines.push(
 			clean(
-				`${formatTab("Gain", activeTab === "Gain")} ${theme.fg("dim", "│")} ${formatTab("Missed", activeTab === "Missed")}`,
+				`${formatTab("Gain", activeTab === "Gain")} ${theme.fg("dim", "│")} ${formatTab("Missed", activeTab === "Missed")} ${theme.fg("dim", "│")} ${formatTab("Status", activeTab === "Status")}`,
 				width,
 			),
 		);
@@ -169,6 +244,15 @@ export class MinimizerGainOverlayComponent implements Component {
 			),
 		);
 		lines.push("");
+
+		if (activeTab === "Status") {
+			lines.push(...this.#renderStatus(width));
+			lines.push("");
+			lines.push(clean(theme.fg("dim", "Tab · S switch scope · R refresh · Esc close"), width));
+			lines.push(clean(theme.fg("dim", `Path: ${shortenPath(context.path)}`), width));
+			lines.push(border(width));
+			return lines;
+		}
 
 		if (activeTab === "Gain") {
 			lines.push(clean(theme.fg("accent", theme.bold("Positive minimizer savings")), width));

@@ -9,7 +9,13 @@ import * as shellSnapshot from "@oh-my-pi/pi-coding-agent/utils/shell-snapshot";
 import type { Shell } from "@oh-my-pi/pi-natives";
 import * as piNatives from "@oh-my-pi/pi-natives";
 import { getAgentDir, setAgentDir } from "@oh-my-pi/pi-utils";
-import { readMinimizerGain, summarizeMinimizerGain } from "../src/minimizer-gain";
+import {
+	buildMinimizerGainDiagnostic,
+	getMinimizerGainStatus,
+	readMinimizerGain,
+	resetMinimizerGainStatusForTesting,
+	summarizeMinimizerGain,
+} from "../src/minimizer-gain";
 
 // Matches the schema default for `tools.artifactHeadBytes` (20 KB) used by
 // OutputSink when bash-executor pulls settings via resolveOutputSinkHeadBytes.
@@ -203,9 +209,41 @@ describe("executeBash", () => {
 				kind: "saved",
 			});
 			expect(record.savedBytes).toBeGreaterThan(0);
+
+			// gain-slash-remediation T6: diagnostic reflects the newly-written
+			// record's count and timestamp.
+			const diag = await buildMinimizerGainDiagnostic({
+				agentDir,
+				cwd: fs.realpathSync(tempDir),
+			});
+			expect(diag.recordCountInScope).toBeGreaterThanOrEqual(1);
+			expect(diag.mostRecentTimestamp).toBe(record.timestamp);
 		} finally {
 			setAgentDir(previousAgentDir);
 			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("surfaces a writeErrorCount via Shape α when the records file path is unwritable", async () => {
+		const previousAgentDir = getAgentDir();
+		resetMinimizerGainStatusForTesting();
+		// Point the gain logger at a regular file as if it were a directory,
+		// forcing fs.mkdir to fail with ENOTDIR. We use a tmp dir that
+		// contains a regular file at the expected agentDir target.
+		const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "omp-bash-werr-"));
+		const blocker = path.join(tmp, "blocker");
+		fs.writeFileSync(blocker, "x");
+		try {
+			setAgentDir(blocker);
+			// Issue a no-op command — the bash-executor path will attempt
+			// to record a gain entry and the write will fail.
+			await executeBash("printf done", { cwd: tempDir, timeout: 5000 });
+			const status = getMinimizerGainStatus();
+			expect(status.writeErrorCount).toBeGreaterThan(0);
+			expect(status.lastWriteError).not.toBeNull();
+		} finally {
+			setAgentDir(previousAgentDir);
+			fs.rmSync(tmp, { recursive: true, force: true });
 		}
 	});
 
