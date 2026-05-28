@@ -5,7 +5,6 @@ import * as path from "node:path";
 import {
 	adjustIndentation,
 	computeEditDiff,
-	computeFileHash,
 	computeHashlineDiff,
 	DEFAULT_FUZZY_THRESHOLD,
 	findMatch,
@@ -238,7 +237,9 @@ describe("computeHashlineDiff", () => {
 
 		// `1:` with the same line as payload is a true no-op: the edit
 		// fires through computeHashlineDiff but produces identical content.
-		const input = `¶${sourcePath}#${computeFileHash(`${line}\n`)}\n1:${line}\n`;
+		// The preview path parses the `#hash` tag structurally but never
+		// resolves it against a snapshot store, so any valid 3-hex tag works.
+		const input = `¶${sourcePath}#0A3\n1:${line}\n`;
 		const result = await computeHashlineDiff({ input }, tempDir);
 		expect("error" in result).toBe(true);
 		if ("error" in result) {
