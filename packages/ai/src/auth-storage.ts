@@ -3034,7 +3034,19 @@ export class AuthStorage {
 		return this.#extractStructuredApiKeyToken(apiKey) === credential.access;
 	}
 
-	async invalidateCredentialMatching(provider: string, apiKey: string, signal?: AbortSignal): Promise<boolean> {
+	async invalidateCredentialMatching(
+		provider: string,
+		apiKey: string,
+		signalOrOptions?: AbortSignal | { signal?: AbortSignal; sessionId?: string },
+	): Promise<boolean> {
+		// Accept either a bare `AbortSignal` (legacy callers) or an
+		// `{ signal, sessionId }` options bag (upstream b4238 shape). The
+		// `sessionId` is informational here — credential matching keys on the
+		// apiKey bytes themselves — but accepting it preserves call-site
+		// symmetry with `markUsageLimitReached(provider, sessionId, …)` and
+		// gives future hooks a place to thread session context if needed.
+		const signal =
+			signalOrOptions instanceof AbortSignal ? signalOrOptions : signalOrOptions?.signal;
 		const stored = this.#getStoredCredentials(provider);
 		let matchedId: number | undefined;
 		for (const entry of stored) {
