@@ -104,7 +104,7 @@ URL selectors are parsed separately in `packages/coding-agent/src/tools/fetch.ts
     - hashline numbered output when edit mode is hashline, read is not raw, source is mutable, edit tool exists, and `readHashLines !== false`
     - otherwise optional line numbers when `readLineNumbers === true`
     - raw mode suppresses both
-- Prefix format in hashline mode is a `¶PATH#HASH` header followed by `LINE:TEXT`, e.g. `¶src/foo.ts#1a2b` and `41:def alpha():`, from `computeFileHash()` / `formatNumberedLine()` in `packages/hashline/src/format.ts`.
+- Prefix format in hashline mode is a `¶PATH#HASH` header followed by `LINE:TEXT`, e.g. `¶src/foo.ts#1a2b` and `41:def alpha():`. The tag in the header is minted by `SnapshotStore.recordContiguous()` in `packages/hashline/src/snapshots.ts` and recorded in the session-scoped `InMemorySnapshotStore`; `formatNumberedLine()` in `packages/hashline/src/format.ts` formats the per-line `LINE:TEXT` prefix.
 - The `edit`/hashline path consumes that header plus bare line numbers later; immutable sources and `:raw` intentionally suppress them.
 
 ### Directory listings

@@ -141,4 +141,4 @@ The tool returns a single text block in `content[0].text` plus structured `detai
 - `hidden:true` is hard-coded in `search.ts`; there is no model-facing flag to exclude dotfiles.
 - `gitignore:false` only affects native directory traversal. It does not disable the tool's own path normalization or explicit-file handling.
 - When `paths` resolves to multiple exact files, `search.ts` does not apply the native `500` match cap and reports `totalMatches` internally as the post-skip length for that branch.
-- The section hash in hashline mode comes from `computeFileHash()` in `packages/hashline/src/format.ts`; `search` emits bare line numbers beneath it.
+- The section tag in hashline mode is minted by `SnapshotStore.recordSparse()` in `packages/hashline/src/snapshots.ts` and stored in the session-scoped `InMemorySnapshotStore`; `search` emits bare line numbers beneath it.
