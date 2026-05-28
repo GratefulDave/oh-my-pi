@@ -1,4 +1,3 @@
-import { once } from "@oh-my-pi/pi-utils";
 import type { ModelManagerOptions } from "../model-manager";
 import { fetchCodexModels } from "../utils/discovery/codex";
 
@@ -28,33 +27,6 @@ export function openaiCodexModelManagerOptions(
 			: undefined),
 	};
 }
-
-// ---------------------------------------------------------------------------
-// Cursor
-// ---------------------------------------------------------------------------
-
-export interface CursorModelManagerConfig {
-	apiKey?: string;
-	baseUrl?: string;
-	clientVersion?: string;
-}
-
-export function cursorModelManagerOptions(config: CursorModelManagerConfig = {}): ModelManagerOptions<"cursor-agent"> {
-	const { apiKey, baseUrl, clientVersion } = config;
-	return {
-		providerId: "cursor",
-		...(apiKey
-			? {
-					fetchDynamicModels: async () => {
-						const { fetchCursorUsableModels } = await cursorDiscovery();
-						return fetchCursorUsableModels({ apiKey, baseUrl, clientVersion });
-					},
-				}
-			: undefined),
-	};
-}
-
-const cursorDiscovery = once(() => import("../utils/discovery/cursor"));
 
 // ---------------------------------------------------------------------------
 // Zai

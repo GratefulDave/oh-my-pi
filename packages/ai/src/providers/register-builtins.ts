@@ -25,7 +25,6 @@ import { getStreamFirstEventTimeoutMs, getStreamIdleTimeoutMs, iterateWithIdleTi
 import type { BedrockOptions } from "./amazon-bedrock";
 import type { AnthropicOptions } from "./anthropic";
 import type { AzureOpenAIResponsesOptions } from "./azure-openai-responses";
-import type { CursorOptions } from "./cursor";
 import type { GoogleOptions } from "./google";
 import type { GoogleGeminiCliOptions } from "./google-gemini-cli";
 import type { GoogleVertexOptions } from "./google-vertex";
@@ -114,14 +113,6 @@ interface OllamaProviderModule {
 	) => AssistantMessageEventStream;
 }
 
-interface CursorProviderModule {
-	streamCursor: (
-		model: Model<"cursor-agent">,
-		context: Context,
-		options: CursorOptions,
-	) => AssistantMessageEventStream;
-}
-
 interface BedrockProviderModule {
 	streamBedrock: (
 		model: Model<"bedrock-converse-stream">,
@@ -143,7 +134,6 @@ let openAICodexResponsesProviderModulePromise: Promise<LazyProviderModule<"opena
 let openAICompletionsProviderModulePromise: Promise<LazyProviderModule<"openai-completions">> | undefined;
 let openAIResponsesProviderModulePromise: Promise<LazyProviderModule<"openai-responses">> | undefined;
 let ollamaProviderModulePromise: Promise<LazyProviderModule<"ollama-chat">> | undefined;
-let cursorProviderModulePromise: Promise<LazyProviderModule<"cursor-agent">> | undefined;
 let bedrockProviderModuleOverride: LazyProviderModule<"bedrock-converse-stream"> | undefined;
 let bedrockProviderModulePromise: Promise<LazyProviderModule<"bedrock-converse-stream">> | undefined;
 
@@ -353,14 +343,6 @@ function loadOllamaProviderModule(): Promise<LazyProviderModule<"ollama-chat">> 
 	return ollamaProviderModulePromise;
 }
 
-function loadCursorProviderModule(): Promise<LazyProviderModule<"cursor-agent">> {
-	cursorProviderModulePromise ||= import("./cursor").then(module => {
-		const provider = module as CursorProviderModule;
-		return { stream: provider.streamCursor };
-	});
-	return cursorProviderModulePromise;
-}
-
 function loadBedrockProviderModule(): Promise<LazyProviderModule<"bedrock-converse-stream">> {
 	if (bedrockProviderModuleOverride) {
 		return Promise.resolve(bedrockProviderModuleOverride);
@@ -391,7 +373,6 @@ export const streamGoogleVertex = createLazyStream(loadGoogleVertexProviderModul
 export const streamOpenAICodexResponses = createLazyStream(loadOpenAICodexResponsesProviderModule);
 export const streamOpenAICompletions = createLazyStream(loadOpenAICompletionsProviderModule);
 export const streamOpenAIResponses = createLazyStream(loadOpenAIResponsesProviderModule);
-export const streamCursor = createLazyStream(loadCursorProviderModule);
 export const streamOllama = createLazyStream(loadOllamaProviderModule);
 
 export const streamBedrock = createLazyStream(loadBedrockProviderModule);

@@ -47,7 +47,7 @@ import {
 	xiaomiModelManagerOptions,
 	zenmuxModelManagerOptions,
 } from "./openai-compat";
-import { cursorModelManagerOptions, zaiModelManagerOptions } from "./special";
+import { zaiModelManagerOptions } from "./special";
 
 /** Catalog discovery configuration for providers that support endpoint-based model listing. */
 export interface CatalogDiscoveryConfig {
@@ -310,12 +310,6 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
 	catalogDescriptor("zai", "glm-5.1", config => zaiModelManagerOptions(config), catalog("zAI", ["ZAI_API_KEY"])),
 	descriptor("github-copilot", "gpt-4o", config => githubCopilotModelManagerOptions(config)),
 	descriptor("google", "gemini-2.5-pro", config => googleModelManagerOptions(config)),
-	catalogDescriptor(
-		"cursor",
-		"claude-sonnet-4-6",
-		config => cursorModelManagerOptions(config),
-		catalog("Cursor", ["CURSOR_API_KEY"], { oauthProvider: "cursor" }),
-	),
 ] as const;
 
 /** Default model IDs for all known providers, built from descriptors + special providers. */

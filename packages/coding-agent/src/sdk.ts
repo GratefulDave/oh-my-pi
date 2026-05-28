@@ -47,7 +47,6 @@ import {
 } from "./config/model-resolver";
 import { loadPromptTemplates as loadPromptTemplatesInternal, type PromptTemplate } from "./config/prompt-templates";
 import { Settings, type SkillsSettings } from "./config/settings";
-import { CursorExecHandlers } from "./cursor";
 import "./discovery";
 import { resolveConfigValue } from "./config/resolve-config-value";
 import { initializeWithSettings } from "./discovery";
@@ -1525,10 +1524,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				toolRegistry.set(tool.name, new ExtensionToolWrapper(tool, extensionRunner));
 			}
 		}
-		if (model?.provider === "cursor") {
-			toolRegistry.delete("edit");
-		}
-
 		// `resolve` is hidden but must stay in the registry whenever any code path can invoke it:
 		// either a deferrable tool stages a preview action, or plan mode installs a standing handler
 		// that consumes `resolve { action: "apply" }` to submit the plan for approval (issue #1428).
@@ -1556,14 +1551,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const wrapped = wrapToolWithMetaNotice(sshTool);
 			return (extensionRunner ? new ExtensionToolWrapper(wrapped, extensionRunner) : wrapped) as AgentTool;
 		};
-
-		let cursorEventEmitter: ((event: AgentEvent) => void) | undefined;
-		const cursorExecHandlers = new CursorExecHandlers({
-			cwd,
-			tools: toolRegistry,
-			getToolContext: () => toolContextStore.getContext(),
-			emitEvent: event => cursorEventEmitter?.(event),
-		});
 
 		const repeatToolDescriptions = settings.get("repeatToolDescriptions");
 		const eagerTasks = settings.get("task.eager");
@@ -1919,7 +1906,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 					},
 				});
 			},
-			cursorExecHandlers,
 			transformToolCallArguments: (args, _toolName) => {
 				let result = args;
 				const maxTimeout = settings.get("tools.maxTimeout");
@@ -1935,8 +1921,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			getToolChoice: () => session?.nextToolChoice(),
 			telemetry: options.telemetry,
 		});
-
-		cursorEventEmitter = event => agent.emitExternalEvent(event);
 
 		// Restore messages if session has existing data
 		if (hasExistingSession) {
