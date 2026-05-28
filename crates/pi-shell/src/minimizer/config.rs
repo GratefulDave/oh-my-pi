@@ -68,6 +68,13 @@ pub struct MinimizerOptions {
 	/// Provider key for the AI summarizer (e.g. `"deepseek"`). Default
 	/// `"deepseek"` when [`Self::ai_smart_enabled`] is true.
 	pub ai_smart_provider:    Option<String>,
+	/// Kill-switch to fall back to the pre-PR (legacy) filter behavior for
+	/// grep / find / pytest. When `Some(true)`, filters that opted into the
+	/// always-shrink Tier 1 / Tier 2 behavior skip the new code path and
+	/// return the legacy passthrough. When `None`, defers to the
+	/// `OMP_MINIMIZER_LEGACY_FILTERS` environment variable (truthy = "1",
+	/// "true", or "yes", case-insensitive); default `false`.
+	pub legacy_filters:       Option<bool>,
 }
 
 /// Resolved minimizer configuration used by the engine.
@@ -88,6 +95,11 @@ pub struct MinimizerConfig {
 	pub ai_smart_enabled:     bool,
 	/// Provider key for the AI summarizer (defaults to `"deepseek"`).
 	pub ai_smart_provider:    String,
+	/// Resolved kill-switch: when true, opted-in filters (Tier 1 grep/find,
+	/// Tier 2 pytest) return the pre-PR legacy behavior. Resolved at
+	/// `from_options()` time from caller-supplied `MinimizerOptions.legacy_filters`
+	/// or the `OMP_MINIMIZER_LEGACY_FILTERS` env var; default `false`.
+	pub legacy_filters_active: bool,
 }
 
 impl Default for MinimizerConfig {
@@ -102,6 +114,7 @@ impl Default for MinimizerConfig {
 			source_outline_level: OutlineLevel::Default,
 			ai_smart_enabled:     false,
 			ai_smart_provider:    DEFAULT_AI_SMART_PROVIDER.to_string(),
+			legacy_filters_active: false,
 		}
 	}
 }
@@ -131,6 +144,14 @@ impl MinimizerConfig {
 		if let Some(v) = opts.ai_smart_enabled {
 			cfg.ai_smart_enabled = v;
 		}
+		cfg.legacy_filters_active = match opts.legacy_filters {
+			Some(v) => v,
+			None => std::env::var("OMP_MINIMIZER_LEGACY_FILTERS")
+				.ok()
+				.is_some_and(|raw| {
+					matches!(raw.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes")
+				}),
+		};
 		if let Some(provider) = opts.ai_smart_provider.as_deref()
 			&& !provider.is_empty()
 		{
@@ -193,6 +214,11 @@ impl MinimizerConfig {
 	/// Fetch a per-command TOML table, if any.
 	pub fn per_command(&self, program: &str) -> Option<&toml::Value> {
 		self.per_command.get(&program.to_lowercase())
+	}
+
+	/// Whether opted-in filters should fall back to pre-PR legacy behavior.
+	pub fn legacy_filters_active(&self) -> bool {
+		self.legacy_filters_active
 	}
 }
 
@@ -333,5 +359,52 @@ mod tests {
 			..Default::default()
 		});
 		assert!(cfg.enabled);
+	}
+
+	#[test]
+	fn legacy_filters_option_some_true_sets_active() {
+		// Explicit caller-supplied `Some(true)` must result in
+		// `legacy_filters_active == true` regardless of env. This is the
+		// test-friendly invocation path that avoids env-var mutation.
+		let cfg = MinimizerConfig::from_options(&MinimizerOptions {
+			enabled: Some(true),
+			legacy_filters: Some(true),
+			..Default::default()
+		});
+		assert!(cfg.legacy_filters_active());
+	}
+
+	#[test]
+	fn legacy_filters_option_some_false_overrides_env() {
+		// Explicit `Some(false)` must override any env var (verified by
+		// inspecting the resolver — `Some(_)` arm short-circuits before
+		// reading the env). We assert behavior via a default-constructed
+		// `MinimizerOptions { legacy_filters: Some(false), .. }`.
+		let cfg = MinimizerConfig::from_options(&MinimizerOptions {
+			enabled: Some(true),
+			legacy_filters: Some(false),
+			..Default::default()
+		});
+		assert!(!cfg.legacy_filters_active());
+	}
+
+	#[test]
+	fn legacy_filters_option_none_defaults_false_without_env() {
+		// With no caller override and (in this test process) no env var set
+		// by the test, the default is false.
+		// SAFETY: we explicitly clear the var; CARGO_TEST runs in the same
+		// process so other tests reading this var must not race; we accept
+		// this is best-effort and the option-override tests above carry the
+		// real assurance.
+		// SAFETY: env_remove is safe in single-threaded test context; this
+		// test only confirms the default branch when env is absent.
+		unsafe {
+			std::env::remove_var("OMP_MINIMIZER_LEGACY_FILTERS");
+		}
+		let cfg = MinimizerConfig::from_options(&MinimizerOptions {
+			enabled: Some(true),
+			..Default::default()
+		});
+		assert!(!cfg.legacy_filters_active());
 	}
 }

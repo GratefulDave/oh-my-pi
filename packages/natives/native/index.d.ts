@@ -1069,6 +1069,12 @@ export interface MinimizerOptions {
   aiSmartEnabled?: boolean
   /** Provider key for the AI summarizer. Defaults to `"deepseek"`. */
   aiSmartProvider?: string
+  /**
+   * Kill-switch to fall back to pre-PR legacy behavior for the
+   * always-shrink filters (grep, find, pytest). When unset, defers to
+   * the `OMP_MINIMIZER_LEGACY_FILTERS` env var; default `false`.
+   */
+  legacyFilters?: boolean
 }
 
 /**
