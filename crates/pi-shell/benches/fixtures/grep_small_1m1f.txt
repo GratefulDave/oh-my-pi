@@ -1,0 +1,12 @@
+src/minimizer/filters/listing.rs:42:    pub fn compact_grep_output_with_a_very_long_function_signature(input: &str, ctx: &MinimizerCtx<'_>) -> Result<MinimizerOutput, MinimizerError> {
+src/minimizer/filters/listing.rs:42:    pub fn compact_grep_output_with_a_very_long_function_signature(input: &str, ctx: &MinimizerCtx<'_>) -> Result<MinimizerOutput, MinimizerError> {
+src/minimizer/filters/listing.rs:42:    pub fn compact_grep_output_with_a_very_long_function_signature(input: &str, ctx: &MinimizerCtx<'_>) -> Result<MinimizerOutput, MinimizerError> {
+src/minimizer/filters/listing.rs:42:    pub fn compact_grep_output_with_a_very_long_function_signature(input: &str, ctx: &MinimizerCtx<'_>) -> Result<MinimizerOutput, MinimizerError> {
+src/minimizer/filters/listing.rs:42:    pub fn compact_grep_output_with_a_very_long_function_signature(input: &str, ctx: &MinimizerCtx<'_>) -> Result<MinimizerOutput, MinimizerError> {
+src/minimizer/filters/listing.rs:42:    pub fn compact_grep_output_with_a_very_long_function_signature(input: &str, ctx: &MinimizerCtx<'_>) -> Result<MinimizerOutput, MinimizerError> {
+src/minimizer/filters/listing.rs:42:    pub fn compact_grep_output_with_a_very_long_function_signature(input: &str, ctx: &MinimizerCtx<'_>) -> Result<MinimizerOutput, MinimizerError> {
+src/minimizer/filters/listing.rs:42:    pub fn compact_grep_output_with_a_very_long_function_signature(input: &str, ctx: &MinimizerCtx<'_>) -> Result<MinimizerOutput, MinimizerError> {
+src/minimizer/filters/listing.rs:42:    pub fn compact_grep_output_with_a_very_long_function_signature(input: &str, ctx: &MinimizerCtx<'_>) -> Result<MinimizerOutput, MinimizerError> {
+src/minimizer/filters/listing.rs:42:    pub fn compact_grep_output_with_a_very_long_function_signature(input: &str, ctx: &MinimizerCtx<'_>) -> Result<MinimizerOutput, MinimizerError> {
+src/minimizer/filters/listing.rs:42:    pub fn compact_grep_output_with_a_very_long_function_signature(input: &str, ctx: &MinimizerCtx<'_>) -> Result<MinimizerOutput, MinimizerError> {
+src/minimizer/filters/listing.rs:42:    pub fn compact_grep_output_with_a_very_long_function_signature(input: &str, ctx: &MinimizerCtx<'_>) -> Result<MinimizerOutput
