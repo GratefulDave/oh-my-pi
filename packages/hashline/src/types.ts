@@ -9,20 +9,33 @@ export interface Anchor {
 	line: number;
 }
 
-/** Where an `insert` edit should land relative to existing content. */
-export type Cursor =
-	| { kind: "bof" }
-	| { kind: "eof" }
-	| { kind: "before_anchor"; anchor: Anchor }
-	| { kind: "after_anchor"; anchor: Anchor };
+/** Where an `insert` or `repeat` edit should land relative to existing content. */
+export type Cursor = { kind: "bof" } | { kind: "eof" } | { kind: "before_anchor"; anchor: Anchor };
 
 /**
  * A single low-level edit produced by the parser and consumed by the applier.
- * Multi-line replacements decompose to one `insert` per replacement line plus
- * one `delete` per consumed line.
+ * Multi-line replacements decompose to one `insert`/`repeat` per replacement
+ * line plus one `delete` per consumed line. Replacement payloads are tagged so
+ * the applier can distinguish literal insertion from new content for a deleted
+ * line.
  */
 export type Edit =
-	| { kind: "insert"; cursor: Cursor; text: string; lineNum: number; index: number }
+	| {
+			kind: "insert";
+			cursor: Cursor;
+			text: string;
+			lineNum: number;
+			index: number;
+			mode?: "replacement";
+	  }
+	| {
+			kind: "repeat";
+			cursor: Cursor;
+			range: ParsedRange;
+			lineNum: number;
+			index: number;
+			mode?: "replacement";
+	  }
 	| { kind: "delete"; anchor: Anchor; lineNum: number; index: number; oldAssertion?: string };
 
 /** Result of applying a parsed set of edits to a text body. */
@@ -31,18 +44,8 @@ export interface ApplyResult {
 	text: string;
 	/** First line number (1-indexed) that changed, or `undefined` for a no-op apply. */
 	firstChangedLine?: number;
-	/** Diagnostic warnings collected by the applier (auto-absorb, boundary checks, …). */
+	/** Diagnostic warnings collected by the parser, patcher, or recovery. */
 	warnings?: string[];
-}
-
-/** Optional knobs forwarded to {@link Edit} application. */
-export interface ApplyOptions {
-	/**
-	 * When `true`, pure-insert and single-line replacement-boundary duplicates
-	 * are dropped opportunistically. Default `false`: only multi-line block
-	 * duplicates and structural-boundary single lines are absorbed.
-	 */
-	autoDropPureInsertDuplicates?: boolean;
 }
 
 /** A parsed `[A..B]` line range. */

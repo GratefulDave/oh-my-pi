@@ -17,51 +17,53 @@ export const END_PATCH_MARKER = "*** End Patch";
 /**
  * Recovery sentinel emitted by an agent loop when a contaminated tool-call
  * stream is truncated mid-call. Behaves like {@link END_PATCH_MARKER} for
- * parsing — terminates the line loop — and additionally surfaces a warning
- * so the caller knows to re-issue any remaining edits.
+ * parsing — terminates the line loop — and does not surface a warning.
  */
 export const ABORT_MARKER = "*** Abort";
 
-/** Warning text appended to the tool result when {@link ABORT_MARKER} terminates parsing. */
-export const ABORT_WARNING =
-	"Tool stream truncated mid-call due to detected output corruption. Applied ops above are valid. Re-issue any remaining edits.";
-
 /**
- * Warning text appended when two consecutive `A-B:` ops on the exact same
- * range get coalesced (model painted a before/after pair). The second op wins;
- * the first op's payload is silently discarded.
+ * Warning text appended when two consecutive hunks target the exact same
+ * concrete range. The second hunk wins; the first is discarded.
  */
 export const REPLACE_PAIR_COALESCED_WARNING =
-	"Detected an identical-range before/after replace pair; kept only the second block's payload. Issue ONE op per range — the payload is the final desired content, never both old and new.";
+	"Detected two identical-range hashline hunks; kept only the second hunk. Issue ONE hunk per range — payload is the final desired content, never both old and new.";
 
 /**
- * Warning text appended when un-prefixed continuation lines are accepted as
- * implicit payload (lenient legacy behavior). The author wrote a multi-line
- * replace without `+` prefixes; the parser accepted it because the lines did
- * not classify as ops/headers/payloads, but the canonical syntax requires `+`
- * on every continuation line after the op.
+ * Warning text appended when a bare hunk header (`A B` with no body)
+ * is followed by an overlapping concrete hunk. The earlier bare hunk is
+ * dropped on the assumption that the model expressed an old/new pair across
+ * two hunks; only the second hunk's payload is applied.
  */
-export const IMPLICIT_CONTINUATION_WARNING =
-	"Accepted continuation line(s) without the `+` prefix as implicit payload. Canonical syntax is `A-B:` followed by `+` on every continuation row; without `+`, lines that look like ops will be parsed as new ops instead of payload. Prefer the explicit form.";
+export const REPLACE_PAIR_COALESCED_OVERLAP_WARNING =
+	"Detected an overlapping bare hashline hunk immediately followed by a concrete hunk; dropped the earlier bare hunk. Issue ONE hunk per range — payload is the final desired content, never both old and new.";
 
 /**
- * Warning text appended when an inner `LINE:TEXT` (or sub-range `A-B:TEXT`)
- * op arrives while an outer `A-B:` replace is still pending and the inner
- * anchor falls inside the outer range. The author used the read-output
- * `LINE:TEXT` format as if it were a payload-continuation line; we strip the
- * `LINE:` prefix and append the body to the pending payload, but warn so the
- * canonical `+`-continuation form remains preferred.
+ * Warning text appended when bare body rows (no `+` / `&` prefix) follow a
+ * hunk header and the parser auto-converts them to `+literal` rows because
+ * no `+`/`&` row was present in the hunk. Helps the model learn the
+ * canonical body-row syntax while keeping the patch applying.
  */
-export const PAYLOAD_LINE_PREFIX_DEMOTED_WARNING =
-	"Detected one or more `LINE:TEXT` lines whose anchors fell inside a pending replace range; treated them as payload-continuation lines and stripped the `LINE:` prefix. Inside an `A-B:` block, every payload line must be on its own row prefixed with `+` — never reuse the read-output gutter format.";
+export const BARE_BODY_AUTO_PIPED_WARNING =
+	"Auto-prefixed bare body row(s) with `+`. Always start payload rows with `+TEXT` (literal) or `&A..B` (repeat) — pasting raw code as payload is not a portable shape.";
 
 /**
- * Warning text appended when an op carries an inline payload (`LINE:TEXT`,
- * `LINE↑CONTENT`, `LINE↓CONTENT`). Canonical syntax is the bare op followed
- * by `+`-prefixed payload rows on the next line(s).
+ * Warning text emitted when a body row begins with `+&A..B` — the model
+ * mistakenly prefixed a repeat row with the `+` literal sigil. We reroute
+ * the row as a `&A..B` repeat so the patch still applies, then surface this
+ * warning so the model sees the mistake on the next turn.
  */
-export const INLINE_PAYLOAD_ACCEPTED_WARNING =
-	"Accepted inline payload on the op line (e.g. `LINE:CONTENT`, `LINE↑CONTENT`). Canonical syntax is the bare op followed by `+`-prefixed payload rows on the next line(s). Prefer the explicit form.";
+export const PLUS_PREFIXED_REPEAT_WARNING =
+	"A body row started with `+&A..B`. `+` (literal text) and `&A..B` (repeat) are sibling row kinds — a row uses exactly one of them. Treated as `&A..B`; remove the leading `+` next time.";
+
+/**
+ * Warning text emitted when a hunk body contains unified-diff-style rows
+ * (`-old`, ` context`) and the parser silently converts them: `-` rows are
+ * dropped (the hunk header's range already deletes those lines), and the
+ * leading metadata-space on context rows is stripped once unified-diff
+ * mode is detected. Bare body rows are auto-prefixed with `+` regardless.
+ */
+export const UNIFIED_DIFF_BODY_AUTO_CONVERT_WARNING =
+	"Hunk body contained unified-diff-style rows (`-old`, ` context`). The `-` rows were dropped (the hunk header's range already deletes those lines); context rows were treated as `+TEXT` literals. Use `+TEXT` (literal) or `&A..B` (repeat) directly next time.";
 
 /** Warning text emitted by `Recovery` when an external write fits a cached snapshot. */
 export const RECOVERY_EXTERNAL_WARNING =
@@ -71,6 +73,14 @@ export const RECOVERY_EXTERNAL_WARNING =
 export const RECOVERY_SESSION_CHAIN_WARNING =
 	"Recovered from a stale file hash using an earlier in-session snapshot (the file hash advanced after a prior edit in this session).";
 
-/** Warning text emitted by `Recovery` when the session-chain fast-path was taken. */
+/**
+ * Warning text emitted by `Recovery` when the session-chain replay
+ * fast-path was taken. Distinct from {@link RECOVERY_SESSION_CHAIN_WARNING}
+ * because replay is the less-certain mode: the structured-patch 3-way
+ * merge refused, the anchor-content gate passed, but a coincidental
+ * insert+delete pair earlier in the chain could still leave an anchor's
+ * line number pointing at a duplicated row. Surface the hedge so the
+ * model verifies before continuing.
+ */
 export const RECOVERY_SESSION_REPLAY_WARNING =
 	"Recovered by replaying your edits onto the current file content — your previous edit in this session changed line(s) you re-targeted with a stale hash. Verify the diff matches your intent before continuing.";

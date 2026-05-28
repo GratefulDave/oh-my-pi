@@ -7,21 +7,25 @@
  * line number so downstream consumers (parser, validators, error messages)
  * can refer back to the input precisely.
  *
- * The tokenizer is intentionally permissive about decorations and prefixes
- * the model may echo back from `read`/`search` output — leading `*`/`>`/`-`
- * markers, CR-terminated lines, leading whitespace before line numbers, and
- * so on are all stripped before classification.
+ * Format shape:
+ * ```
+ * *** path/to/file.ts#0A3
+ * @@ 5,7 @@
+ * +literal new line
+ * &3,4
+ * ```
+ * Each `***` line opens a new file section; each `@@ A,B @@` line opens a
+ * new hunk whose body (zero or more `+`/`&` rows) replaces the selected
+ * range. Empty body = delete the selected range.
  */
 
 import {
 	describeAnchorExamples,
+	HL_FILE_HASH_LENGTH,
 	HL_FILE_HASH_SEP,
 	HL_FILE_PREFIX,
-	HL_OP_DELETE,
-	HL_OP_INSERT_AFTER,
-	HL_OP_INSERT_BEFORE,
-	HL_OP_REPLACE,
-	HL_PAYLOAD_PREFIX,
+	HL_PAYLOAD_REPEAT,
+	HL_PAYLOAD_REPLACE,
 } from "./format";
 import { ABORT_MARKER, BEGIN_PATCH_MARKER, END_PATCH_MARKER } from "./messages";
 import type { Anchor, Cursor, ParsedRange } from "./types";
@@ -33,10 +37,19 @@ const CHAR_NINE = 57;
 const CHAR_HASH = 35;
 const CHAR_TAB = 9;
 const CHAR_SPACE = 32;
+const CHAR_DOT = 46;
+const CHAR_HYPHEN = 45;
+const CHAR_ELLIPSIS = 0x2026;
+
+const CHAR_UPPER_A = 65;
+const CHAR_UPPER_F = 70;
 const CHAR_LOWER_A = 97;
 const CHAR_LOWER_F = 102;
-const CHAR_PILCROW = HL_FILE_PREFIX.charCodeAt(0);
-const FILE_HASH_LENGTH = 4;
+const CHAR_PAYLOAD_REPLACE = HL_PAYLOAD_REPLACE.charCodeAt(0);
+const CHAR_PAYLOAD_REPEAT = HL_PAYLOAD_REPEAT.charCodeAt(0);
+const FILE_PREFIX_LENGTH = HL_FILE_PREFIX.length;
+const BOF_ANCHOR = "BOF";
+const EOF_ANCHOR = "EOF";
 
 function isDigitCode(code: number): boolean {
 	return code >= CHAR_ZERO && code <= CHAR_NINE;
@@ -46,20 +59,27 @@ function isNonZeroDigitCode(code: number): boolean {
 	return code > CHAR_ZERO && code <= CHAR_NINE;
 }
 
-function isDecorationCode(code: number): boolean {
-	return code === 42 || code === 43 || code === 45 || code === 62;
+function isHexDigitCode(code: number): boolean {
+	return (
+		isDigitCode(code) ||
+		(code >= CHAR_UPPER_A && code <= CHAR_UPPER_F) ||
+		(code >= CHAR_LOWER_A && code <= CHAR_LOWER_F)
+	);
 }
 
-function isHexDigitCode(code: number): boolean {
-	return isDigitCode(code) || (code >= CHAR_LOWER_A && code <= CHAR_LOWER_F);
+function isWhitespaceCode(code: number): boolean {
+	return code === CHAR_SPACE || (code >= CHAR_TAB && code <= CHAR_CARRIAGE_RETURN);
 }
 
 function skipWhitespace(line: string, index: number, end = line.length): number {
-	return end - line.slice(index, end).trimStart().length;
+	while (index < end && isWhitespaceCode(line.charCodeAt(index))) index++;
+	return index;
 }
 
 function trimEndIndex(line: string): number {
-	return line.trimEnd().length;
+	let end = line.length;
+	while (end > 0 && isWhitespaceCode(line.charCodeAt(end - 1))) end--;
+	return end;
 }
 
 function isEmptyLine(line: string): boolean {
@@ -67,17 +87,14 @@ function isEmptyLine(line: string): boolean {
 }
 
 function markerLineEquals(line: string, marker: string): boolean {
-	return line.trimEnd() === marker;
+	const end = trimEndIndex(line);
+	return end === marker.length && line.startsWith(marker);
 }
 
 /**
  * Split a hashline diff into individual lines without losing the trailing
  * empty line that callers may rely on for explicit blank payloads. CRLF pairs
  * are normalized to a single line break.
- *
- * This mirrors the line-splitting performed by {@link Tokenizer}'s streaming
- * drain loop and is kept for non-streaming callers that prefer a single-shot
- * split.
  */
 export function splitHashlineLines(text: string): string[] {
 	if (text.length === 0) return [""];
@@ -102,17 +119,7 @@ export function splitHashlineLines(text: string): string[] {
 
 export function cloneCursor(cursor: Cursor): Cursor {
 	if (cursor.kind === "before_anchor") return { kind: "before_anchor", anchor: { ...cursor.anchor } };
-	if (cursor.kind === "after_anchor") return { kind: "after_anchor", anchor: { ...cursor.anchor } };
 	return cursor;
-}
-
-// Leniently accept anchors copied from read/search output:
-//   - optional leading line-marker decoration (`*`, `>`, `+`, `-`)
-//   - the required bare line number
-function skipDecoratedAnchorPrefix(line: string, end = trimEndIndex(line)): number {
-	let index = skipWhitespace(line, 0, end);
-	while (index < end && isDecorationCode(line.charCodeAt(index))) index++;
-	return skipWhitespace(line, index, end);
 }
 
 interface NumberScan {
@@ -134,10 +141,10 @@ function scanLineNumber(line: string, index: number, end: number): NumberScan | 
 	return { line: lineNumber, nextIndex };
 }
 
-/** Parse a bare line-number anchor (used by insert ops). Throws on malformed input. */
+/** Parse a bare line-number anchor. Throws on malformed input. */
 export function parseLid(raw: string, lineNum: number): Anchor {
 	const end = trimEndIndex(raw);
-	const numberStart = skipDecoratedAnchorPrefix(raw, end);
+	const numberStart = skipWhitespace(raw, 0, end);
 	const number = scanLineNumber(raw, numberStart, end);
 	if (number === null || skipWhitespace(raw, number.nextIndex, end) !== end) {
 		throw new Error(
@@ -153,152 +160,150 @@ interface RangeScan {
 	nextIndex: number;
 }
 
-function scanRange(line: string, end = trimEndIndex(line)): RangeScan | null {
-	const numberStart = skipDecoratedAnchorPrefix(line, end);
+/**
+ * Scan a numeric range for a hunk header. Canonical form is `A B` (two
+ * numbers separated by whitespace); models also reflexively emit `A-B`,
+ * `A..B`, and `A…B` (unicode ellipsis), so we accept any of those as the
+ * range separator. A second number is REQUIRED — bare `A` is not a valid
+ * hunk header in this grammar. Repeat-row bodies (`&A..B`) keep their own
+ * parser and still accept the `&A` single-line shorthand; see
+ * {@link tryParseRepeatPayload}.
+ */
+function scanHeaderRange(line: string, index = 0, end = trimEndIndex(line)): RangeScan | null {
+	const numberStart = skipWhitespace(line, index, end);
 	const start = scanLineNumber(line, numberStart, end);
 	if (start === null) return null;
 
-	let nextIndex = start.nextIndex;
-	let rangeEnd = start.line;
-	if (nextIndex < end && line.charCodeAt(nextIndex) === 45) {
-		const endNumber = scanLineNumber(line, nextIndex + 1, end);
-		if (endNumber === null) return null;
-		rangeEnd = endNumber.line;
-		nextIndex = endNumber.nextIndex;
-	}
-
+	const afterFirst = scanRangeSeparator(line, start.nextIndex, end);
+	if (afterFirst === null) return null;
+	const endNumber = scanLineNumber(line, afterFirst, end);
+	if (endNumber === null) return null;
 	return {
-		range: { start: { line: start.line }, end: { line: rangeEnd } },
-		nextIndex: skipWhitespace(line, nextIndex, end),
+		range: { start: { line: start.line }, end: { line: endNumber.line } },
+		nextIndex: skipWhitespace(line, endNumber.nextIndex, end),
 	};
-}
-
-function startsWithWord(line: string, index: number, end: number, word: string): boolean {
-	if (index + word.length > end) return false;
-	for (let offset = 0; offset < word.length; offset++) {
-		if (line.charCodeAt(index + offset) !== word.charCodeAt(offset)) return false;
-	}
-	return true;
-}
-
-function parseInsertTarget(raw: string, lineNum: number, kind: "before" | "after"): Cursor {
-	const end = trimEndIndex(raw);
-	const targetStart = skipDecoratedAnchorPrefix(raw, end);
-
-	if (startsWithWord(raw, targetStart, end, "BOF") && skipWhitespace(raw, targetStart + 3, end) === end) {
-		return { kind: "bof" };
-	}
-	if (startsWithWord(raw, targetStart, end, "EOF") && skipWhitespace(raw, targetStart + 3, end) === end) {
-		return { kind: "eof" };
-	}
-
-	const cursorKind = kind === "before" ? "before_anchor" : "after_anchor";
-	return { kind: cursorKind, anchor: parseLid(raw, lineNum) };
-}
-
-function scanInlineBody(line: string, index: number): string | undefined {
-	const end = trimEndIndex(line);
-	return index < end ? line.slice(index, end) : undefined;
-}
-
-interface ParsedInsertOp {
-	kind: "insert";
-	cursor: Cursor;
-	inlineBody: string | undefined;
-}
-
-interface ParsedReplaceOp {
-	kind: "replace";
-	range: ParsedRange;
-	inlineBody: string | undefined;
-}
-
-interface ParsedDeleteOp {
-	kind: "delete";
-	range: ParsedRange;
-	trailingPayload: boolean;
-}
-
-type ParsedOp = ParsedInsertOp | ParsedReplaceOp | ParsedDeleteOp;
-
-function tryParseInsertOp(line: string, sigil: string, kind: "before" | "after"): ParsedInsertOp | null {
-	const end = trimEndIndex(line);
-	const targetStart = skipDecoratedAnchorPrefix(line, end);
-
-	let targetEnd: number;
-	if (startsWithWord(line, targetStart, end, "BOF") || startsWithWord(line, targetStart, end, "EOF")) {
-		targetEnd = targetStart + 3;
-	} else {
-		const anchor = scanLineNumber(line, targetStart, end);
-		if (anchor === null) return null;
-		targetEnd = anchor.nextIndex;
-	}
-
-	const opIndex = skipWhitespace(line, targetEnd, end);
-	if (opIndex >= end || line[opIndex] !== sigil) return null;
-
-	// parseInsertTarget can only throw on inputs that already passed the
-	// BOF/EOF/line-number scan above, but guard the throw anyway — the
-	// tokenizer contract forbids it and a future refactor of the prefix
-	// scan must not silently start raising here.
-	try {
-		return {
-			kind: "insert",
-			cursor: parseInsertTarget(line.slice(0, opIndex), 0, kind),
-			inlineBody: scanInlineBody(line, opIndex + sigil.length),
-		};
-	} catch {
-		return null;
-	}
-}
-
-function tryParseReplaceOp(line: string): ParsedReplaceOp | null {
-	const end = trimEndIndex(line);
-	const range = scanRange(line, end);
-	if (range === null || range.nextIndex >= end || line[range.nextIndex] !== HL_OP_REPLACE) return null;
-	return {
-		kind: "replace",
-		range: range.range,
-		inlineBody: scanInlineBody(line, range.nextIndex + HL_OP_REPLACE.length),
-	};
-}
-
-function tryParseDeleteOp(line: string): ParsedDeleteOp | null {
-	const end = trimEndIndex(line);
-	const range = scanRange(line, end);
-	if (range === null || range.nextIndex >= end || line[range.nextIndex] !== HL_OP_DELETE) return null;
-	const afterSigil = range.nextIndex + HL_OP_DELETE.length;
-	return { kind: "delete", range: range.range, trailingPayload: afterSigil !== end };
-}
-
-function tryParseOp(line: string): ParsedOp | null {
-	return (
-		tryParseInsertOp(line, HL_OP_INSERT_BEFORE, "before") ??
-		tryParseInsertOp(line, HL_OP_INSERT_AFTER, "after") ??
-		tryParseReplaceOp(line) ??
-		tryParseDeleteOp(line)
-	);
 }
 
 /**
- * Strict header scan: `¶+` prefix, optional whitespace, path body that
- * excludes whitespace, `#`, and `¶`, optional `#[0-9a-f]{4}` hash suffix,
- * optional trailing whitespace. Returns `null` when any byte deviates from
- * the shape.
+ * Consume the mandatory range separator (whitespace, `-`, `..`, or `…`)
+ * between the two numbers of a hunk-header range. Returns the index of
+ * the second number, or `null` when the separator is missing or no digit
+ * follows it.
+ */
+function scanRangeSeparator(line: string, index: number, end: number): number | null {
+	let cursor = index;
+	let consumedSeparator = false;
+	while (cursor < end) {
+		const code = line.charCodeAt(cursor);
+		if (isWhitespaceCode(code)) {
+			cursor++;
+			consumedSeparator = true;
+			continue;
+		}
+		if (code === CHAR_HYPHEN || code === CHAR_ELLIPSIS) {
+			cursor++;
+			consumedSeparator = true;
+			continue;
+		}
+		if (code === CHAR_DOT && cursor + 1 < end && line.charCodeAt(cursor + 1) === CHAR_DOT) {
+			cursor += 2;
+			consumedSeparator = true;
+			continue;
+		}
+		break;
+	}
+	if (!consumedSeparator) return null;
+	if (cursor >= end || !isNonZeroDigitCode(line.charCodeAt(cursor))) return null;
+	return cursor;
+}
+
+export type BlockTarget = { kind: "range"; range: ParsedRange } | { kind: "bof" } | { kind: "eof" };
+
+interface TargetScan {
+	target: BlockTarget;
+	nextIndex: number;
+}
+
+/**
+ * Scan the anchor portion of a hunk header. Accepts `BOF`, `EOF`, or
+ * `A B` (range). Single-number anchors are NOT accepted; callers must
+ * spell single-line ranges as `A A`.
+ */
+function scanHunkAnchor(line: string, start: number, end: number): TargetScan | null {
+	const cursor = skipWhitespace(line, start, end);
+	if (line.startsWith(BOF_ANCHOR, cursor)) {
+		return { target: { kind: "bof" }, nextIndex: skipWhitespace(line, cursor + BOF_ANCHOR.length, end) };
+	}
+	if (line.startsWith(EOF_ANCHOR, cursor)) {
+		return { target: { kind: "eof" }, nextIndex: skipWhitespace(line, cursor + EOF_ANCHOR.length, end) };
+	}
+	const range = scanHeaderRange(line, cursor, end);
+	if (range === null) return null;
+	return { target: { kind: "range", range: range.range }, nextIndex: range.nextIndex };
+}
+
+interface ParsedHunkHeader {
+	target: BlockTarget;
+}
+
+/**
+ * Parse a bare hunk-header line: `A B` (range) or the keywords
+ * `BOF` / `EOF`. Returns `null` for lines that do not match the shape.
+ */
+function tryParseHunkHeader(line: string): ParsedHunkHeader | null {
+	const end = trimEndIndex(line);
+	const start = skipWhitespace(line, 0, end);
+	if (start >= end) return null;
+	const scan = scanHunkAnchor(line, start, end);
+	if (scan === null) return null;
+	if (scan.nextIndex !== end) return null;
+	return { target: scan.target };
+}
+
+/**
+ * Parse a `&A,B` repeat payload row (or `&A` shorthand for `&A,A`). Returns
+ * `null` when the line does not match.
+ */
+function tryParseRepeatPayload(line: string): ParsedRange | null {
+	const end = trimEndIndex(line);
+	if (line.length === 0 || line.charCodeAt(0) !== CHAR_PAYLOAD_REPEAT) return null;
+
+	const start = scanLineNumber(line, 1, end);
+	if (start === null) return null;
+	if (start.nextIndex === end) {
+		// `&A` shorthand → `&A,A`.
+		return { start: { line: start.line }, end: { line: start.line } };
+	}
+	if (
+		start.nextIndex + 1 >= end ||
+		line.charCodeAt(start.nextIndex) !== CHAR_DOT ||
+		line.charCodeAt(start.nextIndex + 1) !== CHAR_DOT
+	)
+		return null;
+
+	const finish = scanLineNumber(line, start.nextIndex + 2, end);
+	if (finish === null) return null;
+	if (skipWhitespace(line, finish.nextIndex, end) !== end) return null;
+	return { start: { line: start.line }, end: { line: finish.line } };
+}
+
+/**
+ * Parse a `¶PATH[#hash]` file-header line. Returns `null` for lines that
+ * do not start with the file prefix or that fail the strict shape.
+ *
+ * `*** Begin Patch` / `*** End Patch` / `*** Abort` markers are matched
+ * earlier in {@link classifyLine}, so envelope markers never reach here.
  */
 function tryParseHeader(line: string): { path: string; fileHash?: string } | null {
+	if (!line.startsWith(HL_FILE_PREFIX)) return null;
 	const end = trimEndIndex(line);
-	if (end === 0 || line.charCodeAt(0) !== CHAR_PILCROW) return null;
-
-	let index = 0;
-	while (index < end && line.charCodeAt(index) === CHAR_PILCROW) index++;
-	index = skipWhitespace(line, index, end);
+	let index = FILE_PREFIX_LENGTH;
 	if (index >= end) return null;
 
 	const pathStart = index;
 	while (index < end) {
 		const code = line.charCodeAt(index);
-		if (code === CHAR_HASH || code === CHAR_PILCROW || code === CHAR_SPACE || code === CHAR_TAB) break;
+		if (code === CHAR_HASH || code === CHAR_SPACE || code === CHAR_TAB) break;
 		index++;
 	}
 	if (index === pathStart) return null;
@@ -307,12 +312,12 @@ function tryParseHeader(line: string): { path: string; fileHash?: string } | nul
 	let fileHash: string | undefined;
 	if (index < end && line.charCodeAt(index) === CHAR_HASH) {
 		const hashStart = index + 1;
-		const hashEnd = hashStart + FILE_HASH_LENGTH;
+		const hashEnd = hashStart + HL_FILE_HASH_LENGTH;
 		if (hashEnd > end) return null;
 		for (let probe = hashStart; probe < hashEnd; probe++) {
 			if (!isHexDigitCode(line.charCodeAt(probe))) return null;
 		}
-		fileHash = line.slice(hashStart, hashEnd);
+		fileHash = line.slice(hashStart, hashEnd).toUpperCase();
 		index = hashEnd;
 	}
 
@@ -320,21 +325,6 @@ function tryParseHeader(line: string): { path: string; fileHash?: string } | nul
 	if (skipWhitespace(line, index, end) !== end) return null;
 
 	return fileHash !== undefined ? { path, fileHash } : { path };
-}
-
-/**
- * Returns true when the line scans as `LINE!payload` (delete sigil followed
- * by additional content). The parser uses this for the dedicated "deletes
- * only" diagnostic, separate from the standard "unrecognized op" path.
- */
-export function isDeleteOpWithPayload(line: string): boolean {
-	const range = scanRange(line, line.length);
-	return (
-		range !== null &&
-		range.nextIndex < line.length &&
-		line[range.nextIndex] === HL_OP_DELETE &&
-		range.nextIndex + HL_OP_DELETE.length < line.length
-	);
 }
 
 interface TokenBase {
@@ -348,10 +338,10 @@ export type Token =
 	| (TokenBase & { kind: "envelope-end" })
 	| (TokenBase & { kind: "abort" })
 	| (TokenBase & { kind: "header"; path: string; fileHash?: string })
-	| (TokenBase & { kind: "op-insert"; cursor: Cursor; inlineBody: string | undefined })
-	| (TokenBase & { kind: "op-replace"; range: ParsedRange; inlineBody: string | undefined })
-	| (TokenBase & { kind: "op-delete"; range: ParsedRange; trailingPayload: boolean })
-	| (TokenBase & { kind: "payload"; text: string });
+	| (TokenBase & { kind: "op-block"; target: BlockTarget })
+	| (TokenBase & { kind: "payload-literal"; text: string })
+	| (TokenBase & { kind: "payload-repeat"; range: ParsedRange })
+	| (TokenBase & { kind: "raw"; text: string });
 
 function classifyLine(line: string, lineNum: number): Token {
 	if (isEmptyLine(line)) return { kind: "blank", lineNum };
@@ -359,7 +349,9 @@ function classifyLine(line: string, lineNum: number): Token {
 	if (markerLineEquals(line, END_PATCH_MARKER)) return { kind: "envelope-end", lineNum };
 	if (markerLineEquals(line, ABORT_MARKER)) return { kind: "abort", lineNum };
 
-	if (line.charCodeAt(0) === CHAR_PILCROW) {
+	const firstCode = line.charCodeAt(0);
+
+	if (line.startsWith(HL_FILE_PREFIX)) {
 		const header = tryParseHeader(line);
 		if (header !== null) {
 			return header.fileHash !== undefined
@@ -368,18 +360,25 @@ function classifyLine(line: string, lineNum: number): Token {
 		}
 	}
 
-	const op = tryParseOp(line);
-	if (op !== null) {
-		if (op.kind === "insert") {
-			return { kind: "op-insert", lineNum, cursor: op.cursor, inlineBody: op.inlineBody };
-		}
-		if (op.kind === "replace") {
-			return { kind: "op-replace", lineNum, range: op.range, inlineBody: op.inlineBody };
-		}
-		return { kind: "op-delete", lineNum, range: op.range, trailingPayload: op.trailingPayload };
+	// Hunk header lines are `A B` (two numbers) or the keyword `BOF` /
+	// `EOF`. `@@`-bracketed forms are intentionally NOT accepted here —
+	// they fall through to `raw` and the parser rejects them as
+	// apply_patch contamination.
+	const isHunkLead = isNonZeroDigitCode(firstCode) || line.startsWith(BOF_ANCHOR) || line.startsWith(EOF_ANCHOR);
+	if (isHunkLead) {
+		const hunk = tryParseHunkHeader(line);
+		if (hunk !== null) return { kind: "op-block", lineNum, target: hunk.target };
 	}
 
-	return { kind: "payload", lineNum, text: line };
+	if (firstCode === CHAR_PAYLOAD_REPLACE) {
+		return { kind: "payload-literal", lineNum, text: line.slice(1) };
+	}
+	if (firstCode === CHAR_PAYLOAD_REPEAT) {
+		const range = tryParseRepeatPayload(line);
+		if (range !== null) return { kind: "payload-repeat", lineNum, range };
+	}
+
+	return { kind: "raw", lineNum, text: line };
 }
 
 /**
@@ -447,7 +446,7 @@ export class Tokenizer {
 	}
 
 	isOp(line: string): boolean {
-		return tryParseOp(line) !== null;
+		return tryParseHunkHeader(line) !== null;
 	}
 
 	isHeader(line: string): boolean {

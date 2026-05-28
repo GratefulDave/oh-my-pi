@@ -1,29 +1,26 @@
 /**
- * Hashline format primitives: sigils, separators, regex fragments, and the
- * file-hash computation. These are the single source of truth for the
- * parser, the tokenizer, the prompt, and the formal grammar.
+ * Hashline format primitives: sigils, separators, regex fragments, and
+ * display helpers. These are the single source of truth for the parser, the
+ * tokenizer, the prompt, and the formal grammar.
  */
+import { InMemorySnapshotStore } from "./snapshots";
 
-/** Op sigil used immediately after a line-number anchor to insert before it. */
-export const HL_OP_INSERT_BEFORE = "↑";
-/** Op sigil used immediately after a line-number anchor to insert after it. */
-export const HL_OP_INSERT_AFTER = "↓";
-/** Op sigil used after a range (or single anchor) to replace its lines. */
-export const HL_OP_REPLACE = ":";
-/** Op sigil used after a range (or single anchor) to delete its lines. */
-export const HL_OP_DELETE = "!";
-
-/** All hashline edit op sigils, concatenated for fast membership tests. */
-export const HL_OP_CHARS = `${HL_OP_INSERT_BEFORE}${HL_OP_INSERT_AFTER}${HL_OP_REPLACE}${HL_OP_DELETE}`;
-
-/** Prefix for payload continuation lines. The prefix itself is not written. */
-export const HL_PAYLOAD_PREFIX = "+";
-
-/** Hashline edit file-section header marker. */
+/** File-section header prefix: `¶path#hash`. */
 export const HL_FILE_PREFIX = "¶";
 
-/** Separator between a hashline file path and its file hash. */
+/** Payload sigil for literal body rows. */
+export const HL_PAYLOAD_REPLACE = "+";
+/** Payload sigil for body rows that repeat original file lines. */
+export const HL_PAYLOAD_REPEAT = "&";
+
+/** All hashline payload sigils, concatenated for fast membership tests. */
+export const HL_PAYLOAD_CHARS = `${HL_PAYLOAD_REPLACE}${HL_PAYLOAD_REPEAT}`;
+
+/** Separator between a hashline file path and its opaque snapshot tag. */
 export const HL_FILE_HASH_SEP = "#";
+
+/** Separator between two line numbers in a range, e.g. `5..10`. */
+export const HL_RANGE_SEP = "..";
 
 /** Separator between a line number and displayed line content in hashline mode. */
 export const HL_LINE_BODY_SEP = ":";
@@ -34,12 +31,12 @@ function regexEscape(str: string): string {
 
 /**
  * Decoration prefix that may precede a line number in tool output:
- * `>` (context line in grep), `+` (added line in diff), `-` (removed line),
- * `*` (match line). Any combination, in any order, surrounded by optional
- * whitespace. Output formatters emit at most one decoration per line; the
- * parser stays liberal because it accepts whatever the model echoes back.
+ * `*` (match line), `>` (context line in grep). Any combination, in any
+ * order, surrounded by optional whitespace. Output formatters emit at most
+ * one decoration per line; the parser stays liberal because it accepts
+ * whatever the model echoes back.
  */
-export const HL_ANCHOR_DECORATION_RE_RAW = `\\s*[>+\\-*]*\\s*`;
+export const HL_ANCHOR_DECORATION_RE_RAW = `\\s*[>*]*\\s*`;
 
 /** Capture-group regex source for a decorated bare line-number anchor. */
 export const HL_ANCHOR_RE_RAW = `${HL_ANCHOR_DECORATION_RE_RAW}(\\d+)`;
@@ -48,10 +45,18 @@ export const HL_ANCHOR_RE_RAW = `${HL_ANCHOR_DECORATION_RE_RAW}(\\d+)`;
 export const HL_LINE_RE_RAW = `[1-9]\\d*`;
 
 /** Capture-group form of {@link HL_LINE_RE_RAW}. */
-export const HL_LINE_CAPTURE_RE_RAW = `([1-9]\\d*)`;
+export const HL_LINE_CAPTURE_RE_RAW = `(${HL_LINE_RE_RAW})`;
 
-/** Four-hex-character file hash carried by a hashline section header. */
-export const HL_FILE_HASH_RE_RAW = `[0-9a-f]{4}`;
+/** Regex for repeat payload rows (`&A..B`). */
+export const HL_PAYLOAD_REPEAT_RE = new RegExp(
+	`^\\${HL_PAYLOAD_REPEAT}${HL_LINE_CAPTURE_RE_RAW},${HL_LINE_CAPTURE_RE_RAW}$`,
+);
+
+/** Number of hex characters in an opaque snapshot tag. */
+export const HL_FILE_HASH_LENGTH = 3;
+
+/** Canonical uppercase hexadecimal opaque snapshot tag carried by a hashline section header. */
+export const HL_FILE_HASH_RE_RAW = `[0-9A-F]{${HL_FILE_HASH_LENGTH}}`;
 
 /** Capture-group form of {@link HL_FILE_HASH_RE_RAW}. */
 export const HL_FILE_HASH_CAPTURE_RE_RAW = `(${HL_FILE_HASH_RE_RAW})`;
@@ -60,10 +65,10 @@ export const HL_FILE_HASH_CAPTURE_RE_RAW = `(${HL_FILE_HASH_RE_RAW})`;
 export const HL_LINE_BODY_SEP_RE_RAW = regexEscape(HL_LINE_BODY_SEP);
 
 /**
- * Representative file hashes for use in user-facing error messages and prompt
- * examples.
+ * Representative snapshot tags for use in user-facing error messages and
+ * prompt examples.
  */
-export const HL_FILE_HASH_EXAMPLES = ["1a2b", "3c4d", "9f3e"] as const;
+export const HL_FILE_HASH_EXAMPLES = ["0A3", "1F7", "3C9"] as const;
 
 /**
  * Format a comma-separated list of example anchors with an optional line-number
@@ -74,26 +79,7 @@ export function describeAnchorExamples(linePrefix = ""): string {
 	return examples.map(e => `"${e}"`).join(", ");
 }
 
-function normalizeFileHashText(text: string): string {
-	return text
-		.replace(/\r/g, "")
-		.split("\n")
-		.map(line => line.trimEnd())
-		.join("\n");
-}
-
-/**
- * Compute the 4-hex-character hash carried by a hashline section header. The
- * hash normalizes CR characters and trailing whitespace before hashing so
- * platform line endings and display-trimmed lines do not invalidate anchors.
- */
-export function computeFileHash(text: string): string {
-	const normalized = normalizeFileHashText(text);
-	const low16 = Bun.hash.xxHash32(normalized, 0) & 0xffff;
-	return low16.toString(16).padStart(4, "0");
-}
-
-/** Format a hashline section header for a file path and file hash. */
+/** Format a hashline section header for a file path and snapshot tag. */
 export function formatHashlineHeader(filePath: string, fileHash: string): string {
 	return `${HL_FILE_PREFIX}${filePath}${HL_FILE_HASH_SEP}${fileHash}`;
 }
@@ -107,4 +93,25 @@ export function formatNumberedLine(lineNumber: number, line: string): string {
 export function formatNumberedLines(text: string, startLine = 1): string {
 	const lines = text.split("\n");
 	return lines.map((line, i) => formatNumberedLine(startLine + i, line)).join("\n");
+}
+
+/**
+ * Backward-compat shim for fork consumers still on the pre-v15.5.9 `computeFileHash`
+ * API. Mints a 3-hex opaque snapshot tag via a throwaway {@link InMemorySnapshotStore}
+ * so the returned value is shape-compatible with {@link HL_FILE_HASH_RE_RAW} and can
+ * be fed straight into {@link formatHashlineHeader}.
+ *
+ * Tags minted by this shim are unresolvable at patch time — the snapshot store is
+ * thrown away on return. Consumers that actually apply patches MUST migrate to a
+ * shared {@link SnapshotStore} (see `packages/hashline/src/snapshots.ts`); this
+ * shim exists only to keep non-applying call sites (e.g. `read`/`search` tool
+ * output formatting) compiling while migration PRs land.
+ *
+ * @deprecated Use a shared `SnapshotStore.recordContiguous(...)` directly. Tracked
+ * for removal in the hashline-shim-removal follow-up PR.
+ */
+export function computeFileHash(text: string): string {
+	const store = new InMemorySnapshotStore();
+	const lines = text.split("\n");
+	return store.recordContiguous("__shim__", 1, lines, { fullText: text });
 }
