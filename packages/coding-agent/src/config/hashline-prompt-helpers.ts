@@ -1,6 +1,6 @@
+import { formatNumberedLine } from "@oh-my-pi/hashline";
 import { prompt } from "@oh-my-pi/pi-utils";
 import type { HelperOptions } from "@oh-my-pi/pi-utils/prompt";
-import { formatNumberedLine } from "@oh-my-pi/hashline";
 
 interface HashlinePromptState {
 	refs: Map<number, string>;

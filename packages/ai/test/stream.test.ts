@@ -6,9 +6,9 @@ import { Effort } from "@oh-my-pi/pi-ai";
 import { getBundledModel } from "@oh-my-pi/pi-ai/models";
 import { complete, getEnvApiKey, stream } from "@oh-my-pi/pi-ai/stream";
 import type { Api, Context, ImageContent, Model, OptionsForApi, Tool, ToolResultMessage } from "@oh-my-pi/pi-ai/types";
-import { __resetVertexTokenCache } from "../src/providers/google-auth";
 import { $which } from "@oh-my-pi/pi-utils";
 import * as z from "zod/v4";
+import { __resetVertexTokenCache } from "../src/providers/google-auth";
 import { e2eApiKey, resolveApiKey } from "./oauth";
 
 // Resolve OAuth tokens at module level (async, runs before tests)

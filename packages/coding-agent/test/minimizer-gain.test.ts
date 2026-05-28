@@ -608,7 +608,7 @@ describe("minimizer gain analytics", () => {
 				await fs.mkdir(path.dirname(filePath), { recursive: true });
 				await fs.writeFile(
 					filePath,
-					JSON.stringify({
+					`${JSON.stringify({
 						timestamp: "2026-05-20T00:00:00.000Z",
 						cwd: "/repo",
 						command: "git status",
@@ -617,7 +617,7 @@ describe("minimizer gain analytics", () => {
 						outputBytes: 250,
 						savedBytes: 750,
 						exitCode: 0,
-					}) + "\n",
+					})}\n`,
 				);
 				const diag = await buildMinimizerGainDiagnostic({ agentDir });
 				expect(diag.recordCount).toBe(1);

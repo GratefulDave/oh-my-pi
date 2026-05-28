@@ -19,7 +19,6 @@ import {
 	type ToolChoice,
 } from "@oh-my-pi/pi-ai";
 import { agentLoop, agentLoopContinue } from "./agent-loop";
-import { EventLoopKeepalive } from "./utils/yield";
 import type { HarmonyAuditEvent } from "./harmony-leak";
 import type {
 	AgentContext,
@@ -32,6 +31,7 @@ import type {
 	StreamFn,
 	ToolCallContext,
 } from "./types";
+import { EventLoopKeepalive } from "./utils/yield";
 
 /**
  * Default convertToLlm: Keep only LLM-compatible messages, convert attachments.
@@ -1013,5 +1013,4 @@ export class Agent {
 			}
 		}
 	}
-
 }

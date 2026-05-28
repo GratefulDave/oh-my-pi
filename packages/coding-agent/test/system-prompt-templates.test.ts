@@ -2,12 +2,12 @@ import { afterEach, describe, expect, test, vi } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import hashlineToolPrompt from "@oh-my-pi/hashline/prompt.md" with { type: "text" };
 import { type AgentTool, INTENT_FIELD } from "@oh-my-pi/pi-agent-core";
 import { buildSystemPrompt, buildSystemPromptToolMetadata } from "@oh-my-pi/pi-coding-agent/system-prompt";
 import { prompt } from "@oh-my-pi/pi-utils";
 import Handlebars from "handlebars";
 import * as z from "zod/v4";
-import hashlineToolPrompt from "@oh-my-pi/hashline/prompt.md" with { type: "text" };
 
 const baseGitContext = {
 	isRepo: true,

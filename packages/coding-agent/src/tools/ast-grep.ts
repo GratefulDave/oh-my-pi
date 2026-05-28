@@ -224,7 +224,12 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 					const absolutePath = path.resolve(this.session.cwd, relativePath);
 					try {
 						const fullText = await Bun.file(absolutePath).text();
-						const fileHash = getFileSnapshotStore(this.session).recordContiguous(absolutePath, 1, fullText.split("\n"), { fullText });
+						const fileHash = getFileSnapshotStore(this.session).recordContiguous(
+							absolutePath,
+							1,
+							fullText.split("\n"),
+							{ fullText },
+						);
 						hashContexts.set(relativePath, { absolutePath, fileHash });
 					} catch {
 						// Best-effort: if a file disappears between ast-grep and rendering, emit plain line output.

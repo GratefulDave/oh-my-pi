@@ -1,6 +1,5 @@
 import {
 	Agent,
-	type AgentEvent,
 	type AgentMessage,
 	type AgentTelemetryConfig,
 	type AgentTool,

@@ -170,10 +170,7 @@ export class MinimizerGainOverlayComponent implements Component {
 		lines.push(clean(`  Saved: ${formatNumber(diag.savedCount)}  Missed: ${formatNumber(diag.missedCount)}`, width));
 		lines.push(clean(`  Most recent: ${diag.mostRecentTimestamp ?? "-"}`, width));
 		lines.push(
-			clean(
-				`  Avg saved ratio: ${diag.avgSavedRatio === null ? "-" : diag.avgSavedRatio.toFixed(3)}`,
-				width,
-			),
+			clean(`  Avg saved ratio: ${diag.avgSavedRatio === null ? "-" : diag.avgSavedRatio.toFixed(3)}`, width),
 		);
 		lines.push(
 			clean(

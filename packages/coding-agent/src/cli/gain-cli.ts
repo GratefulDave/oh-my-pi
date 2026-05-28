@@ -63,12 +63,7 @@ export async function runGainCommand(cmd: GainCommandArgs): Promise<void> {
 }
 
 function exitCodeForDiagnostic(diag: MinimizerGainDiagnostic): void {
-	if (
-		diag.writeErrorCount > 0 ||
-		diag.readErrorCount > 0 ||
-		!diag.minimizerEnabled ||
-		!diag.nativeBindingLoaded
-	) {
+	if (diag.writeErrorCount > 0 || diag.readErrorCount > 0 || !diag.minimizerEnabled || !diag.nativeBindingLoaded) {
 		process.exit(1);
 	}
 }
@@ -98,15 +93,11 @@ function writeDiagnosticOutput(mode: "diag" | "diag-json", diagnostic: Minimizer
 	process.stdout.write(`  Load Duration: ${diagnostic.loadDurationMs}ms\n`);
 	process.stdout.write(`  Write Errors: ${diagnostic.writeErrorCount}\n`);
 	if (diagnostic.lastWriteError) {
-		process.stdout.write(
-			`    last: ${diagnostic.lastWriteError.error} @ ${diagnostic.lastWriteError.at}\n`,
-		);
+		process.stdout.write(`    last: ${diagnostic.lastWriteError.error} @ ${diagnostic.lastWriteError.at}\n`);
 	}
 	process.stdout.write(`  Read Errors: ${diagnostic.readErrorCount}\n`);
 	if (diagnostic.lastReadError) {
-		process.stdout.write(
-			`    last: ${diagnostic.lastReadError.error} @ ${diagnostic.lastReadError.at}\n`,
-		);
+		process.stdout.write(`    last: ${diagnostic.lastReadError.error} @ ${diagnostic.lastReadError.at}\n`);
 	}
 	process.stdout.write(`  Parse Errors: ${diagnostic.parseErrorCount}\n`);
 	if (diagnostic.lastParseError) {

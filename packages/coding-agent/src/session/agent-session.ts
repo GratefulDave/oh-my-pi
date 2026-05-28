@@ -100,12 +100,12 @@ import type { Settings, SkillsSettings } from "../config/settings";
 import { RawSseDebugBuffer } from "../debug/raw-sse-buffer";
 import { loadCapability } from "../discovery";
 import { expandApplyPatchToEntries, normalizeDiff, normalizeToLF, ParseError, previewPatch, stripBom } from "../edit";
+import { namespaceSessionId as namespacePythonSessionId } from "../eval/py";
 import {
 	disposeKernelSessionsByOwner,
 	executePython as executePythonCommand,
 	type PythonResult,
 } from "../eval/py/executor";
-import { namespaceSessionId as namespacePythonSessionId } from "../eval/py";
 import { defaultEvalSessionId } from "../eval/session-id";
 import { type BashResult, executeBash as executeBashCommand } from "../exec/bash-executor";
 import { exportSessionToHtml } from "../export/html";
@@ -6524,7 +6524,13 @@ export class AgentSession {
 		// "overflow" and "incomplete" force inline execution because they are recovery
 		// paths the caller wants resolved before scheduling the next turn. "idle" is
 		// triggered by the idle loop and does its own scheduling.
-		if (!deferred && reason !== "overflow" && reason !== "incomplete" && reason !== "idle" && compactionSettings.strategy === "handoff") {
+		if (
+			!deferred &&
+			reason !== "overflow" &&
+			reason !== "incomplete" &&
+			reason !== "idle" &&
+			compactionSettings.strategy === "handoff"
+		) {
 			this.#schedulePostPromptTask(
 				async signal => {
 					await Promise.resolve();

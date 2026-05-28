@@ -205,7 +205,11 @@ describe("MinimizerGainOverlayComponent", () => {
 				distinctCwdsSample: ["/repo", "/other"],
 			},
 		};
-		const component = new MinimizerGainOverlayComponent(dual, () => {}, () => {});
+		const component = new MinimizerGainOverlayComponent(
+			dual,
+			() => {},
+			() => {},
+		);
 		// Tab to Status (Gain→Missed→Status).
 		component.handleInput("\t");
 		component.handleInput("\t");
@@ -224,7 +228,11 @@ describe("MinimizerGainOverlayComponent", () => {
 			...makeDualContext(),
 			diagnostic: { buildError: "stat ENOENT" },
 		};
-		const component = new MinimizerGainOverlayComponent(dual, () => {}, () => {});
+		const component = new MinimizerGainOverlayComponent(
+			dual,
+			() => {},
+			() => {},
+		);
 		component.handleInput("\t");
 		component.handleInput("\t");
 		const output = render(component);
