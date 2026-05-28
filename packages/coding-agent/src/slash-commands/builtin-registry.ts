@@ -2349,11 +2349,12 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 						provider: "native",
 					},
 				];
-				const skills: SkillsSkillToggle[] = state.skills.map(skill => ({
-					name: skill.name,
-					source: `${skill._source?.providerName ?? "?"} (${skill._source?.level ?? "?"})`,
-					enabled: !disabledSkillNames.has(skill.name),
-				}));
+				// `/skills` overlay shows provider toggles only.
+				// Per-skill enable/disable lives elsewhere: slash discovery
+				// (/<name>) and the `library on/off` CLI. Avoid duplicating
+				// the picker inside the provider-config dialog.
+				const skills: SkillsSkillToggle[] = [];
+				void state; // skills list intentionally unused here
 				return { sources, skills };
 			};
 
