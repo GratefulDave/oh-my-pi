@@ -294,9 +294,7 @@ function buildGainDiscoverLines(context: MinimizerGainContext): string[] {
 
 async function showGainOverlay(runtime: TuiSlashCommandRuntime, initialScope: 0 | 1 = 0, days?: number): Promise<void> {
 	const cwd = runtime.ctx.sessionManager.getCwd();
-	const buildDiagnosticForCwd = async (
-		scopeCwd: string | undefined,
-	): Promise<DualContext["diagnostic"]> => {
+	const buildDiagnosticForCwd = async (scopeCwd: string | undefined): Promise<DualContext["diagnostic"]> => {
 		try {
 			return await buildMinimizerGainDiagnostic({ cwd: scopeCwd, days });
 		} catch (err) {
@@ -2344,9 +2342,6 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 			const state = await loadManageableSkills(cwd, ctx.settings);
 
 			const buildToggles = (): { sources: SkillsSourceToggle[]; skills: SkillsSkillToggle[] } => {
-				const disabledSkillNames = getDisabledSkillNames(
-					(ctx.settings.get("disabledExtensions" as SettingPath) as string[] | undefined) ?? [],
-				);
 				const sources: SkillsSourceToggle[] = [
 					{
 						id: "compatibility.loadForeignConfig",

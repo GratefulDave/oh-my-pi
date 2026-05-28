@@ -357,7 +357,9 @@ export async function generateFileMentionMessages(
 			let { output, lineCount } = buildTextOutput(content);
 			// Ephemeral store: file-mention hashline tags are display-only and not patch-resolvable (matches prior shim behavior). Resolvable @-mention anchoring tracked as a follow-up.
 			if (options?.useHashLines) {
-				const fileHash = new InMemorySnapshotStore().recordContiguous(resolvedPath, 1, content.split("\n"), { fullText: content });
+				const fileHash = new InMemorySnapshotStore().recordContiguous(resolvedPath, 1, content.split("\n"), {
+					fullText: content,
+				});
 				output = `${formatHashlineHeader(resolvedPath, fileHash)}\n${formatNumberedLines(output)}`;
 			}
 			files.push({ path: resolvedPath, content: output, lineCount });

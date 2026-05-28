@@ -11,7 +11,7 @@ import type { OpenAICompletionsOptions } from "./providers/openai-completions";
 import type { OpenAIResponsesOptions } from "./providers/openai-responses";
 import type { AssistantMessageEventStream } from "./utils/event-stream";
 
-export type { AssistantMessageEventStream } from "./utils/event-stream";
+export { AssistantMessageEventStream } from "./utils/event-stream";
 
 export type KnownApi =
 	| "openai-completions"
@@ -745,6 +745,13 @@ export interface AnthropicCompat {
 	supportsEagerToolInputStreaming?: boolean;
 	/** Whether long prompt-cache retention (`ttl: "1h"`) is supported. Default: true for canonical Anthropic API. */
 	supportsLongCacheRetention?: boolean;
+	/**
+	 * Whether the model accepts an explicit reasoning-effort param. Anthropic
+	 * models use thinking budgets rather than effort, so this is `false` by
+	 * default; declared here so consumers can read it off the
+	 * `OpenAICompat | AnthropicCompat` union without narrowing.
+	 */
+	supportsReasoningEffort?: boolean;
 }
 
 /**

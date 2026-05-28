@@ -111,7 +111,7 @@ function applyDiff(content: string, diff: string): string {
 }
 
 function applyDiffWithPureInsertAutoDrop(content: string, diff: string): string {
-	return applyHashlineEdits(content, parseHashline(diff).edits, { autoDropPureInsertDuplicates: true }).lines;
+	return applyHashlineEdits(content, parseHashline(diff).edits).lines;
 }
 
 async function withTempDir(fn: (tempDir: string) => Promise<void>): Promise<void> {
@@ -414,7 +414,7 @@ describe("hashline parser — suffix-op syntax", () => {
 	it("surfaces a warning when pure-insert duplicates are auto-dropped", () => {
 		const source = ["aaa", "bbb", "ccc"].join("\n");
 		const diff = [`${tag(2, "bbb")}↓aaa`, pl("bbb"), pl("NEW")].join("\n");
-		const result = applyHashlineEdits(source, parseHashline(diff).edits, { autoDropPureInsertDuplicates: true });
+		const result = applyHashlineEdits(source, parseHashline(diff).edits);
 		expect(result.lines).toBe("aaa\nbbb\nNEW\nccc");
 		expect(result.warnings).toBeDefined();
 		expect(result.warnings).toEqual(
@@ -861,7 +861,6 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 			currentText,
 			edits,
 			fileHash: snapshotTag,
-			options: {},
 		});
 		expect(recovered).toBeNull();
 	});
@@ -944,7 +943,6 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 			currentText,
 			fileHash: v0Tag,
 			edits: parseHashline(`10:L10-EDITED`).edits,
-			options: {},
 		});
 
 		expect(recovered).not.toBeNull();

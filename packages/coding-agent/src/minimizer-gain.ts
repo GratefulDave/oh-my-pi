@@ -626,9 +626,7 @@ export async function buildMinimizerGainDiagnostic(
 
 	// Read full file (filter-free) for the file-wide recordCount + distinct-
 	// cwd metrics; then apply scope-aware filters for *InScope counters.
-	const allRecords = exists
-		? await readMinimizerGain({ agentDir: input.agentDir })
-		: [];
+	const allRecords = exists ? await readMinimizerGain({ agentDir: input.agentDir }) : [];
 	const recordCount = allRecords.length;
 
 	const scopedRecords = await readMinimizerGain({
@@ -670,8 +668,7 @@ export async function buildMinimizerGainDiagnostic(
 		const denom = s + m;
 		recentMissedRatio = denom === 0 ? null : m / denom;
 	}
-	const minimizerAppearsInactive =
-		recentMissedRatio !== null && recentMissedRatio >= RECENT_MISSED_THRESHOLD;
+	const minimizerAppearsInactive = recentMissedRatio !== null && recentMissedRatio >= RECENT_MISSED_THRESHOLD;
 
 	const distinctCwds = new Set<string>();
 	for (const r of allRecords) {

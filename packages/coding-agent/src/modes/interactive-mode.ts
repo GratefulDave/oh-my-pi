@@ -6,6 +6,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { type Agent, type AgentMessage, type AgentToolResult, ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { CompactionOutcome } from "@oh-my-pi/pi-agent-core/compaction";
+import { EventLoopKeepalive } from "@oh-my-pi/pi-agent-core/utils/yield";
 import {
 	type AssistantMessage,
 	type ImageContent,
@@ -28,7 +29,6 @@ import {
 } from "@oh-my-pi/pi-tui";
 import { COMMAND_NAME, getProjectDir, hsvToRgb, isEnoent, logger, postmortem, prompt } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
-import { EventLoopKeepalive } from "@oh-my-pi/pi-agent-core/utils/yield";
 import { KeybindingsManager } from "../config/keybindings";
 import { isSettingsInitialized, Settings, settings } from "../config/settings";
 import type {

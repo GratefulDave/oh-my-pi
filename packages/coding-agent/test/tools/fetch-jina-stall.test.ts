@@ -81,13 +81,9 @@ describe("renderHtmlToText: jina stall does not starve local fallbacks (#1449)",
 		});
 
 		const controller = new AbortController();
-		const pending = renderHtmlToText(
-			"https://example.com/article",
-			html,
-			30,
-			settings,
-			controller.signal,
-		).catch(err => err);
+		const pending = renderHtmlToText("https://example.com/article", html, 30, settings, controller.signal).catch(
+			err => err,
+		);
 
 		controller.abort();
 		const outcome = await pending;
