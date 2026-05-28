@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { computeFileHash, formatHashlineHeader, formatNumberedLine, formatNumberedLines } from "@oh-my-pi/hashline";
+import { formatHashlineHeader, formatNumberedLine, formatNumberedLines } from "@oh-my-pi/hashline";
 import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
 import type { ImageContent, TextContent } from "@oh-my-pi/pi-ai";
 import { glob, type SummaryResult, summarizeCode } from "@oh-my-pi/pi-natives";
@@ -122,9 +122,16 @@ interface HashlineHeaderContext {
 	fullText: string;
 }
 
-function buildHashlineHeaderContext(displayPath: string, fullText: string): HashlineHeaderContext {
+function buildHashlineHeaderContext(
+	displayPath: string,
+	fullText: string,
+	session: ToolSession,
+	absolutePath: string,
+): HashlineHeaderContext {
 	const normalized = normalizeToLF(fullText);
-	const fileHash = computeFileHash(normalized);
+	const fileHash = getFileSnapshotStore(session).recordContiguous(absolutePath, 1, normalized.split("\n"), {
+		fullText: normalized,
+	});
 	return {
 		header: formatHashlineHeader(displayPath, fileHash),
 		fileHash,
@@ -132,9 +139,13 @@ function buildHashlineHeaderContext(displayPath: string, fullText: string): Hash
 	};
 }
 
-async function readHashlineHeaderContext(absolutePath: string, cwd: string): Promise<HashlineHeaderContext> {
+async function readHashlineHeaderContext(
+	absolutePath: string,
+	cwd: string,
+	session: ToolSession,
+): Promise<HashlineHeaderContext> {
 	const fullText = await Bun.file(absolutePath).text();
-	return buildHashlineHeaderContext(formatPathRelativeToCwd(absolutePath, cwd), fullText);
+	return buildHashlineHeaderContext(formatPathRelativeToCwd(absolutePath, cwd), fullText, session, absolutePath);
 }
 
 function prependHashlineHeader(text: string, context: HashlineHeaderContext | undefined): string {
@@ -840,7 +851,12 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 		const shouldAddLineNumbers = shouldAddHashLines ? false : displayMode.lineNumbers;
 		const hashContext =
 			shouldAddHashLines && options.sourcePath
-				? buildHashlineHeaderContext(formatPathRelativeToCwd(options.sourcePath, this.session.cwd), text)
+				? buildHashlineHeaderContext(
+						formatPathRelativeToCwd(options.sourcePath, this.session.cwd),
+						text,
+						this.session,
+						options.sourcePath,
+					)
 				: undefined;
 		recordHashlineSnapshot(this.session, options.sourcePath, hashContext);
 		let emittedHashlineHeader = false;
@@ -933,7 +949,12 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 		const shouldAddLineNumbers = shouldAddHashLines ? false : displayMode.lineNumbers;
 		const hashContext =
 			shouldAddHashLines && options.sourcePath
-				? buildHashlineHeaderContext(formatPathRelativeToCwd(options.sourcePath, this.session.cwd), text)
+				? buildHashlineHeaderContext(
+						formatPathRelativeToCwd(options.sourcePath, this.session.cwd),
+						text,
+						this.session,
+						options.sourcePath,
+					)
 				: undefined;
 		recordHashlineSnapshot(this.session, options.sourcePath, hashContext);
 		let emittedHashlineHeader = false;
@@ -1014,7 +1035,7 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 		const shouldAddHashLines = !rawSelector && displayMode.hashLines;
 		const shouldAddLineNumbers = rawSelector ? false : shouldAddHashLines ? false : displayMode.lineNumbers;
 		const hashContext = shouldAddHashLines
-			? await readHashlineHeaderContext(absolutePath, this.session.cwd)
+			? await readHashlineHeaderContext(absolutePath, this.session.cwd, this.session)
 			: undefined;
 		recordHashlineSnapshot(this.session, absolutePath, hashContext);
 		let emittedHashlineHeader = false;
@@ -1725,7 +1746,7 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 						renderedSummary.elidedLines,
 					);
 					const summaryHashContext = displayMode.hashLines
-						? await readHashlineHeaderContext(absolutePath, this.session.cwd)
+						? await readHashlineHeaderContext(absolutePath, this.session.cwd, this.session)
 						: undefined;
 					recordHashlineSnapshot(this.session, absolutePath, summaryHashContext);
 					const bodyText = footer ? `${renderedSummary.text}\n\n${footer}` : renderedSummary.text;
@@ -1875,7 +1896,7 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 					const shouldAddHashLines = !rawSelector && displayMode.hashLines;
 					const shouldAddLineNumbers = rawSelector ? false : shouldAddHashLines ? false : displayMode.lineNumbers;
 					const hashContext = shouldAddHashLines
-						? await readHashlineHeaderContext(absolutePath, this.session.cwd)
+						? await readHashlineHeaderContext(absolutePath, this.session.cwd, this.session)
 						: undefined;
 
 					if (collectedLines.length > 0 && !firstLineExceedsLimit) {
@@ -2030,7 +2051,7 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 
 		const rawText = region.lines.join("\n");
 		const hashContext = shouldAddHashLines
-			? await readHashlineHeaderContext(entry.absolutePath, this.session.cwd)
+			? await readHashlineHeaderContext(entry.absolutePath, this.session.cwd, this.session)
 			: undefined;
 		recordHashlineSnapshot(this.session, entry.absolutePath, hashContext);
 		const formattedBody = formatTextWithMode(rawText, region.startLine, shouldAddHashLines, shouldAddLineNumbers);
