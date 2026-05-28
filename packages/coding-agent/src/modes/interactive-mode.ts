@@ -28,6 +28,7 @@ import {
 } from "@oh-my-pi/pi-tui";
 import { COMMAND_NAME, getProjectDir, hsvToRgb, isEnoent, logger, postmortem, prompt } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
+import { EventLoopKeepalive } from "@oh-my-pi/pi-agent-core/utils/yield";
 import { KeybindingsManager } from "../config/keybindings";
 import { isSettingsInitialized, Settings, settings } from "../config/settings";
 import type {
@@ -569,6 +570,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		if (this.session.getGoalModeState()?.mode === "exiting") {
 			await this.#exitGoalMode({ reason: "completed", silent: true });
 		}
+		using _ = new EventLoopKeepalive();
 		const { promise, resolve } = Promise.withResolvers<SubmittedUserInput>();
 		this.onInputCallback = input => {
 			this.onInputCallback = undefined;
