@@ -2,24 +2,6 @@ import type { ZodType, z } from "zod/v4";
 import type { BedrockOptions } from "./providers/amazon-bedrock";
 import type { AnthropicOptions } from "./providers/anthropic";
 import type { AzureOpenAIResponsesOptions } from "./providers/azure-openai-responses";
-import type { CursorOptions } from "./providers/cursor";
-import type {
-	DeleteArgs,
-	DeleteResult,
-	DiagnosticsArgs,
-	DiagnosticsResult,
-	GrepArgs,
-	GrepResult,
-	LsArgs,
-	LsResult,
-	McpResult,
-	ReadArgs,
-	ReadResult,
-	ShellArgs,
-	ShellResult,
-	WriteArgs,
-	WriteResult,
-} from "./providers/cursor/gen/agent_pb";
 import type { GoogleOptions } from "./providers/google";
 import type { GoogleGeminiCliOptions } from "./providers/google-gemini-cli";
 import type { GoogleVertexOptions } from "./providers/google-vertex";
@@ -41,8 +23,7 @@ export type KnownApi =
 	| "google-generative-ai"
 	| "google-gemini-cli"
 	| "google-vertex"
-	| "ollama-chat"
-	| "cursor-agent";
+	| "ollama-chat";
 export type Api = KnownApi | (string & {});
 export interface ApiOptionsMap {
 	"anthropic-messages": AnthropicOptions;
@@ -55,7 +36,6 @@ export interface ApiOptionsMap {
 	"google-gemini-cli": GoogleGeminiCliOptions;
 	"google-vertex": GoogleVertexOptions;
 	"ollama-chat": OllamaChatOptions;
-	"cursor-agent": CursorOptions;
 }
 // Compile-time exhaustiveness check - this will fail if ApiOptionsMap doesn't have all KnownApi keys
 type _CheckExhaustive =
@@ -367,12 +347,9 @@ export interface StreamOptions {
 	 * Optional `fetch` implementation override. Providers route every HTTP
 	 * request — direct calls, SDK clients, and retry helpers — through this
 	 * implementation when set. Defaults to `globalThis.fetch`. Providers that
-	 * do not use `fetch` (Bedrock's AWS SDK transport, Cursor's HTTP/2
-	 * channel) silently ignore the override.
+	 * do not use `fetch` (Bedrock's AWS SDK transport) silently ignore the override.
 	 */
 	fetch?: FetchImpl;
-	/** Cursor exec/MCP tool handlers (cursor-agent only). */
-	execHandlers?: CursorExecHandlers;
 }
 
 // Unified options with reasoning passed to streamSimple() and completeSimple()
@@ -397,10 +374,6 @@ export interface SimpleStreamOptions extends StreamOptions {
 	hideThinkingSummary?: boolean;
 	/** Custom token budgets for thinking levels (token-based providers only) */
 	thinkingBudgets?: ThinkingBudgets;
-	/** Cursor exec handlers for local tool execution */
-	cursorExecHandlers?: CursorExecHandlers;
-	/** Hook to handle tool results from Cursor exec */
-	cursorOnToolResult?: CursorToolResultHandler;
 	/** Optional tool choice override for compatible providers */
 	toolChoice?: ToolChoice;
 	/** OpenAI service tier for processing priority/cost control. Ignored by non-OpenAI providers. */
@@ -599,42 +572,6 @@ export interface ToolResultMessage<TDetails = any> {
 }
 
 export type Message = UserMessage | DeveloperMessage | AssistantMessage | ToolResultMessage;
-
-export type CursorExecHandlerResult<T> = { result: T; toolResult?: ToolResultMessage } | T | ToolResultMessage;
-
-export type CursorToolResultHandler = (
-	result: ToolResultMessage,
-) => ToolResultMessage | undefined | Promise<ToolResultMessage | undefined>;
-
-export interface CursorMcpCall {
-	name: string;
-	providerIdentifier: string;
-	toolName: string;
-	toolCallId: string;
-	args: Record<string, unknown>;
-	rawArgs: Record<string, Uint8Array>;
-}
-
-export interface CursorShellStreamCallbacks {
-	onStdout(data: string): void;
-	onStderr(data: string): void;
-}
-
-export interface CursorExecHandlers {
-	read?: (args: ReadArgs) => Promise<CursorExecHandlerResult<ReadResult>>;
-	ls?: (args: LsArgs) => Promise<CursorExecHandlerResult<LsResult>>;
-	grep?: (args: GrepArgs) => Promise<CursorExecHandlerResult<GrepResult>>;
-	write?: (args: WriteArgs) => Promise<CursorExecHandlerResult<WriteResult>>;
-	delete?: (args: DeleteArgs) => Promise<CursorExecHandlerResult<DeleteResult>>;
-	shell?: (args: ShellArgs) => Promise<CursorExecHandlerResult<ShellResult>>;
-	shellStream?: (
-		args: ShellArgs,
-		callbacks: CursorShellStreamCallbacks,
-	) => Promise<CursorExecHandlerResult<ShellResult>>;
-	diagnostics?: (args: DiagnosticsArgs) => Promise<CursorExecHandlerResult<DiagnosticsResult>>;
-	mcp?: (call: CursorMcpCall) => Promise<CursorExecHandlerResult<McpResult>>;
-	onToolResult?: CursorToolResultHandler;
-}
 
 /**
  * Plain JSON Schema document used by extension-authored tools (legacy TypeBox

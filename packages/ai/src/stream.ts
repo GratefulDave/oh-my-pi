@@ -12,7 +12,6 @@ import {
 } from "./model-thinking";
 import type { BedrockOptions } from "./providers/amazon-bedrock";
 import type { AnthropicOptions } from "./providers/anthropic";
-import type { CursorOptions } from "./providers/cursor";
 import { isGitLabDuoModel, streamGitLabDuo } from "./providers/gitlab-duo";
 import type { GoogleOptions } from "./providers/google";
 import { getVertexAccessToken } from "./providers/google-auth";
@@ -34,7 +33,6 @@ import {
 	streamAnthropic,
 	streamAzureOpenAIResponses,
 	streamBedrock,
-	streamCursor,
 	streamGoogle,
 	streamGoogleGeminiCli,
 	streamGoogleVertex,
@@ -371,9 +369,6 @@ export function stream<TApi extends Api>(
 
 		case "ollama-chat":
 			return streamOllama(model as Model<"ollama-chat">, context, providerOptions as OllamaChatOptions);
-
-		case "cursor-agent":
-			return streamCursor(model as Model<"cursor-agent">, context, providerOptions as CursorOptions);
 
 		default:
 			throw new Error(`Unhandled API: ${api}`);
@@ -994,16 +989,6 @@ function mapOptionsForApi<TApi extends Api>(
 				reasoning: resolveOpenAiReasoningEffort(model, options),
 				toolChoice: options?.toolChoice,
 			});
-
-		case "cursor-agent": {
-			const execHandlers = options?.cursorExecHandlers ?? options?.execHandlers;
-			const onToolResult = options?.cursorOnToolResult ?? execHandlers?.onToolResult;
-			return castApi<"cursor-agent">({
-				...base,
-				execHandlers,
-				onToolResult,
-			});
-		}
 
 		default:
 			throw new Error(`Unhandled API in mapOptionsForApi: ${model.api}`);
