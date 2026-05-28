@@ -3,8 +3,6 @@
  * display helpers. These are the single source of truth for the parser, the
  * tokenizer, the prompt, and the formal grammar.
  */
-import { InMemorySnapshotStore } from "./snapshots";
-
 /** File-section header prefix: `¶path#hash`. */
 export const HL_FILE_PREFIX = "¶";
 
@@ -93,25 +91,4 @@ export function formatNumberedLine(lineNumber: number, line: string): string {
 export function formatNumberedLines(text: string, startLine = 1): string {
 	const lines = text.split("\n");
 	return lines.map((line, i) => formatNumberedLine(startLine + i, line)).join("\n");
-}
-
-/**
- * Backward-compat shim for fork consumers still on the pre-v15.5.9 `computeFileHash`
- * API. Mints a 3-hex opaque snapshot tag via a throwaway {@link InMemorySnapshotStore}
- * so the returned value is shape-compatible with {@link HL_FILE_HASH_RE_RAW} and can
- * be fed straight into {@link formatHashlineHeader}.
- *
- * Tags minted by this shim are unresolvable at patch time — the snapshot store is
- * thrown away on return. Consumers that actually apply patches MUST migrate to a
- * shared {@link SnapshotStore} (see `packages/hashline/src/snapshots.ts`); this
- * shim exists only to keep non-applying call sites (e.g. `read`/`search` tool
- * output formatting) compiling while migration PRs land.
- *
- * @deprecated Use a shared `SnapshotStore.recordContiguous(...)` directly. Tracked
- * for removal in the hashline-shim-removal follow-up PR.
- */
-export function computeFileHash(text: string): string {
-	const store = new InMemorySnapshotStore();
-	const lines = text.split("\n");
-	return store.recordContiguous("__shim__", 1, lines, { fullText: text });
 }

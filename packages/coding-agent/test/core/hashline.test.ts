@@ -6,7 +6,6 @@ import {
 	type ApplyOptions,
 	applyEdits,
 	buildCompactDiffPreview as buildCompactHashlineDiffPreview,
-	computeFileHash,
 	detectLineEnding,
 	type Edit,
 	InMemorySnapshotStore as FileReadCache,
@@ -96,8 +95,15 @@ function tag(line: number, _content: string): string {
 	return `${line}`;
 }
 
-function header(filePath: string, content: string): string {
-	return `¶${filePath}#${computeFileHash(content)}`;
+/**
+ * Fixed, valid 3-hex placeholder tag for parser-only fixtures where the hash is
+ * never resolved against a snapshot store. Recovery tests that need the tag to
+ * resolve must pass the value captured from `recordContiguous`/`recordSparse`.
+ */
+const PLACEHOLDER_FILE_HASH = "0A3";
+
+function header(filePath: string, _content: string, fileHash: string = PLACEHOLDER_FILE_HASH): string {
+	return `¶${filePath}#${fileHash}`;
 }
 
 function sameLineRange(anchor: string): string {
@@ -784,9 +790,8 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 
 			const session = makeHashlineSession(tempDir);
 			// Simulate the read tool having shown V0 to the model in this session.
-			getFileReadCache(session).recordContiguous(filePath, 1, v0Text.split("\n"), {
+			const v0Tag = getFileReadCache(session).recordContiguous(filePath, 1, v0Text.split("\n"), {
 				fullText: v0Text,
-				fileHash: computeFileHash(v0Text),
 			});
 
 			// External actor (linter, subagent, user) prepends 7 lines. Anchors
@@ -797,7 +802,7 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 			await Bun.write(filePath, `${v1Lines.join("\n")}\n`);
 
 			// Model authors anchor against V0 — line 2 is "L2" in V0.
-			const input = `${header("a.ts", v0Text)}\n${sameLineRange(tag(2, "L2"))}:${pl("L2-MODEL")}\n`;
+			const input = `${header("a.ts", v0Text, v0Tag)}\n${sameLineRange(tag(2, "L2"))}:${pl("L2-MODEL")}\n`;
 			const result = await executeHashlineSingle(hashlineExecuteOptions(tempDir, input, undefined, session));
 
 			const finalLines = (await Bun.file(filePath).text()).replace(/\n$/, "").split("\n");
@@ -822,17 +827,15 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 			await Bun.write(filePath, v0Text);
 
 			const session = makeHashlineSession(tempDir);
-			// Cache only covers the first three lines — enough to retain the file hash
+			// Cache only covers the first three lines — enough to resolve the tag
 			// but not enough to synthesize the requested pre-edit snapshot.
-			getFileReadCache(session).recordContiguous(filePath, 1, v0Lines.slice(0, 3), {
-				fileHash: computeFileHash(v0Text),
-			});
+			const v0Tag = getFileReadCache(session).recordContiguous(filePath, 1, v0Lines.slice(0, 3));
 
 			const v1Lines = [...v0Lines];
 			v1Lines[5] = "L6-CHANGED";
 			await Bun.write(filePath, `${v1Lines.join("\n")}\n`);
 
-			const input = `${header("a.ts", v0Text)}\n${sameLineRange(tag(6, "L6"))}:${pl("L6-MODEL")}\n`;
+			const input = `${header("a.ts", v0Text, v0Tag)}\n${sameLineRange(tag(6, "L6"))}:${pl("L6-MODEL")}\n`;
 			await expect(
 				executeHashlineSingle(hashlineExecuteOptions(tempDir, input, undefined, session)),
 			).rejects.toThrow(HashlineMismatchError);
@@ -845,9 +848,8 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 		const cache = new FileReadCache();
 		const fakePath = "/tmp/__hashline-recovery-applypatch__.ts";
 		const snapshotText = "alpha\nbeta\ngamma\ndelta\nepsilon";
-		cache.recordContiguous(fakePath, 1, snapshotText.split("\n"), {
+		const snapshotTag = cache.recordContiguous(fakePath, 1, snapshotText.split("\n"), {
 			fullText: snapshotText,
-			fileHash: computeFileHash(snapshotText),
 		});
 
 		// Live file is completely different — patch context cannot match even
@@ -860,7 +862,7 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 			absolutePath: fakePath,
 			currentText,
 			edits,
-			fileHash: computeFileHash(snapshotText),
+			fileHash: snapshotTag,
 			options: {},
 		});
 		expect(recovered).toBeNull();
@@ -884,21 +886,26 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 
 			const session = makeHashlineSession(tempDir);
 			// Initial read populates the cache with V0.
-			getFileReadCache(session).recordContiguous(filePath, 1, v0Text.split("\n"), {
+			const v0Tag = getFileReadCache(session).recordContiguous(filePath, 1, v0Text.split("\n"), {
 				fullText: v0Text,
-				fileHash: computeFileHash(v0Text),
 			});
 
 			// First edit: change line 2 : BETA. After the write, the cache should
 			// reflect V1 (post-edit), not V0.
-			const firstInput = `${header("a.ts", v0Text)}\n${sameLineRange(tag(2, "beta"))}:${pl("BETA")}\n`;
+			const firstInput = `${header("a.ts", v0Text, v0Tag)}\n${sameLineRange(tag(2, "beta"))}:${pl("BETA")}\n`;
 			await executeHashlineSingle(hashlineExecuteOptions(tempDir, firstInput, undefined, session));
 			const v1Lines = ["alpha", "BETA", "gamma", "delta", "epsilon"];
-			expect(await Bun.file(filePath).text()).toBe(`${v1Lines.join("\n")}\n`);
+			const v1Text = `${v1Lines.join("\n")}\n`;
+			expect(await Bun.file(filePath).text()).toBe(v1Text);
 			const snap = getFileReadCache(session).head(filePath);
-			expect(snap?.lines.get(1)).toBe("alpha");
-			expect(snap?.lines.get(2)).toBe("BETA");
-			expect(snap?.lines.get(3)).toBe("gamma");
+			expect(snap?.get(1)).toBe("alpha");
+			expect(snap?.get(2)).toBe("BETA");
+			expect(snap?.get(3)).toBe("gamma");
+			// Re-record the post-edit snapshot to recover the tag the patcher minted
+			// for V1 (dedup returns the existing slot's tag for identical content).
+			const v1Tag = getFileReadCache(session).recordContiguous(filePath, 1, v1Text.split("\n"), {
+				fullText: v1Text,
+			});
 
 			// External actor prepends 7 lines after the edit. Anchors authored
 			// against V1 (the post-edit state the model just observed) no longer
@@ -907,7 +914,7 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 			const v2Lines = ["H1", "H2", "H3", "H4", "H5", "H6", "H7", ...v1Lines];
 			await Bun.write(filePath, `${v2Lines.join("\n")}\n`);
 
-			const secondInput = `${header("a.ts", `${v1Lines.join("\n")}\n`)}\n${sameLineRange(tag(3, "gamma"))}:${pl("GAMMA")}\n`;
+			const secondInput = `${header("a.ts", v1Text, v1Tag)}\n${sameLineRange(tag(3, "gamma"))}:${pl("GAMMA")}\n`;
 			const result = await executeHashlineSingle(hashlineExecuteOptions(tempDir, secondInput, undefined, session));
 
 			const finalLines = (await Bun.file(filePath).text()).replace(/\n$/, "").split("\n");
@@ -926,20 +933,18 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 		const v1Text = "L1\nL2-EDITED\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\n";
 		const currentText = "L1\nL2-EDITED\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nTRAILER\n";
 
-		cache.recordContiguous(fakePath, 1, v0Text.split("\n"), {
+		const v0Tag = cache.recordContiguous(fakePath, 1, v0Text.split("\n"), {
 			fullText: v0Text,
-			fileHash: computeFileHash(v0Text),
 		});
 		cache.recordContiguous(fakePath, 1, v1Text.split("\n"), {
 			fullText: v1Text,
-			fileHash: computeFileHash(v1Text),
 		});
 
 		const recovered = tryRecoverHashlineWithCache({
 			cache,
 			absolutePath: fakePath,
 			currentText,
-			fileHash: computeFileHash(v0Text),
+			fileHash: v0Tag,
 			edits: parseHashline(`10:L10-EDITED`).edits,
 			options: {},
 		});
@@ -952,15 +957,17 @@ describe("hashline — anchor-stale recovery via read snapshot cache", () => {
 		const cache = new FileReadCache();
 		const fakePath = "/tmp/__hashline-cache-ring__.ts";
 		const versions = ["one\n", "two\n", "three\n"];
-		for (const version of versions) {
+		const tags = versions.map(version =>
 			cache.recordContiguous(fakePath, 1, version.split("\n"), {
 				fullText: version,
-				fileHash: computeFileHash(version),
-			});
-		}
-		expect(cache.head(fakePath)?.fileHash).toBe(computeFileHash("three\n"));
-		expect(cache.byHash(fakePath, computeFileHash("one\n"))?.fullText).toBe("one\n");
-		expect(cache.byHash(fakePath, computeFileHash("two\n"))?.fullText).toBe("two\n");
+			}),
+		);
+		const [tagOne, tagTwo, tagThree] = tags;
+		// Head is the newest version; earlier tags still resolve from the ring.
+		expect(cache.head(fakePath)?.fullText).toBe("three\n");
+		expect(cache.byHash(fakePath, tagThree)?.fullText).toBe("three\n");
+		expect(cache.byHash(fakePath, tagOne)?.fullText).toBe("one\n");
+		expect(cache.byHash(fakePath, tagTwo)?.fullText).toBe("two\n");
 	});
 
 	it("drops a cached entry when newly recorded lines disagree on overlap", () => {
