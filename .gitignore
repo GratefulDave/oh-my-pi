@@ -43,6 +43,12 @@ packages/ai/test/.temp-images/
 !.omp/
 .omp/plugins/
 .omp/semantic-search/
+.omc/sessions/
+.omc/state/
+.omc/project-memory.json
+.omc/notepad.md
+.omc/research/
+.omc/logs/
 .pi_config/
 .opencode/
 .worktrees/
