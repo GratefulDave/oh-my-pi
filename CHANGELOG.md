@@ -67,3 +67,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   corpus once production traffic stabilizes; if cargo subcommands such
   as `cargo metadata` or `cargo audit` reappear in the `unknown`
   bucket, extend `cargo::supports()` accordingly.
+
+## [15.5.10] - 2026-05-28
+
+Selective upstream parity port against `can1357/oh-my-pi` v15.5.7..v15.5.9
+(~26 of 36 upstream commits applied; remainder are docs/CHANGELOG/codex-removed
+or non-applicable to this fork). All fork-specific divergence preserved — no
+blind `git merge upstream/main`. Each cherry-pick carries a
+`(cherry picked from commit <SHA>)` provenance trailer. Landed across PRs #5–#20.
+
+### Added
+
+- **Tier A** (PR #5) — natives addon tarball packaging; Wafer Pass / Serverless
+  providers; auth-gateway status-precedence; DSML stream healing; Anthropic
+  ≥20-image downscale; `#emit` listener isolation; shebang auto-chmod.
+- **Tier B** (PR #6) — auth-broker logger `setTransports` fix; MCP HTTP/SSE
+  bounded startup; shared Python kernel `eval` ↔ shortcut.
+- **Tier C / Obsidian** (PR #7) — Obsidian integration + `vault://` protocol
+  (`vault.enabled` defaults to `false`; vault security fns ported verbatim).
+- **Tier C / Vertex** (PR #8) — Vertex Claude `rawPredict` + model-catalog
+  refresh on a fetch-wrapper architecture (fork non-Vertex catalog preserved).
+- **Tier C / Keepalive** (PR #9) — `EventLoopKeepalive` busy-wait fix +
+  idle-CPU regression test.
+- **Tier C / Recovery** (PR #10) — incomplete-stop recovery (surgical manual
+  port of upstream `5053a6a4d`).
+- **Tier C / Auth-gateway** (PR #11) — strict-mode + completion-probe; 429
+  usage-limit rotation (`markUsageLimitReached`).
+
+### Changed
+
+- **Tier C / Hashline** (PRs #12–#20) — rewrote `@oh-my-pi/hashline` to the
+  upstream v15.5.9 `SnapshotStore` API (atomic replace). PR #12 landed the
+  rewrite behind a temporary `computeFileHash` backward-compat shim; PRs
+  #13–#18 migrated all six fork consumers (`read`, `search`, `ast-edit`,
+  `ast-grep`, `file-mentions`, `typescript-edit-benchmark` runner) to direct
+  `SnapshotStore.recordContiguous`/`recordSparse` calls — tool consumers use
+  the session-scoped shared store so emitted hashline tags resolve at patch
+  time; display-only/synthetic sites use an ephemeral store. PR #20 removed the
+  shim and re-authored `hashline.test.ts` + `edit-diff.test.ts` against the
+  capture-the-returned-tag pattern (ring tags are no longer content-addressed).
+  PR #19 updated the edit/read/search tool docs accordingly.
+
+### Notes
+
+- Snapshot tags are now opaque ring-permutation slot tags, not content hashes;
+  the patcher resolves a tag to its recorded snapshot and verifies content
+  against the live file before applying edits.
+- `@oh-my-pi/hashline` realigned from 15.5.9 to 15.5.10 with the rest of the
+  workspace; the removed `computeFileHash` export was added and removed within
+  this cycle and never shipped in a published release.
+
+### Deferred
+
+- `file-mentions` hashline tags remain display-only (not patch-resolvable):
+  `generateFileMentionMessages` has no reachable `ToolSession`. Making them
+  resolvable requires threading the session-shared store through
+  `agent-session.ts` — tracked as a separate follow-up.
+- Pre-existing `hashline.test.ts` baseline failures (~75) from the upstream
+  parser-grammar migration (legacy `2-2:`/bare-`N:`/`EOF↓` fixtures rejected by
+  the new section parser) are independent of the shim removal (0 regressions
+  confirmed via stash round-trip) and tracked separately.

@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/opencode-antigravity-bridge",
-	"version": "15.5.7",
+	"version": "15.5.10",
 	"description": "OMP provider bridge for the OpenCode Antigravity auth plugin",
 	"homepage": "https://omp.sh",
 	"author": "Derek Rynd",
