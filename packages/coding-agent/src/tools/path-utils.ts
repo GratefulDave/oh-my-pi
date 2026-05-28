@@ -28,6 +28,7 @@ const INTERNAL_SCHEMES_WITH_SELECTORS: Record<string, true> = {
 	pr: true,
 	rule: true,
 	skill: true,
+	vault: true,
 };
 const INTERNAL_URL_SCHEME_RE = /^([a-z][a-z0-9+.-]*):\/\//i;
 const NARROW_NO_BREAK_SPACE = "\u202F";
@@ -38,6 +39,7 @@ const TOP_LEVEL_INTERNAL_URL_PREFIXES = [
 	"rule://",
 	"local://",
 	"mcp://",
+	"vault://",
 ] as const;
 
 function normalizeUnicodeSpaces(str: string): string {
