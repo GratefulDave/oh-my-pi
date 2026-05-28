@@ -30,6 +30,7 @@ pub mod pkg;
 
 pub mod python;
 pub mod ruby;
+pub mod rust_tools;
 pub mod system;
 
 pub fn supports(program: &str, subcommand: Option<&str>) -> bool {
@@ -53,6 +54,7 @@ pub fn supports(program: &str, subcommand: Option<&str>) -> bool {
 			python::supports(program, subcommand)
 		},
 		"rspec" | "rake" | "rails" | "rubocop" => ruby::supports(program, subcommand),
+		"rustfmt" => rust_tools::supports(program, subcommand),
 		"tsc" | "eslint" | "biome" | "shellcheck" | "markdownlint" | "hadolint" | "yamllint"
 		| "oxlint" | "pyright" | "basedpyright" => {
 			lint::supports(subcommand) || lint::supports_program(program, subcommand)
@@ -150,6 +152,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 			python::filter(ctx, input, exit_code)
 		},
 		"rspec" | "rake" | "rails" | "rubocop" => ruby::filter(ctx, input, exit_code),
+		"rustfmt" => rust_tools::filter(ctx, input, exit_code),
 		"tsc" | "eslint" | "biome" | "shellcheck" | "markdownlint" | "hadolint" | "yamllint"
 		| "oxlint" | "pyright" | "basedpyright" => lint::filter(ctx, input, exit_code),
 		"jest" | "vitest" | "playwright" => node_tests::filter(ctx, input, exit_code),

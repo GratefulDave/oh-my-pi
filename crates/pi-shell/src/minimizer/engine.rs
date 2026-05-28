@@ -386,6 +386,7 @@ fn program_label(program: &str) -> &'static str {
 		"rake" => "rake",
 		"rails" => "rails",
 		"rubocop" => "rubocop",
+		"rustfmt" => "rustfmt",
 		"tsc" => "tsc",
 		"eslint" => "eslint",
 		"biome" => "biome",
