@@ -160,7 +160,6 @@ function recordHashlineSnapshot(
 	if (!context || !absolutePath || !path.isAbsolute(absolutePath)) return;
 	getFileSnapshotStore(session).recordContiguous(absolutePath, 1, context.fullText.split("\n"), {
 		fullText: context.fullText,
-		fileHash: context.fileHash,
 	});
 }
 
@@ -1083,7 +1082,7 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 					absolutePath,
 					range.startLine,
 					collectedLines,
-					hashContext ? { fullText: hashContext.fullText, fileHash: hashContext.fileHash } : {},
+					hashContext ? { fullText: hashContext.fullText } : {},
 				);
 			}
 
@@ -1904,7 +1903,7 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 							absolutePath,
 							startLineDisplay,
 							collectedLines,
-							hashContext ? { fullText: hashContext.fullText, fileHash: hashContext.fileHash } : {},
+							hashContext ? { fullText: hashContext.fullText } : {},
 						);
 					}
 
