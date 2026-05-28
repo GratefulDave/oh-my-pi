@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import { Agent, type AgentMessage } from "@oh-my-pi/pi-agent-core";
-import type { Message, SimpleStreamOptions } from "@oh-my-pi/pi-ai";
+import { registerCustomApi, type Api, type AssistantMessageEventStream, type Context, type Model, type SimpleStreamOptions } from "@oh-my-pi/pi-ai";
+import type { Message } from "@oh-my-pi/pi-ai";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { AgentSession, type AgentSessionEvent } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import { createAssistantMessage } from "./helpers/agent-session-setup";
 
 function createAgent(): Agent {
 	return new Agent({
@@ -94,7 +96,7 @@ describe("AgentSession message pipeline", () => {
 	it("applies configured OpenRouter routing variant to ephemeral side-channel options", async () => {
 		const api = "test-ephemeral-openrouter-variant";
 		let capturedOptions: SimpleStreamOptions | undefined;
-		registerCustomApi(api, (_model, _context, options) => {
+		registerCustomApi(api, (_model: Model<Api>, _context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream => {
 			capturedOptions = options;
 			const stream = new AssistantMessageEventStream();
 			queueMicrotask(() => {
