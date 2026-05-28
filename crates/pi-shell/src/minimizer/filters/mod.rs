@@ -6,6 +6,7 @@ pub mod ai_smart;
 pub mod cloud;
 pub mod cpp;
 
+pub mod binary_tools;
 pub mod bun;
 
 pub mod cargo;
@@ -55,6 +56,7 @@ pub fn supports(program: &str, subcommand: Option<&str>) -> bool {
 		},
 		"rspec" | "rake" | "rails" | "rubocop" => ruby::supports(program, subcommand),
 		"rustfmt" => rust_tools::supports(program, subcommand),
+		"xxd" | "strings" | "od" => binary_tools::supports(program, subcommand),
 		"tsc" | "eslint" | "biome" | "shellcheck" | "markdownlint" | "hadolint" | "yamllint"
 		| "oxlint" | "pyright" | "basedpyright" => {
 			lint::supports(subcommand) || lint::supports_program(program, subcommand)
@@ -153,6 +155,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		},
 		"rspec" | "rake" | "rails" | "rubocop" => ruby::filter(ctx, input, exit_code),
 		"rustfmt" => rust_tools::filter(ctx, input, exit_code),
+		"xxd" | "strings" | "od" => binary_tools::filter(ctx, input, exit_code),
 		"tsc" | "eslint" | "biome" | "shellcheck" | "markdownlint" | "hadolint" | "yamllint"
 		| "oxlint" | "pyright" | "basedpyright" => lint::filter(ctx, input, exit_code),
 		"jest" | "vitest" | "playwright" => node_tests::filter(ctx, input, exit_code),
