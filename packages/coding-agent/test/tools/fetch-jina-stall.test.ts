@@ -47,7 +47,7 @@ describe("renderHtmlToText: jina stall does not starve local fallbacks (#1449)",
 		const started = Date.now();
 		// `timeout: 2` keeps the overall budget tight — the test must complete
 		// within ~2s even though Jina would otherwise hang for the full budget.
-		const result = await renderHtmlToText("https://example.com/article", html, 2, settings, undefined, null);
+		const result = await renderHtmlToText("https://example.com/article", html, 2, settings, undefined);
 		const elapsedMs = Date.now() - started;
 
 		expect(result.ok).toBe(true);
@@ -87,7 +87,6 @@ describe("renderHtmlToText: jina stall does not starve local fallbacks (#1449)",
 			30,
 			settings,
 			controller.signal,
-			null,
 		).catch(err => err);
 
 		controller.abort();

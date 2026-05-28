@@ -603,7 +603,6 @@ export async function renderHtmlToText(
 					fullContent: false,
 					signal: ptree.combineSignals(userSignal, remoteBudgetMs),
 				},
-				storage,
 			);
 			const firstDocument = parallelResult.results[0];
 			if (firstDocument) {
