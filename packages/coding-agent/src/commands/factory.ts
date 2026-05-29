@@ -31,7 +31,7 @@ export default class Factory extends Command {
 		yes: Flags.boolean({ char: "y", description: "Apply init without interactive confirmation" }),
 		existing: Flags.boolean({ description: "Conservatively import existing .omp / legacy config roots" }),
 		force: Flags.boolean({ description: "Overwrite existing factory-managed files" }),
-		"enable-memory": Flags.boolean({ description: "Write project .omp/settings.json with memory.backend=icm" }),
+		"enable-memory": Flags.boolean({ description: "Write project .omp/settings.json with memory.backend=hindsight" }),
 	};
 
 	async run(): Promise<void> {
