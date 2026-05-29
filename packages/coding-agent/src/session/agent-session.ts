@@ -547,6 +547,17 @@ export function resolveToolCallBatchCapForModel(model: Model | undefined): numbe
  * replies); compress runs longer than 3 down to one instance + `[…N×]`, then
  * cap at 4 KiB so a runaway reply can't flood the channel.
  */
+const IRC_PROTOCOL_MARKUP_RE =
+	/<\/?(?:function_calls?|invoke|parameters?|parameter|tool_call|tool_use|dsml:[a-z_]+)(?:\s[^>]*)?>[\s\S]*?(?:<\/(?:function_calls?|invoke|parameters?|parameter|tool_call|tool_use|dsml:[a-z_]+)>|$)/gi;
+
+function sanitizeEphemeralReply(text: string): string {
+	if (!text) return text;
+	return text
+		.replace(IRC_PROTOCOL_MARKUP_RE, "")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
+}
+
 function dedupeIrcReply(text: string): string {
 	if (!text) return text;
 	const lines = text.split("\n");
@@ -3040,6 +3051,19 @@ export class AgentSession {
 	 */
 	async dispose(): Promise<void> {
 		this.#isDisposed = true;
+		// Attempt to drain any queued IRC exchanges before tearing down.
+		// If the session is still streaming we cannot safely flush (the
+		// agent state is mid-mutation), so log the drop count instead.
+		if (this.#pendingBackgroundExchanges.length > 0) {
+			if (!this.isStreaming) {
+				this.#flushPendingBackgroundExchanges();
+			} else {
+				logger.warn("Dropping pending IRC background exchanges during streaming dispose", {
+					count: this.#pendingBackgroundExchanges.length,
+					agentId: this.#agentId,
+				});
+			}
+		}
 		this.#pendingBackgroundExchanges = [];
 		this.yieldQueue.clear();
 		this.agent.setAsideMessageProvider(undefined);
@@ -7911,6 +7935,13 @@ export class AgentSession {
 		);
 	}
 
+	static #isRetryableEphemeralError(err: unknown): boolean {
+		const msg = err instanceof Error ? err.message : String(err);
+		return /overloaded|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|retry your request|network.?error|connection.?error|connection.?refused|fetch failed|socket hang up|timed? out|timeout|stream stall|ECONNRESET/i.test(
+			msg,
+		);
+	}
+
 	#getRetryFallbackChains(): RetryFallbackChains {
 		const configuredChains = this.settings.get("retry.fallbackChains");
 		if (!configuredChains || typeof configuredChains !== "object") return {};
@@ -8733,10 +8764,37 @@ export class AgentSession {
 			from: args.from,
 			message: args.message,
 		});
-		const { replyText } = await this.runEphemeralTurn({
-			promptText: incomingPrompt,
-			signal: args.signal,
-		});
+
+		const MAX_EPHEMERAL_RETRIES = 2;
+		let lastError: unknown;
+		let replyText: string | undefined;
+		for (let attempt = 0; attempt <= MAX_EPHEMERAL_RETRIES; attempt++) {
+			if (args.signal?.aborted)
+				throw args.signal.reason instanceof Error ? args.signal.reason : new Error("IRC aborted");
+			if (attempt > 0) {
+				const backoffMs = Math.min(250 * 2 ** (attempt - 1), 2000);
+				await Bun.sleep(backoffMs);
+			}
+			try {
+				const result = await this.runEphemeralTurn({
+					promptText: incomingPrompt,
+					signal: args.signal,
+				});
+				replyText = result.replyText;
+				break;
+			} catch (err) {
+				lastError = err;
+				if (!AgentSession.#isRetryableEphemeralError(err) || attempt >= MAX_EPHEMERAL_RETRIES) throw err;
+				logger.warn("IRC ephemeral turn failed, retrying", {
+					from: args.from,
+					agentId: this.#agentId,
+					attempt: attempt + 1,
+					maxRetries: MAX_EPHEMERAL_RETRIES,
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
+		}
+		if (replyText === undefined) throw lastError;
 
 		const replyRecord: CustomMessage = {
 			role: "custom",
@@ -8774,12 +8832,21 @@ export class AgentSession {
 		timestamp: number;
 	}): void {
 		const registry = this.#agentRegistry;
-		if (!registry) return;
-		// If this session is the main agent, the local emit already reached the main UI.
+		if (!registry) {
+			logger.debug("IRC relay skipped: no agent registry", { from: args.from, to: args.to });
+			return;
+		}
 		if (this.#agentId === MAIN_AGENT_ID) return;
 		const mainRef = registry.get(MAIN_AGENT_ID);
 		const mainSession = mainRef?.session;
-		if (!mainSession || mainSession === this) return;
+		if (!mainSession || mainSession === this) {
+			logger.debug("IRC relay skipped: main session unavailable", {
+				from: args.from,
+				to: args.to,
+				reason: !mainSession ? "no main session" : "main session is self",
+			});
+			return;
+		}
 		const arrow = args.kind === "reply" ? "→ (auto)" : "→";
 		const relayRecord: CustomMessage = {
 			role: "custom",
@@ -8880,7 +8947,7 @@ export class AgentSession {
 			throw new Error("Ephemeral turn ended without a final message");
 		}
 		return {
-			replyText: args.dedupeReply === false ? replyText.trim() : dedupeIrcReply(replyText.trim()),
+			replyText: args.dedupeReply === false ? sanitizeEphemeralReply(replyText.trim()) : dedupeIrcReply(sanitizeEphemeralReply(replyText.trim())),
 			assistantMessage,
 		};
 	}
@@ -8931,7 +8998,16 @@ export class AgentSession {
 		return messages;
 	}
 
+	static readonly #MAX_PENDING_BACKGROUND_EXCHANGES = 500;
+
 	#queueBackgroundExchangeInjection(messages: CustomMessage[]): void {
+		if (this.#pendingBackgroundExchanges.length >= AgentSession.#MAX_PENDING_BACKGROUND_EXCHANGES) {
+			this.#pendingBackgroundExchanges.shift();
+			logger.warn("IRC background exchange queue full, evicting oldest batch", {
+				agentId: this.#agentId,
+				cap: AgentSession.#MAX_PENDING_BACKGROUND_EXCHANGES,
+			});
+		}
 		this.#pendingBackgroundExchanges.push(messages);
 		if (!this.isStreaming) {
 			this.#flushPendingBackgroundExchanges();
