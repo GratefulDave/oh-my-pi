@@ -21,6 +21,7 @@
 		"extension"
 	],
 	"scripts": {
+		"build": "bun scripts/build-bundle.ts",
 		"check": "biome check . && bun run check:types",
 		"check:types": "tsgo -p tsconfig.json --noEmit",
 		"test": "bun test test",
@@ -44,7 +45,7 @@
 	},
 	"omp": {
 		"extensions": [
-			"./src/extension.ts"
+			"./dist/extension.bundle.js"
 		]
 	},
 	"files": [

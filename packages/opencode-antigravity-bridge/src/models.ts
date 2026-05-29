@@ -89,6 +89,21 @@ export const OPENCODE_ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		maxTokens: 65_536,
 	},
 	{
+		id: "gemini-3.5-flash",
+		name: "Gemini 3.5 Flash (Antigravity Bridge)",
+		reasoning: true,
+		thinking: {
+			mode: "google-level",
+			minLevel: Effort.Low,
+			maxLevel: Effort.High,
+			levels: [Effort.Low, Effort.Medium, Effort.High],
+		},
+		input: ["text", "image"],
+		cost: ZERO_COST,
+		contextWindow: 1_048_576,
+		maxTokens: 65_536,
+	},
+	{
 		id: "antigravity-claude-sonnet-4-6",
 		name: "Antigravity Claude Sonnet 4.6",
 		reasoning: false,
