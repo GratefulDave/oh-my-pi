@@ -43,6 +43,7 @@ import {
 	parseModelString,
 	resolveAllowedModels,
 	resolveModelRoleValue,
+	resolveModelScope,
 } from "./config/model-resolver";
 import { loadPromptTemplates as loadPromptTemplatesInternal, type PromptTemplate } from "./config/prompt-templates";
 import { Settings, type SkillsSettings } from "./config/settings";
@@ -1381,6 +1382,21 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				modelRegistry.registerProvider(name, config, sourceId);
 			}
 			extensionsResult.runtime.pendingProviderRegistrations = [];
+
+			// Re-resolve scopedModels now that extension-provided models are registered.
+			// The caller (main.ts) pre-computes scopedModels from enabledModels patterns
+			// before extensions load, so extension-provided models (e.g. antigravity) are
+			// missing from the Ctrl+P cycling list. Re-resolve to include them.
+			const enabledPatterns = settings.get("enabledModels");
+			if (enabledPatterns && enabledPatterns.length > 0 && options.scopedModels) {
+				const refreshed = await resolveModelScope(enabledPatterns, modelRegistry, modelMatchPreferences);
+				if (refreshed.length > options.scopedModels.length) {
+					options.scopedModels = refreshed.map(sm => ({
+						model: sm.model,
+						thinkingLevel: sm.thinkingLevel,
+					}));
+				}
+			}
 		}
 
 		// Resolve deferred --model pattern now that extension models are registered.
