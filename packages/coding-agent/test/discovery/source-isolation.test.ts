@@ -26,8 +26,8 @@ describe("discoverAgents — source isolation", () => {
 		delete process.env.PI_CONFIG_DIR;
 		vi.spyOn(os, "homedir").mockReturnValue(tempHome);
 
-		writeAgent(path.join(tempHome, ".omp", "agent", "agents"), "native-user-agent");
-		writeAgent(path.join(tempProject, ".omp", "agents"), "native-project-agent");
+		writeAgent(path.join(tempHome, ".lex", "agent", "agents"), "native-user-agent");
+		writeAgent(path.join(tempProject, ".lex", "agents"), "native-project-agent");
 
 		for (const source of [".claude", ".codex", ".gemini"]) {
 			const prefix = source.slice(1);
