@@ -43,7 +43,7 @@
 	"dependencies": {
 		"@anthropic-ai/sdk": "catalog:",
 		"@bufbuild/protobuf": "catalog:",
-		"@oh-my-pi/pi-utils": "15.5.7",
+		"@oh-my-pi/pi-utils": "workspace:*",
 		"openai": "catalog:",
 		"partial-json": "catalog:",
 		"zod": "catalog:"

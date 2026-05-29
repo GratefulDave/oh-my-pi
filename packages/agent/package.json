@@ -35,9 +35,9 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-ai": "15.5.7",
-		"@oh-my-pi/pi-natives": "15.5.7",
-		"@oh-my-pi/pi-utils": "15.5.7",
+		"@oh-my-pi/pi-ai": "workspace:*",
+		"@oh-my-pi/pi-natives": "workspace:*",
+		"@oh-my-pi/pi-utils": "workspace:*",
 		"@opentelemetry/api": "catalog:"
 	},
 	"devDependencies": {
