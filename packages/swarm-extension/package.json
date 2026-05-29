@@ -31,9 +31,7 @@
 		"fix": "biome check --write --unsafe .",
 		"fmt": "biome format --write ."
 	},
-	"dependencies": {
-		"@oh-my-pi/pi-utils": "workspace:*"
-	},
+	"dependencies": {},
 	"devDependencies": {
 		"@types/bun": "^1.3.14"
 	},
@@ -45,7 +43,7 @@
 	},
 	"omp": {
 		"extensions": [
-			"./src/extension.ts"
+			"./dist/extension.bundle.js"
 		]
 	},
 	"files": [
