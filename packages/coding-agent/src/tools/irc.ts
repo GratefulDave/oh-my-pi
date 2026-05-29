@@ -19,7 +19,7 @@
  */
 
 import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
-import { prompt } from "@oh-my-pi/pi-utils";
+import { logger, prompt } from "@oh-my-pi/pi-utils";
 import * as z from "zod/v4";
 import ircDescription from "../prompts/tools/irc.md" with { type: "text" };
 import type { AgentRef, AgentRegistry } from "../registry/agent-registry";
@@ -284,10 +284,20 @@ async function runIrcDispatchWithTimeout<T>(
 	}, timeoutMs);
 	timeout.unref?.();
 
+	const runPromise = run(controller.signal);
+
 	try {
-		return await Promise.race([run(controller.signal), timeoutDeferred.promise]);
+		return await Promise.race([runPromise, timeoutDeferred.promise]);
 	} finally {
 		if (timeout) clearTimeout(timeout);
 		if (parentSignal && parentAbortListener) parentSignal.removeEventListener("abort", parentAbortListener);
+		// The original `run` promise may still be in-flight after timeout/abort.
+		// Suppress its eventual rejection to prevent unhandled promise crashes.
+		runPromise.catch(zombieErr => {
+			logger.debug("IRC zombie stream error suppressed after timeout/abort", {
+				targetId,
+				error: zombieErr instanceof Error ? zombieErr.message : String(zombieErr),
+			});
+		});
 	}
 }
