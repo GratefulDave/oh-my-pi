@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- Fixed opencode-antigravity config and models not loading in other directories due to extensions relative path mapping in project settings; the adapter can now be loaded globally using absolute path configurations in the user's global config.
 - Fixed top-level `lex install npm:<package>` compatibility so it routes to plugin installation, strips the explicit `npm:` scheme before npm package validation, and no longer falls through to a launched chat session.
 - Fixed npm plugin installs failing on stale `~/.lex/plugins/package.json` dependencies that are no longer present in the plugin runtime lock; installs now prune those stale dependency entries before invoking Bun.
 - Fixed npm plugin extension modules (for example `pi-cmux`) being loaded at runtime but missing from the `/extensions` Extension Control Center inventory.
