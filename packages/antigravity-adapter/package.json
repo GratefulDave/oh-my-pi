@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/antigravity-adapter",
-	"version": "15.5.10",
+	"version": "15.5.15",
 	"description": "OMP provider adapter for the OpenCode Antigravity auth plugin",
 	"homepage": "https://omp.sh",
 	"author": "Derek Rynd",

@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
@@ -15,6 +16,7 @@ const embeddedAddonTypedefs = `/** @typedef {"modern" | "baseline" | "default"} 
  * @property {EmbeddedAddonVariant} variant
  * @property {string} filename
  * @property {number} size
+ * @property {string} sha256
  * @property {string=} filePath
  */
 
@@ -65,6 +67,7 @@ interface CandidateAddon {
 interface AvailableAddon extends CandidateAddon {
 	path: string;
 	size: number;
+	sha256: string;
 }
 
 const targetPlatform = Bun.env.TARGET_PLATFORM || process.platform;
@@ -82,8 +85,13 @@ const available: AvailableAddon[] = [];
 for (const candidate of candidates) {
 	const candidatePath = path.join(nativeDir, candidate.filename);
 	try {
-		const stat = await fs.stat(candidatePath);
-		available.push({ ...candidate, path: candidatePath, size: stat.size });
+		const bytes = await fs.readFile(candidatePath);
+		available.push({
+			...candidate,
+			path: candidatePath,
+			size: bytes.byteLength,
+			sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+		});
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
 	}
@@ -106,7 +114,7 @@ await Bun.write(archivePath, await new Bun.Archive(archiveEntries, { compress: "
 const files = available
 	.map(
 		addon =>
-			`\t\t{ variant: ${JSON.stringify(addon.variant)}, filename: ${JSON.stringify(addon.filename)}, size: ${addon.size} },`,
+			`\t\t{ variant: ${JSON.stringify(addon.variant)}, filename: ${JSON.stringify(addon.filename)}, size: ${addon.size}, sha256: ${JSON.stringify(addon.sha256)} },`,
 	)
 	.join("\n");
 

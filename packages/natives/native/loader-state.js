@@ -1,4 +1,5 @@
 import * as childProcess from "node:child_process";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as os from "node:os";
@@ -35,10 +36,10 @@ const SUPPORTED_PLATFORMS = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-a
 
 function getNativesDir() {
 	const xdgDataHome = process.env.XDG_DATA_HOME;
-	if (xdgDataHome && fs.existsSync(path.join(xdgDataHome, "lex"))) {
-		return path.join(xdgDataHome, "lex", "natives");
+	if (xdgDataHome && fs.existsSync(path.join(xdgDataHome, "omp"))) {
+		return path.join(xdgDataHome, "omp", "natives");
 	}
-	return path.join(os.homedir(), ".lex", "natives");
+	return path.join(os.homedir(), process.env.PI_CONFIG_DIR || ".omp", "natives");
 }
 
 // =========================================================================
@@ -267,7 +268,10 @@ function isEmbeddedAddonFileCurrent(targetPath, file) {
 	try {
 		const stat = fs.statSync(targetPath);
 		if (!stat.isFile()) return false;
-		return typeof file.size !== "number" || stat.size === file.size;
+		if (typeof file.size === "number" && stat.size !== file.size) return false;
+		if (typeof file.sha256 !== "string") return true;
+		const actual = crypto.createHash("sha256").update(fs.readFileSync(targetPath)).digest("hex");
+		return actual === file.sha256;
 	} catch (err) {
 		if (err && err.code === "ENOENT") return false;
 		throw err;
