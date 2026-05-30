@@ -116,12 +116,12 @@ describe("MinimizerGainOverlayComponent", () => {
 		const onClose = vi.fn();
 		const component = new MinimizerGainOverlayComponent(makeDualContext(), () => {}, onClose);
 
-		expect(render(component)).toContain("Positive minimizer savings");
+		expect(render(component)).toContain("Token Savings (Current Scope)");
 		expect(render(component)).toContain("[ Current ]");
 
 		component.handleInput("\t");
 		expect(render(component)).toContain("Largest unminimized shell outputs");
-		expect(render(component)).not.toContain("Positive minimizer savings");
+		expect(render(component)).not.toContain("Token Savings");
 
 		component.handleInput("s");
 		expect(render(component)).toContain("[ All ]");
@@ -187,13 +187,13 @@ describe("MinimizerGainOverlayComponent", () => {
 		);
 
 		try {
-			expect(render(component)).toContain("Commands: 2");
+			expect(render(component)).toContain("Total commands: 2");
 
 			await component.refresh();
 
 			const output = render(component);
-			expect(output).toContain("Commands: 3");
-			expect(output).toContain("Saved Bytes: 3.1K");
+			expect(output).toContain("Total commands: 3");
+			expect(output).toContain("775");
 			expect(requestRender).toHaveBeenCalledTimes(1);
 		} finally {
 			component.dispose();
@@ -276,10 +276,22 @@ describe("MinimizerGainOverlayComponent", () => {
 		const output = render(component);
 		expect(output).toContain("Largest unminimized shell outputs");
 		expect(output).toContain("Highest potential token savings");
-		// New formula: cmds × avg = total est. tokens
-		// 3 cmds × 1000 avg → 1K, 3000 total → 3K
-		expect(output).toContain("3 cmds × 1K avg = 3K est. tokens");
+		// Largest-output table headers
+		expect(output).toContain("Command");
+		expect(output).toContain("Count");
+		expect(output).toContain("Total");
+		expect(output).toContain("Avg");
+		expect(output).toContain("Exit");
+		// Highest-potential table headers
+		expect(output).toContain("Avg Est");
+		expect(output).toContain("Est Savings");
+		// Fixture row values for potential table:
+		// command prefix, count=3, avg=1K, total est=3K, exits=0,1
 		expect(output).toContain("cargo test");
+		expect(output).toContain("3");
+		expect(output).toContain("1K");
+		expect(output).toContain("3K");
+		expect(output).toContain("0,1");
 	});
 
 	it("Status tab shows recent hit ratio", () => {
@@ -326,7 +338,7 @@ describe("MinimizerGainOverlayComponent", () => {
 		expect(output).toContain("Recent missed ratio (last 50): 0.400");
 	});
 
-	it("Gain tab shows % Tokens Saved when tokensSavedRatio is present", () => {
+	it("Gain tab renders token savings table with summary and By Command table", () => {
 		const component = new MinimizerGainOverlayComponent(
 			makeDualContext(),
 			() => {},
@@ -334,6 +346,20 @@ describe("MinimizerGainOverlayComponent", () => {
 		);
 		const output = render(component);
 		// makeContext has tokensSavedRatio = 650/875 ≈ 0.743 → 74.3%
-		expect(output).toContain("% Tokens Saved");
+		expect(output).toContain("Token Savings (Current Scope)");
+		expect(output).toContain("Total commands:");
+		expect(output).toContain("Input tokens:");
+		expect(output).toContain("Output tokens:");
+		expect(output).toContain("Tokens saved:");
+		expect(output).toContain("74.3%");
+		expect(output).toContain("Efficiency meter:");
+		expect(output).toContain("By Command");
+		// Table header columns
+		expect(output).toContain("#");
+		expect(output).toContain("Command");
+		expect(output).toContain("Count");
+		expect(output).toContain("Saved");
+		expect(output).toContain("Avg%");
+		expect(output).toContain("Impact");
 	});
 });
