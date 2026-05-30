@@ -142,10 +142,29 @@ describe("MinimizerGainOverlayComponent", () => {
 			() => {},
 		);
 		const output = render(component);
-
 		expect(output).not.toContain("\t");
 		expect(output).toContain("minimizer-gain.jsonl");
 		expect(output).toContain("git status --short");
+	});
+	it("sanitizes and flattens newlines in multiline commands", () => {
+		const context = makeDualContext();
+		context.current.missed.commands[0]!.command = "python - <<'PY'\nimport asyncio\nfrom pathlib import Path\nPY";
+		const component = new MinimizerGainOverlayComponent(
+			context,
+			() => {},
+			() => {},
+		);
+		// Switch to Missed tab to render the missed command table
+		component.handleInput("\t");
+		const output = render(component);
+		// The command should be flattened to one line using space
+		expect(output).toContain("python - <<'PY' import asyncio from pathlib import Path PY");
+		// Ensure the newlines from the command don't leak into the output
+		const lines = component.render(100);
+		for (const line of lines) {
+			expect(line).not.toContain("\n");
+			expect(line).not.toContain("\r");
+		}
 	});
 
 	it("refreshes rendered stats from the latest context", async () => {

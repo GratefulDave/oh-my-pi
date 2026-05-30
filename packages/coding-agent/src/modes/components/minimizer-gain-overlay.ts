@@ -30,7 +30,8 @@ interface DualContext {
 }
 
 function clean(text: string, width: number): string {
-	return truncateToWidth(replaceTabs(text), width);
+	const singleLine = text.replace(/[\r\n]+/g, " ");
+	return truncateToWidth(replaceTabs(singleLine), width);
 }
 
 function border(width: number): string {
