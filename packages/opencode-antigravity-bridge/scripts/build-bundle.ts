@@ -13,7 +13,7 @@ const result = await Bun.build({
 		{
 			name: "stub-pi-natives",
 			setup(build) {
-				build.onResolve({ filter: /^@oh-my-pi\/pi-natives/ }, (args) => ({
+				build.onResolve({ filter: /^@oh-my-pi\/pi-natives/ }, args => ({
 					path: args.path,
 					namespace: "pi-natives-stub",
 				}));

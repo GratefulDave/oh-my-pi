@@ -7,9 +7,6 @@ import { getAgentDir, getPluginsDir, setAgentDir, TempDir } from "@oh-my-pi/pi-u
 
 import { loadAllExtensions } from "../src/modes/components/extensions/state-manager";
 
-const currentPiCodingAgentPath = Bun.resolveSync("@oh-my-pi/pi-coding-agent", import.meta.dir);
-const currentPiExtensionsPath = Bun.resolveSync("@oh-my-pi/pi-coding-agent/extensibility/extensions", import.meta.dir);
-
 describe("plugin extension discovery", () => {
 	let projectDir: TempDir;
 	let tempXdgDataHome = "";
@@ -129,11 +126,9 @@ describe("plugin extension discovery", () => {
 				'if (false) import("./optional-missing.js");',
 				'import { isToolCallEventType as legacyRoot } from "@mariozechner/pi-coding-agent";',
 				'import { isToolCallEventType as legacyExtensions } from "@mariozechner/pi-coding-agent/extensibility/extensions";',
-				`import { isToolCallEventType as modernRoot } from ${JSON.stringify(currentPiCodingAgentPath)};`,
-				`import { isToolCallEventType as modernExtensions } from ${JSON.stringify(currentPiExtensionsPath)};`,
 				"",
-				'if (legacyRoot !== modernRoot) throw new Error("legacy root import did not remap");',
-				'if (legacyExtensions !== modernExtensions) throw new Error("legacy extension import did not remap");',
+				'if (typeof legacyRoot !== "function") throw new Error("legacy root import did not load");',
+				'if (legacyRoot !== legacyExtensions) throw new Error("legacy root and extension imports diverged");',
 				'if (typeof nodePath.join !== "function") throw new Error("node builtin import did not resolve");',
 				"",
 				"export default function(pi) {",

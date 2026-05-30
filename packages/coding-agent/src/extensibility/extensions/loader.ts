@@ -17,9 +17,9 @@ import { execCommand } from "../../exec/exec";
 import type { CustomMessage } from "../../session/messages";
 import { EventBus } from "../../utils/event-bus";
 import { installLegacyPiSpecifierShim, loadLegacyPiModule } from "../plugins/legacy-pi-compat";
+import * as LegacyPiFacade from "../plugins/legacy-pi-facade";
 import { getAllPluginExtensionPaths } from "../plugins/loader";
 import * as TypeBox from "../typebox";
-import * as LegacyPiFacade from "../plugins/legacy-pi-facade";
 
 import { resolvePath } from "../utils";
 import type {

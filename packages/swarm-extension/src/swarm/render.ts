@@ -1,8 +1,9 @@
 /**
  * TUI progress rendering for swarm pipeline status.
  */
-import { formatDuration, truncate } from "./format";
+
 import { renderSwarmEvents, type SwarmEvent } from "./events";
+import { formatDuration, truncate } from "./format";
 import { type ReservationRecord, renderReservations } from "./reservations";
 import type { AgentState, SwarmState } from "./state";
 

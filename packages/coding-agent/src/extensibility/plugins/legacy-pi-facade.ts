@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
 interface ToolResultEvent {
 	toolName: string;
 }
@@ -8,7 +9,6 @@ interface ToolResultEvent {
 interface ToolCallEvent {
 	toolName: string;
 }
-
 
 export function isToolCallEventType(toolName: string, event: ToolCallEvent): boolean {
 	return event.toolName === toolName;
@@ -93,7 +93,9 @@ export class SessionManager {
 
 	static open(filePath: string, sessionDir: string = path.dirname(filePath)): SessionManager {
 		const entries = readEntries(filePath);
-		const header = entries.find((entry): entry is LegacySessionHeader => entry.type === "session") as LegacySessionHeader | undefined;
+		const header = entries.find((entry): entry is LegacySessionHeader => entry.type === "session") as
+			| LegacySessionHeader
+			| undefined;
 		return new SessionManager(header?.cwd ?? process.cwd(), sessionDir, filePath, entries);
 	}
 

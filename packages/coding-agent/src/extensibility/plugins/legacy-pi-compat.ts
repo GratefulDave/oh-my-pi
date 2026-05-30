@@ -235,7 +235,9 @@ function resolveBareFallback(specifier: string, importerDir: string): string | n
 			}
 
 			// Fallback: main/module for root imports, direct path for subpaths.
-			const candidate = !subpath ? path.resolve(pkgDir, pkg.module ?? pkg.main ?? "index.js") : path.resolve(pkgDir, `.${subpath}`);
+			const candidate = !subpath
+				? path.resolve(pkgDir, pkg.module ?? pkg.main ?? "index.js")
+				: path.resolve(pkgDir, `.${subpath}`);
 			return resolveExistingImportPath(candidate) ?? candidate;
 		} catch {}
 		const parent = path.dirname(dir);
@@ -286,7 +288,7 @@ export async function loadLegacyPiModule(resolvedPath: string): Promise<unknown>
 
 	const extensionDir = path.dirname(resolvedPath);
 	const outfile = path.join(root, "bundle.mjs");
-	let result: Awaited<ReturnType<typeof Bun.build>>;
+	let result: Bun.BuildOutput;
 	try {
 		result = await Bun.build({
 			entrypoints: [resolvedPath],
