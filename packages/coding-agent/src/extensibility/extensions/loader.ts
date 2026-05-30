@@ -19,6 +19,7 @@ import { EventBus } from "../../utils/event-bus";
 import { installLegacyPiSpecifierShim, loadLegacyPiModule } from "../plugins/legacy-pi-compat";
 import { getAllPluginExtensionPaths } from "../plugins/loader";
 import * as TypeBox from "../typebox";
+import * as LegacyPiFacade from "../plugins/legacy-pi-facade";
 
 import { resolvePath } from "../utils";
 import type {
@@ -294,7 +295,7 @@ async function loadExtension(
 
 		const extension = createExtension(extensionPath, resolvedPath);
 		const api = new ConcreteExtensionAPI(
-			await import("@oh-my-pi/pi-coding-agent"),
+			LegacyPiFacade as unknown as typeof import("@oh-my-pi/pi-coding-agent"),
 			extension,
 			runtime,
 			cwd,

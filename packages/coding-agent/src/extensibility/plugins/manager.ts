@@ -22,6 +22,34 @@ import type {
 	ProjectPluginOverrides,
 } from "./types";
 
+interface PluginsPackageJson {
+	name?: string;
+	private?: boolean;
+	dependencies?: Record<string, string>;
+}
+
+export function filterPluginDependenciesByRuntimeConfig(
+	dependencies: Record<string, string>,
+	config: PluginRuntimeConfig,
+): Record<string, string> {
+	const synced: Record<string, string> = {};
+	for (const [name, version] of Object.entries(dependencies)) {
+		if (config.plugins[name]) {
+			synced[name] = version;
+		}
+	}
+	return synced;
+}
+
+function dependenciesEqual(left: Record<string, string>, right: Record<string, string>): boolean {
+	const leftEntries = Object.entries(left);
+	if (leftEntries.length !== Object.keys(right).length) return false;
+	for (const [name, version] of leftEntries) {
+		if (right[name] !== version) return false;
+	}
+	return true;
+}
+
 // =============================================================================
 // Validation
 // =============================================================================
@@ -127,6 +155,28 @@ export class PluginManager {
 		}
 	}
 
+	async #syncPackageJsonDependencies(): Promise<void> {
+		const pkgJsonPath = getPluginsPackageJson();
+		const pkg = (await Bun.file(pkgJsonPath).json()) as PluginsPackageJson;
+		const dependencies = pkg.dependencies ?? {};
+		const config = await this.#ensureConfigLoaded();
+		const syncedDependencies = filterPluginDependenciesByRuntimeConfig(dependencies, config);
+		if (dependenciesEqual(dependencies, syncedDependencies)) return;
+
+		await Bun.write(
+			pkgJsonPath,
+			JSON.stringify(
+				{
+					...pkg,
+					name: pkg.name ?? "omp-plugins",
+					private: pkg.private ?? true,
+					dependencies: syncedDependencies,
+				},
+				null,
+				2,
+			),
+		);
+	}
 	// ==========================================================================
 	// Install / Uninstall
 	// ==========================================================================
@@ -154,6 +204,8 @@ export class PluginManager {
 				enabled: true,
 			};
 		}
+
+		await this.#syncPackageJsonDependencies();
 
 		// Run npm install
 		const proc = Bun.spawn(["bun", "install", spec.packageName], {

@@ -13,12 +13,13 @@ import * as url from "node:url";
 // scope name they happened to declare in their peerDependencies.
 const CANONICAL_PI_SCOPE = "@oh-my-pi";
 
-// Scopes that have historically been used to publish (or alias) the same set
-// of internal pi-* packages. `@oh-my-pi` is intentionally included so that
-// direct imports of the canonical name still flow through `Bun.resolveSync`
-// against the host binary, avoiding a duplicate copy being pulled in from a
-// plugin's own node_modules tree at install time.
+// Scopes that have historically been used to publish (or alias) internal
+// pi-* packages. `@earendil-works` is included in the filter so plugin-local
+// installs can be resolved by the bare fallback below, but is intentionally not
+// canonicalized: several Pi plugins depend on its published runtime surface and
+// should not be forced through Lex's current SDK during bundling.
 const PI_SCOPE_ALIASES = ["oh-my-pi", "mariozechner", "earendil-works"] as const;
+const CANONICALIZED_PI_SCOPE_ALIASES = ["oh-my-pi", "mariozechner"] as const;
 
 // Internal pi-* package basenames bundled inside the omp binary.
 const PI_PACKAGE_NAMES = ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-natives", "pi-tui", "pi-utils"] as const;
@@ -58,6 +59,7 @@ const resolvedSpecifierFallbacks = new Map<string, string>();
 const TYPEBOX_SPECIFIER = "@sinclair/typebox";
 const TYPEBOX_SPECIFIER_FILTER = /^@sinclair\/typebox$/;
 const TYPEBOX_SHIM_PATH = path.resolve(import.meta.dir, "../typebox.ts");
+const EARENDIL_PI_CODING_AGENT_FACADE_PATH = path.resolve(import.meta.dir, "legacy-pi-facade.ts");
 
 let isLegacyPiSpecifierShimInstalled = false;
 
@@ -70,7 +72,14 @@ function remapLegacyPiSpecifier(specifier: string): string | null {
 	if (slashIdx === -1) {
 		return null;
 	}
+	const scope = specifier.slice(1, slashIdx);
 	const rest = specifier.slice(slashIdx + 1);
+	if (rest === "pi-coding-agent" || rest === "pi-coding-agent/extensibility/extensions") {
+		return EARENDIL_PI_CODING_AGENT_FACADE_PATH;
+	}
+	if (!CANONICALIZED_PI_SCOPE_ALIASES.includes(scope as (typeof CANONICALIZED_PI_SCOPE_ALIASES)[number])) {
+		return null;
+	}
 	const remappedSubpath = PI_SUBPATH_REMAPS.get(rest) ?? rest;
 	return `${CANONICAL_PI_SCOPE}/${remappedSubpath}`;
 }
@@ -86,6 +95,12 @@ function getResolvedSpecifier(specifier: string): string {
 	return resolved;
 }
 
+function resolveRemappedLegacyPiSpecifier(specifier: string): string | null {
+	const remapped = remapLegacyPiSpecifier(specifier);
+	if (!remapped) return null;
+	return path.isAbsolute(remapped) ? remapped : getResolvedSpecifier(remapped);
+}
+
 function toImportSpecifier(resolvedPath: string): string {
 	return url.pathToFileURL(resolvedPath).href;
 }
@@ -94,13 +109,13 @@ function rewriteLegacyPiImports(source: string): string {
 	return source.replace(
 		LEGACY_PI_IMPORT_SPECIFIER_REGEX,
 		(match, prefix: string, specifier: string, suffix: string) => {
-			const remappedSpecifier = remapLegacyPiSpecifier(specifier);
-			if (!remappedSpecifier) {
+			const resolved = resolveRemappedLegacyPiSpecifier(specifier);
+			if (!resolved) {
 				return match;
 			}
 
 			try {
-				return `${prefix}${toImportSpecifier(getResolvedSpecifier(remappedSpecifier))}${suffix}`;
+				return `${prefix}${toImportSpecifier(resolved)}${suffix}`;
 			} catch {
 				// Resolution from the bundled binary root failed (e.g. compiled binary
 				// loading a workspace extension). Leave the specifier unchanged so
@@ -174,6 +189,32 @@ function resolveViaExports(exports: Record<string, unknown>, subpath: string, pk
 	return null;
 }
 
+const IMPORT_FILE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".jsx"] as const;
+
+function resolveExistingImportPath(candidate: string): string | null {
+	try {
+		const stat = fs1.statSync(candidate);
+		if (stat.isFile()) return candidate;
+		if (stat.isDirectory()) {
+			for (const extension of IMPORT_FILE_EXTENSIONS) {
+				const indexPath = path.join(candidate, `index${extension}`);
+				try {
+					if (fs1.statSync(indexPath).isFile()) return indexPath;
+				} catch {}
+			}
+		}
+	} catch {}
+
+	for (const extension of IMPORT_FILE_EXTENSIONS) {
+		const filePath = `${candidate}${extension}`;
+		try {
+			if (fs1.statSync(filePath).isFile()) return filePath;
+		} catch {}
+	}
+
+	return null;
+}
+
 function resolveBareFallback(specifier: string, importerDir: string): string | null {
 	const parts = specifier.startsWith("@") ? specifier.split("/", 2) : specifier.split("/", 1);
 	const pkgName = parts.join("/");
@@ -190,15 +231,12 @@ function resolveBareFallback(specifier: string, importerDir: string): string | n
 			// Try exports map first.
 			if (pkg.exports) {
 				const resolved = resolveViaExports(pkg.exports, exportSubpath, pkgDir);
-				if (resolved) return resolved;
+				if (resolved) return resolveExistingImportPath(resolved) ?? resolved;
 			}
 
 			// Fallback: main/module for root imports, direct path for subpaths.
-			if (!subpath) {
-				const entry = pkg.module ?? pkg.main ?? "index.js";
-				return path.resolve(pkgDir, entry);
-			}
-			return path.resolve(pkgDir, `.${subpath}`);
+			const candidate = !subpath ? path.resolve(pkgDir, pkg.module ?? pkg.main ?? "index.js") : path.resolve(pkgDir, `.${subpath}`);
+			return resolveExistingImportPath(candidate) ?? candidate;
 		} catch {}
 		const parent = path.dirname(dir);
 		if (parent === dir) return null;
@@ -261,13 +299,8 @@ export async function loadLegacyPiModule(resolvedPath: string): Promise<unknown>
 					name: "omp:legacy-pi-build-shim",
 					setup(build) {
 						build.onResolve({ filter: LEGACY_PI_SPECIFIER_FILTER }, args => {
-							const remapped = remapLegacyPiSpecifier(args.path);
-							if (!remapped) return undefined;
-							try {
-								return { path: getResolvedSpecifier(remapped) };
-							} catch {
-								return undefined;
-							}
+							const resolved = resolveRemappedLegacyPiSpecifier(args.path);
+							return resolved ? { path: resolved } : undefined;
 						});
 						build.onResolve({ filter: TYPEBOX_SPECIFIER_FILTER }, () => ({
 							path: TYPEBOX_SHIM_PATH,
@@ -309,14 +342,8 @@ function getLoader(path: string): "js" | "jsx" | "ts" | "tsx" {
 }
 
 function resolveLegacyPiSpecifier(args: { path: string }): { path: string } | undefined {
-	const remappedSpecifier = remapLegacyPiSpecifier(args.path);
-	if (!remappedSpecifier) {
-		return undefined;
-	}
-
-	return {
-		path: getResolvedSpecifier(remappedSpecifier),
-	};
+	const resolved = resolveRemappedLegacyPiSpecifier(args.path);
+	return resolved ? { path: resolved } : undefined;
 }
 
 function resolveTypeBoxSpecifier(): { path: string } {
@@ -363,7 +390,6 @@ export function installLegacyPiSpecifierShim(): void {
 					loader: getLoader(args.path),
 				};
 			});
-
 			build.onResolve({ filter: /^[@a-zA-Z]/, namespace: "file" }, args => {
 				const dir = args.resolveDir || (args.importer ? path.dirname(args.importer) : undefined);
 				if (!dir) return undefined;

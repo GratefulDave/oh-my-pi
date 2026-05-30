@@ -383,24 +383,26 @@ async function handleInstall(
 			continue;
 		}
 
+		const npmSpec = target.spec;
+
 		// --scope only applies to marketplace installs; warn when it would be silently no-op'd for npm.
 		if (flags.scope) {
 			console.error(
 				chalk.yellow(
-					`Warning: --scope is only supported for marketplace installs (name@marketplace). Ignoring for ${spec}.`,
+					`Warning: --scope is only supported for marketplace installs (name@marketplace). Ignoring for ${npmSpec}.`,
 				),
 			);
 		}
 
 		// npm path
 		try {
-			const result = await manager.install(spec, { force: flags.force, dryRun: flags.dryRun });
+			const result = await manager.install(npmSpec, { force: flags.force, dryRun: flags.dryRun });
 
 			if (flags.json) {
 				console.log(JSON.stringify(result, null, 2));
 			} else {
 				if (flags.dryRun) {
-					console.log(chalk.dim(`[dry-run] Would install ${spec}`));
+					console.log(chalk.dim(`[dry-run] Would install ${npmSpec}`));
 				} else {
 					console.log(chalk.green(`${theme.status.success} Installed ${result.name}@${result.version}`));
 					if (result.enabledFeatures && result.enabledFeatures.length > 0) {
