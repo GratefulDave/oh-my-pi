@@ -80,6 +80,8 @@ export interface MinimizerGainTotals {
 	savedBytes: number;
 	estimatedTokensSaved: number;
 	usesEstimatedTokensSaved: boolean;
+	estimatedInputTokens: number;
+	tokensSavedRatio: number | null;
 }
 
 export interface MinimizerGainFilterSummary extends MinimizerGainTotals {
@@ -148,10 +150,13 @@ export interface MinimizerMissedItem {
 	outputBytes: number;
 	avgInputBytes: number;
 	exitCodes: Array<number | null>;
+	estimatedPotentialTokensSaved: number;
+	avgEstimatedPotentialTokensSaved: number;
 }
 
 export interface MinimizerMissedSummary {
 	commands: MinimizerMissedItem[];
+	potentialTokenSavings: MinimizerMissedItem[];
 }
 
 export interface ReadMinimizerGainOptions {
@@ -310,11 +315,16 @@ export function summarizeMissedMinimizerGain(records: MinimizerGainRecord[], lim
 		item.outputBytes += record.outputBytes;
 		addExitCode(item, record.exitCode);
 	}
-	const commands = [...groups.values()]
-		.map(finalizeMissedItem)
+	const all = [...groups.values()].map(finalizeMissedItem);
+	const commands = all
+		.slice()
 		.sort((a, b) => b.inputBytes - a.inputBytes)
 		.slice(0, limit);
-	return { commands };
+	const potentialTokenSavings = all
+		.slice()
+		.sort((a, b) => b.estimatedPotentialTokensSaved - a.estimatedPotentialTokensSaved)
+		.slice(0, limit);
+	return { commands, potentialTokenSavings };
 }
 
 function isSavedRecord(record: MinimizerGainRecord): boolean {
@@ -363,6 +373,8 @@ function getMissedItem(
 		outputBytes: 0,
 		avgInputBytes: 0,
 		exitCodes: [],
+		estimatedPotentialTokensSaved: 0,
+		avgEstimatedPotentialTokensSaved: 0,
 		_exitCodes: new Set(),
 	}));
 }
@@ -372,6 +384,9 @@ function addExitCode(item: MinimizerMissedAccumulator, exitCode: number | null):
 }
 
 function finalizeMissedItem(item: MinimizerMissedAccumulator): MinimizerMissedItem {
+	const estimatedPotentialTokensSaved = Math.floor(item.inputBytes / BYTES_PER_TOKEN_ESTIMATE);
+	const avgEstimatedPotentialTokensSaved =
+		item.commands === 0 ? 0 : Math.floor(estimatedPotentialTokensSaved / item.commands);
 	return {
 		command: item.command,
 		filter: item.filter,
@@ -380,6 +395,8 @@ function finalizeMissedItem(item: MinimizerMissedAccumulator): MinimizerMissedIt
 		outputBytes: item.outputBytes,
 		avgInputBytes: item.commands === 0 ? 0 : Math.round(item.inputBytes / item.commands),
 		exitCodes: [...item._exitCodes].sort(compareExitCodes),
+		estimatedPotentialTokensSaved,
+		avgEstimatedPotentialTokensSaved,
 	};
 }
 
@@ -536,6 +553,8 @@ function createTotals(): MinimizerGainTotals {
 		savedBytes: 0,
 		estimatedTokensSaved: 0,
 		usesEstimatedTokensSaved: false,
+		estimatedInputTokens: 0,
+		tokensSavedRatio: null,
 	};
 }
 
@@ -546,9 +565,14 @@ function addRecord(totals: MinimizerGainTotals, record: MinimizerGainRecord): vo
 	totals.savedBytes += record.savedBytes;
 	totals.estimatedTokensSaved += record.savedTokens ?? Math.floor(record.savedBytes / BYTES_PER_TOKEN_ESTIMATE);
 	totals.usesEstimatedTokensSaved ||= record.savedTokens === undefined;
+	if (isSavingsRecord(record)) {
+		totals.estimatedInputTokens += Math.floor(record.inputBytes / BYTES_PER_TOKEN_ESTIMATE);
+	}
 }
 
 function finalizeTotals<T extends MinimizerGainTotals>(totals: T): T {
+	totals.tokensSavedRatio =
+		totals.estimatedInputTokens > 0 ? totals.estimatedTokensSaved / totals.estimatedInputTokens : null;
 	return totals;
 }
 
@@ -576,6 +600,7 @@ export interface MinimizerGainDiagnostic {
 	missedCount: number;
 	mostRecentTimestamp: string | null;
 	recentMissedRatio: number | null;
+	recentHitRatio: number | null;
 	minimizerAppearsInactive: boolean;
 	avgSavedRatio: number | null;
 	loadDurationMs: number;
@@ -657,8 +682,12 @@ export async function buildMinimizerGainDiagnostic(
 	const avgSavedRatio = savedCount > 0 && savedSumInput > 0 ? savedSumSaved / savedSumInput : null;
 
 	let recentMissedRatio: number | null = null;
+	let recentHitRatio: number | null = null;
 	if (scopedRecords.length >= RECENT_MISSED_WINDOW) {
-		const window = scopedRecords.slice(-RECENT_MISSED_WINDOW);
+		const sorted = scopedRecords
+			.slice()
+			.sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
+		const window = sorted.slice(-RECENT_MISSED_WINDOW);
 		let s = 0;
 		let m = 0;
 		for (const r of window) {
@@ -667,6 +696,7 @@ export async function buildMinimizerGainDiagnostic(
 		}
 		const denom = s + m;
 		recentMissedRatio = denom === 0 ? null : m / denom;
+		recentHitRatio = denom === 0 ? null : s / denom;
 	}
 	const minimizerAppearsInactive = recentMissedRatio !== null && recentMissedRatio >= RECENT_MISSED_THRESHOLD;
 
@@ -705,6 +735,7 @@ export async function buildMinimizerGainDiagnostic(
 		missedCount,
 		mostRecentTimestamp,
 		recentMissedRatio,
+		recentHitRatio,
 		minimizerAppearsInactive,
 		avgSavedRatio,
 		loadDurationMs,

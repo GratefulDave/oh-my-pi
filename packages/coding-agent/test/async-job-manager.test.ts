@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { AsyncJobManager } from "@oh-my-pi/pi-coding-agent/async/job-manager";
+import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
+import { AsyncJobManager, type AsyncJobObserverPayload } from "@oh-my-pi/pi-coding-agent/async/job-manager";
+import type { AgentRunMetadata } from "@oh-my-pi/pi-coding-agent/task/types";
 
 describe("AsyncJobManager", () => {
 	test("forwards progress updates and delivers completion", async () => {
@@ -31,6 +33,79 @@ describe("AsyncJobManager", () => {
 		expect(progressEvents).toEqual([{ text: "running step", details: { async: { state: "running" } } }]);
 		expect(completions).toEqual([{ jobId, text: "final output" }]);
 		expect(manager.getJob(jobId)?.status).toBe("completed");
+	});
+
+	test("emits observer updates for registration, progress, completion, failure, and cancellation", async () => {
+		const updates: AsyncJobObserverPayload[] = [];
+		const manager = new AsyncJobManager({
+			onJobComplete: async () => {},
+			onJobUpdate: update => {
+				updates.push(update);
+			},
+		});
+
+		const completedJobId = manager.register(
+			"bash",
+			"build",
+			async ({ reportProgress }) => {
+				await reportProgress("halfway", { step: 1 });
+				return "done";
+			},
+			{ id: "build-job", ownerId: "0-Main" },
+		);
+		const failedJobId = manager.register("task", "review", async () => {
+			throw new Error("review failed");
+		});
+		const cancelled = Promise.withResolvers<void>();
+		const cancelledJobId = manager.register("bash", "sleep", async ({ signal }) => {
+			signal.addEventListener("abort", () => cancelled.resolve(), { once: true });
+			await cancelled.promise;
+			return "aborted";
+		});
+		expect(manager.cancel(cancelledJobId)).toBe(true);
+
+		await manager.waitForAll();
+		await manager.drainDeliveries({ timeoutMs: 2_000 });
+
+		expect(completedJobId).toBe("build-job");
+		expect(failedJobId).toBe("bg_1");
+		expect(updates).toContainEqual(
+			expect.objectContaining({
+				id: "build-job",
+				type: "bash",
+				label: "build",
+				status: "running",
+				ownerId: "0-Main",
+			}),
+		);
+		expect(updates).toContainEqual(
+			expect.objectContaining({
+				id: "build-job",
+				status: "running",
+				progressText: "halfway",
+				progressDetails: { step: 1 },
+			}),
+		);
+		expect(updates).toContainEqual(
+			expect.objectContaining({
+				id: "build-job",
+				status: "completed",
+				resultText: "done",
+			}),
+		);
+		expect(updates).toContainEqual(
+			expect.objectContaining({
+				id: failedJobId,
+				status: "failed",
+				errorText: "review failed",
+			}),
+		);
+		expect(updates).toContainEqual(
+			expect.objectContaining({
+				id: cancelledJobId,
+				status: "cancelled",
+			}),
+		);
 	});
 
 	test("swallows progress callback errors without failing the job", async () => {
@@ -373,5 +448,94 @@ describe("AsyncJobManager", () => {
 		manager.cancelAll();
 		await manager.waitForAll();
 		expect(manager.getJob(parentJobId)?.status).toBe("cancelled");
+	});
+
+	test("runMetadata registered with a job is preserved through observer updates, getJob, and getAllJobs", async () => {
+		const updates: AsyncJobObserverPayload[] = [];
+		const manager = new AsyncJobManager({
+			onJobComplete: async () => {},
+			onJobUpdate: update => {
+				updates.push(update);
+			},
+		});
+
+		const metadata: AgentRunMetadata = {
+			runId: "run-abc-123",
+			parentRunId: "run-root-0",
+			taskId: "task-42",
+			agent: "task",
+			model: "claude-opus-4-5",
+			thinkingLevel: ThinkingLevel.High,
+			cwd: "/workspace/project",
+			worktree: "/workspace/project/.git/worktrees/branch-a",
+			status: "running",
+			presentation: { mode: "embedded", backend: "core" },
+			artifacts: [
+				{ kind: "transcript", path: "/tmp/run-abc-123.md" },
+				{ kind: "manifest", path: "/tmp/run-abc-123.manifest.json" },
+			],
+		};
+
+		const jobId = manager.register("task", "delegate: auth refactor", async () => "done", {
+			ownerId: "0-Main",
+			runMetadata: metadata,
+		});
+
+		const secondJobId = manager.register("task", "delegate: unrelated", async () => "done", { ownerId: "1-Worker" });
+
+		await manager.waitForAll();
+
+		expect(updates).toContainEqual(
+			expect.objectContaining({
+				id: jobId,
+				status: "running",
+				runMetadata: metadata,
+			}),
+		);
+		expect(updates).toContainEqual(
+			expect.objectContaining({
+				id: jobId,
+				status: "completed",
+				runMetadata: metadata,
+			}),
+		);
+		expect(updates).toContainEqual(
+			expect.objectContaining({
+				id: secondJobId,
+				status: "completed",
+			}),
+		);
+		const secondJobUpdates = updates.filter(update => update.id === secondJobId);
+		expect(secondJobUpdates.every(update => update.runMetadata === undefined)).toBe(true);
+
+		// Exact metadata preserved on direct lookup.
+		const job = manager.getJob(jobId);
+		expect(job?.runMetadata).toEqual(metadata);
+		expect(job?.runMetadata?.runId).toBe("run-abc-123");
+		expect(job?.runMetadata?.parentRunId).toBe("run-root-0");
+		expect(job?.runMetadata?.presentation.mode).toBe("embedded");
+		expect(job?.runMetadata?.artifacts).toHaveLength(2);
+		expect(job?.runMetadata?.artifacts[0]?.kind).toBe("transcript");
+		expect(job?.runMetadata?.artifacts[1]?.kind).toBe("manifest");
+
+		// Job without metadata has undefined field.
+		expect(manager.getJob(secondJobId)?.runMetadata).toBeUndefined();
+
+		// getAllJobs (unscoped) returns both; metadata-bearing job round-trips correctly.
+		const all = manager.getAllJobs();
+		const found = all.find(j => j.id === jobId);
+		expect(found?.runMetadata).toEqual(metadata);
+
+		// Owner-filtered getAllJobs returns only the matching owner's job with metadata intact.
+		const ownerJobs = manager.getAllJobs({ ownerId: "0-Main" });
+		expect(ownerJobs).toHaveLength(1);
+		expect(ownerJobs[0]?.id).toBe(jobId);
+		expect(ownerJobs[0]?.runMetadata).toEqual(metadata);
+
+		// Other owner's filtered view excludes the metadata-bearing job.
+		const workerJobs = manager.getAllJobs({ ownerId: "1-Worker" });
+		expect(workerJobs).toHaveLength(1);
+		expect(workerJobs[0]?.id).toBe(secondJobId);
+		expect(workerJobs[0]?.runMetadata).toBeUndefined();
 	});
 });

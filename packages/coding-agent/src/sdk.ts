@@ -32,7 +32,7 @@ import {
 	Snowflake,
 } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
-import { type AsyncJob, AsyncJobManager, isBackgroundJobSupportEnabled } from "./async";
+import { ASYNC_JOB_OBSERVER_CHANNEL, type AsyncJob, AsyncJobManager, isBackgroundJobSupportEnabled } from "./async";
 import { createAutoresearchExtension } from "./autoresearch";
 import { loadCapability } from "./capability";
 import { type Rule, ruleCapability, setActiveRules } from "./capability/rule";
@@ -1105,6 +1105,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		backgroundJobsEnabled && !options.parentTaskPrefix
 			? new AsyncJobManager({
 					maxRunningJobs: asyncMaxJobs,
+					onJobUpdate: payload => {
+						eventBus.emit(ASYNC_JOB_OBSERVER_CHANNEL, payload);
+					},
 					onJobComplete: async (jobId, result, job) => {
 						if (!session || asyncJobManager!.isDeliverySuppressed(jobId)) return;
 						const formattedResult = await formatAsyncResultForFollowUp(result);

@@ -21,7 +21,7 @@ import type { KeyId } from "../../config/keybindings";
 import { isSilentAbort } from "../../session/messages";
 import type { SessionMessageEntry } from "../../session/session-manager";
 import { parseSessionEntries } from "../../session/session-manager";
-import { PREVIEW_LIMITS, replaceTabs, TRUNCATE_LENGTHS, truncateToWidth } from "../../tools/render-utils";
+import { PREVIEW_LIMITS, replaceTabs, shortenPath, TRUNCATE_LENGTHS, truncateToWidth } from "../../tools/render-utils";
 import type { ObservableSession, SessionObserverRegistry } from "../session-observer-registry";
 import { getMarkdownTheme, theme } from "../theme/theme";
 import { DynamicBorder } from "./dynamic-border";
@@ -178,9 +178,10 @@ export class SessionObserverOverlayComponent extends Container {
 		if (!session) {
 			contentLines.push(theme.fg("dim", "Session no longer available."));
 		} else if (!session.sessionFile) {
-			contentLines.push(theme.fg("dim", "No session file available yet."));
+			this.#buildObservableMetadataLines(session, contentLines);
 		} else if (!messageEntries) {
 			contentLines.push(theme.fg("dim", "Unable to read session file."));
+			this.#buildObservableMetadataLines(session, contentLines);
 		} else if (messageEntries.length === 0) {
 			contentLines.push(theme.fg("dim", "No messages yet."));
 		} else {
@@ -283,6 +284,127 @@ export class SessionObserverOverlayComponent extends Container {
 		if (stats.length > 0) parts.push(theme.fg("dim", stats.join(theme.sep.dot)));
 		if (progress.cost > 0) parts.push(theme.fg("statusLineCost", `$${progress.cost.toFixed(2)}`));
 		return parts.join(theme.sep.dot);
+	}
+
+	#buildObservableMetadataLines(session: ObservableSession, lines: string[]): void {
+		const progress = session.progress;
+		const metadata = session.runMetadata ?? progress?.runMetadata;
+		const artifacts = metadata?.artifacts ?? [];
+		const hasTranscriptArtifact = artifacts.some(artifact => artifact.kind === "transcript");
+
+		lines.push(
+			theme.fg(
+				"dim",
+				hasTranscriptArtifact
+					? "Transcript view unavailable until a session file is attached; transcript artifact is listed below."
+					: "Captured transcript unavailable; this run has not published a session file.",
+			),
+		);
+		lines.push("");
+		lines.push(theme.bold("Observable run"));
+		this.#appendMetadataLine(
+			lines,
+			"Status",
+			metadata?.status ? `${session.status} (${metadata.status})` : session.status,
+		);
+		this.#appendMetadataLine(lines, "Label", session.label);
+		if (session.description && session.description !== session.label)
+			this.#appendMetadataLine(lines, "Description", session.description);
+		this.#appendMetadataLine(lines, "Agent", session.agent ?? metadata?.agent);
+		if (session.source) {
+			this.#appendMetadataLine(
+				lines,
+				"Source",
+				[session.source.kind, session.source.name, session.source.eventChannel].filter(Boolean).join(" · "),
+			);
+		}
+		if (metadata?.runId) this.#appendMetadataLine(lines, "Run", metadata.runId);
+		if (metadata?.taskId && metadata.taskId !== metadata.runId)
+			this.#appendMetadataLine(lines, "Task", metadata.taskId);
+		if (metadata?.parentRunId) this.#appendMetadataLine(lines, "Parent", metadata.parentRunId);
+		this.#appendMetadataLine(lines, "Model", this.#formatMetadataValue(metadata?.resolvedModel ?? metadata?.model));
+		if (metadata?.runtimeFallbackUsed) {
+			this.#appendMetadataLine(
+				lines,
+				"Fallback",
+				[metadata.fallbackFrom, metadata.fallbackTo].filter(Boolean).join(" → "),
+			);
+		}
+		if (metadata?.thinkingLevel) this.#appendMetadataLine(lines, "Thinking", metadata.thinkingLevel);
+
+		if (metadata?.presentation) {
+			const presentation = metadata.presentation;
+			this.#appendMetadataLine(
+				lines,
+				"Presentation",
+				[
+					presentation.mode,
+					presentation.backend ? `backend=${presentation.backend}` : "",
+					presentation.session ? `session=${presentation.session}` : "",
+					presentation.paneId ? `paneId=${presentation.paneId}` : "",
+				]
+					.filter(Boolean)
+					.join(" · "),
+			);
+		}
+		if (metadata?.cwd) this.#appendMetadataLine(lines, "Cwd", this.#formatMetadataPath(metadata.cwd));
+		if (metadata?.worktree && metadata.worktree !== metadata.cwd)
+			this.#appendMetadataLine(lines, "Worktree", this.#formatMetadataPath(metadata.worktree));
+
+		if (progress) {
+			lines.push("");
+			lines.push(theme.bold("Progress"));
+			if (progress.description) this.#appendMetadataLine(lines, "Description", progress.description);
+			if (progress.task && progress.task !== progress.description)
+				this.#appendMetadataLine(lines, "Task", progress.task);
+			if (progress.lastIntent) this.#appendMetadataLine(lines, "Intent", progress.lastIntent);
+			if (progress.currentTool) {
+				const currentTool = progress.currentToolArgs
+					? `${progress.currentTool} ${progress.currentToolArgs}`
+					: progress.currentTool;
+				this.#appendMetadataLine(lines, "Current tool", currentTool);
+			}
+			const statsLine = this.#buildStatsLine(session);
+			if (statsLine) this.#appendMetadataLine(lines, "Usage", statsLine);
+			if (progress.recentOutput.length > 0) {
+				const recentOutput = progress.recentOutput.slice(-PREVIEW_LIMITS.COLLAPSED_LINES);
+				lines.push(`${INDENT}${theme.fg("dim", "Recent output:")}`);
+				for (const outputLine of recentOutput) {
+					lines.push(`${INDENT}  ${theme.fg("dim", sanitizeLine(outputLine, contentWidth("      ")))}`);
+				}
+			}
+		}
+
+		if (artifacts.length > 0) {
+			lines.push("");
+			lines.push(theme.bold("Artifacts"));
+			for (const artifact of artifacts) {
+				this.#appendMetadataLine(lines, artifact.kind, this.#formatArtifactRef(artifact));
+			}
+		}
+	}
+
+	#appendMetadataLine(lines: string[], label: string, value: string | undefined): void {
+		if (!value) return;
+		lines.push(`${INDENT}${theme.fg("dim", `${label}:`)} ${sanitizeLine(value, contentWidth())}`);
+	}
+
+	#formatMetadataValue(value: string | string[] | undefined): string | undefined {
+		if (Array.isArray(value)) return value.join(", ");
+		return value;
+	}
+
+	#formatArtifactRef(artifact: { url?: string; path?: string; mime?: string }): string {
+		const refs = [
+			artifact.url ? `url=${artifact.url}` : "",
+			artifact.path ? `path=${this.#formatMetadataPath(artifact.path)}` : "",
+			artifact.mime ? `mime=${artifact.mime}` : "",
+		].filter(Boolean);
+		return refs.length > 0 ? refs.join(" · ") : "reference unavailable";
+	}
+
+	#formatMetadataPath(pathValue: string): string {
+		return shortenPath(pathValue);
 	}
 
 	#buildTranscriptLines(messageEntries: SessionMessageEntry[], lines: string[]): void {

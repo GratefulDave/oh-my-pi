@@ -35,6 +35,37 @@ export const TASK_SUBAGENT_PROGRESS_CHANNEL = "task:subagent:progress";
 /** EventBus channel for subagent lifecycle (start/end) */
 export const TASK_SUBAGENT_LIFECYCLE_CHANNEL = "task:subagent:lifecycle";
 
+export interface AgentRunArtifactRef {
+	kind: "transcript" | "manifest" | "raw";
+	path: string;
+}
+
+export interface AgentRunPresentation {
+	mode: "embedded" | "pane" | "window";
+	backend?: "core" | "acpx" | "tmux" | "cmux";
+	session?: string;
+	paneId?: string;
+	command?: string[];
+}
+
+export interface AgentRunMetadata {
+	runId: string;
+	parentRunId?: string;
+	taskId?: string;
+	agent: string;
+	model?: string;
+	resolvedModel?: string;
+	runtimeFallbackUsed?: boolean;
+	fallbackFrom?: string;
+	fallbackTo?: string;
+	thinkingLevel?: ThinkingLevel;
+	cwd?: string;
+	worktree?: string;
+	status: AgentProgress["status"];
+	presentation: AgentRunPresentation;
+	artifacts: AgentRunArtifactRef[];
+}
+
 /** Payload emitted on TASK_SUBAGENT_PROGRESS_CHANNEL */
 export interface SubagentProgressPayload {
 	index: number;
@@ -43,6 +74,7 @@ export interface SubagentProgressPayload {
 	task: string;
 	assignment?: string;
 	progress: AgentProgress;
+	runMetadata?: AgentRunMetadata;
 	sessionFile?: string;
 }
 
@@ -54,6 +86,7 @@ export interface SubagentLifecyclePayload {
 	description?: string;
 	status: "started" | "completed" | "failed" | "aborted";
 	sessionFile?: string;
+	runMetadata?: AgentRunMetadata;
 	index: number;
 }
 
@@ -211,6 +244,7 @@ export interface AgentProgress {
 	modelOverride?: string | string[];
 	/** Data extracted by registered subprocess tool handlers (keyed by tool name) */
 	extractedToolData?: Record<string, unknown[]>;
+	runMetadata?: AgentRunMetadata;
 }
 
 /** Result from a single agent execution */

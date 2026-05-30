@@ -54,11 +54,21 @@ function formatRow(label: string, value: string, width: number): string {
 	return clean(`  ${label}: ${value}`, width);
 }
 
+function formatTokensSavedPercent(ratio: number | null): string {
+	return ratio === null ? "-" : `${(ratio * 100).toFixed(1)}%`;
+}
+
 function formatGainRow<
-	T extends { commands: number; savedBytes: number; estimatedTokensSaved: number; usesEstimatedTokensSaved: boolean },
+	T extends {
+		commands: number;
+		savedBytes: number;
+		estimatedTokensSaved: number;
+		usesEstimatedTokensSaved: boolean;
+		tokensSavedRatio: number | null;
+	},
 >(label: string, row: T, width: number): string {
 	return clean(
-		`  ${label}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} saved, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}`,
+		`  ${label}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} saved, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)} (${formatTokensSavedPercent(row.tokensSavedRatio)} saved)`,
 		width,
 	);
 }
@@ -70,6 +80,22 @@ function formatMissedRow(
 ): string {
 	return clean(
 		`  ${label}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.inputBytes)}B total (${formatNumber(row.avgInputBytes)} avg), exit=${formatExitCodes(row.exitCodes)}`,
+		width,
+	);
+}
+
+function formatPotentialSavingsRow(
+	label: string,
+	row: {
+		commands: number;
+		estimatedPotentialTokensSaved: number;
+		avgEstimatedPotentialTokensSaved: number;
+		exitCodes: Array<number | null>;
+	},
+	width: number,
+): string {
+	return clean(
+		`  ${label}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.estimatedPotentialTokensSaved)} tok total (${formatNumber(row.avgEstimatedPotentialTokensSaved)} avg), exit=${formatExitCodes(row.exitCodes)}`,
 		width,
 	);
 }
@@ -178,6 +204,12 @@ export class MinimizerGainOverlayComponent implements Component {
 				width,
 			),
 		);
+		lines.push(
+			clean(
+				`  Recent hit ratio (last 50): ${diag.recentHitRatio === null ? "-" : diag.recentHitRatio.toFixed(3)}`,
+				width,
+			),
+		);
 		if (diag.minimizerAppearsInactive) {
 			lines.push(clean(theme.fg("accent", "  ⚠ Minimizer appears inactive"), width));
 		}
@@ -260,7 +292,7 @@ export class MinimizerGainOverlayComponent implements Component {
 			lines.push(
 				formatRow(
 					formatTokensSavedLabel(context.summary.usesEstimatedTokensSaved),
-					formatNumber(context.summary.estimatedTokensSaved),
+					`${formatNumber(context.summary.estimatedTokensSaved)} (${formatTokensSavedPercent(context.summary.tokensSavedRatio)} tokens saved)`,
 					width,
 				),
 			);
@@ -300,6 +332,15 @@ export class MinimizerGainOverlayComponent implements Component {
 			} else {
 				for (const row of context.missed.commands.slice(0, 8)) {
 					lines.push(formatMissedRow(row.command, row, contentWidth));
+				}
+			}
+			lines.push("");
+			lines.push(clean(theme.fg("accent", theme.bold("Highest potential token savings")), width));
+			if (context.missed.potentialTokenSavings.length === 0) {
+				lines.push(clean(theme.fg("dim", "No unminimized shell output recorded for this scope yet."), width));
+			} else {
+				for (const row of context.missed.potentialTokenSavings.slice(0, 8)) {
+					lines.push(formatPotentialSavingsRow(row.command, row, contentWidth));
 				}
 			}
 		}
