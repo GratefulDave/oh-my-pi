@@ -256,6 +256,14 @@ function findReplacementGroup(edits: readonly AppliedEdit[], start: number): Rep
 	};
 }
 
+function containsBlockCommentDelimiter(lines: readonly string[], start: number, end: number): boolean {
+	for (let i = start; i < end; i++) {
+		const line = lines[i] ?? "";
+		if (line.includes("/*") || line.includes("*/")) return true;
+	}
+	return false;
+}
+
 /**
  * Largest `k` such that the payload's last `k` lines exactly equal the `k`
  * surviving file lines just below the range AND dropping them zeroes `delta`.
@@ -274,7 +282,9 @@ function findDuplicateSuffix(group: ReplacementGroup, fileLines: readonly string
 		}
 		if (!matches) continue;
 		if (k === 1 && !STRUCTURAL_CLOSER_RE.test(payload[payload.length - 1])) continue;
-		if (balanceEqual(computeDelimiterBalance(payload.slice(payload.length - k)), delta)) return k;
+		const candidateStart = payload.length - k;
+		if (containsBlockCommentDelimiter(payload, candidateStart, payload.length)) continue;
+		if (balanceEqual(computeDelimiterBalance(payload.slice(candidateStart)), delta)) return k;
 	}
 	return 0;
 }
@@ -296,6 +306,7 @@ function findDuplicatePrefix(group: ReplacementGroup, fileLines: readonly string
 		}
 		if (!matches) continue;
 		if (j === 1 && !STRUCTURAL_CLOSER_RE.test(payload[0])) continue;
+		if (containsBlockCommentDelimiter(payload, 0, j)) continue;
 		if (balanceEqual(computeDelimiterBalance(payload.slice(0, j)), delta)) return j;
 	}
 	return 0;

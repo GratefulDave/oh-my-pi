@@ -280,6 +280,34 @@ describe("Coding Agent Tools", () => {
 			expect(result.details?.truncation).toBeUndefined();
 		});
 
+		it("suffix-resolves only bare missing filenames", async () => {
+			fs.mkdirSync(path.join(testDir, "elsewhere", "docs"), { recursive: true });
+			fs.writeFileSync(path.join(testDir, "elsewhere", "docs", "missing.md"), "unique suffix content\n");
+
+			const result = await readTool.execute("test-call-read-bare-suffix", { path: "missing.md" });
+
+			const output = getTextOutput(result);
+			expect(output).toContain("resolved to 'elsewhere/docs/missing.md' via suffix match");
+			expect(output).toContain("unique suffix content");
+		});
+
+		it("does not suffix-resolve missing relative paths with directory components", async () => {
+			fs.mkdirSync(path.join(testDir, "elsewhere", "docs"), { recursive: true });
+			fs.writeFileSync(path.join(testDir, "elsewhere", "docs", "missing.md"), "must not be read\n");
+
+			const promise = readTool.execute("test-call-read-dir-suffix", { path: "docs/missing.md" });
+
+			await expect(promise).rejects.toThrow("Path 'docs/missing.md' not found");
+		});
+
+		it("does not suffix-resolve missing trailing-slash paths as bare filenames", async () => {
+			fs.mkdirSync(path.join(testDir, "elsewhere", "docs"), { recursive: true });
+
+			const promise = readTool.execute("test-call-read-trailing-slash-suffix", { path: "docs/" });
+
+			await expect(promise).rejects.toThrow("Path 'docs/' not found");
+		});
+
 		it("truncates lines wider than the read column cap, leaving narrow lines untouched", async () => {
 			const wideLine = "x".repeat(1500);
 			const testFile = path.join(testDir, "wide.txt");

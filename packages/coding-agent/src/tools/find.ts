@@ -74,6 +74,35 @@ function validateFindPathInputs(paths: readonly string[]): void {
 	}
 }
 
+async function findBasePathExists(pattern: string, cwd: string): Promise<boolean> {
+	const { basePath } = parseFindPattern(pattern);
+	try {
+		await fs.promises.stat(resolveToCwd(basePath, cwd));
+		return true;
+	} catch (err) {
+		if (isEnoent(err)) return false;
+		throw err;
+	}
+}
+
+async function expandWhitespacePackedFindPaths(paths: readonly string[], cwd: string): Promise<string[]> {
+	if (paths.length !== 1) return [...paths];
+	const [entry] = paths;
+	if (!/\s/.test(entry)) return [entry];
+
+	const normalizedEntry = normalizePathLikeInput(entry).replace(/\\/g, "/");
+	if (normalizedEntry.length === 0 || (await findBasePathExists(normalizedEntry, cwd))) {
+		return [entry];
+	}
+
+	const tokens = normalizedEntry.split(/\s+/).filter(Boolean);
+	if (tokens.length < 2) return [entry];
+	for (const token of tokens) {
+		if (!(await findBasePathExists(token, cwd))) return [entry];
+	}
+	return tokens;
+}
+
 export interface FindToolDetails {
 	truncation?: TruncationResult;
 	resultLimitReached?: number;
@@ -144,7 +173,8 @@ export class FindTool implements AgentTool<typeof findSchema, FindToolDetails> {
 		return untilAborted(signal, async () => {
 			const formatScopePath = (targetPath: string): string => formatPathRelativeToCwd(targetPath, this.session.cwd);
 			validateFindPathInputs(paths);
-			const rawPatterns = paths.map(input => normalizePathLikeInput(input).replace(/\\/g, "/"));
+			const expandedPaths = await expandWhitespacePackedFindPaths(paths, this.session.cwd);
+			const rawPatterns = expandedPaths.map(input => normalizePathLikeInput(input).replace(/\\/g, "/"));
 			const internalRouter = InternalUrlRouter.instance();
 			const normalizedPatterns: string[] = [];
 			for (const rawPattern of rawPatterns) {

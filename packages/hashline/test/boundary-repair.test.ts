@@ -68,6 +68,16 @@ describe("boundary-balance repair", () => {
 		expect(warnings.some(w => /delimiter-balance/.test(w))).toBe(true);
 	});
 
+	it("does not drop block-comment delimiters as part of duplicated suffix repair", () => {
+		const file = ["describe('x', () => {", "\t/*", "\t * old", "\t */", "});"].join("\n");
+		const diff = ["replace 3..3:", "+\t * new", "+\t */", "+});"].join("\n");
+		const { text, warnings } = apply(file, diff);
+
+		expect(text).toBe(["describe('x', () => {", "\t/*", "\t * new", "\t */", "});", "\t */", "});"].join("\n"));
+		expect(text.split("\n").filter(line => line === "\t */")).toHaveLength(2);
+		expect(warnings).toHaveLength(0);
+	});
+
 	// Genuine missing-closer: payload omits the trailing `});`.
 	it("spares the deleted closing line when the payload omits it", () => {
 		const file = ["const handlers = {", "\ta() {", "\t\treturn 1;", "\t},", "};"].join("\n");

@@ -75,6 +75,11 @@ function detectApplyPatchContamination(text: string, _hasPending: boolean): stri
 	return null;
 }
 
+function stripHashlineSnapshotPrefix(text: string): string {
+	const match = /^\s*\d+:(.*)$/.exec(text);
+	return match?.[1] ?? text;
+}
+
 interface PendingComment {
 	lineNum: number;
 	text: string;
@@ -215,7 +220,7 @@ export class Executor {
 			if (this.#pending.target.kind === "delete") throw new Error(`line ${lineNum}: ${DELETE_TAKES_NO_BODY}`);
 			if (text.trimStart().charCodeAt(0) === 45 /* - */) throw new Error(`line ${lineNum}: ${MINUS_ROW_REJECTED}`);
 			if (!this.#warnings.includes(BARE_BODY_AUTO_PIPED_WARNING)) this.#warnings.push(BARE_BODY_AUTO_PIPED_WARNING);
-			this.#pending.payloads.push({ kind: "literal", text, lineNum });
+			this.#pending.payloads.push({ kind: "literal", text: stripHashlineSnapshotPrefix(text), lineNum });
 			return;
 		}
 		if (text.trim().length === 0) return;

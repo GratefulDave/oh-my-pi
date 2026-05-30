@@ -78,7 +78,7 @@ URL selectors are parsed separately in `packages/coding-agent/src/tools/fetch.ts
    - `#readSqlite()` dispatches on `parseSqliteSelector()`.
 6. Otherwise it treats the input as a local filesystem path.
    - `resolveReadPath()` expands `~`, resolves relative to session cwd, treats bare `/` as session cwd, and retries macOS screenshot/NFD/curly-quote variants.
-   - If the path does not exist, `findUniqueSuffixMatch()` does a workspace glob-based unique suffix lookup (skipped for remote mounts).
+   - If a bare filename does not exist, `findUniqueSuffixMatch()` does a workspace glob-based unique suffix lookup (skipped for remote mounts). Missing relative paths with directory components fail exactly; they are not suffix-repaired elsewhere in the workspace.
 7. Directories go through `#readDirectory()`.
 8. Non-directories branch by content type:
    - image metadata / inline image
@@ -281,7 +281,7 @@ Notes: ...
   - `Line selector 0 is invalid; lines are 1-indexed. Use :1.`
   - invalid `A+B` / `A-B` shapes
   - `Cannot combine query extraction with offset/limit` for `agent://.../path:50`
-- Missing local/archive/sqlite paths first attempt unique suffix resolution; if no unique match exists they error.
+- Missing local/archive/sqlite bare filenames first attempt unique suffix resolution; missing paths with directory components and paths without a unique basename match error.
 - Out-of-bounds line reads do not throw. They return explanatory text with a suggestion such as `Use :1 ...` or `Use :<last line> ...`.
 - Binary archive entries do not throw; they return a text notice.
 - Document conversion failure returns a text notice.

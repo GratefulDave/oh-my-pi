@@ -482,6 +482,11 @@ function isNotFoundError(error: unknown): boolean {
 	return code === "ENOENT" || code === "ENOTDIR";
 }
 
+function canSuffixResolvePath(rawPath: string): boolean {
+	const normalized = rawPath.replace(/\\/g, "/").replace(/^\.\//, "");
+	return normalized.replace(/\/+$/, "").length > 0 && !normalized.includes("/");
+}
+
 /**
  * Attempt to resolve a non-existent path by finding a unique suffix match within the workspace.
  * Uses a glob suffix pattern so the native engine handles matching directly.
@@ -492,8 +497,8 @@ async function findUniqueSuffixMatch(
 	cwd: string,
 	signal?: AbortSignal,
 ): Promise<{ absolutePath: string; displayPath: string } | null> {
+	if (!canSuffixResolvePath(rawPath)) return null;
 	const normalized = rawPath.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
-	if (!normalized) return null;
 
 	const timeoutSignal = AbortSignal.timeout(GLOB_TIMEOUT_MS);
 	const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;

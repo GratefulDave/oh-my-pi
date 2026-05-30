@@ -34,8 +34,12 @@ describe("multi-path tools tolerate missing entries", () => {
 	beforeEach(async () => {
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-multi-path-missing-"));
 		await fs.mkdir(path.join(tempDir, "src"), { recursive: true });
+		await fs.mkdir(path.join(tempDir, "test"), { recursive: true });
+		await fs.mkdir(path.join(tempDir, "folder with spaces"), { recursive: true });
 		await Bun.write(path.join(tempDir, "src", "alpha.ts"), "shared-needle alpha\n");
 		await Bun.write(path.join(tempDir, "src", "beta.ts"), "shared-needle beta\n");
+		await Bun.write(path.join(tempDir, "test", "gamma.ts"), "shared-needle gamma\n");
+		await Bun.write(path.join(tempDir, "folder with spaces", "delta.ts"), "shared-needle delta\n");
 	});
 
 	afterEach(async () => {
@@ -83,17 +87,53 @@ describe("multi-path tools tolerate missing entries", () => {
 		const result = await tool.execute("find-multi-missing", {
 			paths: ["src/**/*.ts", "tests/**/*.ts"],
 		});
-
 		const text = getText(result);
 		const details = result.details as { fileCount?: number; missingPaths?: string[]; files?: string[] } | undefined;
 
-		expect(text).toContain("# src/");
-		expect(text).toContain("alpha.ts");
-		expect(text).toContain("beta.ts");
+		expect(text).toContain("src/alpha.ts");
+		expect(text).toContain("src/beta.ts");
 		expect(details?.files).toEqual(expect.arrayContaining(["src/alpha.ts", "src/beta.ts"]));
 		expect(text).toContain("Skipped missing paths: tests/**/*.ts");
 		expect(details?.fileCount).toBe(2);
 		expect(details?.missingPaths).toEqual(["tests/**/*.ts"]);
+	});
+
+	it("find expands a single whitespace-packed entry when every token is an existing target", async () => {
+		const tools = await createTools(createTestSession(tempDir));
+		const tool = tools.find(entry => entry.name === "find");
+		if (!tool) throw new Error("Missing find tool");
+
+		const result = await tool.execute("find-packed-paths", {
+			paths: ["src test"],
+		});
+
+		const details = result.details as { files?: string[] } | undefined;
+		expect(details?.files).toEqual(expect.arrayContaining(["src/alpha.ts", "src/beta.ts", "test/gamma.ts"]));
+	});
+
+	it("find preserves an existing path that contains spaces", async () => {
+		const tools = await createTools(createTestSession(tempDir));
+		const tool = tools.find(entry => entry.name === "find");
+		if (!tool) throw new Error("Missing find tool");
+
+		const result = await tool.execute("find-path-with-spaces", {
+			paths: ["folder with spaces/"],
+		});
+
+		const details = result.details as { files?: string[] } | undefined;
+		expect(details?.files).toEqual(["folder with spaces/delta.ts"]);
+	});
+
+	it("find keeps an ambiguous missing path with spaces as one not-found path", async () => {
+		const tools = await createTools(createTestSession(tempDir));
+		const tool = tools.find(entry => entry.name === "find");
+		if (!tool) throw new Error("Missing find tool");
+
+		const promise = tool.execute("find-missing-path-with-spaces", {
+			paths: ["missing path/"],
+		});
+
+		await expect(promise).rejects.toThrow("Path not found: missing path");
 	});
 
 	it("find errors only when every glob's base directory is missing", async () => {

@@ -50,6 +50,26 @@ describe("hashline body contracts", () => {
 		expect(result.warnings.some(w => /Auto-prefixed bare body row/.test(w))).toBe(true);
 	});
 
+	it("strips read-output line numbers from auto-piped replacement body rows", () => {
+		const result = parsePatch("replace 2..3:\n119:      const args: string[] = [];\n120:      return args;");
+
+		expect(applyEdits(FILE, result.edits).text).toBe("a\n      const args: string[] = [];\n      return args;\nd\ne");
+		expect(result.warnings.some(w => /Auto-prefixed bare body row/.test(w))).toBe(true);
+	});
+
+	it("strips read-output line numbers from auto-piped insert body rows", () => {
+		const result = parsePatch("insert after 2:\n119:      const args: string[] = [];");
+
+		expect(applyEdits(FILE, result.edits).text).toBe("a\nb\n      const args: string[] = [];\nc\nd\ne");
+		expect(result.warnings.some(w => /Auto-prefixed bare body row/.test(w))).toBe(true);
+	});
+
+	it("preserves explicit literal payload rows that look like read-output line numbers", () => {
+		expect(applyPatch(FILE, "replace 2..2:\n+119:      const args: string[] = [];")).toBe(
+			"a\n119:      const args: string[] = [];\nc\nd\ne",
+		);
+	});
+
 	it("rejects `-` body rows with a teaching error", () => {
 		expect(() => parsePatch("replace 2..2:\n-old\n+new")).toThrow(/`-` rows are not valid/);
 	});
