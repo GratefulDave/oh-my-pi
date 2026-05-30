@@ -193,7 +193,7 @@ function validateProviderConfiguration(
 		}
 	}
 
-	if (mode === "models-config" && config.discovery && !config.api) {
+	if (mode === "models-config" && config.discovery && !config.api && config.discovery.type !== "proxy") {
 		throw new Error(`Provider ${providerName}: "api" is required when discovery is enabled at provider level.`);
 	}
 
@@ -255,6 +255,8 @@ interface ProviderOverride {
 
 interface DiscoveryProviderConfig {
 	provider: string;
+	/** Provider-level api; for `discovery.type === "proxy"` this is a fallback
+	 *  only — each model's api is derived from `supported_endpoint_types`. */
 	api: Api;
 	baseUrl?: string;
 	headers?: Record<string, string>;
@@ -1155,13 +1157,17 @@ export class ModelRegistry {
 				keylessProviders.add(providerName);
 			}
 
-			if (providerConfig.discovery && providerConfig.api) {
+			if (providerConfig.discovery && (providerConfig.api || providerConfig.discovery.type === "proxy")) {
+				const disableStrictCompat = providerConfig.disableStrictTools ? { disableStrictTools: true } : undefined;
 				discoverableProviders.push({
 					provider: providerName,
-					api: providerConfig.api as Api,
+					// Proxy discovery derives per-model api from /v1/models's
+					// supported_endpoint_types; the provider-level api is only a
+					// fallback for entries that don't advertise one.
+					api: (providerConfig.api ?? "openai-completions") as Api,
 					baseUrl: providerConfig.baseUrl,
 					headers: providerConfig.headers,
-					compat: providerConfig.compat,
+					compat: mergeCompat(providerConfig.compat, disableStrictCompat),
 					discovery: providerConfig.discovery,
 					optional: false,
 				});
@@ -1340,6 +1346,8 @@ export class ModelRegistry {
 			case "omlx":
 			case "openai-models-list":
 				return this.#discoverOpenAIModelsList(providerConfig);
+			case "proxy":
+				return this.#discoverProxyModels(providerConfig);
 		}
 	}
 
@@ -1700,7 +1708,7 @@ export class ModelRegistry {
 		const [response, statusMetadata] = await Promise.all([
 			fetch(modelsUrl, {
 				headers,
-				signal: AbortSignal.timeout(250),
+				signal: AbortSignal.timeout(10_000),
 			}),
 			statusMetadataPromise,
 		]);
@@ -1750,6 +1758,84 @@ export class ModelRegistry {
 						supportsDeveloperRole: false,
 						supportsReasoningEffort: supportsReasoning,
 					},
+				}),
+			);
+		}
+		return this.#applyProviderModelOverrides(providerConfig.provider, discovered);
+	}
+
+	/**
+	 * Discover models from an Anthropic+OpenAI-compatible reseller proxy that
+	 * exposes both `/v1/messages` and `/v1/chat/completions`, advertising each
+	 * model's wire capabilities through `supported_endpoint_types` on
+	 * `GET /v1/models` (new-api / one-api-style proxies).
+	 *
+	 * Routing per model:
+	 *   supported_endpoint_types: ["anthropic", ...] -> api: "anthropic-messages"
+	 *   supported_endpoint_types: ["openai"]         -> api: "openai-completions"
+	 *   missing / neither                            -> provider-level api fallback
+	 *
+	 * Anthropic models share the same baseUrl; the Anthropic SDK strips a
+	 * trailing `/v1` itself before appending `/v1/messages`, so the discovery
+	 * URL (which ends in `/v1`) round-trips correctly.
+	 */
+	async #discoverProxyModels(providerConfig: DiscoveryProviderConfig): Promise<Model<Api>[]> {
+		const baseUrl = this.#normalizeOpenAIModelsListBaseUrl(providerConfig.baseUrl);
+		const modelsUrl = `${baseUrl}/models`;
+
+		const headers: Record<string, string> = { ...(providerConfig.headers ?? {}) };
+		const apiKey = await this.authStorage.getApiKey(providerConfig.provider);
+		if (apiKey && apiKey !== DEFAULT_LOCAL_TOKEN && apiKey !== kNoAuth) {
+			headers.Authorization = `Bearer ${apiKey}`;
+		}
+
+		const response = await fetch(modelsUrl, {
+			headers,
+			signal: AbortSignal.timeout(10_000),
+		});
+		if (!response.ok) {
+			throw new Error(`HTTP ${response.status} from ${modelsUrl}`);
+		}
+		const payload = (await response.json()) as {
+			data?: Array<{ id?: string; supported_endpoint_types?: string[] }>;
+		};
+		const items = payload.data ?? [];
+		const discovered: Model<Api>[] = [];
+		for (const item of items) {
+			const id = item.id;
+			if (!id) continue;
+			const endpoints = item.supported_endpoint_types ?? [];
+			const api: Api | undefined = endpoints.includes("anthropic")
+				? "anthropic-messages"
+				: endpoints.includes("openai")
+					? "openai-completions"
+					: providerConfig.api;
+			if (!api) continue;
+			const isAnthropic = api === "anthropic-messages";
+			discovered.push(
+				enrichModelThinking({
+					id,
+					name: id,
+					api,
+					provider: providerConfig.provider,
+					baseUrl,
+					reasoning: false,
+					input: ["text"],
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: 128000,
+					maxTokens: 8192,
+					headers,
+					// OpenAI-compat fields are no-ops on anthropic models; the
+					// Anthropic SDK ignores them. Provider-level disableStrictTools
+					// flows in via #applyProviderCompat for the third-party-Anthropic
+					// path.
+					compat: isAnthropic
+						? undefined
+						: {
+								supportsStore: false,
+								supportsDeveloperRole: false,
+								supportsReasoningEffort: false,
+							},
 				}),
 			);
 		}

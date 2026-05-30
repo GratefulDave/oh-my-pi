@@ -10,7 +10,12 @@ import {
 	type SimpleStreamOptions,
 } from "@oh-my-pi/pi-ai";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { AgentSession, type AgentSessionEvent } from "@oh-my-pi/pi-coding-agent/session/agent-session";
+import {
+	AgentSession,
+	type AgentSessionEvent,
+	ANTHROPIC_TOOL_CALL_BATCH_CAP,
+	resolveToolCallBatchCapForModel,
+} from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { createAssistantMessage } from "./helpers/agent-session-setup";
 
@@ -32,6 +37,43 @@ describe("AgentSession message pipeline", () => {
 		for (const session of sessions.splice(0)) {
 			await session.dispose();
 		}
+	});
+
+	it("enables the tool-call batch cap only for Anthropic Claude Opus 4.8 models", () => {
+		const baseModel: Model = {
+			id: "gpt-5",
+			name: "GPT-5",
+			api: "openai-responses" as Api,
+			provider: "openai",
+			baseUrl: "",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 200_000,
+			maxTokens: 8_192,
+		};
+		const anthropicOpus48: Model = {
+			...baseModel,
+			id: "claude-opus-4-8",
+			name: "Claude Opus 4.8",
+			api: "anthropic" as Api,
+			provider: "anthropic",
+		};
+
+		expect(resolveToolCallBatchCapForModel(anthropicOpus48)).toBe(ANTHROPIC_TOOL_CALL_BATCH_CAP);
+		expect(resolveToolCallBatchCapForModel({ ...anthropicOpus48, id: "claude-opus-4.8" })).toBe(
+			ANTHROPIC_TOOL_CALL_BATCH_CAP,
+		);
+		expect(resolveToolCallBatchCapForModel({ ...anthropicOpus48, id: "claude-opus-4-8-20260530" })).toBe(
+			ANTHROPIC_TOOL_CALL_BATCH_CAP,
+		);
+		expect(resolveToolCallBatchCapForModel({ ...anthropicOpus48, provider: "openrouter" })).toBeUndefined();
+		expect(resolveToolCallBatchCapForModel({ ...anthropicOpus48, id: "claude-sonnet-4-8" })).toBeUndefined();
+		expect(resolveToolCallBatchCapForModel({ ...anthropicOpus48, id: "claude-opus-4-7" })).toBeUndefined();
+		expect(resolveToolCallBatchCapForModel({ ...anthropicOpus48, id: "claude-opus-4-9" })).toBeUndefined();
+		expect(resolveToolCallBatchCapForModel({ ...anthropicOpus48, id: "claude-opus-4-80" })).toBeUndefined();
+		expect(resolveToolCallBatchCapForModel(baseModel)).toBeUndefined();
+		expect(resolveToolCallBatchCapForModel({ ...baseModel, provider: "openai-codex" })).toBeUndefined();
 	});
 
 	it("applies transformContext before convertToLlm", async () => {
@@ -145,6 +187,7 @@ describe("AgentSession message pipeline", () => {
 			}),
 			modelRegistry: {
 				getApiKey: vi.fn(async () => "key"),
+				onModelUpdate: () => {},
 			} as never,
 		});
 		sessions.push(session);

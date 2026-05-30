@@ -2280,4 +2280,111 @@ describe("ModelRegistry", () => {
 
 		expect(callbackFired).toBe(true);
 	});
+
+	describe("proxy discovery (discovery.type: proxy)", () => {
+		function mockProxyModels(url: string, models: Array<{ id: string; supported_endpoint_types?: string[] }>) {
+			return hookFetch(input => {
+				const requestUrl = String(input);
+				if (requestUrl === url) {
+					return new Response(JSON.stringify({ data: models }), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				}
+				throw new Error(`Unexpected URL: ${requestUrl}`);
+			});
+		}
+
+		test("routes anthropic models via anthropic-messages based on supported_endpoint_types", async () => {
+			writeRawModelsJson({
+				"mixed-proxy": {
+					baseUrl: "https://proxy.example.com/v1",
+					apiKey: "TEST_KEY",
+					discovery: { type: "proxy" },
+				},
+			});
+
+			using _hook = mockProxyModels("https://proxy.example.com/v1/models", [
+				{ id: "claude-sonnet-4-5", supported_endpoint_types: ["anthropic"] },
+				{ id: "gpt-4o", supported_endpoint_types: ["openai"] },
+			]);
+
+			const registry = new ModelRegistry(authStorage, modelsJsonPath);
+			await registry.refreshProvider("mixed-proxy", "online");
+
+			const anthropicModel = registry.find("mixed-proxy", "claude-sonnet-4-5");
+			expect(anthropicModel).toBeDefined();
+			expect(anthropicModel!.api).toBe("anthropic-messages");
+
+			const openaiModel = registry.find("mixed-proxy", "gpt-4o");
+			expect(openaiModel).toBeDefined();
+			expect(openaiModel!.api).toBe("openai-completions");
+		});
+
+		test("uses provider-level api fallback for models without supported_endpoint_types", async () => {
+			writeRawModelsJson({
+				"mixed-proxy": {
+					baseUrl: "https://proxy.example.com/v1",
+					apiKey: "TEST_KEY",
+					api: "openai-completions",
+					discovery: { type: "proxy" },
+				},
+			});
+
+			using _hook = mockProxyModels("https://proxy.example.com/v1/models", [{ id: "unknown-model" }]);
+
+			const registry = new ModelRegistry(authStorage, modelsJsonPath);
+			await registry.refreshProvider("mixed-proxy", "online");
+
+			const model = registry.find("mixed-proxy", "unknown-model");
+			expect(model).toBeDefined();
+			expect(model!.api).toBe("openai-completions");
+		});
+
+		test("proxy discovery schema accepts type proxy without api field", () => {
+			expect(() =>
+				writeRawModelsJson({
+					"mixed-proxy": {
+						baseUrl: "https://proxy.example.com/v1",
+						apiKey: "TEST_KEY",
+						discovery: { type: "proxy" },
+					},
+				}),
+			).not.toThrow();
+			// Constructing the registry validates the config
+			expect(() => new ModelRegistry(authStorage, modelsJsonPath)).not.toThrow();
+		});
+
+		test("openai-compat fields are set for openai models; anthropic models have no compat override", async () => {
+			writeRawModelsJson({
+				"mixed-proxy": {
+					baseUrl: "https://proxy.example.com/v1",
+					apiKey: "TEST_KEY",
+					discovery: { type: "proxy" },
+				},
+			});
+
+			using _hook = mockProxyModels("https://proxy.example.com/v1/models", [
+				{ id: "claude-opus-4", supported_endpoint_types: ["anthropic"] },
+				{ id: "gpt-4o-mini", supported_endpoint_types: ["openai"] },
+			]);
+
+			const registry = new ModelRegistry(authStorage, modelsJsonPath);
+			await registry.refreshProvider("mixed-proxy", "online");
+
+			const anthropicModel = registry.find("mixed-proxy", "claude-opus-4");
+			expect(anthropicModel).toBeDefined();
+			// Anthropic models carry no compat override from proxy discovery
+			expect(anthropicModel!.compat).toBeUndefined();
+
+			const openaiModel = registry.find("mixed-proxy", "gpt-4o-mini");
+			expect(openaiModel).toBeDefined();
+			const compat = openaiModel!.compat as
+				| { supportsStore?: boolean; supportsDeveloperRole?: boolean; supportsReasoningEffort?: boolean }
+				| undefined;
+			expect(compat?.supportsStore).toBe(false);
+			expect(compat?.supportsDeveloperRole).toBe(false);
+			expect(compat?.supportsReasoningEffort).toBe(false);
+		});
+	});
 });

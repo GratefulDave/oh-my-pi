@@ -453,6 +453,16 @@ function todoClearKey(phaseName: string, taskContent: string): string {
 
 const IRC_REPLY_MAX_BYTES = 4096;
 
+export const ANTHROPIC_TOOL_CALL_BATCH_CAP = 4;
+const CLAUDE_OPUS_4_8_MODEL_ID = /(?:^|[./_-])claude-opus-4[.-]8\b/i;
+
+export function resolveToolCallBatchCapForModel(model: Model | undefined): number | undefined {
+	if (!model) return undefined;
+	return model.provider === "anthropic" && CLAUDE_OPUS_4_8_MODEL_ID.test(model.id)
+		? ANTHROPIC_TOOL_CALL_BATCH_CAP
+		: undefined;
+}
+
 /**
  * Collapse degenerate IRC ephemeral replies before they hit the relay.
  * Models occasionally loop on a single line (~16 reports of N-times-repeated
@@ -997,6 +1007,10 @@ export class AgentSession {
 		this.#emit(pending);
 	}
 
+	#syncToolCallBatchCap(model: Model | undefined = this.model): void {
+		this.agent.maxToolCallsPerTurn = resolveToolCallBatchCapForModel(model);
+	}
+
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
@@ -1013,6 +1027,8 @@ export class AgentSession {
 		this.#skillWarnings = config.skillWarnings ?? [];
 		this.#customCommands = config.customCommands ?? [];
 		this.#skillsSettings = config.skillsSettings;
+		this.#syncToolCallBatchCap();
+
 		this.#modelRegistry = config.modelRegistry;
 		this.#modelRegistry.onModelUpdate(() => this.#updateCurrentModelFromRegistry());
 		this.#validateRetryFallbackChains();
@@ -6148,6 +6164,7 @@ export class AgentSession {
 			this.#closeProviderSessionsForModelSwitch(currentModel, model);
 		}
 		this.agent.setModel(model);
+		this.#syncToolCallBatchCap(model);
 	}
 	#updateCurrentModelFromRegistry(): void {
 		const currentModel = this.model;
@@ -6155,6 +6172,7 @@ export class AgentSession {
 			const newModel = this.#modelRegistry.find(currentModel.provider, currentModel.id);
 			if (newModel) {
 				this.agent.setModel(newModel);
+				this.#syncToolCallBatchCap(newModel);
 			}
 		}
 	}
@@ -8115,6 +8133,7 @@ export class AgentSession {
 							this.#setModelWithProviderSessionReset(match);
 						} else {
 							this.agent.setModel(match);
+							this.#syncToolCallBatchCap(match);
 						}
 					}
 				}
@@ -8173,6 +8192,9 @@ export class AgentSession {
 			this.#scheduledHiddenNextTurnGeneration = previousScheduledHiddenNextTurnGeneration;
 			if (previousModel) {
 				this.agent.setModel(previousModel);
+				this.#syncToolCallBatchCap(previousModel);
+			} else {
+				this.#syncToolCallBatchCap(undefined);
 			}
 			this.#thinkingLevel = previousThinkingLevel;
 			this.agent.setThinkingLevel(toReasoningEffort(previousThinkingLevel));

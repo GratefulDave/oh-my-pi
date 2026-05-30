@@ -439,6 +439,26 @@ async function runLoop(
 interface StepCounter {
 	count: number;
 }
+function normalizeMaxToolCallsPerTurn(value: number | undefined): number | undefined {
+	if (value === undefined || !Number.isFinite(value)) return undefined;
+	const normalized = Math.trunc(value);
+	return normalized > 0 ? normalized : undefined;
+}
+
+function cloneAssistantMessageForToolCallCap(message: AssistantMessage): AssistantMessage {
+	return {
+		...message,
+		content: message.content.map(block => {
+			if (block.type === "toolCall") {
+				return { ...block, arguments: structuredClone(block.arguments) };
+			}
+			return { ...block };
+		}),
+		stopReason: "toolUse",
+		errorMessage: undefined,
+		errorStatus: undefined,
+	};
+}
 
 async function runLoopBody(
 	currentContext: AgentContext,
@@ -670,11 +690,18 @@ async function streamAssistantResponse(
 	const dynamicReasoning = config.getReasoning?.();
 	const harmonyMitigationEnabled = isHarmonyLeakMitigationTarget(config.model);
 	const harmonyAbortController = harmonyMitigationEnabled ? new AbortController() : undefined;
-	const requestSignal = harmonyAbortController
-		? signal
-			? AbortSignal.any([signal, harmonyAbortController.signal])
-			: harmonyAbortController.signal
-		: signal;
+	const maxToolCallsPerTurn = normalizeMaxToolCallsPerTurn(config.maxToolCallsPerTurn);
+	const toolCallCapAbortController = maxToolCallsPerTurn === undefined ? undefined : new AbortController();
+	const requestSignals: AbortSignal[] = [];
+	if (signal) requestSignals.push(signal);
+	if (harmonyAbortController) requestSignals.push(harmonyAbortController.signal);
+	if (toolCallCapAbortController) requestSignals.push(toolCallCapAbortController.signal);
+	const requestSignal =
+		requestSignals.length === 0
+			? undefined
+			: requestSignals.length === 1
+				? requestSignals[0]
+				: AbortSignal.any(requestSignals);
 	const effectiveTemperature =
 		harmonyRetryAttempt > 0 && config.temperature !== undefined ? config.temperature + 0.05 : config.temperature;
 	const effectiveToolChoice = dynamicToolChoice ?? config.toolChoice;
@@ -736,6 +763,26 @@ async function streamAssistantResponse(
 			let addedPartial = false;
 
 			const responseIterator = response[Symbol.asyncIterator]();
+			let completedToolCalls = 0;
+			let cappedMessage: AssistantMessage | undefined;
+			let capFinalized = false;
+
+			const finishCappedAssistantMessage = async (): Promise<AssistantMessage | undefined> => {
+				if (!cappedMessage) return undefined;
+				responseIterator.return?.()?.catch(() => {});
+				if (!capFinalized) {
+					if (addedPartial) {
+						context.messages[context.messages.length - 1] = cappedMessage;
+					} else {
+						context.messages.push(cappedMessage);
+						stream.push({ type: "message_start", message: { ...cappedMessage } });
+					}
+					stream.push({ type: "message_end", message: cappedMessage });
+					await finishChat(cappedMessage);
+					capFinalized = true;
+				}
+				return cappedMessage;
+			};
 
 			// Set up a single abort race: register the abort listener once for the whole
 			// stream and reuse the same race promise for every iterator.next() instead of
@@ -761,6 +808,10 @@ async function streamAssistantResponse(
 					if (abortRacePromise) {
 						const result = await Promise.race([responseIterator.next(), abortRacePromise]);
 						if (result === ABORTED) {
+							if (toolCallCapAbortController?.signal.aborted) {
+								const capped = await finishCappedAssistantMessage();
+								if (capped) return capped;
+							}
 							responseIterator.return?.()?.catch(() => {});
 							const aborted = emitAbortedAssistantMessage(partialMessage, addedPartial, context, config, stream);
 							await finishChat(aborted);
@@ -771,6 +822,10 @@ async function streamAssistantResponse(
 						next = await responseIterator.next();
 					}
 					if (requestSignal?.aborted) {
+						if (toolCallCapAbortController?.signal.aborted) {
+							const capped = await finishCappedAssistantMessage();
+							if (capped) return capped;
+						}
 						const aborted = emitAbortedAssistantMessage(partialMessage, addedPartial, context, config, stream);
 						await finishChat(aborted);
 						return aborted;
@@ -808,6 +863,15 @@ async function streamAssistantResponse(
 									assistantMessageEvent: event,
 									message: { ...partialMessage },
 								});
+								if (event.type === "toolcall_end" && maxToolCallsPerTurn !== undefined) {
+									completedToolCalls++;
+									if (completedToolCalls >= maxToolCallsPerTurn) {
+										cappedMessage = cloneAssistantMessageForToolCallCap(partialMessage);
+										toolCallCapAbortController?.abort();
+										const capped = await finishCappedAssistantMessage();
+										if (capped) return capped;
+									}
+								}
 							}
 							break;
 
