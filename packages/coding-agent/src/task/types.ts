@@ -96,8 +96,9 @@ const assignmentDescription = "per-task instructions; self-contained";
 const createTaskItemSchema = (_contextEnabled: boolean) =>
 	z.object({
 		id: z.string().max(48).describe("camelcase identifier"),
-		description: z.string().describe("ui label, not seen by subagent"),
+		description: z.string().describe("ui label only; subagent does not see it"),
 		assignment: z.string().describe(assignmentDescription),
+		agent: z.string().optional().describe("optional per-task agent override; use auto to route by task content"),
 	});
 
 /** Single task item for parallel execution (default shape with context enabled). */
@@ -109,7 +110,7 @@ const createTaskSchema = (options: { isolationEnabled: boolean; simpleMode: Task
 	const itemSchema = createTaskItemSchema(contextEnabled);
 
 	let schema = z.object({
-		agent: z.string().describe("agent type"),
+		agent: z.string().describe("default agent type; use auto to route each task by content"),
 		tasks: z.array(itemSchema).describe("tasks to execute in parallel"),
 	});
 	if (contextEnabled) {

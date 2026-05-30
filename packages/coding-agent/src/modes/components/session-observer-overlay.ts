@@ -31,6 +31,29 @@ import { DynamicBorder } from "./dynamic-border";
 /** IRC custom message types that are displayed in the observer transcript. */
 const IRC_CUSTOM_TYPES = new Set(["irc:incoming", "irc:autoreply", "irc:relay", "irc_message"]);
 
+const OVERVIEW_AGENT_WIDTH = 14;
+const OVERVIEW_STATUS_WIDTH = 11;
+const OVERVIEW_ROW_CHROME_WIDTH = 11; // cursor + spaces + three " │ " separators
+const OVERVIEW_MIN_TASK_WIDTH = 12;
+const OVERVIEW_MIN_MESSAGE_WIDTH = 12;
+const OVERVIEW_MAX_TASK_FRACTION = 0.45;
+const OVERVIEW_TARGET_TASK_FRACTION = 0.34;
+
+function clamp(value: number, min: number, max: number): number {
+	return Math.min(Math.max(value, min), max);
+}
+
+function getOverviewColumnWidths(width: number): { agentW: number; taskW: number; statusW: number; msgW: number } {
+	const contentWidth = Math.max(1, width - 1); // #renderOverview prefixes each row with one leading space.
+	const available = contentWidth - OVERVIEW_AGENT_WIDTH - OVERVIEW_STATUS_WIDTH - OVERVIEW_ROW_CHROME_WIDTH;
+	const taskUpperBound = Math.max(1, available - OVERVIEW_MIN_MESSAGE_WIDTH);
+	const desiredTaskW = Math.floor(contentWidth * OVERVIEW_TARGET_TASK_FRACTION);
+	const maxTaskW = Math.max(OVERVIEW_MIN_TASK_WIDTH, Math.floor(contentWidth * OVERVIEW_MAX_TASK_FRACTION));
+	const taskW = Math.min(clamp(desiredTaskW, OVERVIEW_MIN_TASK_WIDTH, maxTaskW), taskUpperBound);
+	const msgW = Math.max(1, available - taskW);
+	return { agentW: OVERVIEW_AGENT_WIDTH, taskW, statusW: OVERVIEW_STATUS_WIDTH, msgW };
+}
+
 /** Union of transcript entries held in the cache. */
 type TranscriptEntry = SessionMessageEntry | CustomMessageEntry;
 
@@ -124,6 +147,7 @@ export class SessionObserverOverlayComponent extends Container {
 
 	override render(width: number): string[] {
 		if (this.#mode === "overview") {
+			this.#buildOverviewContent(width);
 			return this.#renderOverview(width);
 		}
 		return this.#renderViewer(width);
@@ -159,16 +183,8 @@ export class SessionObserverOverlayComponent extends Container {
 	}
 
 	/** Build overview header/footer/content lines */
-	#buildOverviewContent(): void {
-		const cols = process.stdout.columns || 80;
-		// Column widths: Agent(14) | Task(dynamic) | Status(11) | Message(rest)
-		const agentW = 14;
-		const statusW = 11;
-		const msgW = Math.max(20, cols - agentW - statusW - 4 - 4 - 4 - 6); // borders + separators
-		const taskW = Math.max(16, Math.floor((cols - agentW - statusW - msgW - 20) / 1));
-		// Recompute with taskW to let message fill remainder
-		const totalFixed = agentW + taskW + statusW + 8; // 8 for " │ " separators (3 × 2 + 2 borders)
-		const actualMsgW = Math.max(16, cols - totalFixed - 2);
+	#buildOverviewContent(width = process.stdout.columns || 80): void {
+		const { agentW, taskW, statusW, msgW: actualMsgW } = getOverviewColumnWidths(width);
 
 		const pad = (s: string, w: number): string => {
 			// Truncate if too long (ignoring ANSI), then left-pad with spaces to width.

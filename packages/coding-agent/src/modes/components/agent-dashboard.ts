@@ -253,6 +253,7 @@ class AgentInspectorPane implements Component {
 		private readonly defaultResolution: ModelResolution | undefined,
 		private readonly effectivePatterns: string[],
 		private readonly effectiveResolution: ModelResolution | undefined,
+		private readonly taskFallbackChain: string[],
 	) {}
 
 	render(width: number): string[] {
@@ -281,6 +282,9 @@ class AgentInspectorPane implements Component {
 		lines.push(`${theme.fg("muted", "Effective pattern:")} ${replaceTabs(joinPatterns(this.effectivePatterns))}`);
 		lines.push(
 			`${theme.fg("muted", "Effective:")} ${this.effectiveResolution ? this.#formatResolution(this.effectiveResolution) : theme.fg("dim", "(unresolved)")}`,
+		);
+		lines.push(
+			`${theme.fg("muted", "Task fallback:")} ${this.taskFallbackChain.length > 0 ? replaceTabs(this.taskFallbackChain.join(" → ")) : theme.fg("dim", "(none)")}`,
 		);
 
 		if (this.agent.filePath) {
@@ -788,6 +792,13 @@ export class AgentDashboard extends Container {
 		};
 	}
 
+	#taskFallbackChain(): string[] {
+		const chains = this.#settingsManager?.get("retry.fallbackChains");
+		if (!chains || typeof chains !== "object" || Array.isArray(chains)) return [];
+		const taskChain = (chains as Record<string, unknown>).task;
+		return Array.isArray(taskChain) ? taskChain.filter((item): item is string => typeof item === "string") : [];
+	}
+
 	#renderTabBar(): string {
 		const parts: string[] = [" "];
 		for (let i = 0; i < this.#tabs.length; i++) {
@@ -979,6 +990,7 @@ export class AgentDashboard extends Container {
 				defaultResolution,
 				effectivePatterns,
 				effectiveResolution,
+				this.#taskFallbackChain(),
 			);
 			const bodyHeight = Math.max(5, this.terminalHeight - 8);
 			this.addChild(new TwoColumnBody(listPane, inspector, bodyHeight));

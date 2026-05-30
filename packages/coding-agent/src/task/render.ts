@@ -494,7 +494,7 @@ function formatOutputInline(data: unknown, theme: Theme, maxWidth = 80): string 
 export function renderCall(args: TaskParams, _options: RenderResultOptions, theme: Theme): Component {
 	const lines: string[] = [];
 
-	const agentLabel = args.agent;
+	const defaultAgentLabel = args.agent;
 
 	for (const task of args.tasks ?? []) {
 		// Prefer description, then id, then first line of assignment
@@ -503,6 +503,8 @@ export function renderCall(args: TaskParams, _options: RenderResultOptions, them
 			task.id ||
 			truncateToWidth(replaceTabs((task.assignment ?? "").split("\n")[0] ?? ""), 60);
 		const label = truncateToWidth(replaceTabs(rawLabel), 60);
+
+		const agentLabel = task.agent?.trim() || defaultAgentLabel;
 
 		// ▸ <Agent>  <label>
 		const launchLine = `${theme.fg("accent", "▸")} ${theme.bold(agentLabel)}  ${theme.fg("muted", label)}`;

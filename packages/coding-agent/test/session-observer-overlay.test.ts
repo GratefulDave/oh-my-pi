@@ -132,6 +132,19 @@ describe("SessionObserverOverlayComponent — overview pane", () => {
 		expect(fullText).toContain("Analyze git");
 	});
 
+	it("allocates enough overview width for useful task labels", async () => {
+		const { registry } = makeRegistryWithAgent(
+			"sa-005-wide",
+			"oracle",
+			"Implement payment reconciliation worker",
+		);
+
+		const overlay = new SessionObserverOverlayComponent(registry, () => {}, []);
+		const fullText = stripAnsi(overlay.render(120).join("\n"));
+
+		expect(fullText).toContain("Implement payment reconciliation");
+	});
+
 	it("renders status for the seeded agent", async () => {
 		const { registry } = makeRegistryWithAgent("sa-006", "explore", "Analyze git history");
 

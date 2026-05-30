@@ -63,12 +63,12 @@ function codexProviderConfig(modelIds: string[]): ProviderConfigInput {
 	};
 }
 
-function buildAgModel(modelId: string): Model {
+function buildAgModel(modelId: string, provider = "opencode-antigravity"): Model {
 	return {
 		id: modelId,
 		name: modelId,
 		api: "opencode-antigravity-google" as never,
-		provider: "opencode-antigravity",
+		provider,
 		baseUrl: "https://generativelanguage.googleapis.com/v1beta",
 		reasoning: true,
 		thinking: { mode: "google-level", minLevel: "minimal", maxLevel: "high" } as ThinkingConfig,
@@ -317,6 +317,59 @@ describe("AgentSession opencode-antigravity quota fallback", () => {
 		}
 		const lastMsg = session.messages.at(-1);
 		expect(lastMsg?.role).toBe("assistant");
+	});
+
+	it("Google Antigravity Claude 404 falls back to Antigravity Gemini Flash", async () => {
+		const claudeModelId = "claude-sonnet-4-6";
+		const sameQuotaGroupModelId = "claude-opus-4-6-thinking";
+		const flashModelId = "gemini-3-flash";
+
+		modelRegistry.registerProvider(
+			"google-antigravity",
+			agProviderConfig([claudeModelId, sameQuotaGroupModelId, flashModelId]),
+			"ext://ag",
+		);
+
+		const agModel = buildAgModel(claudeModelId, "google-antigravity");
+		const requestedModels: string[] = [];
+		const fallbackAppliedEvents: FallbackAppliedEvent[] = [];
+
+		const mock = createMockModel();
+		const agent = new Agent({
+			getApiKey: provider => `${provider}-test-key`,
+			initialState: { model: agModel, systemPrompt: ["Test"], tools: [], messages: [] },
+			streamFn: (model, context, options) => {
+				requestedModels.push(`${model.provider}/${model.id}`);
+				if (model.provider === "google-antigravity" && model.id === claudeModelId) {
+					mock.push({ throw: "HTTP 404 model not found: claude-sonnet-4-6 unavailable" });
+				} else {
+					mock.push({ content: [`recovered:${model.provider}/${model.id}`] });
+				}
+				return mock.stream(model, context, options);
+			},
+		});
+
+		const settings = Settings.isolated({
+			"compaction.enabled": false,
+			"retry.baseDelayMs": 5,
+			"retry.maxRetries": 3,
+		});
+
+		session = new AgentSession({ agent, sessionManager: SessionManager.inMemory(), settings, modelRegistry });
+		session.subscribe(event => {
+			if (event.type === "retry_fallback_applied") fallbackAppliedEvents.push(event);
+		});
+
+		await session.prompt("AG Claude 404 fallback test");
+		await session.waitForIdle();
+
+		expect(requestedModels[0]).toBe(`google-antigravity/${claudeModelId}`);
+		expect(requestedModels[1]).toBe(`google-antigravity/${flashModelId}`);
+		expect(modelRegistry.isSelectorSuppressed(`google-antigravity/${claudeModelId}`)).toBe(true);
+		expect(modelRegistry.isSelectorSuppressed(`google-antigravity/${sameQuotaGroupModelId}`)).toBe(true);
+		expect(fallbackAppliedEvents).toHaveLength(1);
+		expect(fallbackAppliedEvents[0].from).toBe(`google-antigravity/${claudeModelId}`);
+		expect(fallbackAppliedEvents[0].to).toBe(`google-antigravity/${flashModelId}:medium`);
 	});
 
 	it("explicit retry.fallbackChains takes priority over derived codex fallback", async () => {

@@ -128,6 +128,71 @@ function createEmbeddedRunMetadata(id: string, agent: string, cwd: string, taskI
 	return metadata;
 }
 
+interface RoutedTask {
+	task: TaskParams["tasks"][number];
+	agentName: string;
+	agent?: AgentDefinition;
+}
+
+function hasAgent(agents: AgentDefinition[], name: string): boolean {
+	return agents.some(agent => agent.name === name);
+}
+
+function pickAvailableAgent(agents: AgentDefinition[], candidates: string[], fallback: string): string {
+	for (const candidate of candidates) {
+		if (hasAgent(agents, candidate)) return candidate;
+	}
+	if (fallback !== "auto" && hasAgent(agents, fallback)) return fallback;
+	if (hasAgent(agents, "task")) return "task";
+	return fallback;
+}
+
+export function inferTaskAgentName(
+	task: TaskParams["tasks"][number],
+	defaultAgent: string,
+	agents: AgentDefinition[],
+): string {
+	const explicit = task.agent?.trim();
+	if (explicit && explicit !== "auto") return explicit;
+	if (defaultAgent !== "auto" && !explicit) return defaultAgent;
+
+	const text = `${task.id}\n${task.description}\n${task.assignment}`.toLowerCase();
+	const pick = (candidates: string[]) => pickAvailableAgent(agents, candidates, defaultAgent);
+
+	if (/\b(playwright|browser|screenshot|viewport|cta|ux|ui smoke|frontend qa|visual regression)\b/.test(text)) {
+		return pick(["frontend-qa-scout", "qa-agent", "test-runner", "task"]);
+	}
+	if (/\b(debug|debugger|dap|breakpoint|stack trace|crash|hang|deadlock|race|reproduce|root cause)\b/.test(text)) {
+		return pick(["debugger-dap", "debugger", "incident-responder", "task"]);
+	}
+	if (/\b(pytest|python|\.py\b|pip|uv |poetry|ruff|mypy|django|fastapi|pydantic)\b/.test(text)) {
+		return pick(["python-specialist", "task"]);
+	}
+	if (/\b(next\.js|nextjs|app router|server component|rsc|cache components|route handler)\b/.test(text)) {
+		return pick(["nextjs-specialist", "tsx-specialist", "task"]);
+	}
+	if (/\b(tsx|jsx|react|component|\.tsx\b|\.jsx\b|typescript|javascript|\.ts\b|\.js\b|lsp|typecheck)\b/.test(text)) {
+		return pick(["tsx-specialist", "nextjs-specialist", "task"]);
+	}
+	if (/\b(test|tests|verify|verification|regression|unit test|integration test|smoke|assertion)\b/.test(text)) {
+		return pick(["test-runner", "tdd-specialist", "quick_task", "task"]);
+	}
+	if (/\b(migration|schema|backfill|rollout|compatibility|producer|consumer|contract)\b/.test(text)) {
+		return pick(["migration-specialist", "task"]);
+	}
+	if (/\b(docs|readme|documentation|changelog|prompt|example)\b/.test(text)) {
+		return pick(["docs-steward", "quick_task", "task"]);
+	}
+	return pick(["task"]);
+}
+
+function routeTasks(tasks: TaskParams["tasks"], defaultAgent: string, agents: AgentDefinition[]): RoutedTask[] {
+	return tasks.map(task => {
+		const agentName = inferTaskAgentName(task, defaultAgent, agents);
+		return { task, agentName, agent: getAgent(agents, agentName) };
+	});
+}
+
 // Re-export types and utilities
 export { loadBundledAgents as BUNDLED_AGENTS } from "./agents";
 export { discoverCommands, expandCommand, getCommand } from "./commands";
@@ -303,9 +368,15 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			return createTaskModeError(validationError);
 		}
 
+		const taskItems = params.tasks ?? [];
+		const routedTaskItems = routeTasks(taskItems, params.agent, this.#discoveredAgents);
 		const asyncEnabled = this.session.settings.get("async.enabled");
 		const selectedAgent = this.#discoveredAgents.find(agent => agent.name === params.agent);
-		if (!asyncEnabled || selectedAgent?.blocking === true) {
+		if (
+			!asyncEnabled ||
+			selectedAgent?.blocking === true ||
+			routedTaskItems.some(item => item.agent?.blocking === true)
+		) {
 			return this.#executeSync(_toolCallId, params, signal, onUpdate);
 		}
 
@@ -317,7 +388,6 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			};
 		}
 
-		const taskItems = params.tasks ?? [];
 		if (taskItems.length === 0) {
 			return this.#executeSync(_toolCallId, params, signal, onUpdate);
 		}
@@ -325,19 +395,19 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		const outputManager =
 			this.session.agentOutputManager ?? new AgentOutputManager(this.session.getArtifactsDir ?? (() => null));
 		const uniqueIds = await outputManager.allocateBatch(taskItems.map(t => t.id));
-		const fallbackAgentSource =
-			this.#discoveredAgents.find(agent => agent.name === params.agent)?.source ?? "bundled";
 		const progressByTaskId = new Map<string, AgentProgress>();
 		for (let index = 0; index < taskItems.length; index++) {
 			const taskItem = taskItems[index];
+			const route = routedTaskItems[index];
+			const routeAgentName = route?.agentName ?? params.agent;
 			const assignment = taskItem.assignment.trim();
 			const runId = uniqueIds[index];
-			const runMetadata = createEmbeddedRunMetadata(runId, params.agent, this.session.cwd, taskItem.id);
+			const runMetadata = createEmbeddedRunMetadata(runId, routeAgentName, this.session.cwd, taskItem.id);
 			progressByTaskId.set(taskItem.id, {
 				index,
 				id: runId,
-				agent: params.agent,
-				agentSource: fallbackAgentSource,
+				agent: routeAgentName,
+				agentSource: route?.agent?.source ?? "bundled",
 				status: "pending",
 				task: renderSubagentUserPrompt(assignment, simpleMode),
 				assignment,
@@ -384,6 +454,12 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 
 		for (let i = 0; i < taskItems.length; i++) {
 			const taskItem = taskItems[i];
+			const route = routedTaskItems[i];
+			if (!route?.agent) {
+				failedSchedules.push(`${taskItem.id}: unknown agent "${route?.agentName ?? params.agent}"`);
+				setAgentProgressStatus(progressByTaskId.get(taskItem.id), "failed");
+				continue;
+			}
 			if (signal?.aborted) {
 				failedSchedules.push(`${taskItem.id}: cancelled before scheduling`);
 				setAgentProgressStatus(progressByTaskId.get(taskItem.id), "aborted");
@@ -391,7 +467,11 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			}
 
 			const uniqueId = uniqueIds[i];
-			const singleParams: TaskParams = { ...params, tasks: [taskItem] };
+			const singleParams: TaskParams = {
+				...params,
+				agent: route.agentName,
+				tasks: [{ ...taskItem, agent: undefined }],
+			};
 			const label = uniqueId;
 			try {
 				const jobId = manager.register(
@@ -592,7 +672,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		}
 
 		// Validate agent exists
-		const agent = getAgent(agents, agentName);
+		const agent = getAgent(agents, agentName) ?? (agentName === "auto" ? getAgent(agents, "task") : undefined);
 		if (!agent) {
 			const available = agents.map(a => a.name).join(", ") || "none";
 			return {
@@ -612,7 +692,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 
 		// Check if agent is disabled in settings
 		const disabledAgents = this.session.settings.get("task.disabledAgents") as string[];
-		if (disabledAgents.length > 0 && disabledAgents.includes(agentName)) {
+		if (agentName !== "auto" && disabledAgents.length > 0 && disabledAgents.includes(agentName)) {
 			const enabled = agents.filter(a => !disabledAgents.includes(a.name)).map(a => a.name);
 			return {
 				content: [
@@ -724,6 +804,120 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 					projectAgentsDir,
 					results: [],
 					totalDurationMs: 0,
+				},
+			};
+		}
+
+		const needsRouting = agentName === "auto" || tasks.some(task => task.agent !== undefined);
+		if (needsRouting) {
+			const routedTasks = routeTasks(tasks, agentName, agents);
+			const missingRoutes = routedTasks.filter(route => !route.agent);
+			if (missingRoutes.length > 0) {
+				const available = agents.map(a => a.name).join(", ") || "none";
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Unknown routed agent(s): ${missingRoutes.map(route => route.agentName).join(", ")}. Available: ${available}`,
+						},
+					],
+					details: { projectAgentsDir, results: [], totalDurationMs: Date.now() - startTime },
+				};
+			}
+			const outputManager =
+				this.session.agentOutputManager ?? new AgentOutputManager(this.session.getArtifactsDir ?? (() => null));
+			const uniqueIds =
+				preAllocatedIds && preAllocatedIds.length === tasks.length
+					? preAllocatedIds
+					: await outputManager.allocateBatch(tasks.map(task => task.id));
+			const { results: partialResults, aborted } = await mapWithConcurrencyLimit(
+				routedTasks,
+				maxConcurrency,
+				async (route, index) => {
+					const routedParams: TaskParams = {
+						...params,
+						agent: route.agentName,
+						tasks: [{ ...route.task, agent: undefined }],
+					};
+					const result = await this.#executeSync(_toolCallId, routedParams, signal, undefined, [uniqueIds[index]]);
+					return result.details?.results[0];
+				},
+				signal,
+			);
+			const results: SingleResult[] = partialResults.flatMap((result, index) => {
+				if (result) return [result];
+				const route = routedTasks[index];
+				const assignment = route.task.assignment.trim();
+				return [
+					{
+						index,
+						id: uniqueIds[index],
+						agent: route.agentName,
+						agentSource: route.agent?.source ?? "bundled",
+						task: renderSubagentUserPrompt(assignment, simpleMode),
+						assignment,
+						description: route.task.description,
+						exitCode: 1,
+						output: "",
+						stderr: "Skipped (cancelled before start)",
+						truncated: false,
+						durationMs: 0,
+						tokens: 0,
+						error: "Cancelled before start",
+						aborted: true,
+						abortReason: "Cancelled before start",
+					} satisfies SingleResult,
+				];
+			});
+			const aggregatedUsage = createUsageTotals();
+			let hasAggregatedUsage = false;
+			for (const result of results) {
+				if (result.usage) {
+					addUsageTotals(aggregatedUsage, result.usage);
+					hasAggregatedUsage = true;
+				}
+			}
+			const totalDuration = Date.now() - startTime;
+			const cancelledCount = results.filter(result => result.aborted).length;
+			const successCount = results.filter(
+				result => result.exitCode === 0 && !result.error && !result.aborted,
+			).length;
+			const summaries = results.map(result => ({
+				agent: result.agent,
+				status: result.aborted
+					? "cancelled"
+					: result.exitCode === 0 && result.error
+						? "merge failed"
+						: result.exitCode === 0
+							? "completed"
+							: `failed (exit ${result.exitCode})`,
+				id: result.id,
+				preview: result.output.trim() || result.stderr.trim() || "(no output)",
+				truncated: false,
+				meta: undefined,
+			}));
+			const outputIds = results
+				.filter(result => !result.aborted || result.output.trim())
+				.map(result => `agent://${result.id}`);
+			const summary = prompt.render(taskSummaryTemplate, {
+				successCount,
+				totalCount: results.length,
+				cancelledCount,
+				hasCancelledNote: aborted && cancelledCount > 0,
+				duration: formatDuration(totalDuration),
+				summaries,
+				outputIds,
+				agentName: "auto",
+				mergeSummary: "",
+			});
+			return {
+				content: [{ type: "text", text: summary }],
+				details: {
+					projectAgentsDir,
+					results,
+					totalDurationMs: totalDuration,
+					usage: hasAggregatedUsage ? aggregatedUsage : undefined,
+					outputPaths: results.flatMap(result => (result.outputPath ? [result.outputPath] : [])),
 				},
 			};
 		}

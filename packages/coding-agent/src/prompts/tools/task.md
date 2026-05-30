@@ -19,11 +19,12 @@ Subagents have no conversation history. Every fact, file path, and direction the
 {{/if}}
 
 <parameters>
-- `agent`: agent type for all tasks
+- `agent`: default agent type for all tasks; use `auto` to route each task by content and available specialist agents
 - `tasks`: tasks to execute in parallel
  - `.id`: CamelCase, ≤32 chars
  - `.description`: UI label only — subagent never sees it
  - `.assignment`: complete self-contained instructions; one-liners and missing acceptance criteria are PROHIBITED
+ - `.agent` (optional): per-task agent override; use `auto` to route this task by content
 {{#if contextEnabled}}- `context`: shared background prepended to every assignment; session-specific only{{/if}}
 {{#if customSchemaEnabled}}- `schema`: JTD schema for expected structured output (do not put format rules in assignments){{/if}}
 {{#if isolationEnabled}}- `isolated`: run in isolated env; use when tasks edit overlapping files{{/if}}
@@ -41,6 +42,7 @@ Subagents have no conversation history. Every fact, file path, and direction the
 - Pass large payloads via `local://<path>` URIs, not inline.
 {{#if contextEnabled}}- Put shared constraints in `context` once; do not duplicate across assignments.{{/if}}
 - Prefer agents that investigate **and** edit in one pass; only spin a read-only discovery step when affected files are genuinely unknown.
+- Automatic routing is deterministic and availability-aware: Python → `python-specialist`; TS/JS/TSX/React → `tsx-specialist` or `nextjs-specialist`; runtime failures → `debugger-dap`; verification → `test-runner`; browser/UI QA → `frontend-qa-scout`; docs → `docs-steward`; migration/schema → `migration-specialist`; otherwise fallback to `task`.
 </rules>
 
 <parallelization>

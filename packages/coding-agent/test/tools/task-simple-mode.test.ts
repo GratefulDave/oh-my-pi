@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "bun:test";
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import { validateToolArguments } from "@oh-my-pi/pi-ai/utils/validation";
 import { Settings } from "../../src/config/settings";
-import { TaskTool } from "../../src/task";
+import { inferTaskAgentName, TaskTool } from "../../src/task";
 import * as discoveryModule from "../../src/task/discovery";
 import type { TaskParams } from "../../src/task/types";
 import type { ToolSession } from "../../src/tools";
@@ -13,6 +13,24 @@ const TEST_AGENTS = [
 		description: "General-purpose task agent",
 		systemPrompt: "You are a task agent.",
 		source: "bundled" as const,
+	},
+	{
+		name: "python-specialist",
+		description: "Python specialist",
+		systemPrompt: "You are a Python specialist.",
+		source: "user" as const,
+	},
+	{
+		name: "tsx-specialist",
+		description: "TSX specialist",
+		systemPrompt: "You are a TSX specialist.",
+		source: "user" as const,
+	},
+	{
+		name: "test-runner",
+		description: "Test runner",
+		systemPrompt: "You run focused tests.",
+		source: "user" as const,
 	},
 ];
 
@@ -118,5 +136,45 @@ describe("task.simple", () => {
 		});
 		const validatedIndependentResult = await independentTool.execute("tool-2-validated", validatedIndependentParams);
 		expect(getFirstText(validatedIndependentResult)).toContain("does not accept `context`");
+	});
+});
+
+describe("task routing", () => {
+	it("routes auto tasks to available specialists by task content", () => {
+		expect(
+			inferTaskAgentName(
+				{ id: "Py", description: "Fix Python pytest", assignment: "Update python/robomp/foo.py and run pytest." },
+				"auto",
+				TEST_AGENTS,
+			),
+		).toBe("python-specialist");
+		expect(
+			inferTaskAgentName(
+				{ id: "Ui", description: "Fix React TSX", assignment: "Edit src/Button.tsx component types." },
+				"auto",
+				TEST_AGENTS,
+			),
+		).toBe("tsx-specialist");
+		expect(
+			inferTaskAgentName(
+				{
+					id: "Verify",
+					description: "Run regression tests",
+					assignment: "Run focused unit tests and report failures.",
+				},
+				"auto",
+				TEST_AGENTS,
+			),
+		).toBe("test-runner");
+	});
+
+	it("honors explicit per-task agent over automatic routing", () => {
+		expect(
+			inferTaskAgentName(
+				{ id: "Forced", description: "Python work", assignment: "Edit foo.py", agent: "tsx-specialist" },
+				"auto",
+				TEST_AGENTS,
+			),
+		).toBe("tsx-specialist");
 	});
 });
