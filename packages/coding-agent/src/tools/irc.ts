@@ -103,7 +103,8 @@ export class IrcTool implements AgentTool<typeof ircSchema, IrcDetails> {
 		} else {
 			lines.push(`${peers.length} peer(s):`);
 			for (const peer of peers) {
-				lines.push(`- ${peer.id} [${peer.displayName} · ${peer.kind} · ${peer.status}]`);
+				const unread = peer.mailbox.unreadCount;
+				lines.push(`- ${peer.id} [${peer.displayName} · ${peer.kind} · ${peer.status}] (${unread} unread)`);
 			}
 		}
 		const channels = ["all", ...peers.map(p => p.id)];
@@ -123,7 +124,6 @@ export class IrcTool implements AgentTool<typeof ircSchema, IrcDetails> {
 			},
 		};
 	}
-
 	async #executeSend(
 		registry: AgentRegistry,
 		senderId: string,
@@ -138,8 +138,7 @@ export class IrcTool implements AgentTool<typeof ircSchema, IrcDetails> {
 		if (!message) {
 			return errorResult('`message` is required for op="send".', { op: "send", from: senderId });
 		}
-
-		// Resolve target peers.
+		// Resolve target peers
 		let targets: AgentRef[];
 		const notFound: string[] = [];
 		const isBroadcast = to === "all";
@@ -147,32 +146,37 @@ export class IrcTool implements AgentTool<typeof ircSchema, IrcDetails> {
 			targets = registry.listVisibleTo(senderId);
 		} else {
 			const ref = registry.get(to);
-			if (!ref || ref.id === senderId) {
-				notFound.push(to);
-				targets = [];
-			} else if (ref.status !== "running" && ref.status !== "idle") {
-				notFound.push(to);
-				targets = [];
-			} else {
+			if (ref && ref.id !== senderId) {
 				targets = [ref];
+			} else if (to !== senderId && to.length > 0 && registry.hasBeenRegistered(to)) {
+				// Offline buffering: route a message via registry which creates/buffers the mailbox
+				registry.routeMessage(senderId, to, message);
+				return {
+					content: [{ type: "text", text: `Buffered message asynchronously in offline mailbox for ${to}.` }],
+					details: {
+						op: "send",
+						from: senderId,
+						to,
+						delivered: [to],
+					},
+				};
+			} else {
+				notFound.push(to);
+				targets = [];
 			}
 		}
-
 		const awaitReply = params.awaitReply ?? !isBroadcast;
-
 		const timeoutMs = normalizeIrcTimeoutMs(this.session.settings.get("irc.timeoutMs"));
 		const delivered: string[] = [];
 		const replies: IrcReply[] = [];
 		const failed: Array<{ id: string; error: string }> = [];
-
-		// Dispatch to each target in parallel via the recipient's ephemeral
-		// side-channel. Independent calls so a slow recipient cannot stall the
-		// others. The recipient's main loop never has to be unblocked: the
-		// side-channel runs alongside any in-flight tool call.
+		// Route message to each target's mailbox and try side-channel dispatch if requested/available
 		const dispatches = targets.map(async target => {
 			const targetSession = target.session;
 			if (!targetSession) {
-				notFound.push(target.id);
+				// Route message via registry which enqueues and emits the queue event
+				registry.routeMessage(senderId, target.id, message);
+				delivered.push(target.id);
 				return;
 			}
 			try {
@@ -188,16 +192,19 @@ export class IrcTool implements AgentTool<typeof ircSchema, IrcDetails> {
 						}),
 					target.id,
 				);
+				// Route and mark delivered only if the background dispatch succeeded
+				registry.routeMessage(senderId, target.id, message);
 				delivered.push(target.id);
 				if (awaitReply && result.replyText) {
 					replies.push({ from: target.id, text: result.replyText });
+					// Route the auto-reply back to the sender's own mailbox asynchronously
+					registry.routeMessage(target.id, senderId, result.replyText);
 				}
 			} catch (err) {
 				failed.push({ id: target.id, error: err instanceof Error ? err.message : String(err) });
 			}
 		});
 		await Promise.all(dispatches);
-
 		const lines: string[] = [];
 		if (delivered.length === 0) {
 			lines.push("No recipients received the message.");
@@ -223,7 +230,6 @@ export class IrcTool implements AgentTool<typeof ircSchema, IrcDetails> {
 			lines.push("");
 			lines.push(`Unknown / unavailable peers: ${notFound.join(", ")}`);
 		}
-
 		return {
 			content: [{ type: "text", text: lines.join("\n") }],
 			details: {

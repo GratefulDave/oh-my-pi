@@ -154,7 +154,7 @@ import planModeToolDecisionReminderPrompt from "../prompts/system/plan-mode-tool
 };
 import ttsrInterruptTemplate from "../prompts/system/ttsr-interrupt.md" with { type: "text" };
 import ttsrToolReminderTemplate from "../prompts/system/ttsr-tool-reminder.md" with { type: "text" };
-import { type AgentRegistry, MAIN_AGENT_ID } from "../registry/agent-registry";
+import { AgentRegistry, MAIN_AGENT_ID } from "../registry/agent-registry";
 import { deobfuscateSessionContext, type SecretObfuscator } from "../secrets/obfuscator";
 import { invalidateHostMetadata } from "../ssh/connection-manager";
 import { resolveThinkingLevelForModel, toReasoningEffort } from "../thinking";
@@ -843,6 +843,7 @@ export class AgentSession {
 	#providerSessionId: string | undefined;
 	#parentEvalSessionId: string | undefined;
 	#isDisposed = false;
+	#unsubscribeRegistry?: () => void;
 	// Extension system
 	#extensionRunner: ExtensionRunner | undefined = undefined;
 	#turnIndex = 0;
@@ -1163,6 +1164,25 @@ export class AgentSession {
 				);
 			},
 		});
+
+		// Set up Actor Mailbox listener
+		if (this.#agentId) {
+			const reg = AgentRegistry.global();
+			this.#unsubscribeRegistry = reg.onChange(event => {
+				if (event.type === "message_queued" && event.recipientId === this.#agentId) {
+					if (this.#isDisposed) return;
+					// Poll and flush the mailbox to background exchanges
+					this.#pollAndFlushActorMailbox();
+
+					// If we are currently idle, autonomously trigger a next turn continue
+					if (!this.isStreaming && !this.agent.state.isStreaming) {
+						this.#scheduleAgentContinue({
+							generation: this.#promptGeneration,
+						});
+					}
+				}
+			});
+		}
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, hooks, auto-compaction, retry logic)
@@ -2779,6 +2799,7 @@ export class AgentSession {
 		} catch (error) {
 			logger.warn("Failed to emit session_shutdown event", { error: String(error) });
 		}
+		this.#unsubscribeRegistry?.();
 		await this.#cancelPostPromptTasks();
 		this.#clearTodoClearTimers();
 		// Cancel jobs this agent registered so a subagent's teardown doesn't
@@ -4074,6 +4095,7 @@ export class AgentSession {
 			this.#flushPendingBashMessages();
 			this.#flushPendingPythonMessages();
 			this.#flushPendingBackgroundExchanges();
+			this.#pollAndFlushActorMailbox();
 
 			// Reset todo reminder count on new user prompt
 			this.#todoReminderCount = 0;
@@ -8201,6 +8223,35 @@ export class AgentSession {
 				this.agent.emitExternalEvent({ type: "message_end", message: msg });
 			}
 		}
+	}
+
+	#pollAndFlushActorMailbox(): void {
+		if (!this.#agentId) return;
+		const registry = AgentRegistry.global();
+		const mailbox = registry.getOrCreateMailbox(this.#agentId);
+		const unread = mailbox.listUnread();
+		if (unread.length === 0) return;
+
+		// Convert unread ActorMessages into historical custom message injections
+		const messagesToInject: CustomMessage[] = unread.map(msg => {
+			mailbox.markAsRead(msg.id);
+			return {
+				role: "custom" as const,
+				customType: "irc_message" as const,
+				content: msg.content,
+				display: true,
+				details: {
+					from: msg.senderId,
+					to: msg.recipientId,
+					timestamp: msg.timestamp,
+				},
+				attribution: "agent",
+				timestamp: msg.timestamp,
+			};
+		});
+
+		// Queue them for injection into history
+		this.#queueBackgroundExchangeInjection(messagesToInject);
 	}
 
 	// =========================================================================

@@ -7,6 +7,7 @@
  */
 
 import type { AgentSession } from "../session/agent-session";
+import { ActorMailbox } from "./mailbox";
 
 export const MAIN_AGENT_ID = "0-Main";
 
@@ -23,12 +24,14 @@ export interface AgentRef {
 	sessionFile: string | null;
 	createdAt: number;
 	lastActivity: number;
+	mailbox: ActorMailbox;
 }
 
 export type RegistryEvent =
 	| { type: "registered"; ref: AgentRef }
 	| { type: "status_changed"; ref: AgentRef }
-	| { type: "removed"; ref: AgentRef };
+	| { type: "removed"; ref: AgentRef }
+	| { type: "message_queued"; recipientId: string; senderId: string; message: string };
 
 type RegistryListener = (event: RegistryEvent) => void;
 
@@ -59,8 +62,34 @@ export class AgentRegistry {
 
 	readonly #refs = new Map<string, AgentRef>();
 	readonly #listeners = new Set<RegistryListener>();
+	readonly #mailboxes = new Map<string, ActorMailbox>();
+	readonly #historicalIds = new Set<string>([MAIN_AGENT_ID]);
 
+	hasBeenRegistered(id: string): boolean {
+		return this.#historicalIds.has(id);
+	}
+
+	getOrCreateMailbox(id: string): ActorMailbox {
+		let mailbox = this.#mailboxes.get(id);
+		if (!mailbox) {
+			mailbox = new ActorMailbox();
+			this.#mailboxes.set(id, mailbox);
+		}
+		return mailbox;
+	}
+
+	routeMessage(senderId: string, recipientId: string, content: string): void {
+		const mailbox = this.getOrCreateMailbox(recipientId);
+		mailbox.enqueue(senderId, recipientId, content);
+		this.#emit({
+			type: "message_queued",
+			recipientId,
+			senderId,
+			message: content,
+		});
+	}
 	register(input: RegisterInput): AgentRef {
+		this.#historicalIds.add(input.id);
 		const now = Date.now();
 		const ref: AgentRef = {
 			id: input.id,
@@ -72,6 +101,7 @@ export class AgentRegistry {
 			sessionFile: input.sessionFile ?? null,
 			createdAt: now,
 			lastActivity: now,
+			mailbox: this.getOrCreateMailbox(input.id),
 		};
 		this.#refs.set(ref.id, ref);
 		this.#emit({ type: "registered", ref });
