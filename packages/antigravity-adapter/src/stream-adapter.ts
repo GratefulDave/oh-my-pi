@@ -8,6 +8,7 @@ import type {
 	SimpleStreamOptions,
 } from "@oh-my-pi/pi-ai";
 import { streamGoogle } from "@oh-my-pi/pi-ai/providers/google";
+import { isJsonObject, type JsonObject, normalizeSchemaForCCA } from "@oh-my-pi/pi-ai/utils/schema";
 import type {
 	LoaderResult,
 	PluginClient,
@@ -78,24 +79,63 @@ function buildUpstreamModelId(model: Model<Api>, reasoning?: string): string {
 }
 
 /**
- * Strips `generationConfig.thinkingConfig` from the serialised request body.
- * The upstream plugin resolves thinking config from the model-name tier
- * suffix; a duplicate config in the body would be double-processed.
+ * Normalizes the serialised Google request before it enters the upstream
+ * Antigravity plugin. The plugin bridges via Cloud Code Assist, whose tool
+ * debug path treats `parametersJsonSchema` as a custom schema and rejects it
+ * with `hasCustom=true, hasFunction=false`. Send the legacy function schema
+ * field instead.
  */
-function stripBodyThinkingConfig(init?: RequestInit): RequestInit | undefined {
+function normalizeBodyForUpstream(init?: RequestInit): RequestInit | undefined {
 	if (!init?.body || typeof init.body !== "string") return init;
 	try {
 		const body = JSON.parse(init.body);
-		if (body.generationConfig?.thinkingConfig) {
-			delete body.generationConfig.thinkingConfig;
-			if (Object.keys(body.generationConfig).length === 0) {
-				delete body.generationConfig;
-			}
-		}
-		return { ...init, body: JSON.stringify(body) };
+		if (!isJsonObject(body)) return init;
+
+		let changed = stripThinkingConfig(body);
+		changed = normalizeToolSchemas(body) || changed;
+
+		return changed ? { ...init, body: JSON.stringify(body) } : init;
 	} catch {
 		return init;
 	}
+}
+
+function stripThinkingConfig(body: JsonObject): boolean {
+	const generationConfig = body.generationConfig;
+	if (!isJsonObject(generationConfig) || !("thinkingConfig" in generationConfig)) return false;
+	delete generationConfig.thinkingConfig;
+	if (Object.keys(generationConfig).length === 0) {
+		delete body.generationConfig;
+	}
+	return true;
+}
+
+function normalizeToolSchemas(body: JsonObject): boolean {
+	let changed = normalizeToolList(body.tools);
+	const request = body.request;
+	if (isJsonObject(request)) {
+		changed = normalizeToolList(request.tools) || changed;
+	}
+	return changed;
+}
+
+function normalizeToolList(tools: unknown): boolean {
+	if (!Array.isArray(tools)) return false;
+
+	let changed = false;
+	for (const tool of tools) {
+		if (!isJsonObject(tool) || !Array.isArray(tool.functionDeclarations)) continue;
+		for (const declaration of tool.functionDeclarations) {
+			if (!isJsonObject(declaration) || !("parametersJsonSchema" in declaration)) continue;
+
+			if (!("parameters" in declaration)) {
+				declaration.parameters = normalizeSchemaForCCA(declaration.parametersJsonSchema);
+			}
+			delete declaration.parametersJsonSchema;
+			changed = true;
+		}
+	}
+	return changed;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +183,7 @@ export function createOpencodeAntigravityStream(
 					}
 				}
 				const loader = await createUpstreamLoader(auth, credentials);
-				return createBridgeFetch(loader.fetch)(input, stripBodyThinkingConfig(init));
+				return createBridgeFetch(loader.fetch)(input, normalizeBodyForUpstream(init));
 			},
 		});
 		return stream;

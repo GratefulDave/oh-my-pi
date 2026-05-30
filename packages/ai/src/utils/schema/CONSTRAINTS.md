@@ -86,7 +86,7 @@ For Cloud Code Assist Claude tool declarations, schema MUST satisfy stricter con
 
 ### 3.1 Transport contract
 
-1. **Use legacy `parameters` field** (not `parametersJsonSchema`) for CCA Claude.
+1. **Use the `parameters` field** for CCA Claude (as required by CCA's tool declaration format).
 2. CCA path uses the full `normalizeSchemaForCCA` pipeline.
 
 ### 3.2 Sanitization contract
@@ -143,7 +143,7 @@ If any remain, schema is incompatible.
   - Emit `strict: true` only when effective strict enforcement succeeded.
 
 - **Google Gemini/Vertex/Gemini CLI (non-CCA Claude)**:
-  - Use `normalizeSchemaForGoogle` and send schema on `parametersJsonSchema` path.
+  - Use `normalizeSchemaForGoogle` and send schema in the `parameters` field.
 
 - **Cloud Code Assist Claude models (`model.id` starts with `claude-`)**:
   - Use `normalizeSchemaForCCA` and send sanitized normalized schema in `parameters`.

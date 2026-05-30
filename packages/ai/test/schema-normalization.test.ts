@@ -805,7 +805,7 @@ describe("normalizeSchemaForCCA", () => {
 		expect(normalized.description).toBe('ID\n\n{pattern: "^\\\\d+$", minLength: 1, maxLength: 8}');
 	});
 
-	it("uses the same merged object output in shared and gemini-cli Antigravity paths", () => {
+	it("merges object anyOf variants for Claude (CCA) but preserves anyOf for Gemini (Google normalizer)", () => {
 		const parameters = {
 			anyOf: [
 				{
@@ -828,9 +828,20 @@ describe("normalizeSchemaForCCA", () => {
 		} as TJsonSchema;
 		const tools: Tool[] = [{ name: "merge_test", description: "Merge test", parameters }];
 
+		// Claude CCA path: object combiners are merged
 		const sharedTools = convertTools(tools, createGoogleCliModel("claude-sonnet-4-5"));
 		const sharedDeclaration = sharedTools?.[0]?.functionDeclarations[0] as Record<string, unknown>;
+		expect(sharedDeclaration.parameters).toEqual({
+			type: "object",
+			properties: {
+				shared: { type: "string" },
+				a: { type: "string" },
+				b: { type: "number" },
+			},
+			required: ["shared"],
+		});
 
+		// Gemini (non-Claude) CCA/Antigravity path: Google normalizer preserves anyOf
 		const context: Context = {
 			messages: [{ role: "user", content: "hello", timestamp: 0 }],
 			tools,
@@ -841,18 +852,10 @@ describe("normalizeSchemaForCCA", () => {
 			unknown
 		>;
 
-		const expected = {
-			type: "object",
-			properties: {
-				shared: { type: "string" },
-				a: { type: "string" },
-				b: { type: "number" },
-			},
-			required: ["shared"],
-		};
-		expect(sharedDeclaration.parameters).toEqual(expected);
-		expect(antigravityDeclaration.parameters).toEqual(expected);
-		expect(antigravityDeclaration.parameters).toEqual(sharedDeclaration.parameters);
+		// anyOf is preserved by normalizeSchemaForGoogle (no combiner collapsing)
+		const antigravityParams = antigravityDeclaration.parameters as Record<string, unknown>;
+		expect(Array.isArray(antigravityParams?.anyOf)).toBe(true);
+		expect((antigravityParams?.anyOf as unknown[]).length).toBe(2);
 		expect(antigravityDeclaration.parametersJsonSchema).toBeUndefined();
 	});
 

@@ -138,9 +138,13 @@ describe("Cloud Code Assist Claude tool schema conversion", () => {
 		expect(JSON.stringify(claudeDeclaration.parameters)).not.toContain('"anyOf"');
 		expect(JSON.stringify(claudeDeclaration.parameters)).not.toContain('"oneOf"');
 		expect(claudeDeclaration.parametersJsonSchema).toBeUndefined();
-		expect(
-			(geminiDeclaration.parametersJsonSchema as { properties?: Record<string, unknown> })?.properties?.lines,
-		).toEqual((parameters as { properties: { lines: unknown } }).properties.lines);
+		// Gemini path uses parameters + normalizeSchemaForGoogle; anyOf with no unsupported fields passes through
+		expect(geminiDeclaration.parametersJsonSchema).toBeUndefined();
+		expect(geminiDeclaration.parameters).toBeDefined();
+		const geminiLines = (geminiDeclaration.parameters as { properties?: Record<string, unknown> })?.properties
+			?.lines as Record<string, unknown>;
+		// anyOf is preserved (Google normalizer does not collapse combiners)
+		expect(geminiLines?.anyOf).toBeDefined();
 	});
 
 	it("collapses mixed anyOf with shared metadata for edit-style lines fields", () => {
@@ -251,9 +255,15 @@ describe("Cloud Code Assist Claude tool schema conversion", () => {
 			required: [],
 		});
 		expect(JSON.stringify(claudeDeclaration.parameters)).not.toContain('"anyOf"');
-		expect(
-			(geminiDeclaration.parametersJsonSchema as { properties?: Record<string, unknown> })?.properties?.value,
-		).toEqual((parameters as { properties: { value: unknown } }).properties.value);
+		// Gemini path uses parameters + normalizeSchemaForGoogle
+		// Google normalizer collapses anyOf with a null branch into nullable + collapsed schema
+		expect(geminiDeclaration.parametersJsonSchema).toBeUndefined();
+		expect(geminiDeclaration.parameters).toBeDefined();
+		const geminiValue = (geminiDeclaration.parameters as { properties?: Record<string, unknown> })?.properties
+			?.value as Record<string, unknown>;
+		// anyOf[enum, null] → nullable: true + enum (Google null-field collapsing)
+		expect(geminiValue?.nullable).toBe(true);
+		expect(geminiValue?.enum).toEqual(["A", "B"]);
 	});
 
 	it("falls back to minimal object schema when non-null unresolved unions remain for CCA Claude", () => {
@@ -314,6 +324,152 @@ describe("Cloud Code Assist Claude tool schema conversion", () => {
 				},
 			},
 		});
+	});
+});
+
+function createGeminiModel(): Model<"google-generative-ai"> {
+	return {
+		id: "gemini-3.1-pro",
+		name: "Gemini 3.1 Pro",
+		api: "google-generative-ai",
+		provider: "opencode-antigravity",
+		baseUrl: "https://generativelanguage.googleapis.com",
+		reasoning: false,
+		input: ["text"],
+		cost: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+		},
+		contextWindow: 200000,
+		maxTokens: 8192,
+	};
+}
+
+describe("Google generative-ai (non-Claude) tool schema conversion", () => {
+	it("uses parameters (not parametersJsonSchema) for non-Claude Gemini models", () => {
+		const schema = {
+			type: "object",
+			properties: {
+				path: { type: "string", description: "file path" },
+			},
+			required: ["path"],
+			additionalProperties: false,
+		} as TJsonSchema;
+		const tools: Tool[] = [{ name: "read", description: "Read a file", parameters: schema }];
+		const model = createGeminiModel();
+
+		const result = convertTools(tools, model);
+		const decl = result?.[0]?.functionDeclarations[0] as Record<string, unknown>;
+
+		// Must use `parameters`, never `parametersJsonSchema`
+		expect(decl.parameters).toBeDefined();
+		expect(decl.parametersJsonSchema).toBeUndefined();
+
+		// Google does not accept additionalProperties — must be stripped
+		const params = decl.parameters as Record<string, unknown>;
+		expect(params.additionalProperties).toBeUndefined();
+
+		// Core shape preserved
+		expect(params.type).toBe("object");
+		expect((params.properties as Record<string, unknown>).path).toBeDefined();
+		expect(params.required).toEqual(["path"]);
+	});
+
+	it("strips maxLength, propertyNames and anyOf from non-Claude Gemini tool schema", () => {
+		const schema = {
+			type: "object",
+			properties: {
+				command: {
+					type: "string",
+					maxLength: 4096,
+					description: "shell command",
+				},
+				env: {
+					type: "object",
+					propertyNames: { type: "string", pattern: "^[A-Za-z_][A-Za-z0-9_]*$" },
+					additionalProperties: { type: "string" },
+				},
+			},
+			required: ["command", "_i"],
+			additionalProperties: false,
+		} as TJsonSchema;
+		const tools: Tool[] = [{ name: "bash", description: "Run bash", parameters: schema }];
+		const model = createGeminiModel();
+
+		const result = convertTools(tools, model);
+		const decl = result?.[0]?.functionDeclarations[0] as Record<string, unknown>;
+		const params = decl.parameters as Record<string, unknown>;
+		const props = params.properties as Record<string, Record<string, unknown>>;
+
+		expect(decl.parametersJsonSchema).toBeUndefined();
+		// additionalProperties stripped at top-level and nested
+		expect(params.additionalProperties).toBeUndefined();
+		expect(props.env?.additionalProperties).toBeUndefined();
+		// propertyNames stripped
+		expect(props.env?.propertyNames).toBeUndefined();
+		// maxLength stripped (may be lifted to description)
+		expect(props.command?.maxLength).toBeUndefined();
+	});
+
+	it("normalizes type arrays to scalar + nullable for non-Claude Gemini models", () => {
+		const schema = {
+			type: "object",
+			properties: {
+				value: { type: ["string", "null"] },
+			},
+		} as TJsonSchema;
+		const tools: Tool[] = [{ name: "set_value", description: "Set a value", parameters: schema }];
+		const model = createGeminiModel();
+
+		const result = convertTools(tools, model);
+		const decl = result?.[0]?.functionDeclarations[0] as Record<string, unknown>;
+		const params = decl.parameters as Record<string, unknown>;
+		const props = params.properties as Record<string, Record<string, unknown>>;
+		// normalizeSchemaForGoogle converts type array to scalar + nullable
+		expect(props.value?.type).toBe("string");
+		expect(props.value?.nullable).toBe(true);
+		expect(decl.parametersJsonSchema).toBeUndefined();
+	});
+
+	it("uses parameters field for anyOf union result schema (yield tool shape)", () => {
+		// Matches the `yield` tool in the failing request which has anyOf at the result level.
+		// Google should receive parameters with anyOf stripped (Google doesn't support anyOf).
+		const schema = {
+			type: "object",
+			additionalProperties: false,
+			properties: {
+				result: {
+					anyOf: [
+						{
+							type: "object",
+							additionalProperties: false,
+							properties: { data: { type: "object" } },
+							required: ["data"],
+						},
+						{
+							type: "object",
+							additionalProperties: false,
+							properties: { error: { type: "string" } },
+							required: ["error"],
+						},
+					],
+				},
+			},
+			required: ["result"],
+		} as TJsonSchema;
+		const tools: Tool[] = [{ name: "yield", description: "Yield result", parameters: schema }];
+		const model = createGeminiModel();
+
+		const result = convertTools(tools, model);
+		const decl = result?.[0]?.functionDeclarations[0] as Record<string, unknown>;
+		// Must use parameters, not parametersJsonSchema
+		expect(decl.parameters).toBeDefined();
+		expect(decl.parametersJsonSchema).toBeUndefined();
+		// additionalProperties stripped at top level
+		const params = decl.parameters as Record<string, unknown>;
+		expect(params.additionalProperties).toBeUndefined();
 	});
 });
 

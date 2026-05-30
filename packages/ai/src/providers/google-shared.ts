@@ -325,11 +325,13 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 /**
  * Convert tools to Gemini function declarations format.
  *
- * We prefer `parametersJsonSchema` (full JSON Schema: anyOf/oneOf/const/etc.).
+ * All Gemini API surfaces (generative-ai, Vertex, gemini-cli) require the `parameters`
+ * field (a subset of JSON Schema that Google's schema proto accepts). The schema is
+ * normalized before sending: Google-unsupported keywords (`additionalProperties`,
+ * `anyOf`, `maxLength`, `propertyNames`, etc.) are stripped or lifted to descriptions.
  *
- * Claude models via Cloud Code Assist require the legacy `parameters` field; the API
- * translates it into Anthropic's `input_schema`. When using that path, we sanitize the
- * schema to remove Google-unsupported JSON Schema keywords.
+ * Claude models via Cloud Code Assist use a stricter normalization pass (`normalizeSchemaForCCA`)
+ * that additionally collapses nullable unions and applies CCA-specific validation.
  */
 export function convertTools(
 	tools: Tool[],
@@ -338,8 +340,8 @@ export function convertTools(
 	if (tools.length === 0) return undefined;
 
 	/**
-	 * Claude models on Cloud Code Assist need the legacy `parameters` field;
-	 * the API translates it into Anthropic's `input_schema`.
+	 * Claude models on Cloud Code Assist use a stricter normalizer; all others use
+	 * the standard Google schema normalizer.
 	 */
 	const useParameters = model.id.startsWith("claude-");
 
@@ -348,9 +350,9 @@ export function convertTools(
 			functionDeclarations: tools.map(tool => ({
 				name: tool.name,
 				description: tool.description || "",
-				...(useParameters
-					? { parameters: normalizeSchemaForCCA(toolWireSchema(tool)) }
-					: { parametersJsonSchema: toolWireSchema(tool) }),
+				parameters: useParameters
+					? normalizeSchemaForCCA(toolWireSchema(tool))
+					: normalizeSchemaForGoogle(toolWireSchema(tool)),
 			})),
 		},
 	];

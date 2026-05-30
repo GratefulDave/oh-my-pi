@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
-import type { Api, Context, Model } from "@oh-my-pi/pi-ai";
+import type { Api, Context, Model, Tool } from "@oh-my-pi/pi-ai";
 import type { OAuthLoginCallbacks } from "@oh-my-pi/pi-ai/utils/oauth/types";
 import type { ExtensionAPI, ProviderConfig } from "@oh-my-pi/pi-coding-agent";
 import type { AuthMethod, PluginResult } from "opencode-antigravity-auth/dist/src/plugin/types";
@@ -334,6 +334,58 @@ describe("OpenCode Antigravity fetch bridge", () => {
 
 		expect(sawSignal).toBe(true);
 		expect(apiKeyHeader).toBeNull();
+	});
+
+	it("rewrites Google parametersJsonSchema tools to legacy parameters before upstream fetch", async () => {
+		const credentials = { refresh: "refresh", access: "access", expires: Date.now() + 60_000 };
+		let requestedBody: unknown;
+		const auth: PluginResult["auth"] = {
+			provider: "google",
+			methods: [] as AuthMethod[],
+			loader: async () => ({
+				apiKey: "",
+				fetch: async (_input, init) => {
+					requestedBody = JSON.parse(String(init?.body));
+					return new Response(
+						'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}\n\n',
+						{ headers: { "content-type": "text/event-stream" } },
+					);
+				},
+			}),
+		};
+		const tools: Tool[] = [
+			{
+				name: "bash",
+				description: "Run bash",
+				parameters: {
+					type: "object",
+					properties: {
+						env: {
+							type: "object",
+							propertyNames: { type: "string", pattern: "^[A-Z_]+$" },
+							additionalProperties: { type: "string" },
+						},
+					},
+					required: ["env"],
+					additionalProperties: false,
+				},
+			},
+		];
+		const streamSimple = createOpencodeAntigravityStream(auth);
+
+		await streamSimple(
+			model(),
+			{ ...context(), tools },
+			{
+				apiKey: serializeBridgeCredentials(credentials),
+			},
+		).result();
+
+		const body = requestedBody as { tools?: Array<{ functionDeclarations?: Array<Record<string, unknown>> }> };
+		const declaration = body.tools?.[0]?.functionDeclarations?.[0];
+		expect(declaration?.parametersJsonSchema).toBeUndefined();
+		expect(declaration?.parameters).toBeDefined();
+		expect(JSON.stringify(declaration?.parameters)).not.toContain("propertyNames");
 	});
 
 	it("routes OMP Google streaming through the upstream loader fetch", async () => {
