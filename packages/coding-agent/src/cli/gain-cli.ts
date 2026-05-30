@@ -33,6 +33,8 @@ type GainRow = {
 	savedBytes: number;
 	estimatedTokensSaved: number;
 	usesEstimatedTokensSaved: boolean;
+	tokensSavedRatio: number | null;
+	estimatedInputTokens: number;
 };
 
 type GainContext = {
@@ -85,6 +87,9 @@ function writeDiagnosticOutput(mode: "diag" | "diag-json", diagnostic: Minimizer
 	process.stdout.write(`  Most Recent Timestamp: ${diagnostic.mostRecentTimestamp ?? "-"}\n`);
 	process.stdout.write(
 		`  Recent Missed Ratio (last 50): ${diagnostic.recentMissedRatio === null ? "-" : diagnostic.recentMissedRatio.toFixed(3)}\n`,
+	);
+	process.stdout.write(
+		`  Recent Hit Ratio (last 50): ${diagnostic.recentHitRatio === null ? "-" : diagnostic.recentHitRatio.toFixed(3)}\n`,
 	);
 	process.stdout.write(`  Minimizer Appears Inactive: ${diagnostic.minimizerAppearsInactive}\n`);
 	process.stdout.write(
@@ -197,7 +202,7 @@ function printGainSummary(input: GainContext): void {
 	process.stdout.write(`  Output Bytes: ${formatNumber(summary.outputBytes)}\n`);
 	process.stdout.write(`  Saved Bytes: ${formatNumber(summary.savedBytes)}\n`);
 	process.stdout.write(
-		`  ${formatTokensSavedLabel(summary.usesEstimatedTokensSaved)}: ${formatNumber(summary.estimatedTokensSaved)}\n`,
+		`  ${formatTokensSavedLabel(summary.usesEstimatedTokensSaved)}: ${formatNumber(summary.estimatedTokensSaved)} (${formatTokensSavedPercent(summary.tokensSavedRatio)})\n`,
 	);
 
 	printRows("Top Filters", summary.byFilter, row => row.filter);
@@ -232,6 +237,12 @@ function printMissedSummary(input: GainContext): void {
 				`  ${row.command}: ${formatNumber(row.inputBytes)} bytes total (${formatNumber(row.avgInputBytes)} avg), ${formatNumber(row.commands)} cmds, exit=${formatExitCodes(row.exitCodes)}\n`,
 			);
 		}
+		process.stdout.write(chalk.bold("\nHighest potential token savings:\n"));
+		for (const row of input.missed.potentialTokenSavings) {
+			process.stdout.write(
+				`  ${row.command}: ${formatNumber(row.estimatedPotentialTokensSaved)} tokens total (${formatNumber(row.avgEstimatedPotentialTokensSaved)} avg), ${formatNumber(row.commands)} cmds, exit=${formatExitCodes(row.exitCodes)}\n`,
+			);
+		}
 	}
 	printScope(input);
 }
@@ -250,6 +261,11 @@ function formatTokensSavedLabel(usesEstimatedTokensSaved: boolean): string {
 	return usesEstimatedTokensSaved ? "Estimated Tokens Saved" : "Tokens Saved";
 }
 
+function formatTokensSavedPercent(ratio: number | null): string {
+	if (ratio === null) return "-";
+	return `${(ratio * 100).toFixed(1)}%`;
+}
+
 function formatScope(input: { days: number; cwd: string | undefined; all: boolean }): string {
 	const window = `${formatNumber(input.days)} day${input.days === 1 ? "" : "s"}`;
 	if (input.all) return `all working directories, last ${window}`;
@@ -264,7 +280,7 @@ function printRows<T extends GainRow>(title: string, rows: T[], label: (row: T) 
 	}
 	for (const row of rows.slice(0, 10)) {
 		process.stdout.write(
-			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes saved, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}\n`,
+			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes saved, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)} (${formatTokensSavedPercent(row.tokensSavedRatio)})\n`,
 		);
 	}
 }

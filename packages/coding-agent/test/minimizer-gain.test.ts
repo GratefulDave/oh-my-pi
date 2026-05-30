@@ -102,10 +102,28 @@ describe("minimizer gain analytics", () => {
 			expect(summary.savedBytes).toBe(3350);
 			expect(summary.estimatedTokensSaved).toBe(483);
 			expect(summary.usesEstimatedTokensSaved).toBe(true);
+			// estimatedInputTokens: only savings records (savedBytes > 0) contribute.
+			// Record 1 (git status):       floor(1000/4) = 250
+			// Record 2 (cargo test):       floor(2200/4) = 550
+			// Record 3 (git status --short): savedBytes=0 → excluded
+			// Record 4 (bun test):         floor(1000/4) = 250
+			// Total: 1050
+			expect(summary.estimatedInputTokens).toBe(1050);
+			// tokensSavedRatio = 483 / 1050
+			expect(summary.tokensSavedRatio).toBeCloseTo(483 / 1050, 10);
 			expect(summary.byFilter.map(row => row.filter)).toEqual(["cargo", "git", "bun"]);
 			expect(summary.byCwd.map(row => row.cwd)).toEqual(["/repo", "/other-repo"]);
 			expect(summary.byCwd[0]).toMatchObject({ cwd: "/repo", savedBytes: 2750 });
 			expect(summary.byCwd[1]).toMatchObject({ cwd: "/other-repo", savedBytes: 600 });
+			// git filter: only Record 1 qualifies (Record 3 savedBytes=0 excluded)
+			// estimatedInputTokens = floor(1000/4) = 250; estimatedTokensSaved = 111
+			const gitFilter = summary.byFilter.find(r => r.filter === "git")!;
+			expect(gitFilter.estimatedInputTokens).toBe(250);
+			expect(gitFilter.tokensSavedRatio).toBeCloseTo(111 / 250, 10);
+			// byCommand "cargo test": estimatedInputTokens = floor(2200/4) = 550; estimatedTokensSaved = 222
+			const cargoCmd = summary.byCommand.find(r => r.command === "cargo test")!;
+			expect(cargoCmd.estimatedInputTokens).toBe(550);
+			expect(cargoCmd.tokensSavedRatio).toBeCloseTo(222 / 550, 10);
 
 			const discovery = discoverMinimizerGain(records);
 			expect(discovery.commands[0]).toMatchObject({
@@ -502,6 +520,7 @@ describe("minimizer gain analytics", () => {
 				expect(diag.recordCountInScope).toBe(0);
 				expect(diag.mostRecentTimestamp).toBeNull();
 				expect(diag.recentMissedRatio).toBeNull();
+				expect(diag.recentHitRatio).toBeNull();
 				expect(diag.avgSavedRatio).toBeNull();
 				expect(diag.exists).toBe(false);
 				expect(diag.minimizerAppearsInactive).toBe(false);
@@ -669,6 +688,264 @@ describe("minimizer gain analytics", () => {
 			} finally {
 				await fs.rm(tmp, { recursive: true, force: true });
 			}
+		});
+		// -------------------------------------------------------------------
+		// summarizeMissedMinimizerGain — contract tests (SlashGainMissedSavings)
+		// -------------------------------------------------------------------
+		it("summarizeMissedMinimizerGain sorts commands by inputBytes desc and potentialTokenSavings by estimatedPotentialTokensSaved desc", () => {
+			// Three distinct command/filter groups.
+			//
+			//   alpha: 1 hit, inputBytes = 4000
+			//     → estimatedPotentialTokensSaved = floor(4000 / 4) = 1000
+			//     → avgEstimatedPotentialTokensSaved = floor(1000 / 1) = 1000
+			//
+			//   beta: 2 hits, inputBytes = 800 + 800 = 1600
+			//     → estimatedPotentialTokensSaved = floor(1600 / 4) = 400
+			//     → avgEstimatedPotentialTokensSaved = floor(400 / 2) = 200
+			//
+			//   gamma: 3 hits, inputBytes = 500 + 500 + 500 = 1500
+			//     → estimatedPotentialTokensSaved = floor(1500 / 4) = 375
+			//     → avgEstimatedPotentialTokensSaved = floor(375 / 3) = 125
+			//
+			// commands order (by total inputBytes desc): alpha(4000), beta(1600), gamma(1500)
+			// potentialTokenSavings order (by estimatedPotentialTokensSaved desc): alpha(1000), beta(400), gamma(375)
+			// Both orderings are the same here because inputBytes is monotonic with
+			// estimatedPotentialTokensSaved; we assert each array and each computed
+			// field individually so any future formula or sort change is caught.
+			const base = {
+				timestamp: "2026-05-20T00:00:00.000Z",
+				cwd: "/repo",
+				outputBytes: 0,
+				savedBytes: 0,
+				exitCode: 0,
+				kind: "missed" as const,
+			};
+			const records: Parameters<typeof summarizeMissedMinimizerGain>[0] = [
+				// gamma — 3 occurrences
+				{ ...base, command: "gamma-cmd", filter: "gamma", inputBytes: 500 },
+				{ ...base, command: "gamma-cmd", filter: "gamma", inputBytes: 500 },
+				{ ...base, command: "gamma-cmd", filter: "gamma", inputBytes: 500 },
+				// beta — 2 occurrences
+				{ ...base, command: "beta-cmd", filter: "beta", inputBytes: 800 },
+				{ ...base, command: "beta-cmd", filter: "beta", inputBytes: 800 },
+				// alpha — 1 occurrence
+				{ ...base, command: "alpha-cmd", filter: "alpha", inputBytes: 4000 },
+			];
+			const missed = summarizeMissedMinimizerGain(records);
+			// commands — sorted by total inputBytes descending
+			expect(missed.commands.map(c => c.command)).toEqual(["alpha-cmd", "beta-cmd", "gamma-cmd"]);
+			// alpha group: exact field values
+			const alphaCmd = missed.commands[0];
+			expect(alphaCmd.command).toBe("alpha-cmd");
+			expect(alphaCmd.filter).toBe("alpha");
+			expect(alphaCmd.commands).toBe(1);
+			expect(alphaCmd.inputBytes).toBe(4000);
+			expect(alphaCmd.estimatedPotentialTokensSaved).toBe(1000); // floor(4000 / 4)
+			expect(alphaCmd.avgEstimatedPotentialTokensSaved).toBe(1000); // floor(1000 / 1)
+			// beta group
+			const betaCmd = missed.commands[1];
+			expect(betaCmd.command).toBe("beta-cmd");
+			expect(betaCmd.commands).toBe(2);
+			expect(betaCmd.inputBytes).toBe(1600);
+			expect(betaCmd.estimatedPotentialTokensSaved).toBe(400); // floor(1600 / 4)
+			expect(betaCmd.avgEstimatedPotentialTokensSaved).toBe(200); // floor(400 / 2)
+			// gamma group
+			const gammaCmd = missed.commands[2];
+			expect(gammaCmd.command).toBe("gamma-cmd");
+			expect(gammaCmd.commands).toBe(3);
+			expect(gammaCmd.inputBytes).toBe(1500);
+			expect(gammaCmd.estimatedPotentialTokensSaved).toBe(375); // floor(1500 / 4)
+			expect(gammaCmd.avgEstimatedPotentialTokensSaved).toBe(125); // floor(375 / 3)
+			// potentialTokenSavings — sorted by estimatedPotentialTokensSaved descending
+			expect(missed.potentialTokenSavings.map(c => c.command)).toEqual(["alpha-cmd", "beta-cmd", "gamma-cmd"]);
+			// Verify the sort key values match expected ordering
+			const pts = missed.potentialTokenSavings;
+			expect(pts[0].estimatedPotentialTokensSaved).toBe(1000);
+			expect(pts[1].estimatedPotentialTokensSaved).toBe(400);
+			expect(pts[2].estimatedPotentialTokensSaved).toBe(375);
+			// avgEstimatedPotentialTokensSaved in potentialTokenSavings array
+			expect(pts[0].avgEstimatedPotentialTokensSaved).toBe(1000);
+			expect(pts[1].avgEstimatedPotentialTokensSaved).toBe(200);
+			expect(pts[2].avgEstimatedPotentialTokensSaved).toBe(125);
+		});
+		it("buildMinimizerGainDiagnostic recentHitRatio and recentMissedRatio use timestamp-sorted last-50 window, not file-append order", async () => {
+			// Strategy: write 55 records in scope where 5 misses have OLD timestamps
+			// and 50 hits have NEWER timestamps, but append the misses to the file LAST
+			// so they are at the tail in file/append order.
+			//
+			// Correct behaviour (sort by timestamp, then slice(-50)):
+			//   sorted order = [miss×5 (old timestamps), hit×50 (new timestamps)]
+			//   last-50 window = hit×50 → recentHitRatio = 1, recentMissedRatio = 0
+			//
+			// Wrong behaviour (slice(-50) without sort, i.e. last 50 appended):
+			//   last 50 file entries = hit×45 + miss×5 → recentHitRatio = 0.9, recentMissedRatio = 0.1
+			//
+			// By asserting recentHitRatio === 1 we prove the impl sorts first.
+			await withTempAgentDir(async agentDir => {
+				resetMinimizerGainStatusForTesting();
+				const cwd = "/ts-sort-test-repo";
+				// Write 50 hits with timestamps T+1..T+50 (newer)
+				for (let i = 1; i <= 50; i++) {
+					// Use hours to keep minute in 00-59 range
+					const hour = Math.floor(i / 60)
+						.toString()
+						.padStart(2, "0");
+					const min = (i % 60).toString().padStart(2, "0");
+					await recordMinimizerGain(
+						{
+							timestamp: `2026-05-20T${hour}:${min}:01.000Z`,
+							cwd,
+							command: "hit-cmd",
+							filter: "hit",
+							inputBytes: 100,
+							outputBytes: 50,
+							savedBytes: 50,
+							exitCode: 0,
+						},
+						{ agentDir },
+					);
+				}
+				// Append 5 misses with OLD timestamps (T-1..T-5) — these land at the
+				// end of the file but belong before all hits in timestamp order.
+				for (let i = 1; i <= 5; i++) {
+					await recordMinimizerGain(
+						{
+							timestamp: `2026-05-19T23:5${i}:00.000Z`,
+							cwd,
+							command: "old-miss-cmd",
+							filter: "missed",
+							inputBytes: 200,
+							outputBytes: 200,
+							savedBytes: 0,
+							exitCode: 1,
+							kind: "missed",
+						},
+						{ agentDir },
+					);
+				}
+				const diag = await buildMinimizerGainDiagnostic({ agentDir, cwd });
+				// 55 total in scope
+				expect(diag.recordCountInScope).toBe(55);
+				// The window is computed on the last 50 by timestamp.
+				// Since the 5 misses have timestamps earlier than all 50 hits,
+				// the last-50 by timestamp are the 50 hits exclusively.
+				expect(diag.recentHitRatio).toBe(1);
+				expect(diag.recentMissedRatio).toBe(0);
+				expect(diag.minimizerAppearsInactive).toBe(false);
+			});
+		});
+	});
+
+	// -------------------------------------------------------------------
+	// tokensSavedRatio contract tests
+	// -------------------------------------------------------------------
+	describe("tokensSavedRatio contract", () => {
+		it("computes estimatedInputTokens and tokensSavedRatio from savings records only", () => {
+			// inputBytes=1000 → estimatedInputTokens=floor(1000/4)=250
+			// savedTokens=150 → estimatedTokensSaved=150
+			// tokensSavedRatio = 150 / 250 = 0.6
+			const records: Parameters<typeof summarizeMinimizerGain>[0] = [
+				{
+					timestamp: "2026-05-20T00:00:00.000Z",
+					cwd: "/repo",
+					command: "bash",
+					filter: "bash",
+					inputBytes: 1000,
+					outputBytes: 400,
+					savedBytes: 600,
+					savedTokens: 150,
+					exitCode: 0,
+				},
+			];
+			const summary = summarizeMinimizerGain(records);
+			expect(summary.estimatedInputTokens).toBe(250); // floor(1000/4)
+			expect(summary.estimatedTokensSaved).toBe(150);
+			expect(summary.tokensSavedRatio).toBeCloseTo(150 / 250, 10); // 0.6
+		});
+
+		it("tokensSavedRatio = null when estimatedInputTokens is 0 (no savings records)", () => {
+			// Only zero-savings records: savedBytes=0 → excluded from estimatedInputTokens
+			const records: Parameters<typeof summarizeMinimizerGain>[0] = [
+				{
+					timestamp: "2026-05-20T00:00:00.000Z",
+					cwd: "/repo",
+					command: "noop",
+					filter: "noop",
+					inputBytes: 500,
+					outputBytes: 500,
+					savedBytes: 0,
+					exitCode: 0,
+					kind: "saved",
+				},
+			];
+			const summary = summarizeMinimizerGain(records);
+			expect(summary.estimatedInputTokens).toBe(0);
+			expect(summary.tokensSavedRatio).toBeNull();
+		});
+
+		it("tokensSavedRatio = null for empty record set", () => {
+			const summary = summarizeMinimizerGain([]);
+			expect(summary.estimatedInputTokens).toBe(0);
+			expect(summary.tokensSavedRatio).toBeNull();
+		});
+
+		it("byCommand and byFilter rows carry correct estimatedInputTokens and tokensSavedRatio", () => {
+			// Two commands, two filters.
+			// cmd-a: inputBytes=800, savedTokens=100 → estimatedInputTokens=200, ratio=100/200=0.5
+			// cmd-b: inputBytes=400, savedTokens=50  → estimatedInputTokens=100, ratio=50/100=0.5
+			// filter-x (cmd-a): estimatedInputTokens=200, tokensSavedRatio=100/200=0.5
+			// filter-y (cmd-b): estimatedInputTokens=100, tokensSavedRatio=50/100=0.5
+			const base = {
+				timestamp: "2026-05-20T00:00:00.000Z",
+				cwd: "/repo",
+				outputBytes: 0,
+				exitCode: 0,
+			};
+			const records: Parameters<typeof summarizeMinimizerGain>[0] = [
+				{ ...base, command: "cmd-a", filter: "filter-x", inputBytes: 800, savedBytes: 800, savedTokens: 100 },
+				{ ...base, command: "cmd-b", filter: "filter-y", inputBytes: 400, savedBytes: 400, savedTokens: 50 },
+			];
+			const summary = summarizeMinimizerGain(records);
+			// Overall
+			expect(summary.estimatedInputTokens).toBe(300); // 200 + 100
+			expect(summary.estimatedTokensSaved).toBe(150); // 100 + 50
+			expect(summary.tokensSavedRatio).toBeCloseTo(150 / 300, 10); // 0.5
+			// byCommand
+			const cmdA = summary.byCommand.find(r => r.command === "cmd-a")!;
+			expect(cmdA.estimatedInputTokens).toBe(200); // floor(800/4)
+			expect(cmdA.tokensSavedRatio).toBeCloseTo(100 / 200, 10); // 0.5
+			const cmdB = summary.byCommand.find(r => r.command === "cmd-b")!;
+			expect(cmdB.estimatedInputTokens).toBe(100); // floor(400/4)
+			expect(cmdB.tokensSavedRatio).toBeCloseTo(50 / 100, 10); // 0.5
+			// byFilter
+			const filterX = summary.byFilter.find(r => r.filter === "filter-x")!;
+			expect(filterX.estimatedInputTokens).toBe(200);
+			expect(filterX.tokensSavedRatio).toBeCloseTo(100 / 200, 10);
+			const filterY = summary.byFilter.find(r => r.filter === "filter-y")!;
+			expect(filterY.estimatedInputTokens).toBe(100);
+			expect(filterY.tokensSavedRatio).toBeCloseTo(50 / 100, 10);
+		});
+
+		it("tokensSavedRatio uses floor(inputBytes/4) for estimatedInputTokens, not raw division", () => {
+			// inputBytes=10 → floor(10/4)=2 (not 2.5)
+			// savedTokens=1 → estimatedTokensSaved=1
+			// tokensSavedRatio = 1/2 = 0.5
+			const records: Parameters<typeof summarizeMinimizerGain>[0] = [
+				{
+					timestamp: "2026-05-20T00:00:00.000Z",
+					cwd: "/repo",
+					command: "tiny",
+					filter: "tiny",
+					inputBytes: 10,
+					outputBytes: 8,
+					savedBytes: 2,
+					savedTokens: 1,
+					exitCode: 0,
+				},
+			];
+			const summary = summarizeMinimizerGain(records);
+			expect(summary.estimatedInputTokens).toBe(2); // floor(10/4), not 2.5
+			expect(summary.tokensSavedRatio).toBeCloseTo(1 / 2, 10);
 		});
 	});
 });

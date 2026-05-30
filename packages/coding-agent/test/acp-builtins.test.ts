@@ -206,7 +206,7 @@ describe("ACP builtin slash commands", () => {
 			expect(await executeAcpBuiltinSlashCommand("/gain", current.runtime)).toEqual({ consumed: true });
 			expect(current.output[0]).toContain("Minimizer savings for /tmp/project");
 			expect(current.output[0]).toContain("Saved Bytes: 750");
-			expect(current.output[0]).toContain("Tokens Saved: 123");
+			expect(current.output[0]).toContain("Tokens Saved: 123 (49.2%)");
 			expect(current.output[0]).not.toContain("/tmp/other");
 		} finally {
 			setAgentDir(previousAgentDir);
@@ -286,7 +286,7 @@ describe("ACP builtin slash commands", () => {
 			expect(await executeAcpBuiltinSlashCommand("/gain --all", current.runtime)).toEqual({ consumed: true });
 			expect(current.output[0]).toContain("Minimizer savings across all repos");
 			expect(current.output[0]).toContain("Saved Bytes: 1.6K");
-			expect(current.output[0]).toContain("Estimated Tokens Saved: 323");
+			expect(current.output[0]).toContain("Estimated Tokens Saved: 323 (58.7%)");
 		} finally {
 			setAgentDir(previousAgentDir);
 			await fs.rm(agentDir, { recursive: true, force: true });
@@ -386,6 +386,104 @@ describe("ACP builtin slash commands", () => {
 			expect(current.output[0]).toContain("7d");
 			expect(current.output[0]).toContain("Saved Bytes: 1.5K");
 			expect(current.output[0]).not.toContain("old command");
+		} finally {
+			setAgentDir(previousAgentDir);
+			await fs.rm(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("renders gain --missed report with dual-view byte and token output", async () => {
+		const previousAgentDir = getAgentDir();
+		const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-acp-gain-missed-flag-"));
+		try {
+			setAgentDir(agentDir);
+			// Two command groups under /tmp/project — different commands, so two distinct items.
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/project",
+					command: "cargo test",
+					filter: "missed",
+					inputBytes: 8000,
+					outputBytes: 8000,
+					savedBytes: 0,
+					exitCode: 1,
+					kind: "missed",
+				},
+				{ agentDir },
+			);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/project",
+					command: "cargo test",
+					filter: "missed",
+					inputBytes: 4000,
+					outputBytes: 4000,
+					savedBytes: 0,
+					exitCode: 0,
+					kind: "missed",
+				},
+				{ agentDir },
+			);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/project",
+					command: "bun test",
+					filter: "missed",
+					inputBytes: 2000,
+					outputBytes: 2000,
+					savedBytes: 0,
+					exitCode: 0,
+					kind: "missed",
+				},
+				{ agentDir },
+			);
+			// Unrelated cwd — must not appear in output scoped to /tmp/project.
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/other",
+					command: "npm run build",
+					filter: "missed",
+					inputBytes: 99000,
+					outputBytes: 99000,
+					savedBytes: 0,
+					exitCode: 0,
+					kind: "missed",
+				},
+				{ agentDir },
+			);
+
+			const current = createRuntime();
+			const result = await executeAcpBuiltinSlashCommand("/gain --missed", current.runtime);
+			expect(result).toEqual({ consumed: true });
+
+			const out = current.output[0];
+			// Correct mode label — not the default summary label.
+			expect(out).toContain("Minimizer missed output for");
+			expect(out).not.toContain("Minimizer savings");
+
+			// Byte view section.
+			expect(out).toContain("Largest unminimized command outputs:");
+			// cargo test: 8000+4000=12000 → formatNumber → "12K" bytes total, 2 cmds, avg 6000 → "6K"
+			expect(out).toContain("cargo test:");
+			expect(out).toContain("12K bytes total");
+			expect(out).toContain("2 cmds");
+			// bun test should also appear.
+			expect(out).toContain("bun test:");
+
+			// Token view section.
+			expect(out).toContain("Highest potential token savings:");
+			// cargo test potential = floor(12000/4) = 3000 → formatNumber → "3K" est. tokens
+			expect(out).toContain("3K est. tokens");
+			// bun test potential = floor(2000/4) = 500 → "500" est. tokens
+			expect(out).toContain("500 est. tokens");
+
+			// Unrelated cwd must be absent.
+			expect(out).not.toContain("npm run build");
+			expect(out).not.toContain("/tmp/other");
 		} finally {
 			setAgentDir(previousAgentDir);
 			await fs.rm(agentDir, { recursive: true, force: true });

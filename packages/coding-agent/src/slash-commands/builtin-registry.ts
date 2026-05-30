@@ -230,6 +230,8 @@ type GainSlashRow = {
 	savedBytes: number;
 	estimatedTokensSaved: number;
 	usesEstimatedTokensSaved: boolean;
+	estimatedInputTokens: number;
+	tokensSavedRatio: number | null;
 };
 
 type GainSlashMode = "summary" | "discover" | "missed";
@@ -269,7 +271,12 @@ function parseGainSlashArgs(args: string): GainSlashArgs {
 
 async function buildGainSlashReport(cwd: string, parsed: GainSlashArgs): Promise<string> {
 	const context = await loadMinimizerGainContext({ cwd, all: parsed.all, days: parsed.days });
-	const lines = parsed.mode === "discover" ? buildGainDiscoverLines(context) : buildGainReportLines(context);
+	const lines =
+		parsed.mode === "discover"
+			? buildGainDiscoverLines(context)
+			: parsed.mode === "missed"
+				? buildGainMissedLines(context)
+				: buildGainReportLines(context);
 	lines.push("", `Path: ${shortenPath(context.path)}`);
 	return lines.join("\n");
 }
@@ -288,6 +295,31 @@ function buildGainDiscoverLines(context: MinimizerGainContext): string[] {
 				`  ${row.command}: ${formatNumber(row.savedBytes)} bytes saved (${formatNumber(row.avgSavedBytes)} avg), ${formatNumber(row.commands)} cmds, filter=${row.filter}`,
 			);
 		}
+	}
+	return lines;
+}
+
+function buildGainMissedLines(context: MinimizerGainContext): string[] {
+	const label = context.all
+		? `Minimizer missed output across all repos (${context.days}d)`
+		: `Minimizer missed output for ${shortenPath(context.cwd ?? context.path)} (${context.days}d)`;
+	const lines = [label];
+	const totalMissedCommands = context.missed.commands.reduce((n, row) => n + row.commands, 0);
+	if (totalMissedCommands === 0) {
+		lines.push("", "No unminimized shell output recorded for this scope yet.");
+		return lines;
+	}
+	lines.push("", "Largest unminimized command outputs:");
+	for (const row of context.missed.commands) {
+		lines.push(
+			`  ${row.command}: ${formatNumber(row.inputBytes)} bytes total, ${formatNumber(row.avgInputBytes)} avg, ${formatNumber(row.commands)} cmds, exit=${formatExitCodes(row.exitCodes)}`,
+		);
+	}
+	lines.push("", "Highest potential token savings:");
+	for (const row of context.missed.potentialTokenSavings) {
+		lines.push(
+			`  ${row.command}: ${formatNumber(row.estimatedPotentialTokensSaved)} est. tokens, ${formatNumber(row.avgEstimatedPotentialTokensSaved)} avg, ${formatNumber(row.commands)} cmds, exit=${formatExitCodes(row.exitCodes)}`,
+		);
 	}
 	return lines;
 }
@@ -334,7 +366,7 @@ function buildGainReportLines(context: MinimizerGainContext): string[] {
 			: `Minimizer savings for ${shortenPath(context.cwd ?? context.path)} (${context.days}d)`,
 		`Commands: ${formatNumber(context.summary.commands)}`,
 		`Saved Bytes: ${formatNumber(context.summary.savedBytes)}`,
-		`${formatTokensSavedLabel(context.summary.usesEstimatedTokensSaved)}: ${formatNumber(context.summary.estimatedTokensSaved)}`,
+		`${formatTokensSavedLabel(context.summary.usesEstimatedTokensSaved)}: ${formatNumber(context.summary.estimatedTokensSaved)} (${formatTokensSavedPercent(context.summary.tokensSavedRatio)})`,
 		"",
 		"Gain:",
 	];
@@ -378,7 +410,7 @@ function pushGainRows<T extends GainSlashRow>(
 ): void {
 	for (const row of rows.slice(0, limit)) {
 		lines.push(
-			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}`,
+			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)} (${formatTokensSavedPercent(row.tokensSavedRatio)})`,
 		);
 	}
 }
@@ -390,6 +422,10 @@ function formatExitCodes(exitCodes: Array<number | null>): string {
 
 function formatTokensSavedLabel(usesEstimatedTokensSaved: boolean): string {
 	return usesEstimatedTokensSaved ? "Estimated Tokens Saved" : "Tokens Saved";
+}
+
+function formatTokensSavedPercent(ratio: number | null): string {
+	return ratio === null ? "-" : `${(ratio * 100).toFixed(1)}%`;
 }
 
 const DELEGATE_USAGE =
