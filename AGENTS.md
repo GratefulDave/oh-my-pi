@@ -19,6 +19,15 @@ This repo contains multiple packages, but **`packages/coding-agent/`** is the pr
 | `packages/utils`        | Shared utilities (logger, streams, temp files)       |
 | `crates/pi-natives`     | Rust crate for performance-critical text/grep ops    |
 
+### Fork namespace debt
+
+- This fork's executable is `lex`, and local developer installs typically live at `~/.local/bin/lex`.
+- Despite that branding/runtime entrypoint, the fork still uses upstream OMP paths for user/project state:
+  - user config/state under `~/.omp/...`
+  - project-scoped resources under `<cwd>/.omp/...`
+- This includes more than config: plugins, natives cache, logs, stats DB, managed Python env, and related runtime files still live in the `.omp` namespace.
+- Treat this as current behavior and migration debt. Do **not** assume `lex` implies a `~/.lex/...` or `<cwd>/.lex/...` storage namespace unless code has been explicitly changed.
+
 ## ICM Memory Policy
 
 Use ICM memory only for durable high-signal facts, and scope every memory to the relevant repository/project topic:

@@ -7,18 +7,14 @@
 - Model-facing prompt: `packages/hashline/src/prompt.md`
 - Key collaborators:
   - `packages/coding-agent/src/utils/edit-mode.ts` — selects active edit mode
-  - `packages/hashline/src/grammar.lark` — custom-tool grammar for hashline mode
-  - `packages/hashline/src/input.ts` — splits `¶PATH` sections
-  - `packages/hashline/src/parser.ts` — parses op-prefixed edits and verbatim payload lines
-  - `packages/hashline/src/apply.ts` — validates anchors and applies edits
+  - `packages/hashline/src/grammar.lark` — canonical constrained-decoding grammar
+  - `packages/hashline/src/format.ts` — sigils and header constants (`¶`, `#`, `+`, `replace`, `delete`, `insert`)
+  - `packages/hashline/src/input.ts` — parses `¶PATH#TAG` sections
+  - `packages/hashline/src/tokenizer.ts` / `packages/hashline/src/parser.ts` — tokenizes and parses ops
+  - `packages/hashline/src/apply.ts` — applies parsed edits to file text
   - `packages/hashline/src/mismatch.ts` — stale-anchor mismatch formatting
-  - `packages/hashline/src/recovery.ts` — cache-based stale-anchor recovery
-  - `packages/hashline/src/format.ts` — computes 4-hex file hashes and `LINE:TEXT` display lines shared with `read`/`search`
-  - `packages/coding-agent/src/edit/file-snapshot-store.ts` — per-session read snapshot cache
-  - `packages/coding-agent/src/tools/read.ts` — emits anchored lines and records read snapshots
-  - `packages/coding-agent/src/tools/search.ts` — records sparse snapshots from matches/context
-  - `packages/coding-agent/src/tools/fs-cache-invalidation.ts` — invalidates FS scan caches after writes
-  - `packages/coding-agent/src/edit/streaming.ts` — computes in-flight diff previews for the TUI
+  - `packages/hashline/src/recovery.ts` — snapshot-based stale-anchor recovery
+  - `packages/hashline/src/snapshots.ts` — mints and resolves per-path opaque snapshot tags
 
 ## Inputs
 
@@ -26,27 +22,43 @@
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `input` | `string` | Yes | One or more edit sections. Anchored sections must start with `¶PATH#HASH`; unbound `¶PATH` is allowed only for new-file / `BOF` / `EOF` boundary inserts. Optional `*** Begin Patch` / `*** End Patch` envelope is ignored if present. |
+| `input` | `string` | Yes | One or more file sections. Anchored sections start with `¶PATH#TAG`; hashless `¶PATH` is allowed only for new-file creation or purely `insert head:` / `insert tail:` inserts. Optional `*** Begin Patch` / `*** End Patch` envelope is ignored if present. |
 
 Patch language inside `input`:
 
-- Section header: `¶PATH#HASH` for anchored edits, `¶PATH` for BOF/EOF-only inserts
-- Insert after: `LINE↓[payload]`
-- Insert before: `LINE↑[payload]`
-- Replace range: `A-B:[payload]`
-- Single-line replace sugar: `A:[payload]` means `A-A:[payload]`
-- Delete range: `A-B!`
-- Single-line delete sugar: `A!` means `A-A!`
-- **Payload semantics:** the first payload line is whatever follows the sigil on the op line itself; additional payload lines follow on subsequent lines and append after the inline first line. An empty inline (just the sigil followed by a newline) means the first payload line is empty. So bare `A↑` / `A↓` insert one blank line, and bare `A:` / `A-B:` replace the line/range with one blank line. But `A↓\nfoo` inserts blank-then-`foo`, not just `foo` — for a single-line insert, put `foo` inline as `A↓foo`.
-- `!` deletes and forbids payload.
-- Read lines like `84:content` are already valid single-line replacements.
-- Special anchors: `BOF`, `EOF` (both support inline payload, e.g. `BOF↓export const done = true;`).
-- Anchor token: bare line number, for example `41`
-- File binding: 4-hex hash in the section header, for example `¶src/a.ts#1a2b`
+- **File header**: `¶PATH#TAG` (or `¶PATH` for new-file / head/tail-only inserts). `TAG` is three uppercase-hex chars minted by the session snapshot store.
+- **Operations**:
+  - `replace N..M:` — replace original lines N..M with the body rows below.
+  - `delete N..M` — delete original lines N..M. No body.
+  - `insert before N:` — insert body rows immediately before line N.
+  - `insert after N:` — insert body rows immediately after line N.
+  - `insert head:` — insert body rows at the start of the file.
+  - `insert tail:` — insert body rows at the end of the file.
+- **Body rows**:
+  - Only body-bearing headers end in `:`.
+  - Every body row is `+TEXT`; `+` alone adds a blank line.
+  - `delete` never has body rows.
+  - There is no repeat row kind. To keep a line, leave it out of every range; split edits into multiple hunks when needed.
+  - `-` rows are invalid. Literal text beginning with `-` or `+` must be written as `+-text` / `++text`.
 
-Anchors come from `read`/`search` output. `read` emits a `¶PATH#HASH` header and lines as `LINE:TEXT`; copy the header into the edit section and copy only the line number into op lines.
+Anchors come from `read`/`search` output. `read` emits a `¶PATH#TAG` header from the session snapshot store and lines as `LINE:TEXT`; copy the header into the edit section and copy only the line number into hunk headers.
 
-Other edit modes exist (`replace`, `patch`, `apply_patch`) and are selected outside the tool payload by `resolveEditMode()` in `packages/coding-agent/src/utils/edit-mode.ts`. Their schemas are different; this document covers the default hashline mode.
+### Tolerated input shapes (lenient parsing)
+
+The canonical grammar is strict, but the hand parser accepts a few non-dangerous variants:
+
+- `replace N:` — accepted as `replace N..N:`.
+- `delete N` — accepted as single-line delete.
+- Missing trailing colon on `replace` or `insert` — accepted.
+- `replace N-M:`, `replace N…M:`, and `replace N M:` — accepted as `replace N..M:`.
+- Bare body rows with no `+` prefix are auto-prepended with `+` and a `BARE_BODY_AUTO_PIPED_WARNING` is appended.
+- `*** Begin Patch` / `*** End Patch` envelopes are silently consumed. `*** Abort` terminates parsing silently — ops parsed before the marker still apply, no warning surfaced.
+- `*** Update File:` / `*** Add File:` / `*** Delete File:` / `*** Move to:` apply_patch sentinels throw an `apply_patch sentinel … is not valid in hashline` error.
+- `@@`-bracketed hunk headers are rejected with guidance to write a verb header.
+- Bare `N` and bare `N M` / `N..M` headers are rejected with guidance to write `replace` or `delete`.
+- `delete N..M:` and any body rows under `delete` are rejected.
+- Empty `replace` / `insert` hunks are rejected.
+- `-` body rows are rejected with `MINUS_ROW_REJECTED`.
 
 ## Outputs
 - Single-shot tool result; hashline mode does not use a `resolve` preview/apply handshake.
@@ -127,27 +139,32 @@ return clean.length === 0 ? DEF : clean.toUpperCase();
 ```
 
 ```text
-¶src/a.ts#1a2b
-4:const clean = (name || DEF).trim();
+¶a.ts#0A3
+replace 1..1:
++const X = "b";
++export const Y = X;
 ```
 
-BOF/EOF examples:
+Insert below line 5:
 
 ```text
-¶src/a.ts
-BOF↓const HEADER = true;
+¶a.ts#0A3
+insert after 5:
++console.log(X + Y);
 ```
 
+Insert above line 5:
 ```text
-¶src/a.ts
-EOF↓export const done = true;
+¶a.ts#0A3
+insert before 5:
++console.log(X + Y);
 ```
 
 Delete / blank examples:
 
 ```text
-¶src/a.ts#1a2b
-4!
+¶a.ts#0A3
+delete 4..5
 ```
 
 ```text
@@ -156,17 +173,21 @@ Delete / blank examples:
 ```
 
 ```text
-¶src/a.ts#1a2b
-4-6!
+¶a.ts#0A3
+insert head:
++// header
+insert tail:
++// trailer
 ```
 
 Multi-file example:
 
 ```text
-¶src/a.ts#1a2b
-4:const enabled = true;
-¶src/b.ts#3c4d
-20!
+¶src/a.ts#0A3
+replace 4..4:
++const enabled = true;
+¶src/b.ts#1F7
+delete 20
 ```
 
 ## Side Effects
@@ -186,13 +207,10 @@ Multi-file example:
   - The tool itself is marked `nonAbortable = true` and `concurrency = "exclusive"` in `packages/coding-agent/src/edit/index.ts`.
 
 ## Limits & Caps
-- Default mode is `hashline` (`DEFAULT_EDIT_MODE`) in `packages/coding-agent/src/utils/edit-mode.ts`.
-- Section tags are short opaque 3-hex values minted by `SnapshotStore.recordContiguous()` (or `recordSparse()`) in `packages/hashline/src/snapshots.ts` and stored in the session-scoped `InMemorySnapshotStore`. The tag is a slot pointer into a ring-permuted table, not a content hash.
-- The visible mismatch report shows 2 lines of context on each side (`MISMATCH_CONTEXT`) in `packages/hashline/src/format.ts`.
-- Stale-anchor recovery uses `fuzzFactor: 0` (`HASHLINE_RECOVERY_FUZZ_FACTOR`) in `packages/hashline/src/recovery.ts`.
-- The per-session read cache keeps at most 30 paths (`MAX_PATHS_PER_SESSION`) in `packages/coding-agent/src/edit/file-snapshot-store.ts`.
-- Hashline streaming chunk defaults are 200 lines or 64 KiB per chunk (`packages/hashline/src/types.ts`, consumed by `packages/hashline/src/stream.ts`).
-- `HL_OP_INSERT_BEFORE` is `↑`, `HL_OP_INSERT_AFTER` is `↓`, `HL_OP_REPLACE` is `:`, `HL_OP_DELETE` is `!`, `HL_OP_CHARS` is `↑↓:!`, `HL_FILE_PREFIX` is `¶`, `HL_FILE_HASH_SEP` is `#`, and `HL_LINE_BODY_SEP` is `:` (`packages/hashline/src/format.ts`).
+- File snapshot tags are exactly three uppercase-hex chars minted by the per-session snapshot store.
+- The visible mismatch report shows 2 lines of context on each side (`MISMATCH_CONTEXT`) in `packages/hashline/src/messages.ts`.
+- Stale-anchor recovery uses `fuzzFactor: 0` in `packages/hashline/src/recovery.ts`.
+- `HL_FILE_PREFIX` is `¶`, `HL_PAYLOAD_REPLACE` is `+`, `HL_RANGE_SEP` is `..`, `HL_FILE_HASH_SEP` is `#`, and hunk keyword constants are `replace` / `delete` / `insert` (`packages/hashline/src/format.ts`).
 
 ## Errors
 - Missing section header:
@@ -211,27 +229,31 @@ Multi-file example:
 - Payload forbidden for `!`:
   - `line N: ! deletes only. Payload is forbidden after !; use : to replace.`
 - Stray payload line:
-  - `line N: payload line has no preceding ↑, ↓, :, or ! operation.`
-- Unknown op:
-  - `line N: unrecognized op. Use LINE↑ (insert before), LINE↓ (insert after), LINE: / A-B: (replace), or LINE! / A-B! (delete).`
-- Missing file for anchor-scoped edits:
-  - `File not found: <path>`
+  - `line N: payload line has no preceding hunk header. Use \`replace N..M:\`, \`delete N..M\`, or \`insert before|after|head|tail:\` above the body. Got "...".`
+- Minus row:
+  - ``line N: `-` rows are not valid; hashline ranges already name the lines being changed. To insert a literal line starting with `-`, write `+-…`.``
+- Empty body-bearing hunk:
+  - `line N: \`replace N..M:\` needs at least one \`+TEXT\` body row. To delete lines, use \`delete N..M\`.`
+  - `line N: \`insert\` needs at least one \`+TEXT\` body row.`
+- Delete with body:
+  - `line N: \`delete N..M\` does not take body rows. Remove the body, or use \`replace N..M:\`.`
+- Range out of order:
+  - `line N: range A..B ends before it starts.`
+- Overlapping hunks on the same anchor:
+  - `line N: anchor line X is already targeted by another hunk on line Y. Issue ONE hunk per range; payload is only the final desired content, never a before/after pair.`
+- apply_patch / unified-diff contamination:
+  - `line N: apply_patch sentinel "*** …" is not valid in hashline. File sections start with \`¶path#HASH\` (no \`Update File:\` / \`Add File:\` keyword). Use \`replace N..M:\`, \`delete N..M\`, or \`insert before|after|head|tail:\` ops.`
+  - `line N: unified-diff hunk header (\`@@ -N,M +N,M @@\`) is not valid in hashline. Use \`replace N..M:\`, \`delete N..M\`, or \`insert before|after|head|tail:\` ops.`
+  - `line N: \`@@\`-bracketed hunk header "@@ …" is not valid in hashline. Drop the \`@@ ... @@\` brackets and write a verb header such as \`replace N..M:\`.`
+  - `line N: hunk headers need a verb. Use \`replace N..N:\` to replace, or \`delete N\` to delete.`
+  - `line N: bare range hunk header "N M" is not valid. Hunk headers need a verb: write \`replace N..M:\` or \`delete N..M\`.`
 - Out-of-range anchor:
   - `Line N does not exist (file has M lines)`
-- Stale file hash throws `HashlineMismatchError`. The error contains both hashes, re-read guidance, and nearby current file lines as `*LINE:TEXT` / ` LINE:TEXT`.
+- Stale snapshot tag: the `Patcher` first attempts snapshot-based recovery. When recovery cannot prove a valid result it throws `MismatchError`, which distinguishes recognized-but-drifted hashes from never-recorded hashes. The error includes the current file hash plus context around each anchor.
 - No-op edit:
   - `Edits to <path> resulted in no changes being made.`
 - Recovery failure is silent internally: if cache-based merge cannot prove a valid result, the mismatch error is surfaced unchanged.
 
-## Notes
-- `read` and `search` are the authoritative source of section hashes. Copy `¶PATH#HASH`; op lines use bare line numbers and do not want the trailing `:TEXT`.
-- Multi-op patches are parsed against the original file snapshot. Do not renumber later anchors after earlier ops; `applyHashlineEdits()` buckets and applies them bottom-up.
-- Failed hand-edits often come from sequentially shifting later anchors inside the same patch. Treat every op as using the line numbers from the original section header.
-- `A-B:` is not a primitive replace in the parser. With payload, it expands to inserts before `A` plus deletes for `A-B`. `A-B!` is the direct delete form. Bare `A:` / `A-B:` (no payload) replaces with a single blank line; bare `↑` / `↓` insert a blank line.
-- Inline payload tip: trailing whitespace on the op line is trimmed. To preserve trailing spaces in the inserted/replacement content, put that content on the next line instead of inline.
-- The patcher resolves a section tag via `InMemorySnapshotStore.byHash(path, tag)` and then calls `matchesLiveFile()` on the recovered snapshot to verify the recorded lines against the live file before applying edits. Stale or mismatched tags surface as `HashlineMismatchError`; they do not silently apply.
-- `splitHashlineInputs()` normalizes absolute `¶PATH#HASH` headers back to a cwd-relative path when the file is inside the current working tree. Headers with any run of leading `¶` chars (e.g. `¶foo.ts`, `¶¶foo.ts`, `¶¶¶foo.ts`) are accepted; the canonical form is `¶PATH#HASH` for anchored edits.
-- Optional `*** Begin Patch` / `*** End Patch` markers are accepted in hashline mode, but the file sections are still `¶PATH#HASH`-based, not Codex `*** Update File:` hunks.
-- `*** Abort` terminates parsing early and returns `ABORT_WARNING`; ops parsed before the marker still apply.
-- File-read cache invalidation is conflict-based, not write-through invalidation. If `read` later records content for a line that disagrees with the cached snapshot, the entire snapshot for that path is replaced with the newly observed lines (`packages/coding-agent/src/edit/file-snapshot-store.ts`).
-- There is no resolve-style apply/discard phase for hashline edits. The only preview path is the transient TUI diff preview in `packages/coding-agent/src/edit/streaming.ts`.
+## Warnings
+- `Auto-prefixed bare body row(s) with +. Body rows must be +TEXT literal lines …` (`BARE_BODY_AUTO_PIPED_WARNING`)
+- Recovery banners: `RECOVERY_EXTERNAL_WARNING`, `RECOVERY_SESSION_CHAIN_WARNING`, `RECOVERY_SESSION_REPLAY_WARNING` (`packages/hashline/src/messages.ts`).

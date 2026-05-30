@@ -18,14 +18,10 @@ describe("resolveMemoryBackend", () => {
 		expect(resolveMemoryBackend(b).id).toBe("hindsight");
 	});
 
-	it("returns the icm backend when memory.backend is icm", () => {
-		const settings = Settings.isolated({ "memory.backend": "icm", "memories.enabled": true });
-		expect(resolveMemoryBackend(settings).id).toBe("icm");
-	});
-
-	it("exposes icm as a selectable memory backend option", () => {
-		expect(getEnumValues("memory.backend")).toContain("icm");
+	it("does not expose icm as a selectable memory backend option", () => {
+		expect(getEnumValues("memory.backend")).not.toContain("icm");
 		const ui = getUi("memory.backend");
-		expect(ui?.options).toEqual(expect.arrayContaining([expect.objectContaining({ value: "icm", label: "ICM" })]));
+		const optionValues = (ui?.options as readonly { value: string }[] | undefined)?.map(o => o.value) ?? [];
+		expect(optionValues).not.toContain("icm");
 	});
 });

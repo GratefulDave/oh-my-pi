@@ -62,7 +62,7 @@ import type { LspStartupServerInfo } from "../tools";
 import { normalizeLocalScheme } from "../tools/path-utils";
 import { setAutoQaConsentHandler } from "../tools/report-tool-issue";
 import { type ResolveToolDetails, runResolveInvocation } from "../tools/resolve";
-import { formatPhaseDisplayName } from "../tools/todo-write";
+import { formatPhaseDisplayName, selectStickyTodoWindow, todoMatchesAnyDescription } from "../tools/todo-write";
 import { ToolError } from "../tools/tool-errors";
 import type { EventBus } from "../utils/event-bus";
 import { getEditorCommand, openInEditor } from "../utils/external-editor";
@@ -480,6 +480,8 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 		this.#observerRegistry.setMainSession(this.sessionManager.getSessionFile() ?? undefined);
 		this.#observerRegistry.onChange(() => {
+			this.#reconcileTodosWithSubagents();
+			this.#renderTodoList();
 			this.statusLine.setSubagentCount(this.#observerRegistry.getActiveSubagentCount());
 			this.ui.requestRender();
 		});
@@ -900,17 +902,18 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.renderSessionContext(context);
 	}
 
-	#formatTodoLine(todo: TodoItem, prefix: string): string {
+	#formatTodoLine(todo: TodoItem, prefix: string, matched: boolean): string {
 		const checkbox = theme.checkbox;
 		const marker = formatHudNoteMarker(todo.notes?.length ?? 0);
 		switch (todo.status) {
 			case "completed":
 				return theme.fg("success", `${prefix}${checkbox.checked} ${chalk.strikethrough(todo.content)}`) + marker;
 			case "in_progress":
-				return theme.fg("accent", `${prefix}${checkbox.unchecked} ${todo.content}`) + marker;
+				return theme.fg("accent", `${prefix}${theme.status.running} ${todo.content}`) + marker;
 			case "abandoned":
 				return theme.fg("error", `${prefix}${checkbox.unchecked} ${chalk.strikethrough(todo.content)}`) + marker;
 			default:
+				if (matched) return theme.fg("accent", `${prefix}${theme.status.running} ${todo.content}`) + marker;
 				return theme.fg("dim", `${prefix}${checkbox.unchecked} ${todo.content}`) + marker;
 		}
 	}
@@ -933,6 +936,15 @@ export class InteractiveMode implements InteractiveModeContext {
 		const indent = "  ";
 		const hook = theme.tree.hook;
 		const lines = ["", indent + theme.bold(theme.fg("accent", "Todos"))];
+		const activeDescs: string[] = [];
+		for (const session of this.#observerRegistry.getSessions()) {
+			if (session.kind !== "subagent" || session.status !== "active") continue;
+			const candidate =
+				session.description?.trim() || session.progress?.description?.trim() || session.label?.trim();
+			if (candidate) activeDescs.push(candidate);
+		}
+		const isMatched = (todo: TodoItem): boolean =>
+			activeDescs.length > 0 && todoMatchesAnyDescription(todo.content, activeDescs);
 
 		if (!this.todoExpanded) {
 			const activeIdx = phases.indexOf(this.#getActivePhase(phases) ?? phases[0]);
@@ -941,28 +953,49 @@ export class InteractiveMode implements InteractiveModeContext {
 			lines.push(
 				`${indent}${theme.fg("accent", `${hook} ${formatPhaseDisplayName(activePhase.name, activeIdx + 1)}`)}`,
 			);
-			const visibleTasks = activePhase.tasks.slice(0, 5);
-			visibleTasks.forEach((todo, index) => {
+			const { visible, hiddenOpenCount } = selectStickyTodoWindow(activePhase.tasks, 5);
+			visible.forEach((todo, index) => {
 				const prefix = `${indent}${index === 0 ? hook : " "} `;
-				lines.push(this.#formatTodoLine(todo, prefix));
+				lines.push(this.#formatTodoLine(todo, prefix, isMatched(todo)));
 			});
-			if (visibleTasks.length < activePhase.tasks.length) {
-				const remaining = activePhase.tasks.length - visibleTasks.length;
-				lines.push(theme.fg("muted", `${indent}  ${hook} +${remaining} more`));
+			if (hiddenOpenCount > 0) {
+				lines.push(theme.fg("muted", `${indent}  ${hook} +${hiddenOpenCount} more`));
 			}
 			this.todoContainer.addChild(new Text(lines.join("\n"), 1, 0));
 			return;
 		}
-
 		phases.forEach((phase, phaseIndex) => {
 			lines.push(`${indent}${theme.fg("accent", `${hook} ${formatPhaseDisplayName(phase.name, phaseIndex + 1)}`)}`);
 			phase.tasks.forEach((todo, index) => {
 				const prefix = `${indent}${index === 0 ? hook : " "} `;
-				lines.push(this.#formatTodoLine(todo, prefix));
+				lines.push(this.#formatTodoLine(todo, prefix, isMatched(todo)));
 			});
 		});
 
 		this.todoContainer.addChild(new Text(lines.join("\n"), 1, 0));
+	}
+	#reconcileTodosWithSubagents(): void {
+		const completedDescs: string[] = [];
+		for (const session of this.#observerRegistry.getSessions()) {
+			if (session.kind !== "subagent" || session.status !== "completed") continue;
+			const candidate =
+				session.description?.trim() || session.progress?.description?.trim() || session.label?.trim();
+			if (candidate) completedDescs.push(candidate);
+		}
+		if (completedDescs.length === 0) return;
+		let mutated = false;
+		const next: TodoPhase[] = this.todoPhases.map(phase => ({
+			name: phase.name,
+			tasks: phase.tasks.map(task => {
+				if (task.status !== "pending" && task.status !== "in_progress") return task;
+				if (!todoMatchesAnyDescription(task.content, completedDescs)) return task;
+				mutated = true;
+				return { ...task, status: "completed" as const };
+			}),
+		}));
+		if (!mutated) return;
+		this.todoPhases = next;
+		this.session.setTodoPhases(next);
 	}
 
 	async #loadTodoList(): Promise<void> {
@@ -1859,9 +1892,14 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 
 		this.#renderPlanPreview(planContent, { append: true });
+		const contextUsage = this.session.getContextUsage();
+		const keepContextLabel =
+			typeof contextUsage?.percent === "number" && contextUsage.percent > 0
+				? `Approve and keep context (${contextUsage.percent.toFixed(1)}%)`
+				: "Approve and keep context";
 		const choice = await this.showHookSelector(
 			"Plan mode - next step",
-			["Approve and execute", "Approve and compact context", "Approve and keep context", "Refine plan"],
+			["Approve and execute", "Approve and compact context", keepContextLabel, "Refine plan"],
 			{
 				helpText: this.#getPlanReviewHelpText(),
 				onExternalEditor: () => void this.#openPlanInExternalEditor(planFilePath),
@@ -1871,6 +1909,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		if (
 			choice === "Approve and execute" ||
 			choice === "Approve and compact context" ||
+			choice === keepContextLabel ||
 			choice === "Approve and keep context"
 		) {
 			const finalPlanFilePath = details.finalPlanFilePath || planFilePath;

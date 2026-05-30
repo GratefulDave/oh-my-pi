@@ -1,12 +1,12 @@
 /**
  * Classify an install spec as a marketplace plugin reference or a plain npm package.
  *
- * Rules (applied in order):
- *  1. Starts with `@` (scoped npm) -> always npm.
- *  2. Contains `@` after the first character -> split on the LAST `@`.
+ *  1. Starts with `npm:` -> npm package with the prefix stripped.
+ *  2. Starts with `@` (scoped npm) -> always npm.
+ *  3. Contains `@` after the first character -> split on the LAST `@`.
  *     If the right-hand side is a known marketplace name, it's a marketplace ref.
  *     Otherwise it's an npm spec (e.g. `pkg@1.2.3`).
- *  3. No `@` -> npm.
+ *  4. No `@` -> npm.
  */
 // Common npm dist-tags that should never be interpreted as marketplace names
 const NPM_DIST_TAGS = new Set([
@@ -29,9 +29,11 @@ export function classifyInstallTarget(
 	spec: string,
 	knownMarketplaces: Set<string>,
 ): { type: "marketplace"; name: string; marketplace: string } | { type: "npm"; spec: string } {
-	// Rule 1: scoped npm package — @ at position 0 is never a marketplace separator.
+	// Rule 1: explicit npm URI accepted for compatibility with `pi install npm:<pkg>`.
+	if (spec.startsWith("npm:")) return { type: "npm", spec: spec.slice("npm:".length) };
+	// Rule 2: scoped npm package — @ at position 0 is never a marketplace separator.
 	if (spec.startsWith("@")) return { type: "npm", spec };
-	// Rule 2: @ somewhere after the first character.
+	// Rule 3: @ somewhere after the first character.
 	const atIdx = spec.lastIndexOf("@");
 	if (atIdx > 0) {
 		const rhs = spec.slice(atIdx + 1);
@@ -45,6 +47,6 @@ export function classifyInstallTarget(
 		// Not a known marketplace — treat as npm version specifier.
 		return { type: "npm", spec };
 	}
-	// Rule 3: no @ at all.
+	// Rule 4: no @ at all.
 	return { type: "npm", spec };
 }

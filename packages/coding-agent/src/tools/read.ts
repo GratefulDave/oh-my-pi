@@ -129,9 +129,7 @@ function buildHashlineHeaderContext(
 	absolutePath: string,
 ): HashlineHeaderContext {
 	const normalized = normalizeToLF(fullText);
-	const fileHash = getFileSnapshotStore(session).recordContiguous(absolutePath, 1, normalized.split("\n"), {
-		fullText: normalized,
-	});
+	const fileHash = getFileSnapshotStore(session).record(absolutePath, normalized);
 	return {
 		header: formatHashlineHeader(displayPath, fileHash),
 		fileHash,
@@ -158,9 +156,7 @@ function recordHashlineSnapshot(
 	context: HashlineHeaderContext | undefined,
 ): void {
 	if (!context || !absolutePath || !path.isAbsolute(absolutePath)) return;
-	getFileSnapshotStore(session).recordContiguous(absolutePath, 1, context.fullText.split("\n"), {
-		fullText: context.fullText,
-	});
+	getFileSnapshotStore(session).record(absolutePath, context.fullText);
 }
 
 function formatTextWithMode(
@@ -1067,26 +1063,26 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 			}
 
 			const collectedLines = streamResult.lines;
+			let displayLines: string[] = collectedLines;
 			if (!rawSelector && maxColumns > 0) {
+				let cloned: string[] | undefined;
 				for (let i = 0; i < collectedLines.length; i++) {
 					const { text, wasTruncated } = truncateLine(collectedLines[i], maxColumns);
 					if (wasTruncated) {
-						collectedLines[i] = text;
+						if (!cloned) cloned = collectedLines.slice();
+						cloned[i] = text;
 						columnTruncated = maxColumns;
 					}
 				}
+				if (cloned) displayLines = cloned;
 			}
 
 			if (collectedLines.length > 0) {
-				getFileSnapshotStore(this.session).recordContiguous(
-					absolutePath,
-					range.startLine,
-					collectedLines,
-					hashContext ? { fullText: hashContext.fullText } : {},
-				);
+				const snapshotText = hashContext ? hashContext.fullText : normalizeToLF(collectedLines.join("\n"));
+				getFileSnapshotStore(this.session).record(absolutePath, snapshotText);
 			}
 
-			const blockText = collectedLines.join("\n");
+			const blockText = displayLines.join("\n");
 			const formatted = formatTextWithMode(blockText, range.startLine, shouldAddHashLines, shouldAddLineNumbers);
 			blocks.push(hashContext && !emittedHashlineHeader ? prependHashlineHeader(formatted, hashContext) : formatted);
 			if (hashContext) emittedHashlineHeader = true;
@@ -1862,17 +1858,21 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 					// view — column truncation surfaces separately via `.limits()`.
 					const rawSelector = isRawSelector(parsed);
 					const maxColumns = resolveOutputMaxColumns(this.session.settings);
+					let displayLines: string[] = collectedLines;
 					if (!rawSelector && maxColumns > 0) {
+						let cloned: string[] | undefined;
 						for (let i = 0; i < collectedLines.length; i++) {
 							const { text, wasTruncated } = truncateLine(collectedLines[i], maxColumns);
 							if (wasTruncated) {
-								collectedLines[i] = text;
+								if (!cloned) cloned = collectedLines.slice();
+								cloned[i] = text;
 								columnTruncated = maxColumns;
 							}
 						}
+						if (cloned) displayLines = cloned;
 					}
 
-					const selectedContent = collectedLines.join("\n");
+					const selectedContent = displayLines.join("\n");
 					const userLimitedLines = collectedLines.length;
 
 					const totalSelectedLines = totalFileLines - startLine;
@@ -1899,12 +1899,8 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 						: undefined;
 
 					if (collectedLines.length > 0 && !firstLineExceedsLimit) {
-						getFileSnapshotStore(this.session).recordContiguous(
-							absolutePath,
-							startLineDisplay,
-							collectedLines,
-							hashContext ? { fullText: hashContext.fullText } : {},
-						);
+						const snapshotText = hashContext ? hashContext.fullText : normalizeToLF(collectedLines.join("\n"));
+						getFileSnapshotStore(this.session).record(absolutePath, snapshotText);
 					}
 
 					let capturedDisplayContent: { text: string; startLine: number } | undefined;

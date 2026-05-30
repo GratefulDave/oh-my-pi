@@ -1,8 +1,8 @@
-# OpenCode Antigravity bridge for OMP
+# Antigravity Adapter for OMP
 
 This OMP extension registers `opencode-antigravity/*` models and routes them through the installed `opencode-antigravity-auth` OpenCode plugin.
 
-The bridge reuses the OpenCode plugin's OAuth flow, account pool, request rewrite, quota scheduling, token refresh, and response transform. It does not port those internals into OMP.
+The adapter reuses the OpenCode plugin's OAuth flow, account pool, request rewrite, quota scheduling, token refresh, and response transform. It does not port those internals into OMP.
 
 ## Configuration
 

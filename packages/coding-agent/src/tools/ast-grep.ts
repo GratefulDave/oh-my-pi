@@ -6,7 +6,7 @@ import type { Component } from "@oh-my-pi/pi-tui";
 import { Text } from "@oh-my-pi/pi-tui";
 import { prompt, untilAborted } from "@oh-my-pi/pi-utils";
 import * as z from "zod/v4";
-import { getFileSnapshotStore } from "../edit/file-snapshot-store";
+import { recordFileSnapshot } from "../edit/file-snapshot-store";
 import type { RenderResultOptions } from "../extensibility/custom-tools/types";
 import type { Theme } from "../modes/theme/theme";
 import astGrepDescription from "../prompts/tools/ast-grep.md" with { type: "text" };
@@ -218,22 +218,14 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 			}
 
 			const useHashLines = resolveFileDisplayMode(this.session).hashLines;
-			const hashContexts = new Map<string, { absolutePath: string; fileHash: string }>();
+			const hashContexts = new Map<string, { tag: string }>();
 			if (useHashLines) {
 				for (const relativePath of fileList) {
 					const absolutePath = path.resolve(this.session.cwd, relativePath);
-					try {
-						const fullText = await Bun.file(absolutePath).text();
-						const fileHash = getFileSnapshotStore(this.session).recordContiguous(
-							absolutePath,
-							1,
-							fullText.split("\n"),
-							{ fullText },
-						);
-						hashContexts.set(relativePath, { absolutePath, fileHash });
-					} catch {
-						// Best-effort: if a file disappears between ast-grep and rendering, emit plain line output.
-					}
+					// Whole-file content tag: any anchor validates while the file is
+					// unchanged; over-cap / unreadable files get no tag (plain output).
+					const tag = await recordFileSnapshot(this.session, absolutePath);
+					if (tag) hashContexts.set(relativePath, { tag });
 				}
 			}
 			const outputLines: string[] = [];
@@ -248,7 +240,6 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 					const endLine = match.startLine + lineCount - 1;
 					return Math.max(width, String(match.startLine).length, String(endLine).length);
 				}, 0);
-				const cacheEntries: Array<readonly [number, string]> = [];
 				for (const match of fileMatches) {
 					const matchLines = match.text.split("\n");
 					for (let index = 0; index < matchLines.length; index++) {
@@ -259,7 +250,6 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 							formatMatchLine(lineNumber, line, isMatch, { useHashLines: hashContext !== undefined }),
 						);
 						displayOut.push(formatCodeFrameLine(isMatch ? "*" : " ", lineNumber, line, lineNumberWidth));
-						cacheEntries.push([lineNumber, line] as const);
 					}
 					if (match.metaVariables && Object.keys(match.metaVariables).length > 0) {
 						const serializedMeta = Object.entries(match.metaVariables)
@@ -271,9 +261,7 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 					}
 					fileMatchCounts.set(relativePath, (fileMatchCounts.get(relativePath) ?? 0) + 1);
 				}
-				if (hashContext && cacheEntries.length > 0) {
-					getFileSnapshotStore(this.session).recordSparse(hashContext.absolutePath, cacheEntries);
-				}
+
 				return { model: modelOut, display: displayOut };
 			};
 
@@ -284,7 +272,7 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 					return {
 						modelLines: rendered.model,
 						displayLines: rendered.display,
-						headerSuffix: hashContext ? `#${hashContext.fileHash}` : "",
+						headerSuffix: hashContext ? `#${hashContext.tag}` : "",
 						skip: rendered.model.length === 0,
 					};
 				});
@@ -300,7 +288,7 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 					}
 					const hashContext = hashContexts.get(relativePath);
 					if (hashContext) {
-						outputLines.push(formatHashlineHeader(relativePath, hashContext.fileHash));
+						outputLines.push(formatHashlineHeader(relativePath, hashContext.tag));
 					}
 					outputLines.push(...rendered.model);
 					displayLines.push(...rendered.display);

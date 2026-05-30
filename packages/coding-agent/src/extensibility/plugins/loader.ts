@@ -11,6 +11,22 @@ import { getConfigDirPaths } from "../../config";
 import { installLegacyPiSpecifierShim } from "./legacy-pi-compat";
 import type { InstalledPlugin, PluginManifest, PluginRuntimeConfig, ProjectPluginOverrides } from "./types";
 
+function getPluginsRootForHome(home?: string): string {
+	return home ? path.join(home, ".omp", "plugins") : path.dirname(getPluginsPackageJson());
+}
+
+function getPluginsNodeModulesPath(home?: string): string {
+	return home ? path.join(getPluginsRootForHome(home), "node_modules") : getPluginsNodeModules();
+}
+
+function getPluginsPackageJsonPath(home?: string): string {
+	return home ? path.join(getPluginsRootForHome(home), "package.json") : getPluginsPackageJson();
+}
+
+function getPluginsLockfilePath(home?: string): string {
+	return home ? path.join(getPluginsRootForHome(home), "omp-plugins.lock.json") : getPluginsLockfile();
+}
+
 installLegacyPiSpecifierShim();
 
 // =============================================================================
@@ -19,9 +35,14 @@ installLegacyPiSpecifierShim();
 
 /**
  * Load plugin runtime config from lock file.
+ *
+ * `home` controls which `<plugins>/omp-plugins.lock.json` is read — pass it
+ * through whenever the caller is loading plugins for a tempdir-rooted
+ * scenario (tests, discovery sub-surfaces that need to mirror an alternate
+ * `LoadContext.home`).
  */
-async function loadRuntimeConfig(): Promise<PluginRuntimeConfig> {
-	const lockPath = getPluginsLockfile();
+async function loadRuntimeConfig(home?: string): Promise<PluginRuntimeConfig> {
+	const lockPath = getPluginsLockfilePath(home);
 	try {
 		return await Bun.file(lockPath).json();
 	} catch (err) {
@@ -46,44 +67,64 @@ async function loadProjectOverrides(cwd: string): Promise<ProjectPluginOverrides
 }
 /**
  * Get list of enabled plugins with their resolved configurations.
- * Respects both global runtime config and project overrides.
+ *
+ * Respects both global runtime config and project overrides. Iterates the
+ * union of `<plugins>/package.json#dependencies` (`bun install`-installed
+ * packages) and `<plugins>/omp-plugins.lock.json#plugins` (so locally
+ * `plugin link`-symlinked extensions, which never get a dependency entry,
+ * are still discovered). The optional `home` parameter pins the plugins
+ * root for callers that need to enumerate plugins relative to a non-default
+ * home (tests with a tempdir, discovery loaders threaded with
+ * `LoadContext.home`).
  */
-export async function getEnabledPlugins(cwd: string): Promise<InstalledPlugin[]> {
-	const pkgJsonPath = getPluginsPackageJson();
-	let pkg: { dependencies?: Record<string, string> };
-	try {
-		pkg = await Bun.file(pkgJsonPath).json();
-	} catch (err) {
-		if (isEnoent(err)) return [];
-		throw err;
-	}
+export async function getEnabledPlugins(cwd: string, opts: { home?: string } = {}): Promise<InstalledPlugin[]> {
+	const { home } = opts;
 
-	const nodeModulesPath = getPluginsNodeModules();
+	const nodeModulesPath = getPluginsNodeModulesPath(home);
 	if (!fs.existsSync(nodeModulesPath)) {
 		return [];
 	}
 
-	const deps = pkg.dependencies || {};
-	const runtimeConfig = await loadRuntimeConfig();
+	let depsKeys: string[] = [];
+	const pkgJsonPath = getPluginsPackageJsonPath(home);
+	try {
+		const pkg: { dependencies?: Record<string, string> } = await Bun.file(pkgJsonPath).json();
+		depsKeys = Object.keys(pkg.dependencies ?? {});
+	} catch (err) {
+		// Linked-only setups may have no `<plugins>/package.json` yet — that's
+		// fine, the lockfile still records the link.
+		if (!isEnoent(err)) throw err;
+	}
+
+	const runtimeConfig = await loadRuntimeConfig(home);
 	const projectOverrides = await loadProjectOverrides(cwd);
+
+	// Union: dependencies (npm/marketplace installs) ∪ runtime-config plugins
+	// (links + already-recorded installs). Set preserves first-seen order,
+	// putting deps before link-only entries for deterministic output.
+	const names = new Set<string>(depsKeys);
+	for (const name of Object.keys(runtimeConfig.plugins ?? {})) {
+		names.add(name);
+	}
+
 	const plugins: InstalledPlugin[] = [];
-	for (const [name] of Object.entries(deps)) {
+	for (const name of names) {
 		const pluginPkgPath = path.join(nodeModulesPath, name, "package.json");
 		let pluginPkg: { version: string; omp?: PluginManifest; pi?: PluginManifest };
 		try {
 			pluginPkg = await Bun.file(pluginPkgPath).json();
 		} catch (err) {
+			// Lockfile entry without a corresponding node_modules tree means the
+			// link was deleted out from under us; skip silently.
 			if (isEnoent(err)) continue;
 			throw err;
 		}
 
 		const manifest: PluginManifest | undefined = pluginPkg.omp || pluginPkg.pi;
-
 		if (!manifest) {
 			// Not an omp plugin, skip
 			continue;
 		}
-
 		manifest.version = pluginPkg.version;
 
 		const runtimeState = runtimeConfig.plugins[name];
@@ -213,7 +254,11 @@ export function resolvePluginExtensionPaths(plugin: InstalledPlugin): string[] {
 	return resolvePluginPaths(plugin, "extensions");
 }
 
-// =============================================================================
+export interface PluginExtensionEntry {
+	pluginName: string;
+	path: string;
+}
+
 // Aggregated Discovery
 // =============================================================================
 
@@ -262,15 +307,21 @@ export async function getAllPluginCommandPaths(cwd: string): Promise<string[]> {
 /**
  * Get all extension module paths from all enabled plugins.
  */
-export async function getAllPluginExtensionPaths(cwd: string): Promise<string[]> {
+export async function getAllPluginExtensionEntries(cwd: string): Promise<PluginExtensionEntry[]> {
 	const plugins = await getEnabledPlugins(cwd);
-	const paths: string[] = [];
+	const entries: PluginExtensionEntry[] = [];
 
 	for (const plugin of plugins) {
-		paths.push(...resolvePluginExtensionPaths(plugin));
+		for (const extensionPath of resolvePluginExtensionPaths(plugin)) {
+			entries.push({ pluginName: plugin.name, path: extensionPath });
+		}
 	}
 
-	return paths;
+	return entries;
+}
+
+export async function getAllPluginExtensionPaths(cwd: string): Promise<string[]> {
+	return (await getAllPluginExtensionEntries(cwd)).map(entry => entry.path);
 }
 
 /**

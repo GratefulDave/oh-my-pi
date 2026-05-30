@@ -11,7 +11,12 @@ describe("classifyInstallTarget", () => {
 		expect(result).toEqual({ type: "marketplace", name: "hello", marketplace: "my-marketplace" });
 	});
 
-	it("classifies scoped @scope/pkg as npm (rule 1: starts with @)", () => {
+	it("strips explicit npm: scheme before npm install handling", () => {
+		const result = classifyInstallTarget("npm:pi-cmux", KNOWN);
+		expect(result).toEqual({ type: "npm", spec: "pi-cmux" });
+	});
+
+	it("classifies scoped @scope/pkg as npm (rule 2: starts with @)", () => {
 		const result = classifyInstallTarget("@scope/pkg", KNOWN);
 		expect(result).toEqual({ type: "npm", spec: "@scope/pkg" });
 	});

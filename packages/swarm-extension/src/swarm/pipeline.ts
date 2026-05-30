@@ -10,6 +10,7 @@ import type { AgentSource, AuthStorage, ModelRegistry, Settings, SingleResult } 
 import { executeSwarmAgent } from "./executor";
 import type { SwarmDefinition } from "./schema";
 import type { StateTracker } from "./state";
+import type { RunSubprocessFn } from "./types";
 
 // ============================================================================
 // Types
@@ -22,6 +23,7 @@ export interface PipelineOptions {
 	authStorage?: AuthStorage;
 	modelRegistry?: ModelRegistry;
 	settings?: Settings;
+	runSubprocess: RunSubprocessFn;
 }
 
 export interface PipelineProgress {
@@ -55,7 +57,7 @@ export class PipelineController {
 	}
 
 	async run(options: PipelineOptions): Promise<PipelineResult> {
-		const { workspace, signal, onProgress, authStorage, modelRegistry, settings } = options;
+		const { workspace, signal, onProgress, authStorage, modelRegistry, settings, runSubprocess } = options;
 		const allResults = new Map<string, SingleResult[]>();
 		const errors: string[] = [];
 
@@ -108,6 +110,7 @@ export class PipelineController {
 					authStorage,
 					modelRegistry,
 					settings,
+					runSubprocess,
 				});
 
 				for (const [agentName, result] of iterationResults) {
@@ -142,6 +145,7 @@ export class PipelineController {
 			authStorage?: AuthStorage;
 			modelRegistry?: ModelRegistry;
 			settings?: Settings;
+			runSubprocess: RunSubprocessFn;
 		},
 	): Promise<Map<string, SingleResult>> {
 		const results = new Map<string, SingleResult>();
@@ -213,6 +217,7 @@ export class PipelineController {
 							modelRegistry: options.modelRegistry,
 							settings: options.settings,
 							stateTracker: this.#stateTracker,
+							runSubprocess: options.runSubprocess,
 						});
 						return { agentName, result };
 					} catch (err) {

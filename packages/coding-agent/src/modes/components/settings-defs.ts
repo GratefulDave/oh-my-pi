@@ -79,13 +79,6 @@ const CONDITIONS: Record<string, () => boolean> = {
 			return false;
 		}
 	},
-	icmActive: () => {
-		try {
-			return Settings.instance.get("memory.backend") === "icm";
-		} catch {
-			return false;
-		}
-	},
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

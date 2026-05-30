@@ -188,6 +188,43 @@ Each candidate path is loaded with dynamic import:
 
 If export is not a function, that path fails with a structured error and loading continues.
 
+### Compiled binary `.js` bundle resolution
+
+In compiled binaries, `Bun.plugin` `onResolve`/`onLoad` hooks do not fire for imports within dynamically `import()`-ed `.js` files. This means pre-built `.js` bundles that contain bare `@oh-my-pi/*` specifiers will fail to resolve at runtime.
+
+`loadLegacyPiModule` handles this by inspecting `.js`/`.mjs`/`.cjs` files before import:
+
+1. Read the file contents.
+2. Check whether any `@oh-my-pi/*` package name appears as a bare import (substring match against `PI_PACKAGE_NAMES`).
+3. If **no** bare pi imports are found → direct `import()` (fast path).
+4. If bare pi imports **are** found → fall through to the `Bun.build()` path, which uses build-time plugins to resolve all bare specifiers transitively.
+
+Extension authors shipping pre-built `.js` bundles should either:
+
+- **Self-contain** all `@oh-my-pi/*` dependencies (inline them into the bundle) and mark `@oh-my-pi/pi-coding-agent` as external, or
+- Ship `.ts` source and let the loader's `Bun.build()` path handle resolution.
+
+
+## Legacy Pi package compatibility work still required
+
+Lex currently needs to keep old Pi/OMP packages installable through `lex install npm:<package>`.
+The `pi-cmux` regression exposed two separate compatibility boundaries:
+
+1. **Loader/runtime SDK compatibility**
+   - Legacy packages can import historical SDK scopes such as `@mariozechner/pi-coding-agent` and `@earendil-works/pi-coding-agent`.
+   - The loader must resolve those imports without pulling the full host CLI graph into extension bundles.
+   - Keep a small extension-facing SDK facade for legacy extension imports; it should expose only stable extension APIs/helpers needed by existing packages.
+   - Regression coverage should load a synthetic legacy package that imports legacy SDK scopes and a dependency whose `package.json` has an extensionless `main` entry such as `"index"`.
+
+2. **Spawned-agent command compatibility**
+   - Packages such as `pi-cmux` may have been authored against the legacy `pi` binary and may spawn `exec pi`.
+   - Lex continuity requires one of these durable fixes before relying on reinstallable packages:
+     - upstream package fix: `pi-cmux` should read `PI_CMUX_AGENT_COMMAND` and default to host command (`lex` under Lex), or
+     - Lex install/runtime compatibility fix: plugin installation or loading should patch/adapt known legacy spawn commands so new panes run `lex`, not `pi`.
+   - Local edits under `~/.lex/plugins/node_modules/...` are not durable; reinstalling the plugin overwrites them.
+
+Operational invariant: after reinstalling `pi-cmux`, `/cmh test` and `/cmv test` must create cmux splits that execute `lex`, not legacy `pi`, and must not fall through as normal model prompts.
+
 ---
 
 ## Failure handling and isolation

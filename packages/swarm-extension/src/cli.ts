@@ -98,7 +98,7 @@ async function runPipeline(yamlPath: string): Promise<void> {
 
 	const stateTracker = await initializeSwarmState(workspace, def);
 
-	const [{ discoverAuthStorage }, { ModelRegistry }, { Settings }] = await Promise.all([
+	const [{ discoverAuthStorage, runSubprocess }, { ModelRegistry }, { Settings }] = await Promise.all([
 		import("@oh-my-pi/pi-coding-agent"),
 		import("@oh-my-pi/pi-coding-agent/config/model-registry"),
 		import("@oh-my-pi/pi-coding-agent/config/settings"),
@@ -129,6 +129,7 @@ async function runPipeline(yamlPath: string): Promise<void> {
 		authStorage,
 		modelRegistry,
 		settings,
+		runSubprocess,
 	});
 
 	console.log("\n--- Pipeline finished ---\n");

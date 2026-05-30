@@ -81,6 +81,7 @@ export type StatusLineSegmentId =
 	| "hostname"
 	| "cache_read"
 	| "cache_write"
+	| "cache_hit"
 	| "session_name";
 
 /** Submenu choice metadata. */
@@ -405,7 +406,7 @@ export const SETTINGS_SCHEMA = {
 	// Status line
 	"statusLine.preset": {
 		type: "enum",
-		values: ["default", "minimal", "compact", "full", "nerd", "ascii", "custom"] as const,
+		values: ["default", "minimal", "compact", "full", "nerd", "debug", "ascii", "custom"] as const,
 		default: "default",
 		ui: {
 			tab: "appearance",
@@ -417,6 +418,7 @@ export const SETTINGS_SCHEMA = {
 				{ value: "compact", label: "Compact", description: "Model, git, cost, context" },
 				{ value: "full", label: "Full", description: "All segments including time" },
 				{ value: "nerd", label: "Nerd", description: "Maximum info with Nerd Font icons" },
+				{ value: "debug", label: "Debug", description: "Cache, rate, cost, and context details" },
 				{ value: "ascii", label: "ASCII", description: "No special characters" },
 				{ value: "custom", label: "Custom", description: "User-defined segments" },
 			],
@@ -1311,17 +1313,16 @@ export const SETTINGS_SCHEMA = {
 	// config/settings.ts migration for details.
 	"memory.backend": {
 		type: "enum",
-		values: ["off", "local", "hindsight", "icm"] as const,
+		values: ["off", "local", "hindsight"] as const,
 		default: "off",
 		ui: {
 			tab: "memory",
 			label: "Memory Backend",
-			description: "Off, local memory pipeline, Hindsight remote memory, or ICM local memory",
+			description: "Off, local memory pipeline, or Hindsight remote memory",
 			options: [
 				{ value: "off", label: "Off", description: "No memory subsystem runs" },
 				{ value: "local", label: "Local", description: "Local rollout summarisation pipeline (memory_summary.md)" },
 				{ value: "hindsight", label: "Hindsight", description: "Vectorize Hindsight remote memory service" },
-				{ value: "icm", label: "ICM", description: "Local ICM CLI memory database and MCP server" },
 			],
 		},
 	},
@@ -1440,52 +1441,6 @@ export const SETTINGS_SCHEMA = {
 	"hindsight.recallTypes": { type: "array", default: HINDSIGHT_RECALL_TYPES_DEFAULT },
 
 	"hindsight.debug": { type: "boolean", default: false },
-
-	// ICM (https://github.com/rtk-ai/icm)
-	"icm.binaryPath": {
-		type: "string",
-		default: "icm",
-		ui: {
-			tab: "memory",
-			label: "ICM Binary Path",
-			description: "Path to the icm executable used for recall and retain",
-			condition: "icmActive",
-		},
-	},
-	"icm.project": {
-		type: "string",
-		default: undefined,
-		ui: {
-			tab: "memory",
-			label: "ICM Project",
-			description: "Optional project name passed to ICM; defaults to cwd basename",
-			condition: "icmActive",
-		},
-	},
-	"icm.autoRecall": {
-		type: "boolean",
-		default: true,
-		ui: {
-			tab: "memory",
-			label: "ICM Auto Recall",
-			description: "Recall ICM memories before each agent turn",
-			condition: "icmActive",
-		},
-	},
-	"icm.autoRetain": {
-		type: "boolean",
-		default: true,
-		ui: {
-			tab: "memory",
-			label: "ICM Auto Retain",
-			description: "Store durable facts from settled turns into ICM",
-			condition: "icmActive",
-		},
-	},
-	"icm.retainEveryNTurns": { type: "number", default: 3 },
-	"icm.recallLimit": { type: "number", default: 8 },
-	"icm.recallMaxChars": { type: "number", default: 12000 },
-	"icm.debug": { type: "boolean", default: false },
 
 	"hindsight.mentalModelsEnabled": {
 		type: "boolean",

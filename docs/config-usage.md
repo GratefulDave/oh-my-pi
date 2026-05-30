@@ -141,6 +141,8 @@ The runtime settings model is layered:
 3. Runtime overrides: in-memory, non-persistent
 4. Schema defaults: from `SETTINGS_SCHEMA`
 
+Fork note: this repository ships the `lex` executable, but user/project storage paths still use the inherited upstream OMP namespace. In practice that means local-bin installs may run `~/.local/bin/lex` while reading and writing user state under `~/.omp/...` and project state under `<cwd>/.omp/...`. This is current behavior, not a completed namespace migration.
+
 Effective read path:
 
 `defaults <- global <- project <- overrides`

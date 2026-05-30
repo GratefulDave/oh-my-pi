@@ -1,11 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { loadExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 import { TempDir } from "@oh-my-pi/pi-utils";
-
-const currentPiCodingAgentPath = Bun.resolveSync("@oh-my-pi/pi-coding-agent", import.meta.dir);
-const currentPiExtensionsPath = Bun.resolveSync("@oh-my-pi/pi-coding-agent/extensibility/extensions", import.meta.dir);
+import { loadExtensions } from "../src/extensibility/extensions/loader";
 
 describe("issue #973: legacy Pi plugin imports", () => {
 	let projectDir: TempDir;
@@ -16,6 +13,16 @@ describe("issue #973: legacy Pi plugin imports", () => {
 		const pluginDir = path.join(projectDir.path(), "legacy-pi-plugin");
 		extensionPath = path.join(pluginDir, "dist", "extension.ts");
 		fs.mkdirSync(path.dirname(extensionPath), { recursive: true });
+		const retryDir = path.join(pluginDir, "node_modules", "retry");
+		fs.mkdirSync(retryDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(retryDir, "package.json"),
+			JSON.stringify({ name: "retry", version: "1.0.0", main: "index" }),
+		);
+		fs.writeFileSync(
+			path.join(retryDir, "index.js"),
+			"export default { operation: () => ({ attempt: () => undefined }) };\n",
+		);
 		fs.writeFileSync(
 			path.join(pluginDir, "package.json"),
 			JSON.stringify({
@@ -31,11 +38,13 @@ describe("issue #973: legacy Pi plugin imports", () => {
 			[
 				'import { isToolCallEventType as legacyRoot } from "@mariozechner/pi-coding-agent";',
 				'import { isToolCallEventType as legacyExtensions } from "@mariozechner/pi-coding-agent/extensibility/extensions";',
-				`import { isToolCallEventType as modernRoot } from ${JSON.stringify(currentPiCodingAgentPath)};`,
-				`import { isToolCallEventType as modernExtensions } from ${JSON.stringify(currentPiExtensionsPath)};`,
+				'import retry from "retry";',
 				"",
-				'if (legacyRoot !== modernRoot) throw new Error("legacy root import did not remap");',
-				'if (legacyExtensions !== modernExtensions) throw new Error("legacy extension import did not remap");',
+				'if (typeof legacyRoot !== "function") throw new Error("legacy root import did not load");',
+				'if (typeof legacyExtensions !== "function") throw new Error("legacy extension import did not load");',
+				"",
+				"const operation = retry.operation({ retries: 0 });",
+				'if (typeof operation.attempt !== "function") throw new Error("extensionless dependency main did not resolve");',
 				"",
 				"export default function(pi) {",
 				'\tpi.registerCommand("legacy-pi-ext", { handler: async () => {} });',

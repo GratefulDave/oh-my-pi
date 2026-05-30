@@ -1,12 +1,14 @@
 import { Database } from "bun:sqlite";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { stripHashlinePrefixes } from "@oh-my-pi/hashline";
+import { formatHashlineHeader, stripHashlinePrefixes } from "@oh-my-pi/hashline";
 import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
 import type { Component } from "@oh-my-pi/pi-tui";
 import { Text } from "@oh-my-pi/pi-tui";
 import { isEnoent, isRecord, prompt, untilAborted } from "@oh-my-pi/pi-utils";
 import * as z from "zod/v4";
+import { getFileSnapshotStore } from "../edit/file-snapshot-store";
+import { normalizeToLF } from "../edit/normalize";
 import type { RenderResultOptions } from "../extensibility/custom-tools/types";
 import { InternalUrlRouter } from "../internal-urls";
 import { parseInternalUrl } from "../internal-urls/parse";
@@ -87,6 +89,16 @@ function stripWriteContent(session: ToolSession, content: string): { text: strin
 	const cleaned = stripHashlinePrefixes(lines);
 	if (cleaned === lines) return { text: content, stripped: false };
 	return { text: cleaned.join("\n"), stripped: true };
+}
+/**
+ * Record a snapshot of freshly-written content and return matching hashline
+ * header so follow-up edits can use the new tag without another read.
+ */
+function maybeWriteSnapshotHeader(session: ToolSession, absolutePath: string, content: string): string | undefined {
+	if (!resolveFileDisplayMode(session).hashLines) return undefined;
+	const normalized = normalizeToLF(content);
+	const tag = getFileSnapshotStore(session).record(absolutePath, normalized);
+	return formatHashlineHeader(formatPathRelativeToCwd(absolutePath, session.cwd), tag);
 }
 
 /**
@@ -587,7 +599,7 @@ export class WriteTool implements AgentTool<typeof writeSchema, WriteToolDetails
 
 		const batchRequest = getLspBatchRequest(context?.toolCall);
 		const allDiagnostics: FileDiagnosticsResult[] = [];
-		const succeededFiles: { displayPath: string; count: number }[] = [];
+		const succeededFiles: { displayPath: string; count: number; header?: string }[] = [];
 		const failedFiles: { displayPath: string; count: number; error: string }[] = [];
 		let totalResolvedIds = 0;
 
@@ -624,7 +636,8 @@ export class WriteTool implements AgentTool<typeof writeSchema, WriteToolDetails
 			invalidateFsScanAfterWrite(absolutePath);
 			this.session.fileSnapshotStore?.invalidate(absolutePath);
 			for (const entry of fileEntries) history.invalidate(entry.id);
-			succeededFiles.push({ displayPath: sample.displayPath, count: fileEntries.length });
+			const header = maybeWriteSnapshotHeader(this.session, absolutePath, text);
+			succeededFiles.push({ displayPath: sample.displayPath, count: fileEntries.length, header });
 			totalResolvedIds += fileEntries.length;
 			if (diagnostics) allDiagnostics.push(diagnostics);
 		}
@@ -647,6 +660,13 @@ export class WriteTool implements AgentTool<typeof writeSchema, WriteToolDetails
 			for (const file of failedFiles) {
 				summaryLines.push(`  ${file.displayPath}: ${file.count} ${conflictWord(file.count)} (${file.error})`);
 			}
+		}
+		const headerLines = succeededFiles
+			.map(file => file.header)
+			.filter((header): header is string => header !== undefined);
+		if (headerLines.length > 0) {
+			summaryLines.push("Snapshots:");
+			for (const header of headerLines) summaryLines.push(`  ${header}`);
 		}
 		if (stripped) {
 			summaryLines.push("Note: auto-stripped hashline display prefixes from content before writing.");
@@ -776,7 +796,9 @@ export class WriteTool implements AgentTool<typeof writeSchema, WriteToolDetails
 				}
 				invalidateFsScanAfterWrite(absolutePath);
 				const displayPath = formatPathRelativeToCwd(absolutePath, this.session.cwd);
-				let resultText = `Successfully wrote ${cleanContent.length} bytes to ${displayPath}`;
+				const header = maybeWriteSnapshotHeader(this.session, absolutePath, cleanContent);
+				const writeLine = `Successfully wrote ${cleanContent.length} bytes to ${displayPath}`;
+				let resultText = header ? `${header}\n${writeLine}` : writeLine;
 				if (stripped) {
 					resultText += `\nNote: auto-stripped hashline display prefixes from content before writing.`;
 				}
@@ -788,7 +810,9 @@ export class WriteTool implements AgentTool<typeof writeSchema, WriteToolDetails
 			const madeExecutable = await maybeMarkExecutableForShebang(absolutePath, cleanContent);
 
 			const displayPath = formatPathRelativeToCwd(absolutePath, this.session.cwd);
-			let resultText = `Successfully wrote ${cleanContent.length} bytes to ${displayPath}`;
+			const header = maybeWriteSnapshotHeader(this.session, absolutePath, cleanContent);
+			const writeLine = `Successfully wrote ${cleanContent.length} bytes to ${displayPath}`;
+			let resultText = header ? `${header}\n${writeLine}` : writeLine;
 			if (stripped) {
 				resultText += `\nNote: auto-stripped hashline display prefixes from content before writing.`;
 			}

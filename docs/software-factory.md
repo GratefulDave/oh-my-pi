@@ -33,7 +33,7 @@ Flags:
 - `--yes`: apply without confirmation prompt.
 - `--existing`: import legacy repo assets conservatively.
 - `--force`: overwrite existing factory-managed files.
-- `--enable-memory`: write project `.omp/settings.json` with `memory.backend = "icm"`.
+- `--enable-memory`: write project `.omp/settings.json` with `memory.backend = "hindsight"`.
 
 ### `lex factory status`
 
@@ -168,7 +168,7 @@ When `--enable-memory` is used, project `.omp/settings.json` gets:
 ```json
 {
   "memory": {
-    "backend": "icm"
+    "backend": "hindsight"
   }
 }
 ```

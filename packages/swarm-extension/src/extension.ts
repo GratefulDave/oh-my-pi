@@ -11,9 +11,9 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { AuthStorage, ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
-import { formatDuration } from "@oh-my-pi/pi-utils";
 import { buildDependencyGraph, buildExecutionWaves, detectCycles } from "./swarm/dag";
 import { renderSwarmEvents } from "./swarm/events";
+import { formatDuration } from "./swarm/format";
 import { loadSwarmInspection } from "./swarm/inspect";
 import { PipelineController } from "./swarm/pipeline";
 import { renderSwarmMeshSummary, renderSwarmProgress } from "./swarm/render";
@@ -158,6 +158,7 @@ async function handleRun(yamlPath: string | undefined, ctx: ExtensionCommandCont
 		authStorage,
 		modelRegistry: ctx.modelRegistry,
 		settings: pi.pi.settings,
+		runSubprocess: pi.pi.runSubprocess,
 	});
 
 	ctx.ui.setWidget(widgetKey, undefined);

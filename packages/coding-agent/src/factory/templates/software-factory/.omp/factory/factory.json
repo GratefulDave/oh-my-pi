@@ -32,6 +32,6 @@
   },
   "memory": {
     "captureCandidates": true,
-    "recommendedBackend": "icm"
+    "recommendedBackend": "hindsight"
   }
 }

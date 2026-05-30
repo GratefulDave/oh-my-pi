@@ -3,7 +3,7 @@ import type { PresetDef, StatusLinePreset } from "./types";
 export const STATUS_LINE_PRESETS: Record<StatusLinePreset, PresetDef> = {
 	default: {
 		leftSegments: ["pi", "model", "mode", "path", "git", "pr", "context_pct", "cost"],
-		rightSegments: ["session_name"],
+		rightSegments: ["session_name", "cache_hit"],
 		separator: "powerline-thin",
 		segmentOptions: {
 			model: { showThinkingLevel: true },
@@ -24,7 +24,7 @@ export const STATUS_LINE_PRESETS: Record<StatusLinePreset, PresetDef> = {
 
 	compact: {
 		leftSegments: ["model", "mode", "git", "pr"],
-		rightSegments: ["session_name", "cost", "context_pct"],
+		rightSegments: ["session_name", "cache_hit", "cost", "context_pct"],
 		separator: "powerline-thin",
 		segmentOptions: {
 			model: { showThinkingLevel: false },
@@ -36,6 +36,7 @@ export const STATUS_LINE_PRESETS: Record<StatusLinePreset, PresetDef> = {
 		leftSegments: ["pi", "hostname", "model", "mode", "path", "git", "pr", "subagents"],
 		rightSegments: [
 			"session_name",
+			"cache_hit",
 			"token_in",
 			"token_out",
 			"token_rate",
@@ -61,8 +62,7 @@ export const STATUS_LINE_PRESETS: Record<StatusLinePreset, PresetDef> = {
 			"session_name",
 			"token_in",
 			"token_out",
-			"cache_read",
-			"cache_write",
+			"cache_hit",
 			"token_rate",
 			"cost",
 			"context_pct",
@@ -76,6 +76,18 @@ export const STATUS_LINE_PRESETS: Record<StatusLinePreset, PresetDef> = {
 			path: { abbreviate: true, maxLength: 60 },
 			git: { showBranch: true, showStaged: true, showUnstaged: true, showUntracked: true },
 			time: { format: "24h", showSeconds: true },
+		},
+	},
+
+	debug: {
+		// Mid-session debugging preset focused on cache visibility and spend/context.
+		leftSegments: ["model", "mode", "path", "git", "pr"],
+		rightSegments: ["session_name", "cache_hit", "cache_read", "cache_write", "token_rate", "cost", "context_pct"],
+		separator: "powerline-thin",
+		segmentOptions: {
+			model: { showThinkingLevel: true },
+			path: { abbreviate: true, maxLength: 45 },
+			git: { showBranch: true, showStaged: true, showUnstaged: true, showUntracked: true },
 		},
 	},
 

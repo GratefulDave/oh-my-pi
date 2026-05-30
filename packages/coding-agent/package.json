@@ -48,13 +48,13 @@
 		"@agentclientprotocol/sdk": "catalog:",
 		"@babel/parser": "catalog:",
 		"@mozilla/readability": "catalog:",
-		"@oh-my-pi/hashline": "15.5.7",
-		"@oh-my-pi/omp-stats": "15.5.7",
-		"@oh-my-pi/pi-agent-core": "15.5.7",
-		"@oh-my-pi/pi-ai": "15.5.7",
-		"@oh-my-pi/pi-natives": "15.5.7",
-		"@oh-my-pi/pi-tui": "15.5.7",
-		"@oh-my-pi/pi-utils": "15.5.7",
+		"@oh-my-pi/hashline": "workspace:*",
+		"@oh-my-pi/omp-stats": "workspace:*",
+		"@oh-my-pi/pi-agent-core": "workspace:*",
+		"@oh-my-pi/pi-ai": "workspace:*",
+		"@oh-my-pi/pi-natives": "workspace:*",
+		"@oh-my-pi/pi-tui": "workspace:*",
+		"@oh-my-pi/pi-utils": "workspace:*",
 		"@puppeteer/browsers": "catalog:",
 		"@types/turndown": "catalog:",
 		"@xterm/headless": "catalog:",
@@ -387,14 +387,6 @@
 		"./hindsight/*": {
 			"types": "./src/hindsight/*.ts",
 			"import": "./src/hindsight/*.ts"
-		},
-		"./icm": {
-			"types": "./src/icm/index.ts",
-			"import": "./src/icm/index.ts"
-		},
-		"./icm/*": {
-			"types": "./src/icm/*.ts",
-			"import": "./src/icm/*.ts"
 		},
 		"./modes": {
 			"types": "./src/modes/index.ts",
