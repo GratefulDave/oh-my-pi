@@ -1081,6 +1081,8 @@ export interface ProviderConfig {
 		/** Optional model rewrite hook for credential-aware routing (e.g., enterprise URLs). */
 		modifyModels?(models: Model<Api>[], credentials: OAuthCredentials): Model<Api>[];
 	};
+	/** Fetch dynamic models for this provider using the provider's resolved API key/OAuth token. */
+	fetchModels?(apiKey: string | undefined): Promise<readonly Model<Api>[] | null | undefined>;
 }
 
 /** Configuration for a model within a provider. */

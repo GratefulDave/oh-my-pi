@@ -8,8 +8,13 @@ import type {
 	SimpleStreamOptions,
 } from "@oh-my-pi/pi-ai";
 import { streamGoogle } from "@oh-my-pi/pi-ai/providers/google";
-import type { LoaderResult, PluginResult, Provider } from "opencode-antigravity-auth/dist/src/plugin/types";
-import { deserializeBridgeCredentials, toUpstreamAuthDetails } from "./auth-adapter";
+import type { LoaderResult, PluginClient, PluginResult, Provider } from "opencode-antigravity-auth/dist/src/plugin/types";
+import {
+	checkBridgeQuotaExhaustion,
+	deserializeBridgeCredentials,
+	type BridgeQuotaExhaustion,
+	toUpstreamAuthDetails,
+} from "./auth-adapter";
 import { GOOGLE_GENERATIVE_LANGUAGE_BASE, OPENCODE_ANTIGRAVITY_MODELS, PROVIDER_ID } from "./models";
 
 type FetchInput = string | URL | Request;
@@ -114,21 +119,43 @@ export function createBridgeFetch(upstreamFetch: FetchImpl): FetchImpl {
 
 export function createOpencodeAntigravityStream(
 	auth: UpstreamAuthHook,
+	clientOrGoogleStream?: PluginClient | GoogleStream,
 	googleStream: GoogleStream = streamGoogle,
 ): (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream {
+	const client = typeof clientOrGoogleStream === "function" ? undefined : clientOrGoogleStream;
+	const resolvedGoogleStream = typeof clientOrGoogleStream === "function" ? clientOrGoogleStream : googleStream;
 	return (model, context, options) => {
 		const credentials = deserializeBridgeCredentials(options?.apiKey);
 		const upstreamId = buildUpstreamModelId(model, options?.reasoning);
-		const stream = googleStream(toGoogleStreamModel(model, upstreamId), context, {
+		const stream = resolvedGoogleStream(toGoogleStreamModel(model, upstreamId), context, {
 			...options,
 			apiKey: "antigravity-adapter",
 			fetch: async (input, init) => {
+				if (client) {
+					const quota = await checkBridgeQuotaExhaustion(credentials, model.id, client);
+					if (quota) {
+						throw new Error(formatQuotaExhaustionError(model.id, quota));
+					}
+				}
 				const loader = await createUpstreamLoader(auth, credentials);
 				return createBridgeFetch(loader.fetch)(input, stripBodyThinkingConfig(init));
 			},
 		});
 		return stream;
 	};
+}
+
+function formatQuotaExhaustionError(modelId: string, quota: BridgeQuotaExhaustion): string {
+	const retryAfterMs = quota.resetMs ? Math.max(0, quota.resetMs - Date.now()) : undefined;
+	return [
+		`opencode-antigravity quota exhausted for model ${modelId}`,
+		`quotaGroup=${quota.quotaGroup}`,
+		`remainingFraction=${quota.remainingFraction}`,
+		quota.resetTime ? `resetTime=${quota.resetTime}` : undefined,
+		retryAfterMs !== undefined ? `retry-after-ms=${retryAfterMs}` : undefined,
+	]
+		.filter((part): part is string => Boolean(part))
+		.join("; ");
 }
 
 // ---------------------------------------------------------------------------

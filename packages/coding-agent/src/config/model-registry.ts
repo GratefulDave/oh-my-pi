@@ -81,6 +81,8 @@ export const MODEL_ROLES: Record<ModelRole, ModelRoleInfo> = {
 
 export const MODEL_ROLE_IDS: ModelRole[] = ["default", "smol", "slow", "vision", "plan", "designer", "commit", "task"];
 
+export type RuntimeProviderModelFetcher = (apiKey: string | undefined) => Promise<readonly Model<Api>[] | null | undefined>;
+
 /** Alias for ModelRoleInfo - used for both built-in and custom roles */
 export type RoleInfo = ModelRoleInfo;
 
@@ -735,6 +737,7 @@ export class ModelRegistry {
 	#runtimeModelOverlays: CustomModelOverlay[] = [];
 	#runtimeProviderApiKeys: Map<string, string> = new Map();
 	#runtimeProviderOverrides: Map<string, ProviderOverride> = new Map();
+	#runtimeProviderModelFetchers: Map<string, RuntimeProviderModelFetcher> = new Map();
 	#runtimeProvidersBySource: Map<string, Set<string>> = new Map();
 	#runtimeProviderSourceByName: Map<string, string> = new Map();
 	#rebuildPending: boolean = false;
@@ -1221,11 +1224,12 @@ export class ModelRegistry {
 				: Promise.all(
 						selectedDiscoverableProviders.map(provider => this.#discoverProviderModels(provider, strategy)),
 					).then(results => results.flat());
-		const [configuredDiscovered, builtInDiscovered] = await Promise.all([
+		const [configuredDiscovered, builtInDiscovered, runtimeDiscovered] = await Promise.all([
 			configuredDiscoveriesPromise,
 			this.#discoverBuiltInProviderModels(strategy, providerFilter),
+			this.#discoverRuntimeProviderModels(providerFilter),
 		]);
-		const discovered = [...configuredDiscovered, ...builtInDiscovered];
+		const discovered = [...configuredDiscovered, ...builtInDiscovered, ...runtimeDiscovered];
 		if (discovered.length === 0) {
 			return;
 		}
@@ -1364,6 +1368,37 @@ export class ModelRegistry {
 		});
 	}
 
+
+	async #discoverRuntimeProviderModels(providerFilter?: ReadonlySet<string>): Promise<Model<Api>[]> {
+		if (this.#runtimeProviderModelFetchers.size === 0) {
+			return [];
+		}
+		const disabledProviders = getDisabledProviderIdsFromSettings();
+		const discoveries = await Promise.all(
+			[...this.#runtimeProviderModelFetchers.entries()]
+				.filter(([provider]) => !disabledProviders.has(provider))
+				.filter(([provider]) => !providerFilter || providerFilter.has(provider))
+				.map(async ([provider, fetchModels]) => {
+					try {
+						const apiKey = await this.authStorage.getApiKey(provider);
+						if (!isAuthenticated(apiKey)) {
+							return [];
+						}
+						const models = await fetchModels(apiKey);
+						return (models ?? []).map(model =>
+							model.provider === provider ? model : { ...model, provider },
+						);
+					} catch (error) {
+						logger.warn("runtime model discovery failed for provider", {
+							provider,
+							error: error instanceof Error ? error.message : String(error),
+						});
+						return [];
+					}
+				}),
+		);
+		return discoveries.flat();
+	}
 	async #discoverBuiltInProviderModels(
 		strategy: ModelRefreshStrategy,
 		providerFilter?: ReadonlySet<string>,
@@ -2240,6 +2275,7 @@ export class ModelRegistry {
 	#clearRuntimeProviderState(providerName: string): void {
 		this.#runtimeProviderApiKeys.delete(providerName);
 		this.#runtimeProviderOverrides.delete(providerName);
+		this.#runtimeProviderModelFetchers.delete(providerName);
 		this.#runtimeModelOverlays = this.#runtimeModelOverlays.filter(overlay => overlay.provider !== providerName);
 		this.authStorage.removeConfigApiKey(providerName);
 	}
@@ -2351,6 +2387,10 @@ export class ModelRegistry {
 			this.#runtimeProviderApiKeys.set(providerName, config.apiKey);
 			const resolved = resolveApiKeyConfig(config.apiKey);
 			if (resolved) this.authStorage.setConfigApiKey(providerName, resolved);
+		}
+
+		if (config.fetchModels) {
+			this.#runtimeProviderModelFetchers.set(providerName, config.fetchModels);
 		}
 
 		if (config.models && config.models.length > 0) {
@@ -2473,6 +2513,8 @@ export interface ProviderConfigInput {
 		getApiKey?(credentials: OAuthCredentials): string;
 		modifyModels?(models: Model<Api>[], credentials: OAuthCredentials): Model<Api>[];
 	};
+	/** Fetch dynamic models for a runtime provider using the provider's resolved API key/OAuth token. */
+	fetchModels?: RuntimeProviderModelFetcher;
 	models?: Array<{
 		id: string;
 		name: string;

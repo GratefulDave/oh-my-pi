@@ -6969,7 +6969,14 @@ export class AgentSession {
 		if (isContextOverflow(message, contextWindow)) return false;
 
 		const err = message.errorMessage;
-		return this.#isTransientErrorMessage(err) || isUsageLimitError(err);
+		if (this.#isTransientErrorMessage(err) || isUsageLimitError(err)) return true;
+
+		// opencode-antigravity quota/403/429/verification exhaustion — retryable via codex fallback
+		if (this.model?.provider === "opencode-antigravity" && this.#isAntigravityQuotaExhaustionError(err)) {
+			return true;
+		}
+
+		return false;
 	}
 
 	#isTransientErrorMessage(errorMessage: string): boolean {
@@ -6999,6 +7006,185 @@ export class AgentSession {
 		const configuredChains = this.settings.get("retry.fallbackChains");
 		if (!configuredChains || typeof configuredChains !== "object") return {};
 		return configuredChains as RetryFallbackChains;
+	}
+
+	/** Detect opencode-antigravity quota/403/429/verification-exhaustion errors. */
+	#isAntigravityQuotaExhaustionError(errorMessage: string): boolean {
+		return /(?:\b403\b|forbidden|\b429\b|too many requests|quota|exhausted|verification|usage.?limit|limit reached|rate.?limit)/i.test(
+			errorMessage,
+		);
+	}
+
+	/**
+	 * Classify an opencode-antigravity model ID into its plugin quota group.
+	 * Returns "gemini-flash" | "gemini-pro" | "claude" | undefined.
+	 */
+	#classifyAntigravityQuotaGroup(modelId: string): "gemini-flash" | "gemini-pro" | "claude" | undefined {
+		const lower = modelId.toLowerCase();
+		if (lower.includes("claude")) return "claude";
+		const isGemini3 = lower.includes("gemini-3") || lower.includes("gemini 3");
+		if (!isGemini3) return undefined;
+		return lower.includes("flash") ? "gemini-flash" : "gemini-pro";
+	}
+
+	/**
+	 * Classify an opencode-antigravity model's weight class for fallback selection.
+	 * Returns "smol" | "default" | "strong".
+	 */
+	#classifyAntigravityModelWeight(modelId: string): "smol" | "default" | "strong" {
+		const lower = modelId.toLowerCase();
+		// Flash/lite models → smol
+		if (lower.includes("flash") || lower.includes("lite")) return "smol";
+		// Opus or heavy thinking → strong
+		if (lower.includes("opus") || lower.includes("opus-4") || lower.includes("heavy")) return "strong";
+		// Pro, Sonnet, general → default
+		return "default";
+	}
+
+	/**
+	 * Derive comparable openai-codex fallback selector(s) for an opencode-antigravity model.
+	 * Explicit retry.fallbackChains still win; otherwise prefer configured codex role
+	 * selectors before conservative built-in Codex IDs.
+	 */
+	#deriveAntigravityCodexFallbackSelectors(
+		currentModelId: string,
+		role: string | undefined,
+		thinkingLevel: ThinkingLevel | undefined,
+	): string[] {
+		if (role) {
+			const chain = this.#getRetryFallbackChains()[role];
+			if (chain && chain.length > 0) return [];
+		}
+
+		const weight = this.#classifyAntigravityModelWeight(currentModelId);
+		const fallbackThinking = weight === "smol" ? ThinkingLevel.Medium : ThinkingLevel.High;
+		const preferredThinking = thinkingLevel ?? fallbackThinking;
+		const roleCandidates: Record<"smol" | "default" | "strong", string[]> = {
+			smol: ["smol", "default"],
+			default: ["default", "plan", "slow"],
+			strong: ["slow", "plan", "default"],
+		};
+		const idCandidates: Record<"smol" | "default" | "strong", string[]> = {
+			smol: ["gpt-5.5", "gpt-5.4-mini", "gpt-5.4", "gpt-5.1-codex-mini"],
+			default: ["gpt-5.5", "gpt-5.4", "gpt-5.1-codex"],
+			strong: ["gpt-5.5", "gpt-5.1-codex-max", "gpt-5.4"],
+		};
+		const selectors: string[] = [];
+		const seen = new Set<string>();
+		const pushSelector = (selector: RetryFallbackSelector): void => {
+			if (selector.provider !== "openai-codex") return;
+			const model = this.#modelRegistry.find(selector.provider, selector.id);
+			if (!model) return;
+			const resolvedThinking =
+				selector.thinkingLevel ?? (model.reasoning && model.thinking ? preferredThinking : undefined);
+			const raw = resolvedThinking
+				? `openai-codex/${selector.id}:${resolvedThinking}`
+				: `openai-codex/${selector.id}`;
+			if (seen.has(raw)) return;
+			seen.add(raw);
+			selectors.push(raw);
+		};
+
+		for (const candidateRole of roleCandidates[weight]) {
+			const configuredSelector = this.settings.getModelRole(candidateRole);
+			if (!configuredSelector) continue;
+			const parsed = parseRetryFallbackSelector(configuredSelector);
+			if (parsed) pushSelector(parsed);
+		}
+		for (const modelId of idCandidates[weight]) {
+			pushSelector({
+				raw: `openai-codex/${modelId}`,
+				provider: "openai-codex",
+				id: modelId,
+				thinkingLevel: undefined,
+			});
+		}
+		for (const model of this.#modelRegistry.getAvailable()) {
+			if (model.provider !== "openai-codex") continue;
+			pushSelector({
+				raw: `openai-codex/${model.id}`,
+				provider: "openai-codex",
+				id: model.id,
+				thinkingLevel: undefined,
+			});
+		}
+		return selectors;
+	}
+
+	/**
+	 * When the current model is opencode-antigravity and the error is quota-related,
+	 * attempt to fall back to a comparable openai-codex model.
+	 *
+	 * Suppresses the current AG selector until quota reset and triggers the existing
+	 * fallback machinery (or a derived codex fallback when no chain is configured).
+	 *
+	 * Returns true if a fallback was applied, false otherwise.
+	 */
+	async #maybeApplyAntigravityQuotaFallback(
+		errorMessage: string,
+		currentSelector: string,
+	): Promise<boolean> {
+		if (!this.model || this.model.provider !== "opencode-antigravity") return false;
+		if (!this.#isAntigravityQuotaExhaustionError(errorMessage)) return false;
+
+		const parsedCurrent = parseRetryFallbackSelector(currentSelector);
+		if (!parsedCurrent) return false;
+
+		const role =
+			this.#activeRetryFallback?.role ?? this.#resolveRetryFallbackRole(currentSelector);
+
+		const quotaGroup = this.#classifyAntigravityQuotaGroup(parsedCurrent.id);
+		const resetMs = this.#parseRetryAfterMsFromError(errorMessage);
+		const suppressUntilMs = resetMs
+			? Date.now() + resetMs
+			: Date.now() + calculateRateLimitBackoffMs("QUOTA_EXHAUSTED");
+
+		// Suppress AG selector so retry machinery won't revisit it until reset
+		this.#modelRegistry.suppressSelector(currentSelector, suppressUntilMs);
+		logger.info("opencode-antigravity quota fallback candidate", {
+			provider: "opencode-antigravity",
+			model: parsedCurrent.id,
+			quotaGroup: quotaGroup ?? "unknown",
+			suppressedUntil: new Date(suppressUntilMs).toISOString(),
+			...(role ? { role } : {}),
+		});
+
+		// Check if an explicit fallback chain handles this (normal tryRetryModelFallback will run after us)
+		if (role) {
+			const chain = this.#getRetryFallbackChains()[role];
+			if (chain && chain.length > 0) {
+				// Normal fallback machinery will handle it — we only needed to suppress.
+				return false;
+			}
+		}
+
+		// Derive and try openai-codex fallback selectors
+		const derivedSelectors = this.#deriveAntigravityCodexFallbackSelectors(
+			parsedCurrent.id,
+			role,
+			parsedCurrent.thinkingLevel,
+		);
+
+		for (const rawSelector of derivedSelectors) {
+			const parsed = parseRetryFallbackSelector(rawSelector);
+			if (!parsed) continue;
+			if (this.#modelRegistry.isSelectorSuppressed(parsed.raw)) continue;
+			const candidate = this.#modelRegistry.find(parsed.provider, parsed.id);
+			if (!candidate) continue;
+			const apiKey = await this.#modelRegistry.getApiKey(candidate, this.sessionId);
+			if (!apiKey) continue;
+
+			logger.info("opencode-antigravity derived fallback applied", {
+				from: currentSelector,
+				to: parsed.raw,
+				provider: "opencode-antigravity",
+				fallbackProvider: parsed.provider,
+			});
+			await this.#applyRetryFallbackCandidate(role ?? "default", parsed, currentSelector);
+			return true;
+		}
+
+		return false;
 	}
 
 	#validateRetryFallbackChains(): void {
@@ -7312,11 +7498,23 @@ export class AgentSession {
 		const currentSelector = this.model ? formatRetryFallbackSelector(this.model, this.thinkingLevel) : undefined;
 		if (!switchedCredential && currentSelector) {
 			this.#noteRetryFallbackCooldown(currentSelector, parsedRetryAfterMs, errorMessage);
-			switchedModel = await this.#tryRetryModelFallback(currentSelector);
-			if (switchedModel) {
+
+			// For opencode-antigravity quota exhaustion: suppress selector and attempt derived codex fallback.
+			// This runs before the normal fallback chain so that AG-quota suppression is registered first.
+			const agQuotaFallback = await this.#maybeApplyAntigravityQuotaFallback(
+				errorMessage,
+				currentSelector,
+			);
+			if (agQuotaFallback) {
+				switchedModel = true;
 				delayMs = 0;
-			} else if (parsedRetryAfterMs && parsedRetryAfterMs > delayMs) {
-				delayMs = parsedRetryAfterMs;
+			} else {
+				switchedModel = await this.#tryRetryModelFallback(currentSelector);
+				if (switchedModel) {
+					delayMs = 0;
+				} else if (parsedRetryAfterMs && parsedRetryAfterMs > delayMs) {
+					delayMs = parsedRetryAfterMs;
+				}
 			}
 		}
 

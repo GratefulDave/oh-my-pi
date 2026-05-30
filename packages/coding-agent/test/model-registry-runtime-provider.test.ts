@@ -6,15 +6,15 @@ import { type AssistantMessageEventStream, clearCustomApis, Effort, getCustomApi
 import { getOAuthProviders, unregisterOAuthProviders } from "@oh-my-pi/pi-ai/utils/oauth";
 import type { OAuthCredentials } from "@oh-my-pi/pi-ai/utils/oauth/types";
 import { ModelRegistry, type ProviderConfigInput } from "@oh-my-pi/pi-coding-agent/config/model-registry";
+import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { Snowflake } from "@oh-my-pi/pi-utils";
-
 describe("ModelRegistry runtime provider registration", () => {
 	let tempDir: string;
 	let modelsJsonPath: string;
 	let authStorage: AuthStorage;
 
-	const sourceIds = ["ext://atomic", "ext://runtime", "ext://oauth"];
+	const sourceIds = ["ext://atomic", "ext://runtime", "ext://oauth", "ext://fetch"];
 
 	beforeEach(async () => {
 		tempDir = path.join(os.tmpdir(), `pi-test-model-registry-runtime-${Snowflake.next()}`);
@@ -445,6 +445,49 @@ describe("ModelRegistry runtime provider registration", () => {
 		expect(registry.find("provider-b", "model-b")).toBeDefined();
 	});
 
+
+	test("runtime provider fetchModels uses refreshed OAuth API key", async () => {
+		const registry = new ModelRegistry(authStorage, modelsJsonPath);
+		const oauthCredentials: OAuthCredentials = {
+			access: "old-access",
+			refresh: "refresh-token",
+			expires: 1,
+		};
+		await authStorage.set("dynamic-oauth-provider", { type: "oauth", ...oauthCredentials });
+		let fetchApiKey = "";
+
+		registry.registerProvider(
+			"dynamic-oauth-provider",
+			{
+				api: "custom-oauth-api",
+				streamSimple,
+				oauth: {
+					name: "Dynamic OAuth",
+					login: async () => oauthCredentials,
+					refreshToken: async credentials => ({ ...credentials, access: "new-access", expires: Date.now() + 60_000 }),
+					getApiKey: credentials => credentials.access,
+				},
+				fetchModels: async apiKey => {
+					fetchApiKey = apiKey ?? "";
+					return [
+						{
+							...baseModel,
+							id: "dynamic-model",
+							provider: "dynamic-oauth-provider",
+							api: "custom-oauth-api",
+							baseUrl: "https://dynamic.example.com",
+						},
+					];
+				},
+			},
+			"ext://fetch",
+		);
+
+		await registry.refreshProvider("dynamic-oauth-provider", "online");
+
+		expect(fetchApiKey).toBe("new-access");
+		expect(registry.find("dynamic-oauth-provider", "dynamic-model")).toBeDefined();
+	});
 	test("clearSourceRegistrations and syncExtensionSources remove source-scoped API and OAuth providers", () => {
 		const registry = new ModelRegistry(authStorage, modelsJsonPath);
 		const oauthCredentials: OAuthCredentials = {
@@ -479,5 +522,62 @@ describe("ModelRegistry runtime provider registration", () => {
 		registry.syncExtensionSources([]);
 		expect(getCustomApi("custom-oauth-api")).toBeUndefined();
 		expect(getOAuthProviders().some(provider => provider.id === "oauth-provider")).toBe(false);
+	});
+
+	test("clearSourceRegistrations removes fetchModels hook, subsequent refresh does not invoke it", async () => {
+		const registry = new ModelRegistry(authStorage, modelsJsonPath);
+		let fetchCallCount = 0;
+
+		authStorage.setRuntimeApiKey("fetch-cleanup-provider", "test-api-key");
+
+		registry.registerProvider(
+			"fetch-cleanup-provider",
+			{
+				api: "openai-completions",
+				baseUrl: "https://fetch-cleanup.example.com/v1",
+				fetchModels: async _apiKey => {
+					fetchCallCount++;
+					return [];
+				},
+			},
+			"ext://fetch",
+		);
+
+		await registry.refreshProvider("fetch-cleanup-provider", "online");
+		expect(fetchCallCount).toBe(1);
+
+		registry.clearSourceRegistrations("ext://fetch");
+
+		// After clearing, refresh must not invoke the removed fetcher
+		await registry.refreshProvider("fetch-cleanup-provider", "online");
+		expect(fetchCallCount).toBe(1);
+	});
+
+	test("disabled provider in disabledProviders does not invoke fetchModels", async () => {
+		resetSettingsForTest();
+		await Settings.init({ inMemory: true, overrides: { disabledProviders: ["blocked-ag-provider"] } });
+
+		const registry = new ModelRegistry(authStorage, modelsJsonPath);
+		let fetchCalled = false;
+
+		authStorage.setRuntimeApiKey("blocked-ag-provider", "test-api-key");
+
+		registry.registerProvider(
+			"blocked-ag-provider",
+			{
+				api: "openai-completions",
+				baseUrl: "https://blocked.example.com/v1",
+				fetchModels: async _apiKey => {
+					fetchCalled = true;
+					return [];
+				},
+			},
+			"ext://fetch",
+		);
+
+		await registry.refresh("online");
+		expect(fetchCalled).toBe(false);
+
+		resetSettingsForTest();
 	});
 });
