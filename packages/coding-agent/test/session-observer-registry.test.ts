@@ -906,3 +906,544 @@ describe("auto-open gating", () => {
 		expect(registry.shouldAutoOpen()).toBe(false);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// getActiveMuxSession — mux routing helper
+// ---------------------------------------------------------------------------
+
+describe("getActiveMuxSession", () => {
+	it("returns undefined when registry is empty", () => {
+		const { registry } = makeRegistry();
+		expect(registry.getActiveMuxSession()).toBeUndefined();
+	});
+
+	it("returns undefined when only the main session exists", () => {
+		const { registry } = makeRegistry();
+		registry.setMainSession();
+		expect(registry.getActiveMuxSession()).toBeUndefined();
+	});
+
+	it("returns undefined when only core-backend subagent sessions exist", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit("subagents:started", {
+			id: "core-sub-1",
+			type: "coder",
+			description: "Core-backend agent",
+			mode: "embedded",
+			backend: "core",
+		});
+
+		expect(registry.getActiveMuxSession()).toBeUndefined();
+	});
+
+	it("returns undefined when only acpx-backend subagent sessions exist", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit("subagents:started", {
+			id: "acpx-sub-1",
+			type: "coder",
+			description: "ACPX agent",
+			mode: "embedded",
+			backend: "acpx",
+		});
+
+		expect(registry.getActiveMuxSession()).toBeUndefined();
+	});
+
+	it("returns undefined when only sessions with no backend metadata exist", () => {
+		const { bus, registry } = makeRegistry();
+
+		const payload: SubagentLifecyclePayload = {
+			id: "no-meta-1",
+			agent: "task",
+			agentSource: "bundled",
+			description: "No metadata subagent",
+			index: 0,
+			status: "started",
+		};
+		bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, payload);
+
+		expect(registry.getActiveMuxSession()).toBeUndefined();
+	});
+
+	it("returns the active tmux session", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit("subagents:started", {
+			id: "tmux-sub-1",
+			type: "coder",
+			description: "tmux worker",
+			mode: "window",
+			backend: "tmux",
+			session: "tmux-main",
+		});
+
+		const result = registry.getActiveMuxSession();
+		expect(result).toBeDefined();
+		expect(result?.id).toBe("tmux-sub-1");
+		expect(result?.runMetadata?.presentation.backend).toBe("tmux");
+	});
+
+	it("returns the active cmux session", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit("subagents:started", {
+			id: "cmux-sub-1",
+			type: "coder",
+			description: "cmux worker",
+			mode: "window",
+			backend: "cmux",
+			session: "cmux-main",
+		});
+
+		const result = registry.getActiveMuxSession();
+		expect(result).toBeDefined();
+		expect(result?.id).toBe("cmux-sub-1");
+		expect(result?.runMetadata?.presentation.backend).toBe("cmux");
+	});
+
+	it("returns the most recently updated mux session when multiple are active", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit("subagents:started", {
+			id: "tmux-a",
+			type: "coder",
+			description: "First tmux worker",
+			mode: "window",
+			backend: "tmux",
+			session: "tmux-main",
+		});
+
+		bus.emit("subagents:started", {
+			id: "cmux-b",
+			type: "coder",
+			description: "Second cmux worker",
+			mode: "window",
+			backend: "cmux",
+			session: "cmux-main",
+		});
+
+		// Pin lastUpdate so we own the ordering, regardless of Date.now() resolution.
+		const sessions = registry.getSessions();
+		const a = sessions.find(s => s.id === "tmux-a");
+		const b = sessions.find(s => s.id === "cmux-b");
+		if (!a || !b) throw new Error("sessions not found");
+		a.lastUpdate = 1000;
+		b.lastUpdate = 2000; // cmux-b is the most recent
+
+		expect(registry.getActiveMuxSession()?.id).toBe("cmux-b");
+
+		// Flip: make tmux-a the most recent
+		a.lastUpdate = 3000;
+		expect(registry.getActiveMuxSession()?.id).toBe("tmux-a");
+	});
+
+	it("ignores completed tmux sessions", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit("subagents:started", {
+			id: "tmux-done",
+			type: "coder",
+			description: "Completed tmux worker",
+			mode: "window",
+			backend: "tmux",
+			session: "tmux-main",
+		});
+		bus.emit("subagents:completed", {
+			id: "tmux-done",
+			type: "coder",
+			description: "Completed tmux worker",
+			mode: "window",
+			backend: "tmux",
+			session: "tmux-main",
+		});
+
+		expect(registry.getActiveMuxSession()).toBeUndefined();
+	});
+
+	it("ignores failed cmux sessions", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit("subagents:started", {
+			id: "cmux-failed",
+			type: "coder",
+			description: "Failed cmux worker",
+			mode: "window",
+			backend: "cmux",
+			session: "cmux-main",
+		});
+		bus.emit("subagents:failed", {
+			id: "cmux-failed",
+			type: "coder",
+			description: "Failed cmux worker",
+			mode: "window",
+			backend: "cmux",
+			session: "cmux-main",
+		});
+
+		expect(registry.getActiveMuxSession()).toBeUndefined();
+	});
+
+	it("returns active mux session even when non-mux sessions also exist", () => {
+		const { bus, registry } = makeRegistry();
+
+		registry.setMainSession();
+
+		bus.emit("subagents:started", {
+			id: "core-sub",
+			type: "coder",
+			description: "Core-backend agent",
+			mode: "embedded",
+			backend: "core",
+		});
+
+		bus.emit("subagents:started", {
+			id: "tmux-active",
+			type: "coder",
+			description: "Active tmux agent",
+			mode: "window",
+			backend: "tmux",
+			session: "tmux-main",
+		});
+
+		const result = registry.getActiveMuxSession();
+		expect(result?.id).toBe("tmux-active");
+	});
+
+	it("returns undefined after all mux sessions are completed", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit("subagents:started", {
+			id: "tmux-final",
+			type: "coder",
+			description: "tmux worker",
+			mode: "window",
+			backend: "tmux",
+			session: "tmux-main",
+		});
+		expect(registry.getActiveMuxSession()).toBeDefined();
+
+		bus.emit("subagents:completed", {
+			id: "tmux-final",
+			type: "coder",
+			description: "tmux worker",
+			mode: "window",
+			backend: "tmux",
+			session: "tmux-main",
+		});
+		expect(registry.getActiveMuxSession()).toBeUndefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getObserverRows — normalized row model contract
+// ---------------------------------------------------------------------------
+
+describe("getObserverRows — source normalization contract", () => {
+	it("excludes the main session", () => {
+		const { registry } = makeRegistry();
+		registry.setMainSession();
+		const rows = registry.getObserverRows();
+		expect(rows.every(r => r.session.kind !== "main")).toBe(true);
+	});
+
+	it("orders active rows first, then inactive, each by lastUpdate desc", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			id: "row-completed-old",
+			agent: "task",
+			agentSource: "bundled",
+			description: "Old completed",
+			status: "completed",
+			index: 0,
+		} satisfies SubagentLifecyclePayload);
+		bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			id: "row-active",
+			agent: "task",
+			agentSource: "bundled",
+			description: "Active agent",
+			status: "started",
+			index: 1,
+		} satisfies SubagentLifecyclePayload);
+
+		const rows = registry.getObserverRows();
+		expect(rows[0]?.id).toBe("row-active");
+		expect(rows[1]?.id).toBe("row-completed-old");
+	});
+
+	it("(a) core lifecycle event — normalizes Agent/Task/Status/Message correctly", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			id: "row-core-lifecycle",
+			agent: "explore",
+			agentSource: "bundled",
+			description: "Analyze git history",
+			status: "started",
+			index: 0,
+		} satisfies SubagentLifecyclePayload);
+
+		const rows = registry.getObserverRows();
+		const row = rows.find(r => r.id === "row-core-lifecycle");
+		expect(row).toBeDefined();
+		expect(row?.agent).toBe("explore");
+		expect(row?.task).toBe("Analyze git history");
+		expect(row?.status).toBe("running");
+		expect(row?.message).toBe("thinking…");
+		expect(row?.session.id).toBe("row-core-lifecycle");
+	});
+
+	it("(a) core lifecycle completed — status is completed, message is empty", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			id: "row-core-done",
+			agent: "task",
+			agentSource: "bundled",
+			description: "Finished work",
+			status: "completed",
+			index: 0,
+		} satisfies SubagentLifecyclePayload);
+
+		const row = registry.getObserverRows().find(r => r.id === "row-core-done");
+		expect(row?.status).toBe("completed");
+		expect(row?.message).toBe("");
+	});
+
+	it("(a) core aborted lifecycle — status is cancelled", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			id: "row-core-abort",
+			agent: "task",
+			agentSource: "bundled",
+			description: "Aborted work",
+			status: "aborted",
+			index: 0,
+		} satisfies SubagentLifecyclePayload);
+
+		const row = registry.getObserverRows().find(r => r.id === "row-core-abort");
+		expect(row?.status).toBe("cancelled");
+	});
+
+	it("(b) async bash job — normalizes Agent/Task/Status/Message", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit(ASYNC_JOB_OBSERVER_CHANNEL, {
+			id: "row-bash-1",
+			type: "bash",
+			label: "tail -f build.log",
+			status: "running",
+			startTime: Date.now(),
+			progressText: "compiled 10 files",
+		} satisfies AsyncJobObserverPayload);
+
+		const row = registry.getObserverRows().find(r => r.id === "job:row-bash-1");
+		expect(row).toBeDefined();
+		expect(row?.agent).toBe("bash");
+		expect(row?.task).toBe("tail -f build.log");
+		expect(row?.status).toBe("running");
+		// progressText first line as message (no progress/lastIntent/currentTool)
+		expect(row?.message).toBe("compiled 10 files");
+	});
+
+	it("(b) async bash job cancelled — status is cancelled", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit(ASYNC_JOB_OBSERVER_CHANNEL, {
+			id: "row-bash-cancel",
+			type: "bash",
+			label: "long command",
+			status: "cancelled",
+			startTime: Date.now(),
+		} satisfies AsyncJobObserverPayload);
+
+		const row = registry.getObserverRows().find(r => r.id === "job:row-bash-cancel");
+		expect(row?.status).toBe("cancelled");
+	});
+
+	it("(c) async task job with progress — uses progress fields for Agent/Task/Message", () => {
+		const { bus, registry } = makeRegistry();
+		const runMetadata: AgentRunMetadata = {
+			runId: "row-task-job",
+			taskId: "row-task-job",
+			agent: "reviewer",
+			cwd: "/repo",
+			status: "running",
+			presentation: { mode: "embedded", backend: "core" },
+			artifacts: [],
+		};
+		const progress: AgentProgress = {
+			index: 0,
+			id: "row-task-job",
+			agent: "reviewer",
+			agentSource: "bundled",
+			status: "running",
+			task: "review code",
+			assignment: "review all the code",
+			description: "Reviewer agent task",
+			lastIntent: "Reading source files",
+			recentTools: [],
+			recentOutput: ["started analysis"],
+			toolCount: 2,
+			tokens: 500,
+			cost: 0.01,
+			durationMs: 300,
+			runMetadata,
+		};
+
+		bus.emit(ASYNC_JOB_OBSERVER_CHANNEL, {
+			id: "row-task-job",
+			type: "task",
+			label: "background reviewer",
+			status: "running",
+			startTime: Date.now(),
+			progressText: "reviewing",
+			progressDetails: {
+				progress: [progress],
+				async: { state: "running", jobId: "row-task-job", type: "task" },
+			},
+		} satisfies AsyncJobObserverPayload);
+
+		const row = registry.getObserverRows().find(r => r.id === "job:row-task-job");
+		expect(row).toBeDefined();
+		// Agent from session.agent = payload.type = "task" (job type, takes precedence over progress.runMetadata.agent)
+		expect(row?.agent).toBe("task");
+		// Task from progress.description (preferred over asyncJob.label)
+		expect(row?.task).toBe("Reviewer agent task");
+		expect(row?.status).toBe("running");
+		// Message from progress.lastIntent (highest priority)
+		expect(row?.message).toBe("Reading source files");
+	});
+
+	it("(c) async task job progress pending — status is queued", () => {
+		const { bus, registry } = makeRegistry();
+		const progress: AgentProgress = {
+			index: 0,
+			id: "row-task-pending",
+			agent: "task",
+			agentSource: "bundled",
+			status: "pending",
+			task: "pending work",
+			assignment: "do pending work",
+			description: "Pending agent",
+			recentTools: [],
+			recentOutput: [],
+			toolCount: 0,
+			tokens: 0,
+			cost: 0,
+			durationMs: 0,
+		};
+
+		bus.emit(ASYNC_JOB_OBSERVER_CHANNEL, {
+			id: "row-task-pending",
+			type: "task",
+			label: "pending task job",
+			status: "running",
+			startTime: Date.now(),
+			progressDetails: {
+				progress: [progress],
+				async: { state: "running", jobId: "row-task-pending", type: "task" },
+			},
+		} satisfies AsyncJobObserverPayload);
+
+		const row = registry.getObserverRows().find(r => r.id === "job:row-task-pending");
+		expect(row?.status).toBe("queued");
+	});
+
+	it("(d) plugin started event — normalizes Agent/Task/Status/Message (no message field)", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit("subagents:started", {
+			id: "row-plugin-start",
+			type: "coder",
+			description: "Refactor auth module",
+		});
+
+		const row = registry.getObserverRows().find(r => r.id === "row-plugin-start");
+		expect(row).toBeDefined();
+		expect(row?.agent).toBe("coder");
+		expect(row?.task).toBe("Refactor auth module");
+		expect(row?.status).toBe("running");
+		expect(row?.message).toBe("thinking…");
+	});
+
+	it("(d) plugin completed with result field — message derives from result", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit("subagents:completed", {
+			id: "row-plugin-result",
+			type: "coder",
+			description: "Code review",
+			result: "All tests pass",
+		});
+
+		const row = registry.getObserverRows().find(r => r.id === "row-plugin-result");
+		expect(row?.status).toBe("completed");
+		expect(row?.message).toBe("All tests pass");
+	});
+
+	it("(d) plugin failed with error field — message derives from error", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit("subagents:failed", {
+			id: "row-plugin-error",
+			type: "coder",
+			description: "Failing agent",
+			error: "Max turns exceeded",
+		});
+
+		const row = registry.getObserverRows().find(r => r.id === "row-plugin-error");
+		expect(row?.status).toBe("failed");
+		expect(row?.message).toBe("Max turns exceeded");
+	});
+
+	it("(d) plugin event with message field — message field takes highest priority", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit("subagents:started", {
+			id: "row-plugin-msg",
+			type: "coder",
+			description: "Agent with message",
+			message: "Initializing workspace",
+			error: "should not use this",
+		});
+
+		const row = registry.getObserverRows().find(r => r.id === "row-plugin-msg");
+		expect(row?.message).toBe("Initializing workspace");
+	});
+
+	it("(d) plugin event with statusMessage — used when message absent", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit("subagents:started", {
+			id: "row-plugin-statusmsg",
+			type: "coder",
+			description: "Agent with statusMessage",
+			statusMessage: "Running tests",
+		});
+
+		const row = registry.getObserverRows().find(r => r.id === "row-plugin-statusmsg");
+		expect(row?.message).toBe("Running tests");
+	});
+
+	it("row.session holds the backing ObservableSession", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			id: "row-session-ref",
+			agent: "task",
+			agentSource: "bundled",
+			description: "Session ref test",
+			status: "started",
+			index: 0,
+		} satisfies SubagentLifecyclePayload);
+
+		const row = registry.getObserverRows().find(r => r.id === "row-session-ref");
+		expect(row?.session).toBeDefined();
+		expect(row?.session.id).toBe("row-session-ref");
+		expect(row?.session.kind).toBe("subagent");
+	});
+});

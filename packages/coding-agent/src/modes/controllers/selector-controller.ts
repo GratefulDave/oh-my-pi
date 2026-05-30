@@ -62,6 +62,8 @@ const CALLBACK_SERVER_PROVIDERS = new Set<OAuthProvider>([
 const MANUAL_LOGIN_TIP = "Tip: You can complete pairing with /login <redirect URL>.";
 
 export class SelectorController {
+	#observerOverlayDone: (() => void) | undefined = undefined;
+
 	constructor(private ctx: InteractiveModeContext) {}
 
 	async #refreshOAuthProviderAuthState(): Promise<void> {
@@ -985,15 +987,23 @@ export class SelectorController {
 	}
 
 	showSessionObserver(registry: SessionObserverRegistry): void {
+		// Toggle: close the existing overlay if it is already open.
+		if (this.#observerOverlayDone) {
+			this.#observerOverlayDone();
+			return;
+		}
+
 		const observeKeys = this.ctx.keybindings.getKeys("app.session.observe");
 		let cleanup: (() => void) | undefined;
 		let overlayHandle: OverlayHandle | undefined;
 
 		const done = () => {
+			this.#observerOverlayDone = undefined;
 			cleanup?.();
 			overlayHandle?.hide();
 			this.ctx.ui.requestRender();
 		};
+		this.#observerOverlayDone = done;
 
 		const selector = new SessionObserverOverlayComponent(registry, done, observeKeys);
 

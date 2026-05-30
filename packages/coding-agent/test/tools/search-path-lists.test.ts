@@ -90,6 +90,25 @@ function makeSubagentRegistry(sessions: ObservableSession[]): SessionObserverReg
 		onChange: () => () => {},
 		setMainSession: () => {},
 		getActiveSubagentCount: () => sessions.filter(session => session.status === "active").length,
+		getObserverRows: () => {
+			const subagents = sessions.filter(s => s.kind !== "main");
+			const active = subagents.filter(s => s.status === "active").sort((a, b) => b.lastUpdate - a.lastUpdate);
+			const inactive = subagents.filter(s => s.status !== "active").sort((a, b) => b.lastUpdate - a.lastUpdate);
+			return [...active, ...inactive].map(s => ({
+				id: s.id,
+				agent: s.agent ?? s.runMetadata?.agent ?? s.source?.jobType ?? "agent",
+				task: s.description ?? s.progress?.description ?? s.asyncJob?.label ?? s.label,
+				status: (s.asyncJob?.status === "cancelled"
+					? "cancelled"
+					: s.status === "active"
+						? "running"
+						: s.status === "aborted"
+							? "cancelled"
+							: s.status) as "running" | "queued" | "completed" | "failed" | "cancelled",
+				message: s.progress?.lastIntent ?? (s.status === "active" ? "thinking…" : ""),
+				session: s,
+			}));
+		},
 	} as unknown as SessionObserverRegistry;
 }
 
@@ -254,6 +273,8 @@ describe("tool path arrays", () => {
 		]);
 
 		const overlay = new SessionObserverOverlayComponent(registry, () => {}, ["ctrl+s"]);
+		// Navigate from overview to detail view first
+		overlay.handleInput("\r");
 		const rendered = Bun.stripANSI(overlay.render(120).join("\n"));
 
 		expect(rendered).toContain("paths: folder with spaces/");

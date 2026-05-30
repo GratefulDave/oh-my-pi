@@ -29,6 +29,25 @@ function makeSubagentRegistry(sessions: ObservableSession[]): SessionObserverReg
 		onChange: () => () => {},
 		setMainSession: () => {},
 		getActiveSubagentCount: () => sessions.filter(s => s.status === "active").length,
+		getObserverRows: () => {
+			const subagents = sessions.filter(s => s.kind !== "main");
+			const active = subagents.filter(s => s.status === "active").sort((a, b) => b.lastUpdate - a.lastUpdate);
+			const inactive = subagents.filter(s => s.status !== "active").sort((a, b) => b.lastUpdate - a.lastUpdate);
+			return [...active, ...inactive].map(s => ({
+				id: s.id,
+				agent: s.agent ?? s.runMetadata?.agent ?? s.source?.jobType ?? "agent",
+				task: s.description ?? s.progress?.description ?? s.asyncJob?.label ?? s.label,
+				status: (s.asyncJob?.status === "cancelled"
+					? "cancelled"
+					: s.status === "active"
+						? "running"
+						: s.status === "aborted"
+							? "cancelled"
+							: s.status) as "running" | "queued" | "completed" | "failed" | "cancelled",
+				message: s.progress?.lastIntent ?? (s.status === "active" ? "thinking…" : ""),
+				session: s,
+			}));
+		},
 	} as unknown as SessionObserverRegistry;
 }
 
@@ -156,6 +175,8 @@ describe("Observer overlay silent-abort regression", () => {
 
 		const overlay = new SessionObserverOverlayComponent(registry, () => {}, ["ctrl+s"]);
 
+		// Navigate from overview to detail view first
+		overlay.handleInput("\r");
 		const rendered = overlay.render(120);
 		const renderedText = rendered.join("\n");
 
@@ -199,16 +220,19 @@ describe("Observer overlay silent-abort regression", () => {
 
 		const overlay = new SessionObserverOverlayComponent(registry, () => {}, ["ctrl+s"]);
 
+		// Navigate from overview to detail view — session has source.kind="async-job" so the
+		// component renders #buildAsyncJobLines, not the generic observable-metadata card.
+		overlay.handleInput("\r");
 		const renderedText = overlay.render(120).join("\n");
-		expect(renderedText).toContain("Captured transcript unavailable");
-		expect(renderedText).toContain("Observable run");
+		// Async-job detail renders the job kind and the session label
+		expect(renderedText).toContain("Bash job");
 		expect(renderedText).toContain("Background build");
+		// Progress description is rendered as a sub-line under the job title
 		expect(renderedText).toContain("compiled 42 files");
-		expect(renderedText).toContain("AsyncJobManager");
-		expect(renderedText).toContain("embedded");
-		expect(renderedText).toContain("~/repo/project");
-		expect(renderedText).toContain("~/repo/project-worktree");
-		expect(renderedText).toContain("path=~/repo/build.log");
+		// The old observable-metadata fallback strings are NOT present in the async-job path
+		expect(renderedText).not.toContain("Captured transcript unavailable");
+		expect(renderedText).not.toContain("Observable run");
+		// No raw home-prefixed path should leak (async-job path emits no cwd/worktree/artifact paths)
 		expect(renderedText).not.toContain(homeDir);
 	});
 
@@ -238,12 +262,15 @@ describe("Observer overlay silent-abort regression", () => {
 			},
 		]);
 
-		const renderedText = new SessionObserverOverlayComponent(registry, () => {}, ["ctrl+s"]).render(180).join("\n");
-		expect(renderedText).toContain("window");
-		expect(renderedText).toContain("backend=cmux");
-		expect(renderedText).toContain("session=session-1");
-		expect(renderedText).toContain("paneId=pane-1");
-		expect(renderedText).toContain("windowId=wind");
+		const overlay260 = new SessionObserverOverlayComponent(registry, () => {}, ["ctrl+s"]);
+		// Navigate from overview to detail view first
+		overlay260.handleInput("\r");
+		const renderedText260 = overlay260.render(180).join("\n");
+		expect(renderedText260).toContain("window");
+		expect(renderedText260).toContain("backend=cmux");
+		expect(renderedText260).toContain("session=session-1");
+		expect(renderedText260).toContain("paneId=pane-1");
+		expect(renderedText260).toContain("windowId=wind");
 	});
 
 	it("expands transcript entries with Enter and mouse click", () => {
@@ -271,9 +298,16 @@ describe("Observer overlay silent-abort regression", () => {
 		]);
 		const overlay = new SessionObserverOverlayComponent(registry, () => {}, ["ctrl+s"]);
 
+		// In overview mode, hidden text is not present
 		expect(overlay.render(120).join("\n")).not.toContain(hiddenTail);
+		// Navigate from overview to detail view
+		overlay.handleInput("\r");
+		// Now in detail mode — entry is collapsed, tail not visible
+		expect(overlay.render(120).join("\n")).not.toContain(hiddenTail);
+		// Expand the entry
 		overlay.handleInput("\r");
 		expect(overlay.render(120).join("\n")).toContain(hiddenTail);
+		// Collapse again
 		overlay.handleInput("\r");
 		expect(overlay.render(120).join("\n")).not.toContain(hiddenTail);
 		overlay.handleMouse({ button: 0, x: 2, y: 6, localX: 2, localY: 6, released: false });

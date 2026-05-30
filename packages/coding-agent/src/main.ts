@@ -55,6 +55,7 @@ import {
 } from "./extensibility/plugins/marketplace";
 import type { MCPManager } from "./mcp";
 import { InteractiveMode, runAcpMode, runPrintMode, runRpcMode } from "./modes";
+import { runStandaloneSessionObserver } from "./modes/session-observer-standalone";
 import { initTheme, stopThemeWatcher } from "./modes/theme/theme";
 import type { SubmittedUserInput } from "./modes/types";
 import {
@@ -773,6 +774,11 @@ export async function runRootCommand(
 		}
 		process.stdout.write(`Exported to: ${result}\n`);
 		process.exit(0);
+	}
+
+	if (parsedArgs.observeSession) {
+		await runStandaloneSessionObserver(parsedArgs.observeSession);
+		return;
 	}
 
 	if ((parsedArgs.mode === "rpc" || parsedArgs.mode === "rpc-ui") && parsedArgs.fileArgs.length > 0) {

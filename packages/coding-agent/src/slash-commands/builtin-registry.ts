@@ -2529,6 +2529,15 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		},
 	},
 	{
+		name: "observer",
+		aliases: ["observe"],
+		description: "Toggle the session observer overlay (or open a mux window for tmux/cmux sessions)",
+		handleTui: (_command, runtime) => {
+			runtime.ctx.showSessionObserver();
+			runtime.ctx.editor.setText("");
+		},
+	},
+	{
 		name: "quit",
 		description: "Quit the application",
 		handleTui: shutdownHandlerTui,

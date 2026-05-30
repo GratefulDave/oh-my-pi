@@ -47,6 +47,7 @@ export interface Args {
 	noRules?: boolean;
 	listModels?: string | true;
 	noTitle?: boolean;
+	observeSession?: string;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
@@ -185,6 +186,8 @@ export function parseArgs(args: string[], extensionFlags?: Map<string, { type: "
 			} else {
 				result.listModels = true;
 			}
+		} else if (arg === "--observe-session" && i + 1 < args.length) {
+			result.observeSession = args[++i];
 		} else if (arg.startsWith("@")) {
 			result.fileArgs.push(arg.slice(1)); // Remove @ prefix
 		} else if (arg.startsWith("--") && extensionFlags) {

@@ -124,6 +124,9 @@ export default class Index extends Command {
 		"no-title": Flags.boolean({
 			description: "Disable title auto-generation",
 		}),
+		"observe-session": Flags.string({
+			description: "Open read-only observer TUI for the given session file",
+		}),
 	};
 
 	static examples = [

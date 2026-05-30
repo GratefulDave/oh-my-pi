@@ -99,6 +99,7 @@ import {
 } from "./loop-limit";
 import { OAuthManualInputManager } from "./oauth-manual-input";
 import { type ObservableSession, SessionObserverRegistry } from "./session-observer-registry";
+import { openObserverWindow } from "./session-observer-window";
 import type { Theme } from "./theme/theme";
 import {
 	getEditorTheme,
@@ -2571,6 +2572,21 @@ export class InteractiveMode implements InteractiveModeContext {
 	}
 
 	showSessionObserver(): void {
+		const muxSession = this.#observerRegistry.getActiveMuxSession();
+		if (muxSession?.sessionFile) {
+			// Route to a new mux window; fall back to in-TUI overlay only if it fails.
+			void openObserverWindow(muxSession).then(result => {
+				if (!result.ok) {
+					this.showWarning(`Observer window failed: ${result.message}`);
+					this.#showInTuiObserver();
+				}
+			});
+			return;
+		}
+		this.#showInTuiObserver();
+	}
+
+	#showInTuiObserver(): void {
 		const sessions = this.#observerRegistry.getSessions();
 		if (sessions.length <= 1) {
 			this.showStatus("No active subagent sessions");

@@ -30,6 +30,17 @@ export interface ObservableSession {
 		ownerId?: string;
 		jobType?: "bash" | "task";
 	};
+	/** Normalized message from plugin event payload (message, statusMessage, summary, result, or error field). */
+	pluginMessage?: string;
+}
+
+export interface ObserverRow {
+	id: string;
+	agent: string;
+	task: string;
+	status: "running" | "queued" | "completed" | "failed" | "cancelled";
+	message: string;
+	session: ObservableSession;
 }
 
 const STATUS_MAP: Record<string, ObservableSession["status"]> = {
@@ -60,6 +71,63 @@ const TASK_PROGRESS_STATUS_MAP: Record<AgentProgress["status"], ObservableSessio
 	failed: "failed",
 	aborted: "aborted",
 };
+
+/** Pure function: derive a normalized ObserverRow from a single ObservableSession. */
+function deriveObserverRow(session: ObservableSession): ObserverRow {
+	// Agent
+	const agent = session.agent ?? session.runMetadata?.agent ?? session.source?.jobType ?? "agent";
+
+	// Task
+	const task = session.description ?? session.progress?.description ?? session.asyncJob?.label ?? session.label;
+
+	// Status
+	let status: ObserverRow["status"];
+	if (session.asyncJob?.status === "cancelled") {
+		status = "cancelled";
+	} else if (session.progress?.status === "pending") {
+		status = "queued";
+	} else {
+		switch (session.status) {
+			case "active":
+				status = "running";
+				break;
+			case "completed":
+				status = "completed";
+				break;
+			case "failed":
+				status = "failed";
+				break;
+			case "aborted":
+				status = "cancelled";
+				break;
+			default:
+				status = "running";
+		}
+	}
+
+	// Message
+	const progress = session.progress;
+	let message = "";
+	if (progress?.lastIntent) {
+		message = progress.lastIntent;
+	} else if (progress?.currentTool) {
+		message = progress.currentToolArgs ? `${progress.currentTool} ${progress.currentToolArgs}` : progress.currentTool;
+	} else if (session.asyncJob?.errorText) {
+		message = session.asyncJob.errorText.split("\n")[0] ?? "";
+	} else if (session.asyncJob?.resultText) {
+		message = session.asyncJob.resultText.split("\n")[0] ?? "";
+	} else if (session.asyncJob?.progressText) {
+		message = session.asyncJob.progressText.split("\n")[0] ?? "";
+	} else if (session.pluginMessage) {
+		message = session.pluginMessage;
+	} else if (progress?.recentOutput && progress.recentOutput.length > 0) {
+		message = progress.recentOutput[progress.recentOutput.length - 1] ?? "";
+	} else if (status === "running") {
+		message = "thinking…";
+	}
+
+	return { id: session.id, agent, task, status, message, session };
+}
 
 export class SessionObserverRegistry {
 	#sessions = new Map<string, ObservableSession>();
@@ -100,12 +168,39 @@ export class SessionObserverRegistry {
 		return sessions;
 	}
 
+	/** Derive normalized observer rows, excluding main session, active first by lastUpdate desc. */
+	getObserverRows(): ObserverRow[] {
+		const sessions = [...this.#sessions.values()].filter(s => s.kind !== "main");
+		const active = sessions.filter(s => s.status === "active").sort((a, b) => b.lastUpdate - a.lastUpdate);
+		const inactive = sessions.filter(s => s.status !== "active").sort((a, b) => b.lastUpdate - a.lastUpdate);
+		return [...active, ...inactive].map(s => deriveObserverRow(s));
+	}
+
 	getActiveSubagentCount(): number {
 		let count = 0;
 		for (const s of this.#sessions.values()) {
 			if (s.kind === "subagent" && s.status === "active") count++;
 		}
 		return count;
+	}
+
+	/**
+	 * Returns the most recently updated active subagent session whose run
+	 * backend is `tmux` or `cmux`.  Used by interactive mode to decide whether
+	 * to open a mux window instead of an in-TUI overlay.
+	 *
+	 * Returns `undefined` when no such session exists (e.g. all sessions use
+	 * `core`, `acpx`, or an unset backend, or all mux sessions are terminal).
+	 */
+	getActiveMuxSession(): ObservableSession | undefined {
+		let best: ObservableSession | undefined;
+		for (const s of this.#sessions.values()) {
+			if (s.kind !== "subagent" || s.status !== "active") continue;
+			const backend = s.runMetadata?.presentation.backend;
+			if (backend !== "tmux" && backend !== "cmux") continue;
+			if (best === undefined || s.lastUpdate > best.lastUpdate) best = s;
+		}
+		return best;
 	}
 
 	/**
@@ -291,6 +386,7 @@ export class SessionObserverRegistry {
 		status: ObservableSession["status"],
 		runMetadata: AgentRunMetadata,
 		source: ObservableSession["source"],
+		pluginMessage: string | undefined,
 	): void {
 		const existing = this.#sessions.get(id);
 		if (existing) {
@@ -299,6 +395,7 @@ export class SessionObserverRegistry {
 			existing.lastUpdate = Date.now();
 			existing.runMetadata = runMetadata;
 			existing.source = source;
+			existing.pluginMessage = pluginMessage;
 			if (description) {
 				existing.description = description;
 				existing.label = description;
@@ -314,8 +411,27 @@ export class SessionObserverRegistry {
 				lastUpdate: Date.now(),
 				runMetadata,
 				source,
+				pluginMessage,
 			});
 		}
+		this.#notifyListeners();
+	}
+
+	/**
+	 * Register a single read-only observed session for standalone observer mode.
+	 * Used by `runStandaloneSessionObserver` to seed the registry with the
+	 * target session file before any EventBus events arrive.
+	 */
+	registerStandaloneSession(sessionFile: string): void {
+		const id = "standalone";
+		this.#sessions.set(id, {
+			id,
+			kind: "subagent",
+			label: sessionFile,
+			status: "active",
+			sessionFile,
+			lastUpdate: Date.now(),
+		});
 		this.#notifyListeners();
 	}
 }
@@ -451,6 +567,16 @@ function buildPluginRunMetadata(
 	return metadata;
 }
 
+/** Extract a normalized message string from known plugin payload message fields. */
+function extractPluginMessage(payload: Record<string, unknown>): string | undefined {
+	const candidates = ["message", "statusMessage", "summary", "result", "error"] as const;
+	for (const key of candidates) {
+		const value = payload[key];
+		if (typeof value === "string" && value.length > 0) return value;
+	}
+	return undefined;
+}
+
 /** Subscribe to plugin subagent EventBus channels and reflect them as ObservableSessions. */
 function subscribeToPluginSubagentEvents(registry: SessionObserverRegistry, eventBus: EventBus): () => void {
 	const unsubscribers: Array<() => void> = [];
@@ -466,6 +592,9 @@ function subscribeToPluginSubagentEvents(registry: SessionObserverRegistry, even
 		const observableStatus = PLUGIN_CHANNEL_STATUS[channel];
 		if (!observableStatus) return;
 
+		// Extract normalized message from plugin-specific fields (in priority order).
+		const pluginMessage: string | undefined = extractPluginMessage(payload);
+
 		const artifacts = extractPluginArtifacts(payload);
 		const runMetadata = buildPluginRunMetadata(payload, id, agentType, observableStatus, artifacts);
 		const source: ObservableSession["source"] = {
@@ -474,7 +603,7 @@ function subscribeToPluginSubagentEvents(registry: SessionObserverRegistry, even
 			eventChannel: channel,
 		};
 
-		registry.upsertPluginSubagent(id, agentType, description, observableStatus, runMetadata, source);
+		registry.upsertPluginSubagent(id, agentType, description, observableStatus, runMetadata, source, pluginMessage);
 	};
 	for (const channel of ["subagents:started", "subagents:completed", "subagents:failed"]) {
 		unsubscribers.push(eventBus.on(channel, data => handlePluginEvent(channel, data)));

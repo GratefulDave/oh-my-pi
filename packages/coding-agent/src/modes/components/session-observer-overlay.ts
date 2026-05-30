@@ -1,30 +1,38 @@
 /**
  * Session observer overlay component.
  *
- * Picker mode: lists main + active subagent sessions with live status.
- * Viewer mode: renders a scrollable, interactive transcript of the selected subagent's session
+ * Overview mode: lists all subagent sessions as a table (Agent | Task | Status | Message).
+ *   ↑/↓ or j/k to select, Enter to open detail, Esc to close.
+ * Detail mode: renders a scrollable, interactive transcript of the selected subagent's session
  *   by reading its JSONL session file — shows thinking, text, tool calls, results
  *   with expand/collapse per entry and breadcrumb navigation for nested sub-agents.
  *
  * Lifecycle:
- *   - shortcut opens picker
- *   - Enter on a subagent -> viewer
- *   - shortcut while in viewer -> back to picker (or pop breadcrumb)
- *   - Esc from viewer -> back to picker (or pop breadcrumb)
- *   - Esc from picker -> close overlay
- *   - Enter on main session -> close overlay (jump back)
+ *   - shortcut opens overview (if subagents exist), else closes immediately
+ *   - Enter on a row → detail viewer
+ *   - Esc from detail → back to overview (or pop breadcrumb)
+ *   - Esc from overview → close overlay
+ *   - Ctrl+S closes from anywhere
  */
+import * as fs from "node:fs";
+
 import type { ToolResultMessage } from "@oh-my-pi/pi-ai";
 import { Container, type LocalMouseEvent, Markdown, type MarkdownTheme, matchesKey } from "@oh-my-pi/pi-tui";
 import { formatDuration, formatNumber, logger } from "@oh-my-pi/pi-utils";
 import type { KeyId } from "../../config/keybindings";
 import { isSilentAbort } from "../../session/messages";
-import type { SessionMessageEntry } from "../../session/session-manager";
+import type { CustomMessageEntry, SessionMessageEntry } from "../../session/session-manager";
 import { parseSessionEntries } from "../../session/session-manager";
 import { PREVIEW_LIMITS, replaceTabs, shortenPath, TRUNCATE_LENGTHS, truncateToWidth } from "../../tools/render-utils";
-import type { ObservableSession, SessionObserverRegistry } from "../session-observer-registry";
+import type { ObservableSession, ObserverRow, SessionObserverRegistry } from "../session-observer-registry";
 import { getMarkdownTheme, theme } from "../theme/theme";
 import { DynamicBorder } from "./dynamic-border";
+
+/** IRC custom message types that are displayed in the observer transcript. */
+const IRC_CUSTOM_TYPES = new Set(["irc:incoming", "irc:autoreply", "irc:relay", "irc_message"]);
+
+/** Union of transcript entries held in the cache. */
+type TranscriptEntry = SessionMessageEntry | CustomMessageEntry;
 
 /** Max thinking characters in collapsed state */
 const MAX_THINKING_CHARS_COLLAPSED = 200;
@@ -51,7 +59,7 @@ function sanitizeLine(text: string, maxWidth?: number): string {
 interface ViewerEntry {
 	lineStart: number;
 	lineCount: number;
-	kind: "thinking" | "text" | "toolCall" | "user";
+	kind: "thinking" | "text" | "toolCall" | "user" | "irc";
 }
 
 /** Breadcrumb item for nested session navigation */
@@ -66,23 +74,33 @@ export class SessionObserverOverlayComponent extends Container {
 	#onDone: () => void;
 	#selectedSessionId?: string;
 	#observeKeys: KeyId[];
-	#transcriptCache?: { path: string; bytesRead: number; entries: SessionMessageEntry[]; model?: string };
+	#transcriptCache?: { path: string; bytesRead: number; entries: TranscriptEntry[]; model?: string };
 
-	// Scroll state
+	// View mode
+	#mode: "overview" | "detail" = "overview";
+
+	// Overview state
+	#overviewRows: ObserverRow[] = [];
+	#overviewSelectedIndex = 0;
+	#overviewHeaderLines: string[] = [];
+	#overviewFooterLines: string[] = [];
+	#overviewContentLines: string[] = [];
+
+	// Scroll state (shared between overview + detail)
 	#scrollOffset = 0;
 	#renderedLines: string[] = [];
 	#viewportHeight = 20;
 	#wasAtBottom = true;
 
-	// Entry selection & expand/collapse
+	// Entry selection & expand/collapse (detail mode)
 	#viewerEntries: ViewerEntry[] = [];
 	#selectedEntryIndex = 0;
 	#expandedEntries = new Set<number>();
 
-	// Breadcrumb navigation
+	// Breadcrumb navigation (detail mode)
 	#navigationStack: BreadcrumbItem[] = [];
 
-	// Cached header/footer for viewer (rebuilt on refresh)
+	// Cached header/footer for detail viewer (rebuilt on refresh)
 	#viewerHeaderLines: string[] = [];
 	#viewerFooterLines: string[] = [];
 	// Markdown rendering
@@ -94,28 +112,20 @@ export class SessionObserverOverlayComponent extends Container {
 		this.#onDone = onDone;
 		this.#observeKeys = observeKeys;
 
-		// Jump directly to the most recently active sub-agent
-		const mostRecent = this.#getMostRecentSubagent();
-		if (mostRecent) {
-			this.#selectedSessionId = mostRecent.id;
-			this.#setupViewer();
+		const rows = this.#registry.getObserverRows();
+		if (rows.length > 0) {
+			this.#mode = "overview";
+			this.#setupOverview();
 		} else {
 			// No sub-agents — close immediately
 			queueMicrotask(() => this.#onDone());
 		}
 	}
 
-	/** Find the most recently updated sub-agent session (prefer active ones) */
-	#getMostRecentSubagent(): ObservableSession | undefined {
-		const sessions = this.#registry.getSessions().filter(s => s.kind === "subagent");
-		if (sessions.length === 0) return undefined;
-		// Prefer active sessions, then sort by lastUpdate descending
-		const active = sessions.filter(s => s.status === "active");
-		const pool = active.length > 0 ? active : sessions;
-		return pool.sort((a, b) => b.lastUpdate - a.lastUpdate)[0];
-	}
-
 	override render(width: number): string[] {
+		if (this.#mode === "overview") {
+			return this.#renderOverview(width);
+		}
 		return this.#renderViewer(width);
 	}
 
@@ -134,9 +144,206 @@ export class SessionObserverOverlayComponent extends Container {
 		}
 	}
 
+	// =========================================================================
+	// Overview mode
+	// =========================================================================
+
+	/** (Re)build the overview table from live registry data */
+	#setupOverview(): void {
+		this.#overviewRows = this.#registry.getObserverRows();
+		// Clamp selection
+		if (this.#overviewRows.length > 0) {
+			this.#overviewSelectedIndex = Math.min(this.#overviewSelectedIndex, this.#overviewRows.length - 1);
+		}
+		this.#buildOverviewContent();
+	}
+
+	/** Build overview header/footer/content lines */
+	#buildOverviewContent(): void {
+		const cols = process.stdout.columns || 80;
+		// Column widths: Agent(14) | Task(dynamic) | Status(11) | Message(rest)
+		const agentW = 14;
+		const statusW = 11;
+		const msgW = Math.max(20, cols - agentW - statusW - 4 - 4 - 4 - 6); // borders + separators
+		const taskW = Math.max(16, Math.floor((cols - agentW - statusW - msgW - 20) / 1));
+		// Recompute with taskW to let message fill remainder
+		const totalFixed = agentW + taskW + statusW + 8; // 8 for " │ " separators (3 × 2 + 2 borders)
+		const actualMsgW = Math.max(16, cols - totalFixed - 2);
+
+		const pad = (s: string, w: number): string => {
+			// Truncate if too long (ignoring ANSI), then left-pad with spaces to width.
+			// We use a raw approach: slice to w chars, pad remainder.
+			const stripped = s.replace(/\x1b\[[0-9;]*m/g, "");
+			if (stripped.length > w) {
+				// Truncate the raw string to fit (we sanitize before calling this)
+				return s.slice(0, w);
+			}
+			return s + " ".repeat(w - stripped.length);
+		};
+		const headerRow = `${pad(theme.bold("Agent"), agentW)} │ ${pad(theme.bold("Task"), taskW)} │ ${pad(theme.bold("Status"), statusW)} │ ${theme.bold("Message")}`;
+		const sepRow = `${"─".repeat(agentW)}─┼─${"─".repeat(taskW)}─┼─${"─".repeat(statusW)}─┼─${"─".repeat(actualMsgW)}`;
+
+		this.#overviewHeaderLines = [theme.fg("accent", "Session Observer")];
+		this.#overviewContentLines = [headerRow, theme.fg("dim", sepRow)];
+
+		for (let i = 0; i < this.#overviewRows.length; i++) {
+			const row = this.#overviewRows[i];
+			const selected = i === this.#overviewSelectedIndex;
+			const cursor = selected ? theme.fg("accent", "▶") : " ";
+
+			const agentRaw = sanitizeLine(row.agent, agentW);
+			const taskRaw = sanitizeLine(row.task, taskW);
+			const { status } = row;
+			const msgRaw = sanitizeLine(row.message, actualMsgW);
+
+			const statusColor: "success" | "error" | "warning" | "dim" =
+				status === "running"
+					? "success"
+					: status === "failed"
+						? "error"
+						: status === "cancelled"
+							? "warning"
+							: "dim";
+
+			const agentStr = selected ? theme.bold(agentRaw) : agentRaw;
+			const taskStr = selected ? theme.bold(taskRaw) : theme.fg("muted", taskRaw);
+			const statusStr = theme.fg(statusColor, pad(status, statusW));
+			const msgStr = theme.fg("dim", msgRaw);
+			const renderedRow = `${cursor} ${pad(agentStr, agentW)} │ ${pad(taskStr, taskW)} │ ${statusStr} │ ${msgStr}`;
+			this.#overviewContentLines.push(renderedRow);
+		}
+		this.#overviewFooterLines = [theme.fg("dim", "↑/↓ select  Enter open  Esc/Ctrl+S close  r refresh")];
+	}
+
+	/** Render the overview pane into terminal lines */
+	#renderOverview(width: number): string[] {
+		const termHeight = process.stdout.rows || 40;
+		const headerChrome = this.#overviewHeaderLines.length + 2;
+		const footerChrome = this.#overviewFooterLines.length + 2;
+		const viewport = Math.max(5, termHeight - headerChrome - footerChrome);
+
+		// Scroll to keep selected row visible (rows start at line 2: header + sep)
+		const selectedLine = 2 + this.#overviewSelectedIndex;
+		if (selectedLine < this.#scrollOffset) this.#scrollOffset = selectedLine;
+		if (selectedLine >= this.#scrollOffset + viewport) this.#scrollOffset = selectedLine - viewport + 1;
+		this.#scrollOffset = Math.max(
+			0,
+			Math.min(this.#scrollOffset, Math.max(0, this.#overviewContentLines.length - viewport)),
+		);
+
+		const lines: string[] = [];
+
+		// Header
+		lines.push(...new DynamicBorder().render(width));
+		for (const hl of this.#overviewHeaderLines) {
+			lines.push(` ${hl}`);
+		}
+		lines.push(...new DynamicBorder().render(width));
+
+		// Content viewport
+		const visible = this.#overviewContentLines.slice(this.#scrollOffset, this.#scrollOffset + viewport);
+		for (const vl of visible) {
+			lines.push(` ${vl}`);
+		}
+		const pad2 = viewport - visible.length;
+		for (let i = 0; i < pad2; i++) {
+			lines.push("");
+		}
+
+		// Footer
+		lines.push("");
+		for (const fl of this.#overviewFooterLines) {
+			lines.push(` ${fl}`);
+		}
+		lines.push(...new DynamicBorder().render(width));
+
+		return lines;
+	}
+
+	/** Enter detail view for the currently selected overview row */
+	#enterDetail(): void {
+		const row = this.#overviewRows[this.#overviewSelectedIndex];
+		if (!row) return;
+		this.#mode = "detail";
+		this.#selectedSessionId = row.session.id;
+		this.#navigationStack = [];
+		this.#transcriptCache = undefined;
+		this.#scrollOffset = 0;
+		this.#selectedEntryIndex = 0;
+		this.#expandedEntries.clear();
+		this.#wasAtBottom = true;
+		this.#setupViewer();
+	}
+
+	/** Return from detail view back to overview */
+	#returnToOverview(): void {
+		this.#mode = "overview";
+		this.#selectedSessionId = undefined;
+		this.#transcriptCache = undefined;
+		this.#navigationStack = [];
+		this.#scrollOffset = 0;
+		this.#setupOverview();
+	}
+
+	/** Handle key input when in overview mode */
+	#handleOverviewInput(keyData: string): void {
+		const rowCount = this.#overviewRows.length;
+		// j / down — move selection down
+		if (keyData === "j" || matchesKey(keyData, "down")) {
+			if (rowCount > 0) {
+				this.#overviewSelectedIndex = Math.min(this.#overviewSelectedIndex + 1, rowCount - 1);
+			}
+			this.#buildOverviewContent();
+			return;
+		}
+
+		// k / up — move selection up
+		if (keyData === "k" || matchesKey(keyData, "up")) {
+			if (rowCount > 0) {
+				this.#overviewSelectedIndex = Math.max(this.#overviewSelectedIndex - 1, 0);
+			}
+			this.#buildOverviewContent();
+			return;
+		}
+
+		// G — jump to last row
+		if (keyData === "G" && rowCount > 0) {
+			this.#overviewSelectedIndex = rowCount - 1;
+			this.#buildOverviewContent();
+			return;
+		}
+
+		// g — jump to first row
+		if (keyData === "g") {
+			this.#overviewSelectedIndex = 0;
+			this.#buildOverviewContent();
+			return;
+		}
+
+		// r — refresh overview
+		if (keyData === "r") {
+			this.#setupOverview();
+			return;
+		}
+
+		// Enter — open detail for selected row
+		if (matchesKey(keyData, "enter") || keyData === "\r" || keyData === "\n") {
+			this.#enterDetail();
+			return;
+		}
+
+		// Escape — close overlay
+		if (matchesKey(keyData, "escape")) {
+			this.#onDone();
+			return;
+		}
+	}
+
 	/** Rebuild content from live registry data */
 	refreshFromRegistry(): void {
-		if (this.#selectedSessionId) {
+		if (this.#mode === "overview") {
+			this.#setupOverview();
+		} else if (this.#selectedSessionId) {
 			// Keep auto-scrolling to bottom unless the user navigated away from the last entry
 			this.#wasAtBottom = this.#selectedEntryIndex >= this.#viewerEntries.length - 1;
 			this.#rebuildViewerContent();
@@ -149,7 +356,7 @@ export class SessionObserverOverlayComponent extends Container {
 		const session = sessions.find(s => s.id === this.#selectedSessionId);
 
 		// Load transcript first so model info is available for header
-		let messageEntries: SessionMessageEntry[] | null = null;
+		let messageEntries: TranscriptEntry[] | null = null;
 		if (session?.sessionFile) {
 			messageEntries = this.#loadTranscript(session.sessionFile);
 		}
@@ -196,7 +403,10 @@ export class SessionObserverOverlayComponent extends Container {
 		const statsLine = this.#buildStatsLine(session);
 		if (statsLine) this.#viewerFooterLines.push(statsLine);
 		this.#viewerFooterLines.push(
-			theme.fg("dim", "j/k:scroll  Enter:expand  [/]/←→:cycle agents  Esc/Ctrl+S:close  g/G:top/bottom"),
+			theme.fg(
+				"dim",
+				"j/k:scroll  Enter:expand  [/]/←→:cycle agents  Esc:back to overview  Ctrl+S:close  g/G:top/bottom",
+			),
 		);
 
 		// Auto-scroll to bottom if we were at bottom
@@ -491,17 +701,37 @@ export class SessionObserverOverlayComponent extends Container {
 		return shortenPath(pathValue);
 	}
 
-	#buildTranscriptLines(messageEntries: SessionMessageEntry[], lines: string[]): void {
-		// Build a tool call ID -> tool result map
+	#buildTranscriptLines(messageEntries: TranscriptEntry[], lines: string[]): void {
+		// Build a tool call ID -> tool result map (only from normal message entries)
 		const toolResults = new Map<string, ToolResultMessage>();
 		for (const entry of messageEntries) {
-			if (entry.message.role === "toolResult") {
+			if (entry.type === "message" && entry.message.role === "toolResult") {
 				toolResults.set(entry.message.toolCallId, entry.message);
 			}
 		}
 
 		let entryIndex = 0;
 		for (const entry of messageEntries) {
+			if (entry.type === "custom_message") {
+				// IRC custom messages
+				const text =
+					typeof entry.content === "string"
+						? entry.content
+						: entry.content
+								.filter((b): b is { type: "text"; text: string } => b.type === "text")
+								.map(b => b.text)
+								.join("\n");
+				if (text.trim()) {
+					const startLine = lines.length;
+					const isSelected = entryIndex === this.#selectedEntryIndex;
+					const isExpanded = this.#expandedEntries.has(entryIndex);
+					this.#renderIrcLines(lines, entry, text.trim(), isExpanded, isSelected);
+					this.#viewerEntries.push({ lineStart: startLine, lineCount: lines.length - startLine, kind: "irc" });
+					entryIndex++;
+				}
+				continue;
+			}
+
 			const msg = entry.message;
 
 			if (msg.role === "assistant") {
@@ -591,6 +821,79 @@ export class SessionObserverOverlayComponent extends Container {
 					entryIndex++;
 				}
 			}
+		}
+	}
+
+	/** Derive a directional label for an IRC custom message entry. */
+	#ircLabel(entry: CustomMessageEntry): string {
+		const d = entry.details as Record<string, unknown> | undefined;
+		const from = typeof d?.from === "string" ? d.from : undefined;
+		const to = typeof d?.to === "string" ? d.to : undefined;
+		const kind = d?.kind;
+
+		if (from !== undefined && to !== undefined) {
+			// relay with explicit kind
+			if (entry.customType === "irc:relay") {
+				if (kind === "reply") {
+					return `[IRC ${from} → (auto) ${to}]`;
+				}
+				return `[IRC ${from} → ${to}]`;
+			}
+			return `[IRC ${from} → ${to}]`;
+		}
+		if (entry.customType === "irc:incoming" && from !== undefined) {
+			return `[IRC ${from} → you]`;
+		}
+		if (entry.customType === "irc:autoreply" && to !== undefined) {
+			return `[IRC you → ${to} (auto)]`;
+		}
+		return "";
+	}
+
+	/** Render an IRC custom message entry in collapsed or expanded form. */
+	#renderIrcLines(
+		lines: string[],
+		entry: CustomMessageEntry,
+		text: string,
+		expanded: boolean,
+		selected: boolean,
+	): void {
+		const cursor = selected ? theme.fg("accent", "▶") : " ";
+
+		// Derive the label from metadata; fall back to content-prefix detection.
+		let label = this.#ircLabel(entry);
+		let body = text;
+
+		if (!label) {
+			const firstNewline = text.indexOf("\n");
+			const firstLine = firstNewline === -1 ? text : text.slice(0, firstNewline);
+			if (firstLine.startsWith("[IRC")) {
+				// Use first line as label; strip it from the body.
+				label = firstLine.trimEnd();
+				body = firstNewline === -1 ? "" : text.slice(firstNewline + 1).trimStart();
+			} else {
+				label = "[IRC]";
+			}
+		}
+
+		const styledLabel = theme.fg("dim", label);
+		lines.push("");
+		if (expanded) {
+			lines.push(`${cursor} ${styledLabel}`);
+			if (body) {
+				const mdLines = this.#renderMarkdownToLines(body);
+				for (const ml of mdLines) {
+					lines.push(ml);
+				}
+			}
+		} else {
+			const bodyLines = body.split("\n");
+			const firstBodyLine = bodyLines[0] ?? "";
+			const totalBodyLines = bodyLines.filter(l => l.trim()).length;
+			const hint = totalBodyLines > 1 ? theme.fg("dim", ` (${totalBodyLines} lines)`) : "";
+			lines.push(
+				`${cursor} ${styledLabel} ${theme.fg("muted", sanitizeLine(firstBodyLine, TRUNCATE_LENGTHS.TITLE))}${hint}`,
+			);
 		}
 	}
 
@@ -781,7 +1084,7 @@ export class SessionObserverOverlayComponent extends Container {
 		}
 	}
 
-	#loadTranscript(sessionFile: string): SessionMessageEntry[] | null {
+	#loadTranscript(sessionFile: string): TranscriptEntry[] | null {
 		if (this.#transcriptCache && this.#transcriptCache.path !== sessionFile) {
 			this.#transcriptCache = undefined;
 		}
@@ -815,6 +1118,8 @@ export class SessionObserverOverlayComponent extends Container {
 						if (!this.#transcriptCache.model && msg.role === "assistant") {
 							this.#transcriptCache.model = msg.model;
 						}
+					} else if (entry.type === "custom_message" && IRC_CUSTOM_TYPES.has(entry.customType)) {
+						this.#transcriptCache.entries.push(entry);
 					} else if (entry.type === "model_change") {
 						this.#transcriptCache.model = entry.model;
 					}
@@ -846,11 +1151,28 @@ export class SessionObserverOverlayComponent extends Container {
 			}
 		}
 
-		this.#handleViewerInput(keyData);
+		if (this.#mode === "overview") {
+			this.#handleOverviewInput(keyData);
+		} else {
+			this.#handleViewerInput(keyData);
+		}
 	}
 
 	handleMouse(event: LocalMouseEvent): void {
 		if (event.released || event.button !== 0) return;
+		if (this.#mode === "overview") {
+			// Click on a data row: rows start at line (headerChrome + 2) for header + sep
+			const overviewHeaderChrome = this.#overviewHeaderLines.length + 2;
+			// +2 for table header row + separator row (both at start of content)
+			const rowLine = event.localY - 1 - overviewHeaderChrome - 2 + this.#scrollOffset;
+			if (rowLine >= 0 && rowLine < this.#overviewRows.length) {
+				this.#overviewSelectedIndex = rowLine;
+				this.#buildOverviewContent();
+				this.#enterDetail();
+			}
+			return;
+		}
+		// Detail mode: toggle expand/collapse on clicked entry
 		const headerChrome = this.#viewerHeaderLines.length + 2;
 		const renderedLineIndex = event.localY - 1 - headerChrome + this.#scrollOffset;
 		if (renderedLineIndex < 0) return;
@@ -871,10 +1193,10 @@ export class SessionObserverOverlayComponent extends Container {
 	#handleViewerInput(keyData: string): void {
 		const entryCount = this.#viewerEntries.length;
 
-		// Escape — pop breadcrumb navigation or close overlay
+		// Escape — pop breadcrumb navigation, then return to overview
 		if (matchesKey(keyData, "escape")) {
 			if (!this.#navigateBack()) {
-				this.#onDone();
+				this.#returnToOverview();
 			}
 			return;
 		}
@@ -978,12 +1300,9 @@ export class SessionObserverOverlayComponent extends Container {
 		}
 	}
 
-	/** Get the ordered list of sub-agent session IDs (excludes main) */
+	/** Get the ordered list of sub-agent session IDs (excludes main), matching overview order. */
 	#getSubagentSessionIds(): string[] {
-		return this.#registry
-			.getSessions()
-			.filter(s => s.kind === "subagent")
-			.map(s => s.id);
+		return this.#registry.getObserverRows().map(r => r.session.id);
 	}
 
 	/** Cycle to next (+1) or previous (-1) sub-agent session */
@@ -1048,7 +1367,6 @@ export class SessionObserverOverlayComponent extends Container {
 }
 
 // Sync helpers for render path
-import * as fs from "node:fs";
 
 function readFileIncremental(filePath: string, fromByte: number): { text: string; newSize: number } | null {
 	try {
