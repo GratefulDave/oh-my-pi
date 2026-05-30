@@ -6201,7 +6201,7 @@ export class AgentSession {
 
 	#closeCodexProviderSessionsForHistoryRewrite(): void {
 		const currentModel = this.model;
-		if (!currentModel || currentModel.api !== "openai-codex-responses") return;
+		if (currentModel?.api !== "openai-codex-responses") return;
 		this.#closeProviderSessionsForModelSwitch(currentModel, currentModel);
 	}
 
@@ -7067,7 +7067,11 @@ export class AgentSession {
 		return lower.includes("flash") ? "gemini-flash" : "gemini-pro";
 	}
 
-	#suppressAntigravityQuotaGroup(provider: string, group: "claude" | "gemini-3.5-flash" | "gemini-3.1" | "gemini-flash" | "gemini-pro" | undefined, untilMs: number): void {
+	#suppressAntigravityQuotaGroup(
+		provider: string,
+		group: "claude" | "gemini-3.5-flash" | "gemini-3.1" | "gemini-flash" | "gemini-pro" | undefined,
+		untilMs: number,
+	): void {
 		if (!group) return;
 		for (const model of this.#modelRegistry.getAvailable()) {
 			if (model.provider !== provider) continue;
@@ -8515,7 +8519,7 @@ export class AgentSession {
 		const previousSessionFile = this.sessionFile;
 		const selectedEntry = this.sessionManager.getEntry(entryId);
 
-		if (!selectedEntry || selectedEntry.type !== "message" || selectedEntry.message.role !== "user") {
+		if (selectedEntry?.type !== "message" || selectedEntry.message.role !== "user") {
 			throw new Error("Invalid entry ID for branching");
 		}
 
