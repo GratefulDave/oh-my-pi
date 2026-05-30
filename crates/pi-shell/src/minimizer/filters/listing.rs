@@ -46,7 +46,7 @@ fn compact_listing_output(input: &str) -> String {
 
 struct GrepMatch {
 	line_no: String,
-	text: String,
+	text:    String,
 }
 
 /// Legacy pre-PR behavior for grep/rg output: passthrough when
@@ -250,8 +250,8 @@ fn collapse_parenthesized_segment(text: &str, min_len: usize) -> String {
 	out
 }
 
-/// Legacy pre-PR behavior for find output: passthrough when `paths.len() <= 20`.
-/// Retained for the `legacy_filters_active` kill-switch.
+/// Legacy pre-PR behavior for find output: passthrough when `paths.len() <=
+/// 20`. Retained for the `legacy_filters_active` kill-switch.
 fn compact_find_output_legacy(input: &str) -> String {
 	let paths: Vec<&str> = input
 		.lines()
@@ -360,9 +360,9 @@ fn push_wrapped_names(out: &mut String, names: &[String], per_line: usize, max_n
 }
 
 struct LsEntry {
-	name: String,
-	is_dir: bool,
-	size: Option<u64>,
+	name:    String,
+	is_dir:  bool,
+	size:    Option<u64>,
 	is_file: bool,
 }
 
@@ -824,7 +824,10 @@ fn render_source_declaration(trimmed: &str) -> String {
 /// languages. Returns `None` for languages we don't have a strip path for so
 /// the caller falls back to default outline rendering.
 fn aggressive_strip_bodies(input: &str, path: &str) -> Option<String> {
-	let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("");
+	let ext = Path::new(path)
+		.extension()
+		.and_then(|e| e.to_str())
+		.unwrap_or("");
 	match ext {
 		"rs" | "ts" | "tsx" | "js" | "jsx" | "go" => Some(strip_brace_bodies(input)),
 		"py" => Some(strip_python_bodies(input)),
@@ -855,13 +858,10 @@ fn strip_brace_bodies(input: &str) -> String {
 		let trimmed = line.trim_start();
 		let delta = brace_delta(line);
 		if delta > 0 && is_function_body_starter(trimmed) {
-			let cut = match line.find('{') {
-				Some(i) => i,
-				None => {
-					out.push_str(line);
-					out.push('\n');
-					continue;
-				},
+			let Some(cut) = line.find('{') else {
+				out.push_str(line);
+				out.push('\n');
+				continue;
 			};
 			out.push_str(line[..cut].trim_end());
 			out.push_str(" { ... }\n");
@@ -904,7 +904,7 @@ fn brace_delta(line: &str) -> i32 {
 /// `namespace`/`module`) are intentionally NOT in this set so we keep
 /// descending and strip the methods inside them.
 fn is_function_body_starter(trimmed: &str) -> bool {
-	let without_attr = trimmed.trim_start_matches(|c: char| c == '#' || c == '[' || c == ']');
+	let without_attr = trimmed.trim_start_matches(['#', '[', ']']);
 	let without_vis = strip_leading_keywords(without_attr.trim_start());
 	if without_vis.starts_with("fn ")
 		|| without_vis.starts_with("function ")
@@ -1009,7 +1009,10 @@ fn strip_python_bodies(input: &str) -> String {
 			let mut stripped_any = false;
 			while i < lines.len() {
 				let body_line = lines[i];
-				let body_indent = body_line.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+				let body_indent = body_line
+					.chars()
+					.take_while(|c| *c == ' ' || *c == '\t')
+					.count();
 				if body_line.trim().is_empty() {
 					if !stripped_any {
 						out.push_str(body_line);
@@ -1393,7 +1396,8 @@ mod tests {
 	fn aggressive_strips_typescript_method_body() {
 		let cfg = aggressive_cfg();
 		let ctx = ctx_command("cat", "cat src/foo.ts", &cfg);
-		let body = "import { z } from 'x';\n\nexport class Svc {\n    run(): number {\n        return 1;\n    }\n}\n";
+		let body = "import { z } from 'x';\n\nexport class Svc {\n    run(): number {\n        \
+		            return 1;\n    }\n}\n";
 		let out = filter(&ctx, body, 0);
 		assert!(out.changed);
 		assert!(out.text.contains("import { z } from 'x';"));
@@ -1451,7 +1455,8 @@ mod tests {
 		for f in 0..files {
 			for m in 0..matches_per_file {
 				out.push_str(&format!(
-					"src/module{f}/file{f}.rs:{ln}:    pub fn handler_{f}_{m}(req: Request) -> Result<Response, AppError> {{ /* body */ }}\n",
+					"src/module{f}/file{f}.rs:{ln}:    pub fn handler_{f}_{m}(req: Request) -> \
+					 Result<Response, AppError> {{ /* body */ }}\n",
 					ln = m * 7 + 1,
 					f = f,
 					m = m,
@@ -1466,7 +1471,8 @@ mod tests {
 		for d in 0..dirs {
 			for f in 0..per_dir {
 				out.push_str(&format!(
-					"./crates/pi-shell/src/minimizer/filters/category{d}/handler_{f}_with_descriptive_name.rs\n",
+					"./crates/pi-shell/src/minimizer/filters/category{d}/\
+					 handler_{f}_with_descriptive_name.rs\n",
 				));
 			}
 		}

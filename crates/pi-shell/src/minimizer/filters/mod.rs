@@ -69,18 +69,16 @@ pub fn supports(program: &str, subcommand: Option<&str>) -> bool {
 		},
 		"pnpm" if matches!(subcommand, Some("dlx")) => true,
 		"uv" if matches!(subcommand, Some("run")) => true,
-		"npm" | "pnpm" | "yarn" | "pip" | "pip3" | "bundle" | "brew" | "composer"
-		| "poetry" => pkg::supports(subcommand),
+		"npm" | "pnpm" | "yarn" | "pip" | "pip3" | "bundle" | "brew" | "composer" | "poetry" => {
+			pkg::supports(subcommand)
+		},
 		"uv" => {
 			// uv dispatch coverage (B1 / m4): admit additional subcommand forms
 			// that wrap a known tool. `uv run` is already handled above; this
 			// arm covers `uv pytest`, `uv -m pytest`, `uv ruff`, `uv mypy`,
 			// and other wrapped-tool forms that pre-PR fell through to the
 			// package-manager filter.
-			matches!(
-				subcommand,
-				Some("pytest" | "ruff" | "mypy" | "-m")
-			) || pkg::supports(subcommand)
+			matches!(subcommand, Some("pytest" | "ruff" | "mypy" | "-m")) || pkg::supports(subcommand)
 		},
 		"env" | "log" | "deps" | "summary" | "err" | "test" | "diff" | "format" | "pipe" | "ps"
 		| "ping" | "ssh" | "sops" => system::supports(program),
@@ -200,10 +198,10 @@ fn filter_uv_wrapper(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> Min
 	// `uv ruff`, `uv mypy` in addition to the pre-existing `uv run …` path.
 	if let Some(tool) = normalize_uv_form(ctx.subcommand, ctx.command) {
 		let routed = MinimizerCtx {
-			program: tool,
+			program:    tool,
 			subcommand: Some(tool),
-			command: ctx.command,
-			config: ctx.config,
+			command:    ctx.command,
+			config:     ctx.config,
 		};
 		return match tool {
 			"pytest" | "ruff" | "mypy" => python::filter(&routed, input, exit_code),
@@ -258,11 +256,10 @@ fn filter_uv_wrapper(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> Min
 /// Resolution order:
 ///   1. If `subcommand` is itself a known python tool name (pytest, ruff,
 ///      mypy), return `Some(<tool>)`.
-///   2. If `subcommand` is `"-m"`, scan `command` tokens for the first
-///      non-flag word matching the python-tool allowlist; return
-///      `Some(<tool>)`.
-///   3. If `subcommand` is `"run"`, return `None` so the caller falls
-///      through to the existing `uv_wrapper_tool` path (regression guard).
+///   2. If `subcommand` is `"-m"`, scan `command` tokens for the first non-flag
+///      word matching the python-tool allowlist; return `Some(<tool>)`.
+///   3. If `subcommand` is `"run"`, return `None` so the caller falls through
+///      to the existing `uv_wrapper_tool` path (regression guard).
 ///   4. Otherwise return `None`.
 ///
 /// The returned `&'static str` is one of `"pytest"`, `"ruff"`, `"mypy"`;
@@ -277,10 +274,11 @@ fn normalize_uv_form(subcommand: Option<&str>, command: &str) -> Option<&'static
 		let tokens = command.split_whitespace();
 		let mut after_dash_m = false;
 		for token in tokens {
-			if after_dash_m && !token.starts_with('-') {
-				if let Some(&tool) = ALLOWLIST.iter().find(|&&tool| tool == token) {
-					return Some(tool);
-				}
+			if after_dash_m
+				&& !token.starts_with('-')
+				&& let Some(&tool) = ALLOWLIST.iter().find(|&&tool| tool == token)
+			{
+				return Some(tool);
 			}
 			if token == "-m" {
 				after_dash_m = true;
@@ -545,11 +543,11 @@ mod tests {
 	// Tier 2a: uv dispatch coverage tests (m4)
 	// ---------------------------------------------------------------
 
-	const PYTEST_FAILURE_INPUT: &str =
-		"============================= test session starts \
-		 ==============================\ncollected 2 \
-		 items\n\nFAILED tests/test_x.py::test_fail - AssertionError\n========================= \
-		 1 failed, 1 passed in 0.05s =========================\n";
+	const PYTEST_FAILURE_INPUT: &str = "============================= test session starts \
+	                                    ==============================\ncollected 2 \
+	                                    items\n\nFAILED tests/test_x.py::test_fail - \
+	                                    AssertionError\n========================= 1 failed, 1 \
+	                                    passed in 0.05s =========================\n";
 
 	#[test]
 	fn uv_pytest_routes_to_python_filter() {
@@ -579,12 +577,8 @@ mod tests {
 		let config = MinimizerConfig::default();
 		let context = ctx("uv", Some("ruff"), "uv ruff check .", &config);
 		assert!(supports("uv", Some("ruff")));
-		let out = filter(
-			&context,
-			"src/a.py:1:1: F401 imported but unused\nFound 1 error.\n",
-			1,
-		)
-		.text;
+		let out =
+			filter(&context, "src/a.py:1:1: F401 imported but unused\nFound 1 error.\n", 1).text;
 		assert!(out.contains("F401"));
 	}
 

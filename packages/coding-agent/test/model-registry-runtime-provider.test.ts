@@ -9,6 +9,7 @@ import { ModelRegistry, type ProviderConfigInput } from "@oh-my-pi/pi-coding-age
 import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { Snowflake } from "@oh-my-pi/pi-utils";
+
 describe("ModelRegistry runtime provider registration", () => {
 	let tempDir: string;
 	let modelsJsonPath: string;
@@ -445,7 +446,6 @@ describe("ModelRegistry runtime provider registration", () => {
 		expect(registry.find("provider-b", "model-b")).toBeDefined();
 	});
 
-
 	test("runtime provider fetchModels uses refreshed OAuth API key", async () => {
 		const registry = new ModelRegistry(authStorage, modelsJsonPath);
 		const oauthCredentials: OAuthCredentials = {
@@ -464,7 +464,11 @@ describe("ModelRegistry runtime provider registration", () => {
 				oauth: {
 					name: "Dynamic OAuth",
 					login: async () => oauthCredentials,
-					refreshToken: async credentials => ({ ...credentials, access: "new-access", expires: Date.now() + 60_000 }),
+					refreshToken: async credentials => ({
+						...credentials,
+						access: "new-access",
+						expires: Date.now() + 60_000,
+					}),
 					getApiKey: credentials => credentials.access,
 				},
 				fetchModels: async apiKey => {

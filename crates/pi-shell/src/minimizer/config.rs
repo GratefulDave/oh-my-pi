@@ -80,40 +80,41 @@ pub struct MinimizerOptions {
 /// Resolved minimizer configuration used by the engine.
 #[derive(Debug, Clone)]
 pub struct MinimizerConfig {
-	pub enabled:              bool,
-	pub only:                 HashSet<String>,
-	pub except:               HashSet<String>,
-	pub max_capture_bytes:    u32,
-	pub per_command:          HashMap<String, toml::Value>,
+	pub enabled:               bool,
+	pub only:                  HashSet<String>,
+	pub except:                HashSet<String>,
+	pub max_capture_bytes:     u32,
+	pub per_command:           HashMap<String, toml::Value>,
 	/// Compiled user-defined pipelines parsed from `settings_path`. Searched
 	/// before the built-in pipelines so user filters win.
-	pub user_pipelines:       Option<Arc<PipelineRegistry>>,
+	pub user_pipelines:        Option<Arc<PipelineRegistry>>,
 	/// Aggressiveness for source-outline body stripping in `compact_cat_output`.
-	pub source_outline_level: OutlineLevel,
+	pub source_outline_level:  OutlineLevel,
 	/// Master switch for the AI summary filter (W4). When false, the filter
 	/// is a no-op passthrough.
-	pub ai_smart_enabled:     bool,
+	pub ai_smart_enabled:      bool,
 	/// Provider key for the AI summarizer (defaults to `"deepseek"`).
-	pub ai_smart_provider:    String,
+	pub ai_smart_provider:     String,
 	/// Resolved kill-switch: when true, opted-in filters (Tier 1 grep/find,
 	/// Tier 2 pytest) return the pre-PR legacy behavior. Resolved at
-	/// `from_options()` time from caller-supplied `MinimizerOptions.legacy_filters`
-	/// or the `OMP_MINIMIZER_LEGACY_FILTERS` env var; default `false`.
+	/// `from_options()` time from caller-supplied
+	/// `MinimizerOptions.legacy_filters` or the `OMP_MINIMIZER_LEGACY_FILTERS`
+	/// env var; default `false`.
 	pub legacy_filters_active: bool,
 }
 
 impl Default for MinimizerConfig {
 	fn default() -> Self {
 		Self {
-			enabled:              false,
-			only:                 HashSet::new(),
-			except:               HashSet::new(),
-			max_capture_bytes:    DEFAULT_MAX_CAPTURE_BYTES,
-			per_command:          HashMap::new(),
-			user_pipelines:       None,
-			source_outline_level: OutlineLevel::Default,
-			ai_smart_enabled:     false,
-			ai_smart_provider:    DEFAULT_AI_SMART_PROVIDER.to_string(),
+			enabled:               false,
+			only:                  HashSet::new(),
+			except:                HashSet::new(),
+			max_capture_bytes:     DEFAULT_MAX_CAPTURE_BYTES,
+			per_command:           HashMap::new(),
+			user_pipelines:        None,
+			source_outline_level:  OutlineLevel::Default,
+			ai_smart_enabled:      false,
+			ai_smart_provider:     DEFAULT_AI_SMART_PROVIDER.to_string(),
 			legacy_filters_active: false,
 		}
 	}
@@ -217,7 +218,7 @@ impl MinimizerConfig {
 	}
 
 	/// Whether opted-in filters should fall back to pre-PR legacy behavior.
-	pub fn legacy_filters_active(&self) -> bool {
+	pub const fn legacy_filters_active(&self) -> bool {
 		self.legacy_filters_active
 	}
 }

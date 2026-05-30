@@ -7,6 +7,8 @@
 //! mode while letting silent runs (no diffs / formatter no-op) pass
 //! through unchanged.
 
+use std::fmt::Write;
+
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
 
 pub fn supports(program: &str, _subcommand: Option<&str>) -> bool {
@@ -37,14 +39,13 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 ///
 /// Two main shapes are handled:
 ///
-/// - **Check mode** emits `Diff in <path> at line <N>:` headers followed
-///   by per-hunk `+`/`-` lines. We collect the set of affected files,
-///   print a one-line header (`N files reformatted (M with diffs):`), the
-///   first 3 file paths, and elide every diff body — the agent rarely
-///   needs the full diff inline; the artifact reference carries the
-///   original.
-/// - **Silent runs** (rustfmt formatted in place, no `--check`) emit no
-///   stdout. The empty buffer passes through; no transformation.
+/// - **Check mode** emits `Diff in <path> at line <N>:` headers followed by
+///   per-hunk `+`/`-` lines. We collect the set of affected files, print a
+///   one-line header (`N files reformatted (M with diffs):`), the first 3 file
+///   paths, and elide every diff body — the agent rarely needs the full diff
+///   inline; the artifact reference carries the original.
+/// - **Silent runs** (rustfmt formatted in place, no `--check`) emit no stdout.
+///   The empty buffer passes through; no transformation.
 ///
 /// On compile errors / panics rustfmt prints to stderr in tens-of-lines
 /// form, well under the head/tail cap below — we keep it as-is.
@@ -66,20 +67,17 @@ fn condense_rustfmt(input: &str, exit_code: i32) -> String {
 	let mut out = String::new();
 	let unique: Vec<&&str> = {
 		let mut seen = std::collections::BTreeSet::new();
-		files
-			.iter()
-			.filter(|f| seen.insert(**f))
-			.collect()
+		files.iter().filter(|f| seen.insert(**f)).collect()
 	};
 	let total = unique.len();
-	out.push_str(&format!("{total} files reformatted ({total} with diffs):\n"));
+	let _ = writeln!(out, "{total} files reformatted ({total} with diffs):");
 	for file in unique.iter().take(3) {
 		out.push_str("  ");
 		out.push_str(file);
 		out.push('\n');
 	}
 	if total > 3 {
-		out.push_str(&format!("  … {} more\n", total - 3));
+		let _ = writeln!(out, "  … {} more", total - 3);
 	}
 	out
 }
@@ -89,7 +87,11 @@ fn collect_diff_files(input: &str) -> Vec<&str> {
 	for line in input.lines() {
 		if let Some(rest) = line.strip_prefix("Diff in ") {
 			// rest looks like: `<path> at line <N>:`
-			let path = rest.split(" at line ").next().unwrap_or(rest).trim_end_matches(':');
+			let path = rest
+				.split(" at line ")
+				.next()
+				.unwrap_or(rest)
+				.trim_end_matches(':');
 			files.push(path);
 		}
 	}

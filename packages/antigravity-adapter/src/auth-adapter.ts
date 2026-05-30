@@ -1,10 +1,10 @@
 import type { Api, Model, OAuthCredentials } from "@oh-my-pi/pi-ai";
 import type { OAuthLoginCallbacks } from "@oh-my-pi/pi-ai/utils/oauth/types";
 import { getAntigravityHeaders } from "opencode-antigravity-auth/dist/src/constants";
+import { checkAccountsQuota, type QuotaGroup } from "opencode-antigravity-auth/dist/src/plugin/quota";
 import type { AccountMetadataV3 } from "opencode-antigravity-auth/dist/src/plugin/storage";
 import { refreshAccessToken } from "opencode-antigravity-auth/dist/src/plugin/token";
-import type { AuthDetails, AuthMethod, OAuthAuthDetails, PluginClient } from "opencode-antigravity-auth/dist/src/plugin/types";
-import { checkAccountsQuota, type QuotaGroup } from "opencode-antigravity-auth/dist/src/plugin/quota";
+import type { AuthMethod, OAuthAuthDetails, PluginClient } from "opencode-antigravity-auth/dist/src/plugin/types";
 import { BRIDGE_API, GOOGLE_GENERATIVE_LANGUAGE_BASE, PROVIDER_ID } from "./models";
 
 const SERIALIZED_CREDENTIAL_PREFIX = "opencode-antigravity:v1:";

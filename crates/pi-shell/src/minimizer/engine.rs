@@ -8,13 +8,13 @@ use std::{
 	},
 };
 
+#[cfg(feature = "ai-smart")]
+use crate::minimizer::filters::ai_smart;
 use crate::minimizer::{
 	MinimizerConfig, MinimizerCtx, MinimizerOutput, detect, filters,
 	pipeline::{self, CompiledPipeline, PipelineRegistry},
 	plan,
 };
-#[cfg(feature = "ai-smart")]
-use crate::minimizer::filters::ai_smart;
 
 /// Minimization strategy for a shell command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,7 +117,18 @@ pub fn apply(
 /// context (pipe/compound bypass), credential availability, and the per-
 /// `apply()` budget. On any gate failure or network error we return the
 /// upstream `output` untouched — this filter is fail-closed.
-#[cfg_attr(not(feature = "ai-smart"), allow(unused_variables, clippy::needless_pass_by_value))]
+#[cfg_attr(
+	not(feature = "ai-smart"),
+	allow(
+		unused_variables,
+		clippy::needless_pass_by_value,
+		reason = "off-feature build keeps call-site signature stable"
+	)
+)]
+#[allow(
+	clippy::missing_const_for_fn,
+	reason = "feature-enabled implementation performs non-const AI budget and summarization work"
+)]
 fn apply_ai_smart_overlay(
 	identity: &detect::CommandIdentity,
 	command: &str,
@@ -133,7 +144,11 @@ fn apply_ai_smart_overlay(
 		ai_smart::reset_apply_budget();
 		let subcommand = identity.subcommand.as_deref();
 		let ctx = MinimizerCtx { program: &identity.program, subcommand, command, config };
-		let candidate = if output.changed { output.text.as_str() } else { captured };
+		let candidate = if output.changed {
+			output.text.as_str()
+		} else {
+			captured
+		};
 		match ai_smart::maybe_summarize(&ctx, candidate) {
 			Some(summary) => {
 				let original_text = output
@@ -153,7 +168,6 @@ fn apply_ai_smart_overlay(
 		output
 	}
 }
-
 
 /// Apply the per-segment dispatch path for a `Chain { segments }` plan.
 ///
@@ -197,7 +211,8 @@ fn apply_chain(
 	{
 		let subcommand = identity.subcommand.as_deref();
 		let ctx = MinimizerCtx { program: &identity.program, subcommand, command, config };
-		let out = match catch_unwind(AssertUnwindSafe(|| filters::filter(&ctx, captured, exit_code))) {
+		let out = match catch_unwind(AssertUnwindSafe(|| filters::filter(&ctx, captured, exit_code)))
+		{
 			Ok(out) => out,
 			Err(_) => MinimizerOutput::passthrough(captured),
 		};
@@ -212,24 +227,19 @@ fn apply_chain(
 		if config.is_program_enabled(&identity.program)
 			&& filters::supports(&identity.program, subcommand)
 		{
-			let ctx = MinimizerCtx {
-				program: &identity.program,
-				subcommand,
-				command,
-				config,
-			};
-			let out = match catch_unwind(AssertUnwindSafe(|| filters::filter(&ctx, captured, exit_code)))
-			{
-				Ok(out) => out,
-				Err(_) => MinimizerOutput::passthrough(captured),
-			};
-			return ensure_success_visible(out.labeled("chain-first"), exit_code).with_original(captured);
+			let ctx = MinimizerCtx { program: &identity.program, subcommand, command, config };
+			let out =
+				match catch_unwind(AssertUnwindSafe(|| filters::filter(&ctx, captured, exit_code))) {
+					Ok(out) => out,
+					Err(_) => MinimizerOutput::passthrough(captured),
+				};
+			return ensure_success_visible(out.labeled("chain-first"), exit_code)
+				.with_original(captured);
 		}
 	}
 
 	MinimizerOutput::passthrough(captured).labeled("compound")
 }
-
 
 fn identity_has_filter(identity: &detect::CommandIdentity, config: &MinimizerConfig) -> bool {
 	if !config.is_program_enabled(&identity.program) {

@@ -119,7 +119,7 @@ fn classify(program: &Program) -> CommandPlan {
 	}
 
 	// Only a single pipeline at this point.
-	classify_pipeline(&and_or.first).unwrap_or_else(|| CommandPlan::Unsupported)
+	classify_pipeline(&and_or.first).unwrap_or(CommandPlan::Unsupported)
 }
 
 fn classify_chain(program: &Program) -> Option<CommandPlan> {
@@ -146,9 +146,7 @@ fn classify_chain(program: &Program) -> Option<CommandPlan> {
 		let mut additional = item.0.additional.iter().peekable();
 
 		loop {
-			let Some((command, program)) = simple_segment(pipeline) else {
-				return None;
-			};
+			let (command, program) = simple_segment(pipeline)?;
 
 			let suppress_errexit = additional
 				.peek()

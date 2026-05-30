@@ -1,7 +1,7 @@
 //! Python test, type-check, and lint output filters.
 //!
 //! Ported from rtk-ai/rtk@878af7de99e0ba71da2e8fd996f6b52a1836e06c
-//! Path: src/cmds/python/pytest_cmd.rs
+//! Path: `src/cmds/python/pytest_cmd.rs`
 //! License: MIT (compatible with workspace MIT). See ATTRIBUTION-RTK.md.
 //!
 //! The pytest state machine (`filter_pytest`, `pytest_success`,

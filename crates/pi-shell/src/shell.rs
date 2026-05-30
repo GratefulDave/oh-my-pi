@@ -585,7 +585,7 @@ struct ChainCapture {
 }
 
 impl ChainCapture {
-	fn new() -> Self {
+	const fn new() -> Self {
 		Self {
 			original_text: String::new(),
 			text:          String::new(),
@@ -599,6 +599,21 @@ impl ChainCapture {
 		self.text.push_str(minimized);
 		self.input_bytes = self.input_bytes.saturating_add(original_input_bytes);
 		self.changed |= changed;
+	}
+}
+
+fn reason_only_minimizer_result(
+	filter: &'static str,
+	original_text: String,
+	input_bytes: usize,
+) -> MinimizerResult {
+	let output_bytes = u32::try_from(original_text.len()).unwrap_or(u32::MAX);
+	MinimizerResult {
+		filter: filter.to_string(),
+		text: original_text.clone(),
+		original_text,
+		input_bytes: u32::try_from(input_bytes).unwrap_or(u32::MAX),
+		output_bytes,
 	}
 }
 
@@ -677,34 +692,40 @@ async fn run_shell_command_single(
 	let mut minimized_out = None;
 	if let Some(buffered) = command_run.buffered
 		&& let Some(config) = options.minimizer.as_ref()
-		&& !buffered.exceeded
 	{
-		let minimized = match minimizer_mode {
-			minimizer::engine::MinimizerMode::WholeCommand => minimizer::apply(
-				&options.command,
-				&buffered.text,
-				exit_code(&command_run.result),
-				config,
-			),
-			minimizer::engine::MinimizerMode::None => {
-				minimizer::MinimizerOutput::passthrough(&buffered.text)
-			},
-			minimizer::engine::MinimizerMode::SegmentedChain => {
-				minimizer::MinimizerOutput::passthrough(&buffered.text)
-			},
-		};
-		if minimized.filter != "passthrough" {
-			let original_text = minimized
-				.original_text
-				.unwrap_or_else(|| minimized.text.clone());
-			let output_bytes = u32::try_from(minimized.text.len()).unwrap_or(u32::MAX);
-			minimized_out = Some(MinimizerResult {
-				filter: minimized.filter.to_string(),
-				text: minimized.text,
-				original_text,
-				input_bytes: u32::try_from(minimized.input_bytes).unwrap_or(u32::MAX),
-				output_bytes,
-			});
+		if buffered.exceeded {
+			if matches!(minimizer_mode, minimizer::engine::MinimizerMode::WholeCommand) {
+				minimized_out =
+					Some(reason_only_minimizer_result("too-large", String::new(), buffered.input_bytes));
+			}
+		} else {
+			let minimized = match minimizer_mode {
+				minimizer::engine::MinimizerMode::WholeCommand => minimizer::apply(
+					&options.command,
+					&buffered.text,
+					exit_code(&command_run.result),
+					config,
+				),
+				minimizer::engine::MinimizerMode::None => {
+					minimizer::MinimizerOutput::passthrough(&buffered.text)
+				},
+				minimizer::engine::MinimizerMode::SegmentedChain => {
+					minimizer::MinimizerOutput::passthrough(&buffered.text)
+				},
+			};
+			if minimized.filter != "passthrough" {
+				let original_text = minimized
+					.original_text
+					.unwrap_or_else(|| minimized.text.clone());
+				let output_bytes = u32::try_from(minimized.text.len()).unwrap_or(u32::MAX);
+				minimized_out = Some(MinimizerResult {
+					filter: minimized.filter.to_string(),
+					text: minimized.text,
+					original_text,
+					input_bytes: u32::try_from(minimized.input_bytes).unwrap_or(u32::MAX),
+					output_bytes,
+				});
+			}
 		}
 	}
 
@@ -728,26 +749,26 @@ async fn run_shell_command_segmented_chain(
 		.await;
 	};
 
-	let segments = match minimizer::plan::analyze(&options.command) {
-		minimizer::plan::CommandPlan::Chain { segments } => segments,
-		_ => {
-			return run_shell_command_single(
-				session,
-				options,
-				on_chunk,
-				cancel_token,
-				minimizer::engine::MinimizerMode::None,
-			)
-			.await;
-		},
+	let minimizer::plan::CommandPlan::Chain { segments } =
+		minimizer::plan::analyze(&options.command)
+	else {
+		return run_shell_command_single(
+			session,
+			options,
+			on_chunk,
+			cancel_token,
+			minimizer::engine::MinimizerMode::None,
+		)
+		.await;
 	};
 
 	let params = session.shell.default_exec_params();
 	let mut aggregate = Some(ChainCapture::new());
+	let mut aggregate_dropped_too_large = false;
+	let mut overflow_input_bytes = 0usize;
 	let mut previous_succeeded = true;
 	let mut last_result = None;
 	let max_capture_bytes = config.max_capture_bytes as usize;
-
 	for segment in segments {
 		if segment.run_if_previous_succeeded && !previous_succeeded {
 			continue;
@@ -776,9 +797,14 @@ async fn run_shell_command_segmented_chain(
 
 		if let Some(buffered) = command_run.buffered {
 			if buffered.exceeded {
+				aggregate_dropped_too_large = aggregate.is_some();
+				overflow_input_bytes = overflow_input_bytes.saturating_add(buffered.input_bytes);
 				aggregate = None;
 			} else if let Some(capture) = aggregate.as_mut() {
-				if capture.input_bytes.saturating_add(buffered.input_bytes) > max_capture_bytes {
+				let next_input_bytes = capture.input_bytes.saturating_add(buffered.input_bytes);
+				if next_input_bytes > max_capture_bytes {
+					aggregate_dropped_too_large = true;
+					overflow_input_bytes = next_input_bytes;
 					aggregate = None;
 				} else {
 					let minimized = minimizer::apply(&segment.command, &buffered.text, exit, config);
@@ -790,7 +816,7 @@ async fn run_shell_command_segmented_chain(
 					);
 				}
 			}
-		} else {
+		} else if aggregate.is_some() {
 			aggregate = None;
 		}
 
@@ -801,26 +827,30 @@ async fn run_shell_command_segmented_chain(
 		}
 	}
 
-	let result = match last_result {
-		Some(result) => result,
-		None => return Err(Error::msg("Segmented chain executed no segments")),
+	let Some(result) = last_result else {
+		return Err(Error::msg("Segmented chain executed no segments"));
 	};
 
-	let minimized_out = aggregate.map(|capture| {
-		let minimized = minimizer::chain_output(
-			capture.text,
-			capture.original_text,
-			capture.input_bytes,
-			capture.changed,
-		);
-		MinimizerResult {
-			filter:        minimized.filter.to_string(),
-			text:          minimized.text,
-			original_text: minimized.original_text.unwrap_or_default(),
-			input_bytes:   u32::try_from(minimized.input_bytes).unwrap_or(u32::MAX),
-			output_bytes:  u32::try_from(minimized.output_bytes).unwrap_or(u32::MAX),
-		}
-	});
+	let minimized_out = aggregate
+		.map(|capture| {
+			let minimized = minimizer::chain_output(
+				capture.text,
+				capture.original_text,
+				capture.input_bytes,
+				capture.changed,
+			);
+			MinimizerResult {
+				filter:        minimized.filter.to_string(),
+				text:          minimized.text,
+				original_text: minimized.original_text.unwrap_or_default(),
+				input_bytes:   u32::try_from(minimized.input_bytes).unwrap_or(u32::MAX),
+				output_bytes:  u32::try_from(minimized.output_bytes).unwrap_or(u32::MAX),
+			}
+		})
+		.or_else(|| {
+			aggregate_dropped_too_large
+				.then(|| reason_only_minimizer_result("too-large", String::new(), overflow_input_bytes))
+		});
 
 	Ok((result, minimized_out))
 }
@@ -2053,6 +2083,26 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 
 	#[cfg(unix)]
 	#[tokio::test(flavor = "multi_thread")]
+	async fn whole_command_exceeding_capture_cap_reports_too_large_and_streams_raw() {
+		let root = unique_temp_dir("whole-cap");
+		let minimizer = printf_minimizer(&root.join("minimizer.toml"), Some(1024));
+		let (result, output) =
+			run_command_capture("printf '%1200s' x", None, Some(minimizer), CancelToken::default())
+				.await;
+		let _ = std::fs::remove_dir_all(&root);
+		assert_eq!(result.exit_code, Some(0));
+		assert_eq!(output.len(), 1200);
+		assert!(output.ends_with('x'));
+		let minimized = result.minimized.expect("too-large result");
+		assert_eq!(minimized.filter, "too-large");
+		assert_eq!(minimized.text, "");
+		assert_eq!(minimized.original_text, "");
+		assert_eq!(minimized.input_bytes, 1200);
+		assert_eq!(minimized.output_bytes, 0);
+	}
+
+	#[cfg(unix)]
+	#[tokio::test(flavor = "multi_thread")]
 	async fn segmented_printf_chain_preserves_raw_original_text() {
 		let root = unique_temp_dir("minimizer");
 		let minimizer = printf_minimizer(&root.join("minimizer.toml"), None);
@@ -2090,7 +2140,10 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 		assert_eq!(result.exit_code, Some(0));
 		assert_eq!(output.len(), 1200);
 		assert!(output.ends_with('y'));
-		assert!(result.minimized.is_none());
+		let minimized = result.minimized.expect("too-large result");
+		assert_eq!(minimized.filter, "too-large");
+		assert_eq!(minimized.text, "");
+		assert_eq!(minimized.original_text, "");
 	}
 
 	#[cfg(unix)]

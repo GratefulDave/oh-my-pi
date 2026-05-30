@@ -168,16 +168,8 @@ describe("AgentSession opencode-antigravity quota fallback", () => {
 		const agModelId = "antigravity-claude-sonnet-4-6";
 		const codexDefaultId = "gpt-5.5";
 
-		modelRegistry.registerProvider(
-			"opencode-antigravity",
-			agProviderConfig([agModelId]),
-			"ext://ag",
-		);
-		modelRegistry.registerProvider(
-			"openai-codex",
-			codexProviderConfig(["gpt-5.4", codexDefaultId]),
-			"ext://codex",
-		);
+		modelRegistry.registerProvider("opencode-antigravity", agProviderConfig([agModelId]), "ext://ag");
+		modelRegistry.registerProvider("openai-codex", codexProviderConfig(["gpt-5.4", codexDefaultId]), "ext://codex");
 
 		const agModel: Model = {
 			...buildAgModel(agModelId),
@@ -416,10 +408,7 @@ describe("AgentSession opencode-antigravity quota fallback", () => {
 		// A 403 from anthropic should NOT suppress the anthropic model or try AG codex path
 		const requestedModels: string[] = [];
 		const mock = createMockModel({
-			responses: [
-				{ throw: "403 Forbidden: anthropic account suspended" },
-				{ content: ["anthropic recovered"] },
-			],
+			responses: [{ throw: "403 Forbidden: anthropic account suspended" }, { content: ["anthropic recovered"] }],
 		});
 		const agent = new Agent({
 			getApiKey: provider => `${provider}-test-key`,

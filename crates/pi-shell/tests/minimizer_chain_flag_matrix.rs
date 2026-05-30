@@ -102,7 +102,8 @@ fn clang_chain_segments_filter_independently() {
 	);
 	let clang = apply(
 		"clang -c foo.c",
-		"foo.c:3:10: fatal error: 'missing.h' file not found\n#include \"missing.h\"\n         ^~~~~~~~~~~\n1 error generated.\n",
+		"foo.c:3:10: fatal error: 'missing.h' file not found\n#include \"missing.h\"\n         \
+		 ^~~~~~~~~~~\n1 error generated.\n",
 		1,
 		&cfg,
 	);
@@ -159,10 +160,7 @@ fn w3_aggressive_outline_handles_flag_rich_cat_invocation() {
 #[test]
 fn w3_aggressive_outline_chain_mode_is_segmented() {
 	let cfg = aggressive_outline_cfg();
-	assert_eq!(
-		mode_for("cat src/foo.rs && cat src/bar.rs", &cfg),
-		MinimizerMode::SegmentedChain
-	);
+	assert_eq!(mode_for("cat src/foo.rs && cat src/bar.rs", &cfg), MinimizerMode::SegmentedChain);
 }
 
 /// AC-C3 (passthrough): malformed source must not panic.
@@ -206,11 +204,7 @@ fn w3_default_level_passes_small_source_files_through() {
 /// AC4.2: when runtime flag is OFF, AI filter is a strict no-op.
 #[test]
 fn w4_disabled_runtime_flag_is_passthrough() {
-	let cfg = MinimizerConfig {
-		enabled: true,
-		ai_smart_enabled: false,
-		..Default::default()
-	};
+	let cfg = MinimizerConfig { enabled: true, ai_smart_enabled: false, ..Default::default() };
 	let out = minimizer::apply("echo hi", "hi\n", 0, &cfg);
 	assert_eq!(out.text, "hi\n");
 	assert!(!out.changed);
@@ -219,11 +213,7 @@ fn w4_disabled_runtime_flag_is_passthrough() {
 /// AC4.3 / AC-C1: piped parent never invokes the AI filter.
 #[test]
 fn w4_pipe_parent_skips_minimization() {
-	let cfg = MinimizerConfig {
-		enabled: true,
-		ai_smart_enabled: true,
-		..Default::default()
-	};
+	let cfg = MinimizerConfig { enabled: true, ai_smart_enabled: true, ..Default::default() };
 	assert_eq!(mode_for("echo hi | cat", &cfg), MinimizerMode::None);
 }
 

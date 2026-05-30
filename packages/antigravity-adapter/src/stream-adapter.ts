@@ -8,11 +8,16 @@ import type {
 	SimpleStreamOptions,
 } from "@oh-my-pi/pi-ai";
 import { streamGoogle } from "@oh-my-pi/pi-ai/providers/google";
-import type { LoaderResult, PluginClient, PluginResult, Provider } from "opencode-antigravity-auth/dist/src/plugin/types";
+import type {
+	LoaderResult,
+	PluginClient,
+	PluginResult,
+	Provider,
+} from "opencode-antigravity-auth/dist/src/plugin/types";
 import {
+	type BridgeQuotaExhaustion,
 	checkBridgeQuotaExhaustion,
 	deserializeBridgeCredentials,
-	type BridgeQuotaExhaustion,
 	toUpstreamAuthDetails,
 } from "./auth-adapter";
 import { GOOGLE_GENERATIVE_LANGUAGE_BASE, OPENCODE_ANTIGRAVITY_MODELS, PROVIDER_ID } from "./models";

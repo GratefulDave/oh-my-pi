@@ -99,7 +99,7 @@ fn try_compact_aws_json(ctx: &MinimizerCtx<'_>, input: &str) -> Option<String> {
 fn compact_aws_service_json(ctx: &MinimizerCtx<'_>, root: &Value) -> Option<String> {
 	match ctx.subcommand {
 		Some("sts") => extract_aws_sts_caller(root).map(compact_aws_sts_caller),
-		Some("s3") | Some("s3api") => extract_aws_s3_buckets(root).map(|rows| {
+		Some("s3" | "s3api") => extract_aws_s3_buckets(root).map(|rows| {
 			compact_named_rows(
 				&["bucket", "date"],
 				&rows
@@ -303,15 +303,12 @@ fn compact_aws_eks(root: &Value) -> Option<String> {
 		return Some(compact_named_rows(&["cluster", "status", "version", "endpoint"], &rows));
 	}
 	let cluster = root.get("cluster")?.as_object()?;
-	Some(compact_named_rows(
-		&["cluster", "status", "version", "endpoint"],
-		&[vec![
-			string_field_map(cluster, &["name"]),
-			string_field_map(cluster, &["status"]),
-			string_field_map(cluster, &["version"]),
-			string_field_map(cluster, &["endpoint"]),
-		]],
-	))
+	Some(compact_named_rows(&["cluster", "status", "version", "endpoint"], &[vec![
+		string_field_map(cluster, &["name"]),
+		string_field_map(cluster, &["status"]),
+		string_field_map(cluster, &["version"]),
+		string_field_map(cluster, &["endpoint"]),
+	]]))
 }
 
 fn compact_aws_sqs(root: &Value) -> Option<String> {
@@ -324,14 +321,11 @@ fn compact_aws_sqs(root: &Value) -> Option<String> {
 		return Some(compact_named_rows(&["url", "visibility", "messages"], &rows));
 	}
 	let attrs = root.get("Attributes").and_then(Value::as_object)?;
-	Some(compact_named_rows(
-		&["url", "visibility", "messages"],
-		&[vec![
-			string_field(root, &["QueueUrl"]),
-			string_field_map(attrs, &["VisibilityTimeout"]),
-			string_field_map(attrs, &["ApproximateNumberOfMessages"]),
-		]],
-	))
+	Some(compact_named_rows(&["url", "visibility", "messages"], &[vec![
+		string_field(root, &["QueueUrl"]),
+		string_field_map(attrs, &["VisibilityTimeout"]),
+		string_field_map(attrs, &["ApproximateNumberOfMessages"]),
+	]]))
 }
 
 fn extract_array<'a>(root: &'a Value, keys: &[&str]) -> Option<Vec<&'a Map<String, Value>>> {
@@ -417,7 +411,7 @@ fn generic_columns(rows: &[Map<String, Value>]) -> Vec<String> {
 	for row in rows {
 		for key in row.keys() {
 			let lower = key.to_ascii_lowercase();
-			if matches!(
+			if (matches!(
 				lower.as_str(),
 				"id"
 					| "name" | "arn"
@@ -432,11 +426,10 @@ fn generic_columns(rows: &[Map<String, Value>]) -> Vec<String> {
 				|| lower.ends_with("status")
 				|| lower.ends_with("state")
 				|| lower.contains("created")
-				|| lower.contains("modified")
+				|| lower.contains("modified"))
+				&& !columns.contains(key)
 			{
-				if !columns.contains(key) {
-					columns.push(key.clone());
-				}
+				columns.push(key.clone());
 			}
 			if columns.len() >= 6 {
 				return columns;

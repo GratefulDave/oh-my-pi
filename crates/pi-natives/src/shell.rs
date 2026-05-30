@@ -319,7 +319,7 @@ pub fn apply_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<Mini
 			output_bytes,
 		});
 	}
-	return None;
+	None
 }
 
 fn bridge_chunks(

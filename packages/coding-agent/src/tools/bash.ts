@@ -19,7 +19,7 @@ import { getSixelLineMask } from "../utils/sixel";
 import type { ToolSession } from ".";
 import { applyBashFixups, formatBashFixupNotice } from "./bash-command-fixup";
 import { type BashInteractiveResult, runInteractiveBashPty } from "./bash-interactive";
-import { checkBashInterception } from "./bash-interceptor";
+import { checkBashInterception, checkBunBuildStdoutPreflight } from "./bash-interceptor";
 import { canUseInteractiveBashPty } from "./bash-pty-selection";
 import { expandInternalUrls, type InternalUrlExpansionOptions } from "./bash-skill-urls";
 import { formatStyledTruncationWarning, type OutputMeta, stripOutputNotice } from "./output-meta";
@@ -493,6 +493,11 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 				cwd = cdMatch[1].trim().replace(/^["']|["']$/g, "");
 				command = command.slice(cdMatch[0].length);
 			}
+		}
+
+		const bunBuildPreflight = checkBunBuildStdoutPreflight(command);
+		if (bunBuildPreflight.block) {
+			throw new ToolError(bunBuildPreflight.message ?? "Command blocked");
 		}
 		if (asyncRequested && !this.#asyncEnabled) {
 			throw new ToolError("Async bash execution is disabled. Enable async.enabled to use async mode.");

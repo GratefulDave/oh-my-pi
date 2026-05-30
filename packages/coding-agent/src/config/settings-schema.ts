@@ -211,12 +211,12 @@ export const DEFAULT_BASH_INTERCEPTOR_RULES: BashInterceptorRule[] = [
 		message: "Use the `read` tool instead of cat/head/tail. It provides better context and handles binary files.",
 	},
 	{
-		pattern: "^\\s*(grep|rg|ripgrep|ag|ack)\\s+",
+		pattern: "(^|[|;]|&&)\\s*(grep|rg|ripgrep|ag|ack)\\s+",
 		tool: "search",
 		message: "Use the `search` tool instead of grep/rg. It respects .gitignore and provides structured output.",
 	},
 	{
-		pattern: "^\\s*(find|fd|locate)\\s+.*(-name|-iname|-type|--type|-glob)",
+		pattern: "(^|[|;]|&&)\\s*(find|fd|locate)\\s+.*(-name|-iname|-type|--type|-glob)",
 		tool: "find",
 		message: "Use the `find` tool instead of find/fd. It respects .gitignore and is faster for glob patterns.",
 	},
@@ -1764,7 +1764,7 @@ export const SETTINGS_SCHEMA = {
 	// Bash interceptor
 	"bashInterceptor.enabled": {
 		type: "boolean",
-		default: false,
+		default: true,
 		ui: { tab: "editing", label: "Bash Interceptor", description: "Block shell commands that have dedicated tools" },
 	},
 	"bashInterceptor.patterns": { type: "array", default: DEFAULT_BASH_INTERCEPTOR_RULES },

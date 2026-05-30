@@ -220,6 +220,7 @@ For the bash tool specifically:
 
 - NEVER commit unless asked.
 - Never use `tsc`/`npx tsc` — always `bun check`.
+- For Rust checks, use `bun run check:rs` instead of raw `cargo fmt --check`; the wrapper resolves the correct rustup toolchain/rustfmt even when Homebrew `cargo` is first on `PATH`.
 
 ## Testing Guidance
 

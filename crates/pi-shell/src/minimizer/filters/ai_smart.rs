@@ -12,9 +12,9 @@
 //! - **Bounded.** Hard caps: 8 KB input, 5 s timeout, 200 max-tokens response.
 //!   Single retry on transient transport errors only.
 //! - **Fail-closed.** Any error path (network, non-2xx, parse, empty body,
-//!   missing API key, budget exhausted, parent is pipe/compound) returns
-//!   `None` so the caller falls back to the original (un-AI-summarized)
-//!   output. The filter never emits partial garbage.
+//!   missing API key, budget exhausted, parent is pipe/compound) returns `None`
+//!   so the caller falls back to the original (un-AI-summarized) output. The
+//!   filter never emits partial garbage.
 //! - **Pipe-safe.** Piped and compound commands bypass the AI entirely —
 //!   downstream parsers (`awk`, `jq`, `rg`, …) must see deterministic bytes.
 
@@ -23,27 +23,41 @@ use crate::minimizer::MinimizerCtx;
 /// Maximum captured bytes we are willing to ship to the AI provider.
 pub const MAX_INPUT_BYTES: usize = 8 * 1024;
 /// Hard upper bound on the response size we'll request.
-#[cfg_attr(not(feature = "ai-smart"), allow(dead_code))]
+#[cfg_attr(
+	not(feature = "ai-smart"),
+	allow(dead_code, reason = "off-feature build exposes constants only for API parity")
+)]
 pub const MAX_RESPONSE_TOKENS: u32 = 200;
 /// Wall-clock timeout for the whole AI round-trip.
-#[cfg_attr(not(feature = "ai-smart"), allow(dead_code))]
+#[cfg_attr(
+	not(feature = "ai-smart"),
+	allow(dead_code, reason = "off-feature build exposes constants only for API parity")
+)]
 pub const REQUEST_TIMEOUT_SECS: u64 = 5;
 /// Pinned deepseek model (plan AC4.5). Executor must RFC if upstream
 /// retires this id — never silently downgrade to `deepseek-chat`.
-#[cfg_attr(not(feature = "ai-smart"), allow(dead_code))]
+#[cfg_attr(
+	not(feature = "ai-smart"),
+	allow(dead_code, reason = "off-feature build exposes constants only for API parity")
+)]
 pub const DEEPSEEK_MODEL: &str = "deepseek-v4-flash";
 /// Deepseek OpenAI-compatible chat-completions endpoint.
-#[cfg_attr(not(feature = "ai-smart"), allow(dead_code))]
+#[cfg_attr(
+	not(feature = "ai-smart"),
+	allow(dead_code, reason = "off-feature build exposes constants only for API parity")
+)]
 pub const DEEPSEEK_ENDPOINT: &str = "https://api.deepseek.com/v1/chat/completions";
 /// Env var that carries the credential. Plan AC4.1.
 pub const API_KEY_ENV: &str = "OMP_AI_SMART_API_KEY";
 
 /// System prompt — kept verbatim so the model behavior is auditable from
 /// source. Two-line summarizer (plan Step 4.3).
-#[cfg_attr(not(feature = "ai-smart"), allow(dead_code))]
-const SYSTEM_PROMPT: &str =
-	"You are a 2-line summarizer for shell command output. Line 1: what happened. Line 2: most \
-	 important number/path/error. Be terse.";
+#[cfg_attr(
+	not(feature = "ai-smart"),
+	allow(dead_code, reason = "off-feature build keeps prompt colocated with feature code")
+)]
+const SYSTEM_PROMPT: &str = "You are a 2-line summarizer for shell command output. Line 1: what \
+                             happened. Line 2: most important number/path/error. Be terse.";
 
 // Single-call budget tracked per `engine::apply` invocation (plan AC4.9).
 //
@@ -71,7 +85,7 @@ pub fn reset_apply_budget() {
 }
 
 #[cfg(not(feature = "ai-smart"))]
-pub fn reset_apply_budget() {}
+pub const fn reset_apply_budget() {}
 
 /// Try to summarize `captured` via the configured AI provider. Returns the
 /// summary text on success, or `None` whenever any preflight gate or the
@@ -107,7 +121,7 @@ pub fn maybe_summarize(ctx: &MinimizerCtx<'_>, captured: &str) -> Option<String>
 
 #[cfg(not(feature = "ai-smart"))]
 #[inline]
-pub fn maybe_summarize(_ctx: &MinimizerCtx<'_>, _captured: &str) -> Option<String> {
+pub const fn maybe_summarize(_ctx: &MinimizerCtx<'_>, _captured: &str) -> Option<String> {
 	None
 }
 
@@ -212,7 +226,11 @@ fn extract_first_message(json: &serde_json::Value) -> Option<String> {
 		.get("content")?
 		.as_str()?;
 	let cleaned = sanitize_summary(text);
-	if cleaned.is_empty() { None } else { Some(cleaned) }
+	if cleaned.is_empty() {
+		None
+	} else {
+		Some(cleaned)
+	}
 }
 
 /// Scrub characters that would corrupt a chain transcript per AC-C4 (no

@@ -38,9 +38,12 @@ const TASK_COMMANDS = {
 } as const satisfies Record<string, readonly (readonly string[])[]>;
 
 type RustTaskName = keyof typeof TASK_COMMANDS;
+const RUST_TOOLCHAIN = "nightly-2026-04-29";
+
 
 const repoRoot = path.join(import.meta.dir, "..");
 const cargoBinary = await resolveCargoBinary();
+const rustfmtBinary = await resolveRustfmtBinary();
 const taskName = process.argv[2];
 
 if (!isRustTaskName(taskName)) {
@@ -121,8 +124,16 @@ function isRustAffectingPath(changedPath: string): boolean {
 function isOneOf<T extends string>(value: string, values: readonly T[]): value is T {
 	return values.some(entry => entry === value);
 }
-
 async function resolveCargoBinary(): Promise<string> {
+	// This repo's rustfmt.toml uses nightly-only options. Homebrew `cargo` and
+	// stable rustup toolchains can pick stable rustfmt and fail formatting checks,
+	// so prefer the pinned nightly toolchain for all repo Rust tasks.
+	const pinned = await $`rustup which --toolchain ${RUST_TOOLCHAIN} cargo`.cwd(repoRoot).quiet().nothrow();
+	if (pinned.exitCode === 0) {
+		const resolved = pinned.stdout.toString().trim();
+		if (resolved !== "") return resolved;
+	}
+
 	// On macOS runners, Homebrew's `rustup-init` binary is on PATH before the
 	// rustup proxies in `$CARGO_HOME/bin`, and invoking it as `cargo` falls
 	// through to its installer mode ("unexpected argument 'nextest' found").
@@ -133,6 +144,23 @@ async function resolveCargoBinary(): Promise<string> {
 		if (resolved !== "") return resolved;
 	}
 	return "cargo";
+}
+
+async function resolveRustfmtBinary(): Promise<string | undefined> {
+	// `cargo fmt` shells out to `rustfmt`; if Homebrew's stable rustfmt is first
+	// on PATH it ignores this repo's nightly-only rustfmt.toml options. Pin the
+	// formatter to the same nightly toolchain as cargo when available.
+	const pinned = await $`rustup which --toolchain ${RUST_TOOLCHAIN} rustfmt`.cwd(repoRoot).quiet().nothrow();
+	if (pinned.exitCode === 0) {
+		const resolved = pinned.stdout.toString().trim();
+		if (resolved !== "") return resolved;
+	}
+	const result = await $`rustup which rustfmt`.cwd(repoRoot).quiet().nothrow();
+	if (result.exitCode === 0) {
+		const resolved = result.stdout.toString().trim();
+		if (resolved !== "") return resolved;
+	}
+	return undefined;
 }
 
 async function runCommand(command: readonly string[]): Promise<number> {
@@ -148,6 +176,9 @@ async function runCommand(command: readonly string[]): Promise<number> {
 		const pathSep = process.platform === "win32" ? ";" : ":";
 		const currentPath = env.PATH ?? env.Path ?? "";
 		env.PATH = currentPath === "" ? toolchainBin : `${toolchainBin}${pathSep}${currentPath}`;
+		if (rustfmtBinary) {
+			env.RUSTFMT = rustfmtBinary;
+		}
 	}
 	const proc = Bun.spawn(argv, {
 		cwd: repoRoot,

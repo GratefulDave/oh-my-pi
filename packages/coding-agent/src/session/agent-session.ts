@@ -7120,18 +7120,14 @@ export class AgentSession {
 	 *
 	 * Returns true if a fallback was applied, false otherwise.
 	 */
-	async #maybeApplyAntigravityQuotaFallback(
-		errorMessage: string,
-		currentSelector: string,
-	): Promise<boolean> {
+	async #maybeApplyAntigravityQuotaFallback(errorMessage: string, currentSelector: string): Promise<boolean> {
 		if (!this.model || this.model.provider !== "opencode-antigravity") return false;
 		if (!this.#isAntigravityQuotaExhaustionError(errorMessage)) return false;
 
 		const parsedCurrent = parseRetryFallbackSelector(currentSelector);
 		if (!parsedCurrent) return false;
 
-		const role =
-			this.#activeRetryFallback?.role ?? this.#resolveRetryFallbackRole(currentSelector);
+		const role = this.#activeRetryFallback?.role ?? this.#resolveRetryFallbackRole(currentSelector);
 
 		const quotaGroup = this.#classifyAntigravityQuotaGroup(parsedCurrent.id);
 		const resetMs = this.#parseRetryAfterMsFromError(errorMessage);
@@ -7501,10 +7497,7 @@ export class AgentSession {
 
 			// For opencode-antigravity quota exhaustion: suppress selector and attempt derived codex fallback.
 			// This runs before the normal fallback chain so that AG-quota suppression is registered first.
-			const agQuotaFallback = await this.#maybeApplyAntigravityQuotaFallback(
-				errorMessage,
-				currentSelector,
-			);
+			const agQuotaFallback = await this.#maybeApplyAntigravityQuotaFallback(errorMessage, currentSelector);
 			if (agQuotaFallback) {
 				switchedModel = true;
 				delayMs = 0;

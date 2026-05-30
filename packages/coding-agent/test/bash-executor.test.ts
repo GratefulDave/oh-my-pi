@@ -297,6 +297,57 @@ describe("executeBash", () => {
 		}
 	});
 
+	it("preserves streamed output while recording native too-large minimizer misses", async () => {
+		if (process.platform === "win32") {
+			return;
+		}
+
+		const previousAgentDir = getAgentDir();
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-bash-too-large-"));
+		const runSpy = vi.spyOn(piNatives.Shell.prototype, "run").mockImplementation(function (
+			this: Shell,
+			_options,
+			onChunk,
+		) {
+			onChunk?.(null, "raw output\n");
+			return Promise.resolve({
+				exitCode: 0,
+				cancelled: false,
+				timedOut: false,
+				minimized: {
+					filter: "too-large",
+					text: "",
+					originalText: "",
+					inputBytes: 5_000_000,
+					outputBytes: 0,
+				},
+			});
+		});
+
+		try {
+			setAgentDir(agentDir);
+			const result = await executeBash("bun test", {
+				cwd: tempDir,
+				timeout: 5000,
+				sessionKey: "too-large-miss",
+			});
+			expect(result.cancelled).toBe(false);
+			expect(result.output).toContain("raw output");
+
+			const records = await readMinimizerGain({ agentDir });
+			expect(records).toHaveLength(1);
+			expect(records[0]).toMatchObject({
+				command: "bun test",
+				filter: "too-large",
+				kind: "missed",
+			});
+		} finally {
+			setAgentDir(previousAgentDir);
+			runSpy.mockRestore();
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("times out before follow-up output", async () => {
 		if (process.platform === "win32") {
 			return;

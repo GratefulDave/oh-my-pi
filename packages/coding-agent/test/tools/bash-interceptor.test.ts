@@ -1,9 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentToolContext } from "@oh-my-pi/pi-agent-core";
 import { validateToolArguments } from "@oh-my-pi/pi-ai/utils/validation";
-import type { BashInterceptorRule } from "../../src/config/settings-schema";
+import { type BashInterceptorRule, DEFAULT_BASH_INTERCEPTOR_RULES } from "../../src/config/settings-schema";
 import type { ToolSession } from "../../src/tools";
 import { BashTool, type BashToolInput } from "../../src/tools/bash";
+import { checkBashInterception, checkBunBuildStdoutPreflight } from "../../src/tools/bash-interceptor";
 
 function createBashTool(rules: BashInterceptorRule[]): BashTool {
 	const session = {
@@ -55,6 +56,64 @@ describe("BashTool interception", () => {
 				toolNames: ["read"],
 			} as AgentToolContext),
 		).rejects.toThrow("Use read instead");
+	});
+
+	it("blocks grep and find after shell pipeline and chain separators", () => {
+		expect(
+			checkBashInterception("printf needle | grep needle", ["search"], DEFAULT_BASH_INTERCEPTOR_RULES),
+		).toMatchObject({ block: true, suggestedTool: "search" });
+		expect(
+			checkBashInterception("echo ok && rg needle src", ["search"], DEFAULT_BASH_INTERCEPTOR_RULES),
+		).toMatchObject({
+			block: true,
+			suggestedTool: "search",
+		});
+		expect(
+			checkBashInterception("echo ok ; find src -name '*.ts'", ["find"], DEFAULT_BASH_INTERCEPTOR_RULES),
+		).toMatchObject({
+			block: true,
+			suggestedTool: "find",
+		});
+	});
+
+	it("does not treat quoted grep text as a shell command", () => {
+		expect(checkBashInterception("printf '; grep needle'", ["search"], DEFAULT_BASH_INTERCEPTOR_RULES)).toEqual({
+			block: false,
+		});
+	});
+});
+
+describe("bun build stdout preflight", () => {
+	it("blocks bun build commands without an output destination", () => {
+		expect(checkBunBuildStdoutPreflight("bun build src/index.ts")).toMatchObject({
+			block: true,
+		});
+		expect(checkBunBuildStdoutPreflight("cd packages/coding-agent && bun build src/index.ts")).toMatchObject({
+			block: true,
+		});
+	});
+
+	it("allows bun build help and explicit output destinations", () => {
+		expect(checkBunBuildStdoutPreflight("bun build --help")).toEqual({ block: false });
+		expect(checkBunBuildStdoutPreflight("bun build src/index.ts --outfile out.js")).toEqual({ block: false });
+		expect(checkBunBuildStdoutPreflight("bun build src/index.ts --outdir=dist")).toEqual({ block: false });
+	});
+
+	it("blocks the first unsafe bun build even when a later segment has an output destination", () => {
+		expect(
+			checkBunBuildStdoutPreflight("bun build src/index.ts ; bun build src/other.ts --outfile out.js"),
+		).toMatchObject({
+			block: true,
+		});
+	});
+
+	it("BashTool rejects unsafe bun build before async execution handling", async () => {
+		const tool = createBashTool([]);
+		await expect(
+			tool.execute("tool-call", { command: "bun build src/index.ts", async: true }, undefined, undefined, {
+				toolNames: ["bash"],
+			} as AgentToolContext),
+		).rejects.toThrow("`bun build` writes bundled output to stdout");
 	});
 });
 

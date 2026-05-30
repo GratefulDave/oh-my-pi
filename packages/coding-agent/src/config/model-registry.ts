@@ -81,7 +81,9 @@ export const MODEL_ROLES: Record<ModelRole, ModelRoleInfo> = {
 
 export const MODEL_ROLE_IDS: ModelRole[] = ["default", "smol", "slow", "vision", "plan", "designer", "commit", "task"];
 
-export type RuntimeProviderModelFetcher = (apiKey: string | undefined) => Promise<readonly Model<Api>[] | null | undefined>;
+export type RuntimeProviderModelFetcher = (
+	apiKey: string | undefined,
+) => Promise<readonly Model<Api>[] | null | undefined>;
 
 /** Alias for ModelRoleInfo - used for both built-in and custom roles */
 export type RoleInfo = ModelRoleInfo;
@@ -1368,7 +1370,6 @@ export class ModelRegistry {
 		});
 	}
 
-
 	async #discoverRuntimeProviderModels(providerFilter?: ReadonlySet<string>): Promise<Model<Api>[]> {
 		if (this.#runtimeProviderModelFetchers.size === 0) {
 			return [];
@@ -1385,9 +1386,7 @@ export class ModelRegistry {
 							return [];
 						}
 						const models = await fetchModels(apiKey);
-						return (models ?? []).map(model =>
-							model.provider === provider ? model : { ...model, provider },
-						);
+						return (models ?? []).map(model => (model.provider === provider ? model : { ...model, provider }));
 					} catch (error) {
 						logger.warn("runtime model discovery failed for provider", {
 							provider,

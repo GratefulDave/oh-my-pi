@@ -117,6 +117,10 @@ impl MinimizerOutput {
 }
 
 /// Aggregate output for a segmented chain.
+#[allow(
+	clippy::missing_const_for_fn,
+	reason = "kept non-const because this constructs owned output used only at runtime"
+)]
 pub(crate) fn chain_output(
 	text: String,
 	original_text: String,
@@ -135,7 +139,6 @@ pub(crate) fn chain_output(
 	}
 }
 /// Apply the configured filter pipeline to a captured buffer.
-
 /// Returns the original text unchanged when minimization is disabled, no
 /// filter matches, or a filter panics.
 pub fn apply(

@@ -958,12 +958,12 @@ function b() {
 		});
 
 		it("should expose built-in interceptor defaults truthfully", () => {
-			const defaultSettings = Settings.isolated({ "bashInterceptor.enabled": true });
+			const defaultSettings = Settings.isolated();
 			const explicitEmptySettings = Settings.isolated({
-				"bashInterceptor.enabled": true,
 				"bashInterceptor.patterns": [],
 			});
 
+			expect(defaultSettings.get("bashInterceptor.enabled")).toBe(true);
 			expect(defaultSettings.get("bashInterceptor.patterns")).toEqual(DEFAULT_BASH_INTERCEPTOR_RULES);
 			expect(defaultSettings.getBashInterceptorRules()).toEqual(DEFAULT_BASH_INTERCEPTOR_RULES);
 			expect(explicitEmptySettings.get("bashInterceptor.patterns")).toEqual([]);
