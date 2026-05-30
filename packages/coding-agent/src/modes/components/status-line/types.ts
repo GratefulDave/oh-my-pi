@@ -45,6 +45,8 @@ export interface SegmentContext {
 	contextWindow: number;
 	autoCompactEnabled: boolean;
 	subagentCount: number;
+	/** Queued (pending) subagent count — not yet started, kept distinct from running. */
+	subagentQueued: number;
 	sessionStartTime: number;
 	git: {
 		branch: string | null;

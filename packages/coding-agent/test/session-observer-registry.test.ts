@@ -17,7 +17,9 @@ import {
 	type AgentProgress,
 	type AgentRunMetadata,
 	type SubagentLifecyclePayload,
+	type SubagentProgressPayload,
 	TASK_SUBAGENT_LIFECYCLE_CHANNEL,
+	TASK_SUBAGENT_PROGRESS_CHANNEL,
 } from "../src/task/types";
 import { EventBus } from "../src/utils/event-bus";
 
@@ -718,5 +720,158 @@ describe("dispose", () => {
 		} satisfies SubagentLifecyclePayload);
 
 		expect(registry.getSessions()).toHaveLength(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Running vs queued count semantics
+// ---------------------------------------------------------------------------
+
+describe("running vs queued count semantics", () => {
+	it("pending progress counts as queued, not running", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit(TASK_SUBAGENT_PROGRESS_CHANNEL, {
+			index: 0,
+			agent: "task",
+			agentSource: "bundled",
+			task: "do something",
+			progress: {
+				index: 0,
+				id: "queued-1",
+				agent: "task",
+				agentSource: "bundled",
+				status: "pending",
+				task: "do something",
+				recentTools: [],
+				recentOutput: [],
+				toolCount: 0,
+				tokens: 0,
+				cost: 0,
+				durationMs: 0,
+			},
+		} satisfies SubagentProgressPayload);
+
+		expect(registry.getActiveSubagentCount()).toBe(1);
+		expect(registry.getQueuedSubagentCount()).toBe(1);
+		expect(registry.getRunningSubagentCount()).toBe(0);
+	});
+
+	it("async bash job without progress counts as running", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit(ASYNC_JOB_OBSERVER_CHANNEL, {
+			id: "bash-run-1",
+			type: "bash",
+			label: "run tests",
+			status: "running",
+			startTime: 1000,
+		} satisfies AsyncJobObserverPayload);
+
+		expect(registry.getActiveSubagentCount()).toBe(1);
+		// bash async job has no progress attached → not pending → counts as running
+		expect(registry.getRunningSubagentCount()).toBe(1);
+		expect(registry.getQueuedSubagentCount()).toBe(0);
+	});
+
+	it("completed session counts in neither running nor queued", () => {
+		const { bus, registry } = makeRegistry();
+
+		// Start then complete via lifecycle channel
+		bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			id: "done-1",
+			agent: "task",
+			agentSource: "bundled",
+			status: "started",
+			index: 0,
+		} satisfies SubagentLifecyclePayload);
+		bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			id: "done-1",
+			agent: "task",
+			agentSource: "bundled",
+			status: "completed",
+			index: 0,
+		} satisfies SubagentLifecyclePayload);
+
+		expect(registry.getActiveSubagentCount()).toBe(0);
+		expect(registry.getRunningSubagentCount()).toBe(0);
+		expect(registry.getQueuedSubagentCount()).toBe(0);
+	});
+
+	it("mixed pending and running progress sessions split counts correctly", () => {
+		const { bus, registry } = makeRegistry();
+
+		const makeProgress = (id: string, status: "pending" | "running"): AgentProgress => ({
+			index: 0,
+			id,
+			agent: "task",
+			agentSource: "bundled",
+			status,
+			task: "work",
+			recentTools: [],
+			recentOutput: [],
+			toolCount: 0,
+			tokens: 0,
+			cost: 0,
+			durationMs: 0,
+		});
+
+		for (const [id, status] of [
+			["p1", "pending"],
+			["p2", "pending"],
+			["r1", "running"],
+		] as const) {
+			bus.emit(TASK_SUBAGENT_PROGRESS_CHANNEL, {
+				index: 0,
+				agent: "task",
+				agentSource: "bundled",
+				task: "work",
+				progress: makeProgress(id, status),
+			} satisfies SubagentProgressPayload);
+		}
+
+		expect(registry.getActiveSubagentCount()).toBe(3);
+		expect(registry.getQueuedSubagentCount()).toBe(2);
+		expect(registry.getRunningSubagentCount()).toBe(1);
+	});
+
+	it("pending progress session transitioning to running moves from queued to running", () => {
+		const { bus, registry } = makeRegistry();
+
+		const baseProgress = {
+			index: 0,
+			id: "transition-1",
+			agent: "task",
+			agentSource: "bundled" as const,
+			task: "work",
+			recentTools: [] as AgentProgress["recentTools"],
+			recentOutput: [] as string[],
+			toolCount: 0,
+			tokens: 0,
+			cost: 0,
+			durationMs: 0,
+		};
+
+		bus.emit(TASK_SUBAGENT_PROGRESS_CHANNEL, {
+			index: 0,
+			agent: "task",
+			agentSource: "bundled",
+			task: "work",
+			progress: { ...baseProgress, status: "pending" },
+		} satisfies SubagentProgressPayload);
+
+		expect(registry.getQueuedSubagentCount()).toBe(1);
+		expect(registry.getRunningSubagentCount()).toBe(0);
+
+		bus.emit(TASK_SUBAGENT_PROGRESS_CHANNEL, {
+			index: 0,
+			agent: "task",
+			agentSource: "bundled",
+			task: "work",
+			progress: { ...baseProgress, status: "running" },
+		} satisfies SubagentProgressPayload);
+
+		expect(registry.getQueuedSubagentCount()).toBe(0);
+		expect(registry.getRunningSubagentCount()).toBe(1);
 	});
 });

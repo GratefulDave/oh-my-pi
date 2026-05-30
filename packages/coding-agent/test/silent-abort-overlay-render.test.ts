@@ -204,11 +204,15 @@ describe("Observer overlay silent-abort regression", () => {
 		expect(renderedText).toContain("Observable run");
 		expect(renderedText).toContain("Background build");
 		expect(renderedText).toContain("compiled 42 files");
+		expect(renderedText).toContain("async-job");
 		expect(renderedText).toContain("AsyncJobManager");
 		expect(renderedText).toContain("embedded");
 		expect(renderedText).toContain("~/repo/project");
 		expect(renderedText).toContain("~/repo/project-worktree");
-		expect(renderedText).toContain("path=~/repo/build.log");
+		expect(renderedText).toContain("~/repo/build.log");
 		expect(renderedText).not.toContain(homeDir);
+		expect(renderedText).not.toContain(cwd);
+		expect(renderedText).not.toContain(worktree);
+		expect(renderedText).not.toContain(artifactPath);
 	});
 });

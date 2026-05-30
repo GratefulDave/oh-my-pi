@@ -26,7 +26,7 @@ import {
 	type ReportFindingDetails,
 	type SubmitReviewDetails,
 } from "../tools/review";
-import { Ellipsis, Hasher, type RenderCache, renderStatusLine } from "../tui";
+import { Ellipsis, Hasher, type RenderCache } from "../tui";
 import { subprocessToolRegistry } from "./subprocess-tool-registry";
 import type { AgentProgress, SingleResult, TaskParams, TaskToolDetails } from "./types";
 
@@ -485,11 +485,20 @@ function formatOutputInline(data: unknown, theme: Theme, maxWidth = 80): string 
 }
 
 /**
- * Render the tool call arguments.
+ * Render the tool call arguments as a reference-style launch card.
+ *
+ * Header shape: `▸ AgentName  N agent(s)` (or full task list when expanded).
+ * The shaded card background is applied by ToolExecutionComponent.
  */
 export function renderCall(args: TaskParams, _options: RenderResultOptions, theme: Theme): Component {
 	const lines: string[] = [];
-	lines.push(renderStatusLine({ icon: "pending", title: "Task", description: args.agent }, theme));
+
+	// Card header: ▸ <agent>  <N agent(s)>
+	const expand = theme.fg("accent", theme.nav.expand);
+	const agentLabel = theme.bold(theme.fg("accent", args.agent));
+	const taskCount = args.tasks?.length ?? 0;
+	const countMeta = theme.fg("muted", `${taskCount} ${taskCount === 1 ? "agent" : "agents"}`);
+	lines.push(`${expand} ${agentLabel}  ${countMeta}`);
 
 	const contextTemplate = args.context ?? "";
 	const context = contextTemplate.trim();
@@ -506,18 +515,15 @@ export function renderCall(args: TaskParams, _options: RenderResultOptions, them
 			lines.push(` ${vertical}  ${content}`);
 		}
 		const taskPrefix = showIsolated ? branch : last;
-		lines.push(
-			` ${taskPrefix} ${theme.fg("dim", "Tasks")}: ${theme.fg("muted", `${args.tasks?.length ?? 0} agents`)}`,
-		);
+		lines.push(` ${taskPrefix} ${theme.fg("dim", "Tasks")}: ${theme.fg("muted", `${taskCount} agents`)}`);
 		if (showIsolated) {
 			lines.push(` ${last} ${theme.fg("dim", "Isolated")}: ${theme.fg("muted", "true")}`);
 		}
 		return new Text(lines.join("\n"), 0, 0);
 	}
 
-	lines.push(`${theme.fg("dim", "Tasks")}: ${theme.fg("muted", `${args.tasks?.length ?? 0} agents`)}`);
 	if (showIsolated) {
-		lines.push(`${theme.fg("dim", "Isolated")}: ${theme.fg("muted", "true")}`);
+		lines.push(` ${last} ${theme.fg("dim", "Isolated")}: ${theme.fg("muted", "true")}`);
 	}
 
 	return new Text(lines.join("\n"), 0, 0);
@@ -534,7 +540,6 @@ function renderAgentProgress(
 	spinnerFrame?: number,
 ): string[] {
 	const lines: string[] = [];
-	const prefix = isLast ? theme.fg("dim", theme.tree.last) : theme.fg("dim", theme.tree.branch);
 	const continuePrefix = isLast ? "   " : `${theme.fg("dim", theme.tree.vertical)}  `;
 
 	const icon = getStatusIcon(progress.status, theme, spinnerFrame);
@@ -545,11 +550,14 @@ function renderAgentProgress(
 				? "error"
 				: "accent";
 
-	// Main status line: id: description [status] · stats · ⟨agent⟩
+	// Card header: ▸ <icon> <id>: <description>  [stats]
+	// ▸ replaces the plain tree branch on the agent header line, giving each
+	// running agent the reference-style launch card shape.
+	const expand = theme.fg("accent", theme.nav.expand);
 	const description = progress.description?.trim();
 	const displayId = formatTaskId(progress.id);
 	const titlePart = description ? `${theme.bold(displayId)}: ${description}` : displayId;
-	let statusLine = `${prefix} ${theme.fg(iconColor, icon)} ${theme.fg("accent", titlePart)}`;
+	let statusLine = `${expand} ${theme.fg(iconColor, icon)} ${theme.fg("accent", titlePart)}`;
 
 	// Only show badge for non-running states (spinner already indicates running)
 	if (progress.status === "failed" || progress.status === "aborted") {
@@ -759,7 +767,6 @@ function renderFindings(
  */
 function renderAgentResult(result: SingleResult, isLast: boolean, expanded: boolean, theme: Theme): string[] {
 	const lines: string[] = [];
-	const prefix = isLast ? theme.fg("dim", theme.tree.last) : theme.fg("dim", theme.tree.branch);
 	const continuePrefix = isLast ? "   " : `${theme.fg("dim", theme.tree.vertical)}  `;
 
 	const { warning: missingCompleteWarning, rest: outputWithoutWarning } = extractMissingYieldWarning(result.output);
@@ -785,11 +792,12 @@ function renderAgentResult(result: SingleResult, isLast: boolean, expanded: bool
 					? "merge failed"
 					: "failed";
 
-	// Main status line: id: description [status] · stats · ⟨agent⟩
+	// Card header: ▸ <icon> <id>: <description> [badge] · stats · duration
+	const expand = theme.fg("accent", theme.nav.expand);
 	const description = result.description?.trim();
 	const displayId = formatTaskId(result.id);
 	const titlePart = description ? `${theme.bold(displayId)}: ${description}` : displayId;
-	let statusLine = `${prefix} ${theme.fg(iconColor, icon)} ${theme.fg("accent", titlePart)} ${formatBadge(
+	let statusLine = `${expand} ${theme.fg(iconColor, icon)} ${theme.fg("accent", titlePart)} ${formatBadge(
 		statusText,
 		iconColor,
 		theme,
@@ -949,6 +957,41 @@ export function renderResult(
 
 			const lines: string[] = [];
 
+			// ── Async background card ───────────────────────────────────────────
+			// When the task is dispatched as a background job, emit a prominent
+			// shaded card header followed by the background-running annotation.
+			if (details.async) {
+				const expand = theme.fg("accent", theme.nav.expand);
+				const stateIcon =
+					details.async.state === "running"
+						? formatStatusIcon("running", theme, spinnerFrame)
+						: details.async.state === "completed"
+							? formatStatusIcon("success", theme)
+							: formatStatusIcon("error", theme);
+				const stateLabel =
+					details.async.state === "running"
+						? theme.fg("accent", "Task")
+						: details.async.state === "completed"
+							? theme.fg("success", "Task")
+							: theme.fg("error", "Task");
+				lines.push(`${expand} ${stateIcon} ${stateLabel}`);
+				const hook = theme.fg("dim", theme.tree.hook);
+				if (details.async.state === "running") {
+					lines.push(
+						`${hook} ${theme.fg("muted", "Running in background")}${theme.sep.dot}${theme.fg("dim", `ID: ${details.async.jobId}`)}`,
+					);
+				} else if (details.async.state === "completed") {
+					lines.push(
+						`${hook} ${theme.fg("success", "Completed")}${theme.sep.dot}${theme.fg("dim", `ID: ${details.async.jobId}`)}`,
+					);
+				} else {
+					lines.push(
+						`${hook} ${theme.fg("error", "Failed")}${theme.sep.dot}${theme.fg("dim", `ID: ${details.async.jobId}`)}`,
+					);
+				}
+			}
+
+			// ── Progress (streaming) ────────────────────────────────────────────
 			const shouldRenderProgress =
 				Boolean(details.progress && details.progress.length > 0) && (isPartial || details.results.length === 0);
 			if (shouldRenderProgress && details.progress) {

@@ -98,6 +98,24 @@ export class SessionObserverRegistry {
 		return count;
 	}
 
+	/** Count active subagents that are actually running (not just queued/pending). */
+	getRunningSubagentCount(): number {
+		let count = 0;
+		for (const s of this.#sessions.values()) {
+			if (s.kind === "subagent" && s.status === "active" && s.progress?.status !== "pending") count++;
+		}
+		return count;
+	}
+
+	/** Count active subagents that are queued (pending, not yet started). */
+	getQueuedSubagentCount(): number {
+		let count = 0;
+		for (const s of this.#sessions.values()) {
+			if (s.kind === "subagent" && s.status === "active" && s.progress?.status === "pending") count++;
+		}
+		return count;
+	}
+
 	getActiveSubagentDescriptions(): string[] {
 		const descriptions: string[] = [];
 		for (const session of this.#sessions.values()) {

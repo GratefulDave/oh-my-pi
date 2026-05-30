@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import { type Component, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
-import { formatCount, getProjectDir } from "@oh-my-pi/pi-utils";
+import { getProjectDir } from "@oh-my-pi/pi-utils";
 import { $ } from "bun";
 import { settings } from "../../config/settings";
 import type { StatusLinePreset, StatusLineSegmentId, StatusLineSeparatorStyle } from "../../config/settings-schema";
@@ -55,6 +55,7 @@ export class StatusLineComponent implements Component {
 	#autoCompactEnabled: boolean = true;
 	#hookStatuses: Map<string, string> = new Map();
 	#subagentCount: number = 0;
+	#subagentQueued: number = 0;
 	#sessionStartTime: number = Date.now();
 	#planModeStatus: { enabled: boolean; paused: boolean } | null = null;
 	#loopModeStatus: { enabled: boolean } | null = null;
@@ -99,6 +100,12 @@ export class StatusLineComponent implements Component {
 
 	setSubagentCount(count: number): void {
 		this.#subagentCount = count;
+	}
+
+	/** Set running and queued subagent counts separately for accurate status-line display. */
+	setSubagentCounts(running: number, queued: number): void {
+		this.#subagentCount = running;
+		this.#subagentQueued = queued;
 	}
 
 	setSessionStartTime(time: number): void {
@@ -357,6 +364,7 @@ export class StatusLineComponent implements Component {
 			contextWindow,
 			autoCompactEnabled: this.#autoCompactEnabled,
 			subagentCount: this.#subagentCount,
+			subagentQueued: this.#subagentQueued,
 			sessionStartTime: this.#sessionStartTime,
 			git: {
 				branch: this.#getCurrentBranch(),
@@ -431,12 +439,6 @@ export class StatusLineComponent implements Component {
 			}
 		}
 
-		const runningBackgroundJobs = this.session.getAsyncJobSnapshot()?.running.length ?? 0;
-		if (runningBackgroundJobs > 0) {
-			const icon = theme.icon.agents ? `${theme.icon.agents} ` : "";
-			const label = `${formatCount("job", runningBackgroundJobs)} running`;
-			rightParts.push(theme.fg("statusLineSubagents", `${icon}${label}`));
-		}
 		const topFillWidth = Math.max(0, width);
 		const left = [...leftParts];
 		const right = [...rightParts];

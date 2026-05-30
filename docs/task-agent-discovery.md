@@ -141,16 +141,25 @@ In synchronous task execution (`TaskTool.#executeSync`):
 
 Agent discovery decides which task agent definition can run; observability is emitted later by the executor path. Native task subagents publish lifecycle and progress snapshots on `TASK_SUBAGENT_LIFECYCLE_CHANNEL` and `TASK_SUBAGENT_PROGRESS_CHANNEL` (`src/task/types.ts`). `SessionObserverRegistry` (`src/modes/session-observer-registry.ts`) converts those events into `ObservableSession` records with label/description, agent, status, optional `sessionFile`, and progress. An `ObservableSession` may include run metadata (`AgentRunMetadata`) when supplied, though native task events rely on lifecycle, progress, and `sessionFile` today.
 
-The observer overlay (`src/modes/components/session-observer-overlay.ts`) uses embedded cards by default for:
+### Inline `● Agents` cards
+
+All of the following appear as inline embedded cards in the `● Agents` tree shown in the TUI status area:
 
 - native task subagents, including async task-job runs;
-- async/background jobs that publish lifecycle or progress metadata;
+- async bash jobs and async task jobs;
+- nested jobs spawned by agents;
 - plugin/background subagent events bridged from stable `subagents:started`, `subagents:completed`, and `subagents:failed` EventBus channels;
 - runs that include visible-pane/window metadata in `AgentRunMetadata.presentation` from a pane/window-capable backend or plugin.
 
-Native task cards and async job cards do not create tmux/cmux panes or windows. Visible panes/windows are a separate presentation mode surfaced as metadata when an integration supplies it. Async task-job progress is matched to observer cards by async job id and `runMetadata.runId`, not by the original task item id.
+Native task cards and async job cards are embedded observer cards. They do not create tmux/cmux panes or windows. Visible pane/window agents are a separate presentation mode surfaced only when the cmux/pi-subagents spawn/event path supplies real metadata; their inline card displays `mode`, `backend`, `session`, `paneId`, and `windowId` when present, and must not invent pane/window IDs.
 
-Transcript rendering is conditional: if `sessionFile` exists and can be read, the overlay shows parsed transcript entries. If no `sessionFile` is available, the card still displays status, label, agent/source, progress summary when present, cwd/worktree, presentation mode/backend/session/paneId when supplied, and artifact refs. It explicitly states when captured transcript is unavailable instead of implying a transcript exists.
+The **status line** distinguishes running agents/jobs from queued ones (waiting on a concurrency slot). Running entries show live status; queued entries show as pending.
+
+### Observer overlay (modal detail view)
+
+The observer overlay (`src/modes/components/session-observer-overlay.ts`) is opened manually via the session-observer keyboard shortcut. It is a detail view for inspecting selected cards — it does not open automatically when agents start.
+
+Transcript rendering is conditional: if `sessionFile` exists and can be read, the overlay shows parsed transcript entries. If no `sessionFile` is available, the card still displays status, label, agent/source, progress summary when present, cwd/worktree, presentation metadata, and artifact refs. Enter expands the selected transcript/detail entry. Terminal mouse click toggles an entry, but **terminal mouse is disabled by default** to preserve text selection and copy; enable with `PI_TUI_MOUSE=1`. Async jobs are still controlled through `job list`, `job poll`, and `job cancel`.
 
 Observer cards are not a control surface. Async jobs are still polled/cancelled/listed through `job`; plugin/background subagents stay read-only unless a separate stable control API is implemented.
 
