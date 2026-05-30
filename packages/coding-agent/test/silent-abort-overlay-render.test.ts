@@ -10,7 +10,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { SessionObserverOverlayComponent } from "../src/modes/components/session-observer-overlay";
-import type { ObservableSession } from "../src/modes/session-observer-registry";
+import type { ObservableSession, SessionObserverRegistry } from "../src/modes/session-observer-registry";
 import { initTheme } from "../src/modes/theme/theme";
 import { SILENT_ABORT_MARKER } from "../src/session/messages";
 
@@ -23,13 +23,13 @@ function makeJsonlSessionFile(dirPath: string, entries: object[]): string {
 	return filePath;
 }
 
-function makeSubagentRegistry(sessions: ObservableSession[]) {
+function makeSubagentRegistry(sessions: ObservableSession[]): SessionObserverRegistry {
 	return {
 		getSessions: () => sessions,
 		onChange: () => () => {},
 		setMainSession: () => {},
 		getActiveSubagentCount: () => sessions.filter(s => s.status === "active").length,
-	} as unknown as import("../src/modes/session-observer-registry").SessionObserverRegistry;
+	} as unknown as SessionObserverRegistry;
 }
 
 describe("Observer overlay silent-abort regression", () => {
@@ -162,5 +162,53 @@ describe("Observer overlay silent-abort regression", () => {
 		// A real error message SHOULD be rendered with the ✗ Error: prefix
 		expect(renderedText).toContain("✗ Error:");
 		expect(renderedText).toContain("Connection timed out");
+	});
+
+	it("renders metadata card for observable runs without leaking home-prefixed paths", () => {
+		const homeDir = os.homedir();
+		const cwd = path.join(homeDir, "repo", "project");
+		const worktree = path.join(homeDir, "repo", "project-worktree");
+		const artifactPath = path.join(homeDir, "repo", "build.log");
+		const registry = makeSubagentRegistry([
+			{
+				id: "job:bg_1",
+				kind: "subagent",
+				label: "Background build",
+				agent: "bash",
+				description: "compiled 42 files",
+				status: "active",
+				lastUpdate: Date.now(),
+				runMetadata: {
+					runId: "bg_1",
+					taskId: "bg_1",
+					agent: "bash",
+					cwd,
+					worktree,
+					status: "running",
+					presentation: { mode: "embedded", backend: "core" },
+					artifacts: [{ kind: "raw", path: artifactPath }],
+				},
+				source: {
+					kind: "async-job",
+					name: "AsyncJobManager",
+					eventChannel: "async:job:update",
+					jobType: "bash",
+				},
+			},
+		]);
+
+		const overlay = new SessionObserverOverlayComponent(registry, () => {}, ["ctrl+s"]);
+
+		const renderedText = overlay.render(120).join("\n");
+		expect(renderedText).toContain("Captured transcript unavailable");
+		expect(renderedText).toContain("Observable run");
+		expect(renderedText).toContain("Background build");
+		expect(renderedText).toContain("compiled 42 files");
+		expect(renderedText).toContain("AsyncJobManager");
+		expect(renderedText).toContain("embedded");
+		expect(renderedText).toContain("~/repo/project");
+		expect(renderedText).toContain("~/repo/project-worktree");
+		expect(renderedText).toContain("path=~/repo/build.log");
+		expect(renderedText).not.toContain(homeDir);
 	});
 });

@@ -31,6 +31,7 @@ import { formatBytes, formatDuration } from "../tools/render-utils";
 import {
 	type AgentDefinition,
 	type AgentProgress,
+	type AgentRunMetadata,
 	getTaskSchema,
 	type SingleResult,
 	type TaskParams,
@@ -108,6 +109,12 @@ function addUsageTotals(target: Usage, usage: Partial<Usage>): void {
 	target.cost.total += cost.total;
 }
 
+function setAgentProgressStatus(progress: AgentProgress | undefined, status: AgentProgress["status"]): void {
+	if (!progress) return;
+	progress.status = status;
+	if (progress.runMetadata) progress.runMetadata.status = status;
+}
+
 // Re-export types and utilities
 export { loadBundledAgents as BUNDLED_AGENTS } from "./agents";
 export { discoverCommands, expandCommand, getCommand } from "./commands";
@@ -116,6 +123,9 @@ export { AgentOutputManager } from "./output-manager";
 export type {
 	AgentDefinition,
 	AgentProgress,
+	AgentRunArtifactRef,
+	AgentRunMetadata,
+	AgentRunPresentation,
 	SingleResult,
 	SubagentLifecyclePayload,
 	SubagentProgressPayload,
@@ -308,9 +318,19 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		for (let index = 0; index < taskItems.length; index++) {
 			const taskItem = taskItems[index];
 			const assignment = taskItem.assignment.trim();
+			const runId = uniqueIds[index];
+			const runMetadata: AgentRunMetadata = {
+				runId,
+				taskId: taskItem.id,
+				agent: params.agent,
+				cwd: this.session.cwd,
+				status: "pending",
+				presentation: { mode: "embedded", backend: "core" },
+				artifacts: [],
+			};
 			progressByTaskId.set(taskItem.id, {
 				index,
-				id: taskItem.id,
+				id: runId,
 				agent: params.agent,
 				agentSource: fallbackAgentSource,
 				status: "pending",
@@ -323,6 +343,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				tokens: 0,
 				cost: 0,
 				durationMs: 0,
+				runMetadata,
 			});
 		}
 
@@ -360,10 +381,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			const taskItem = taskItems[i];
 			if (signal?.aborted) {
 				failedSchedules.push(`${taskItem.id}: cancelled before scheduling`);
-				const progress = progressByTaskId.get(taskItem.id);
-				if (progress) {
-					progress.status = "aborted";
-				}
+				setAgentProgressStatus(progressByTaskId.get(taskItem.id), "aborted");
 				continue;
 			}
 
@@ -380,14 +398,10 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 						await semaphore.acquire();
 						if (runSignal.aborted) {
 							semaphore.release();
-							if (progress) {
-								progress.status = "aborted";
-							}
+							setAgentProgressStatus(progress, "aborted");
 							throw new Error("Aborted before execution");
 						}
-						if (progress) {
-							progress.status = "running";
-						}
+						setAgentProgressStatus(progress, "running");
 						await reportProgress(
 							`Running background task ${taskItem.id}...`,
 							buildAsyncDetails("running", startedJobs[0]?.jobId ?? label) as unknown as Record<string, unknown>,
@@ -399,11 +413,12 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 							const finalText = result.content.find(part => part.type === "text")?.text ?? "(no output)";
 							const singleResult = result.details?.results[0];
 							if (progress) {
-								progress.status = singleResult?.aborted
+								const status: AgentProgress["status"] = singleResult?.aborted
 									? "aborted"
 									: (singleResult?.exitCode ?? 0) === 0
 										? "completed"
 										: "failed";
+								setAgentProgressStatus(progress, status);
 								progress.durationMs = singleResult?.durationMs ?? Math.max(0, Date.now() - startedAt);
 								progress.tokens = singleResult?.tokens ?? 0;
 								progress.contextTokens = singleResult?.contextTokens;
@@ -435,7 +450,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 							return finalText;
 						} catch (error) {
 							if (progress) {
-								progress.status = "failed";
+								setAgentProgressStatus(progress, "failed");
 								progress.durationMs = Math.max(0, Date.now() - startedAt);
 							}
 							completedJobs += 1;
@@ -465,6 +480,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 					{
 						id: label,
 						ownerId: this.session.getAgentId?.() ?? undefined,
+						runMetadata: progressByTaskId.get(taskItem.id)?.runMetadata,
 						onProgress: (text, details) => {
 							const progressDetails =
 								(details as TaskToolDetails | undefined) ??
@@ -477,10 +493,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				failedSchedules.push(`${taskItem.id}: ${message}`);
-				const progress = progressByTaskId.get(taskItem.id);
-				if (progress) {
-					progress.status = "failed";
-				}
+				setAgentProgressStatus(progressByTaskId.get(taskItem.id), "failed");
 			}
 		}
 

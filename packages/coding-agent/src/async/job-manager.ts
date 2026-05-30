@@ -1,10 +1,27 @@
 import { logger } from "@oh-my-pi/pi-utils";
+import type { AgentRunMetadata } from "../task/types";
 
 const DELIVERY_RETRY_BASE_MS = 500;
 const DELIVERY_RETRY_MAX_MS = 30_000;
 const DELIVERY_RETRY_JITTER_MS = 200;
 const DEFAULT_RETENTION_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_RUNNING_JOBS = 15;
+
+export const ASYNC_JOB_OBSERVER_CHANNEL = "async:job:update";
+
+export interface AsyncJobObserverPayload {
+	id: string;
+	type: "bash" | "task";
+	label: string;
+	status: "running" | "completed" | "failed" | "cancelled";
+	startTime: number;
+	ownerId?: string;
+	progressText?: string;
+	progressDetails?: Record<string, unknown>;
+	resultText?: string;
+	errorText?: string;
+	runMetadata?: AgentRunMetadata;
+}
 
 export interface AsyncJob {
 	id: string;
@@ -23,10 +40,12 @@ export interface AsyncJob {
 	 * supply an id (e.g. legacy tests, SDK consumers without an agent context).
 	 */
 	ownerId?: string;
+	runMetadata?: AgentRunMetadata;
 }
 
 export interface AsyncJobManagerOptions {
 	onJobComplete: (jobId: string, text: string, job?: AsyncJob) => void | Promise<void>;
+	onJobUpdate?: (payload: AsyncJobObserverPayload) => void | Promise<void>;
 	maxRunningJobs?: number;
 	retentionMs?: number;
 }
@@ -53,6 +72,7 @@ export interface AsyncJobRegisterOptions {
 	/** Registry id of the agent that owns this job; used to scope cancelAll. */
 	ownerId?: string;
 	onProgress?: (text: string, details?: Record<string, unknown>) => void | Promise<void>;
+	runMetadata?: AgentRunMetadata;
 }
 
 /**
@@ -89,6 +109,7 @@ export class AsyncJobManager {
 	readonly #watchedJobs = new Set<string>();
 	readonly #evictionTimers = new Map<string, NodeJS.Timeout>();
 	readonly #onJobComplete: AsyncJobManagerOptions["onJobComplete"];
+	readonly #onJobUpdate: AsyncJobManagerOptions["onJobUpdate"];
 	readonly #maxRunningJobs: number;
 	readonly #retentionMs: number;
 	#deliveryLoop: Promise<void> | undefined;
@@ -106,6 +127,7 @@ export class AsyncJobManager {
 
 	constructor(options: AsyncJobManagerOptions) {
 		this.#onJobComplete = options.onJobComplete;
+		this.#onJobUpdate = options.onJobUpdate;
 		this.#maxRunningJobs = Math.max(1, Math.floor(options.maxRunningJobs ?? DEFAULT_MAX_RUNNING_JOBS));
 		this.#retentionMs = Math.max(0, Math.floor(options.retentionMs ?? DEFAULT_RETENTION_MS));
 	}
@@ -144,9 +166,11 @@ export class AsyncJobManager {
 			abortController,
 			promise: Promise.resolve(),
 			ownerId: options?.ownerId,
+			runMetadata: options?.runMetadata,
 		};
 
 		const reportProgress = async (text: string, details?: Record<string, unknown>): Promise<void> => {
+			this.#notifyJobUpdate(job, { progressText: text, progressDetails: details });
 			if (!options?.onProgress) return;
 			try {
 				await options.onProgress(text, details);
@@ -157,33 +181,39 @@ export class AsyncJobManager {
 				});
 			}
 		};
+
+		this.#jobs.set(id, job);
+		this.#notifyJobUpdate(job);
+
 		job.promise = (async () => {
 			try {
 				const text = await run({ jobId: id, signal: abortController.signal, reportProgress });
 				if (job.status === "cancelled") {
 					job.resultText = text;
+					this.#notifyJobUpdate(job);
 					this.#scheduleEviction(id);
 					return;
 				}
 				job.status = "completed";
 				job.resultText = text;
+				this.#notifyJobUpdate(job);
 				this.#enqueueDelivery(id, text);
 				this.#scheduleEviction(id);
 			} catch (error) {
 				if (job.status === "cancelled") {
 					job.errorText = error instanceof Error ? error.message : String(error);
+					this.#notifyJobUpdate(job);
 					this.#scheduleEviction(id);
 					return;
 				}
 				const errorText = error instanceof Error ? error.message : String(error);
 				job.status = "failed";
 				job.errorText = errorText;
+				this.#notifyJobUpdate(job);
 				this.#enqueueDelivery(id, errorText);
 				this.#scheduleEviction(id);
 			}
 		})();
-
-		this.#jobs.set(id, job);
 		return id;
 	}
 
@@ -199,6 +229,7 @@ export class AsyncJobManager {
 		if (job.status !== "running") return false;
 		job.status = "cancelled";
 		job.abortController.abort();
+		this.#notifyJobUpdate(job);
 		this.#scheduleEviction(id);
 		return true;
 	}
@@ -287,6 +318,7 @@ export class AsyncJobManager {
 		for (const job of this.getRunningJobs(filter)) {
 			job.status = "cancelled";
 			job.abortController.abort();
+			this.#notifyJobUpdate(job);
 			this.#scheduleEviction(job.id);
 		}
 	}
@@ -352,6 +384,43 @@ export class AsyncJobManager {
 		this.#suppressedDeliveries.clear();
 		this.#watchedJobs.clear();
 		return drained;
+	}
+
+	#notifyJobUpdate(
+		job: AsyncJob,
+		update?: { progressText?: string; progressDetails?: Record<string, unknown> },
+	): void {
+		const onJobUpdate = this.#onJobUpdate;
+		if (!onJobUpdate) return;
+		const payload: AsyncJobObserverPayload = {
+			id: job.id,
+			type: job.type,
+			label: job.label,
+			status: job.status,
+			startTime: job.startTime,
+		};
+		if (job.ownerId !== undefined) payload.ownerId = job.ownerId;
+		if (update?.progressText !== undefined) payload.progressText = update.progressText;
+		if (update?.progressDetails !== undefined) payload.progressDetails = update.progressDetails;
+		if (job.resultText !== undefined) payload.resultText = job.resultText;
+		if (job.errorText !== undefined) payload.errorText = job.errorText;
+		if (job.runMetadata !== undefined) payload.runMetadata = job.runMetadata;
+		try {
+			const result = onJobUpdate(payload);
+			if (result && typeof (result as Promise<void>).catch === "function") {
+				void (result as Promise<void>).catch(error => {
+					logger.warn("Async job observer callback failed", {
+						jobId: job.id,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
+			}
+		} catch (error) {
+			logger.warn("Async job observer callback failed", {
+				jobId: job.id,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
 	}
 
 	#resolveJobId(preferredId?: string): string {

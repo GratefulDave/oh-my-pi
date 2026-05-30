@@ -38,6 +38,12 @@ When the main agent calls `task`, two paths exist:
 3. Returns immediately with job IDs and `async: { state: "running", jobId }`.
 4. The caller later calls `job.poll([id])` to wait for completion.
 
+### Observer cards
+
+Task subagents and async jobs also surface through the session observer registry. Sync and async task runs publish lifecycle/progress events with the task label, agent name, status, latest progress, and optional `sessionFile`. The `AgentRunMetadata` (`runId`, cwd/worktree, presentation metadata when supplied, artifacts) is optional and producer-dependent. Current native sync task lifecycle/progress events expose lifecycle, progress, and `sessionFile`, while async task-job and plugin paths supply run metadata for observer cards. Native `task` and async jobs use embedded observer-card presentation by default; they do not spawn tmux/cmux panes or windows. Visible pane/window details are presentation metadata reported by a pane/window-capable backend or plugin. Async task-job progress is correlated by the async job id and `runMetadata.runId`, not by the original task item id. Async bash jobs publish job lifecycle/progress metadata through `AsyncJobManager`. The observer overlay renders a transcript only when `sessionFile` exists and can be parsed. Otherwise it still renders the observable card metadata and states that captured transcript is unavailable.
+
+Async jobs remain controlled through `job`: observer cards show run state, but polling, cancellation, and completion delivery still use the `job` tool.
+
 ---
 
 ## 2. Job Tracking
@@ -121,7 +127,7 @@ Main agent calls task(agent: "oracle", tasks: [{ id: "LookupFoo", ... }])
 
 **The critical insight**: IRC works **during** sync execution, not just async. Even when the main agent is blocked waiting for `waitForIdle()`, the subagent can IRC the main agent and get an ephemeral side-channel reply without the main agent's main loop being interrupted. The subagent sees the reply as part of its conversation, and the main agent sees the exchange injected into its history for its next turn.
 
-In the async case, jobs and IRC are doubly useful — the main agent can fire off multiple async tasks, poll them with `job`, and coordinate with running subagents via `irc` while they all execute concurrently.
+In the async case, jobs and IRC are doubly useful — the main agent can fire off multiple async tasks, poll or cancel them with `job`, and coordinate with running subagents via `irc` while they all execute concurrently. The same runs appear as observer cards when they publish lifecycle/progress metadata; the card is visibility, not a replacement control API.
 
 ---
 
@@ -131,9 +137,11 @@ In the async case, jobs and IRC are doubly useful — the main agent can fire of
 |------|------|
 | `packages/coding-agent/src/task/index.ts` | `TaskTool` — spawns subagents, sync/async orchestration, worktree isolation, patch/branch merge |
 | `packages/coding-agent/src/task/executor.ts` | `runSubprocess()` — in-process subagent execution; creates AgentSession, tracks progress, finalizes output |
-| `packages/coding-agent/src/task/types.ts` | Shared types: `AgentDefinition`, `AgentProgress`, `SingleResult`, `TaskParams`, schemas |
+| `packages/coding-agent/src/task/types.ts` | Shared types: `AgentDefinition`, `AgentProgress`, `AgentRunMetadata`, `SingleResult`, `TaskParams`, schemas |
 | `packages/coding-agent/src/task/discovery.ts` | `discoverAgents()` — loads agent definitions from bundled + user + project directories |
 | `packages/coding-agent/src/task/parallel.ts` | `mapWithConcurrencyLimit()` + `Semaphore` — parallel execution with concurrency cap |
+| `packages/coding-agent/src/modes/session-observer-registry.ts` | `SessionObserverRegistry` — turns task/plugin lifecycle and progress events into observable cards |
+| `packages/coding-agent/src/modes/components/session-observer-overlay.ts` | Observer overlay — transcript viewer when a session file exists; metadata card when it does not |
 | `packages/coding-agent/src/tools/job.ts` | `JobTool` — poll/cancel/list async background jobs |
 | `packages/coding-agent/src/tools/irc.ts` | `IrcTool` — list live agents, send messages via `respondAsBackground()` |
 | `packages/coding-agent/src/async/job-manager.ts` | `AsyncJobManager` — process-global singleton for registering, tracking, delivering background jobs |
