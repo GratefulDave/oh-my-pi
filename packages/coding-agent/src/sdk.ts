@@ -1419,6 +1419,26 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			}
 		}
 
+		// Extension-provided providers are not visible during the early default-role
+		// resolution above. Re-resolve the settings default after extension
+		// registration so profiles that default to extension models (for example
+		// opencode-antigravity) start on their configured default instead of the
+		// first built-in fallback model.
+		if (!hasExplicitModel && !model) {
+			const availableModels = modelRegistry.getAll();
+			const refreshedDefaultRoleSpec = resolveModelRoleValue(settings.getModelRole("default"), availableModels, {
+				settings,
+				matchPreferences: { usageOrder: settings.getStorage()?.getModelUsageOrder() },
+				modelRegistry,
+			});
+			if (refreshedDefaultRoleSpec.model) {
+				model = refreshedDefaultRoleSpec.model;
+				if (thinkingLevel === undefined && !hasThinkingEntry && refreshedDefaultRoleSpec.explicitThinkingLevel) {
+					thinkingLevel = refreshedDefaultRoleSpec.thinkingLevel;
+				}
+			}
+		}
+
 		// Fall back to first available model with a valid API key, honoring the
 		// path-scoped `enabledModels` allow-list when configured. Skip when the
 		// user explicitly requested a model via --model that wasn't found.

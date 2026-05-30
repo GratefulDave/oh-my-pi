@@ -336,6 +336,37 @@ describe("OpenCode Antigravity fetch bridge", () => {
 		expect(apiKeyHeader).toBeNull();
 	});
 
+	it("passes Request inputs to upstream plugin as URL strings so the plugin intercepts them", async () => {
+		const controller = new AbortController();
+		let requestedInput: string | URL | Request | undefined;
+		let requestedBody = "";
+		let apiKeyHeader: string | null = "not-called";
+		let sawSignal = false;
+		const fetch = createBridgeFetch(async (input, init) => {
+			requestedInput = input;
+			requestedBody = String(init?.body ?? "");
+			apiKeyHeader = new Headers(init?.headers).get("x-goog-api-key");
+			sawSignal = init?.signal === controller.signal;
+			return new Response("{}", { status: 200 });
+		});
+		const request = new Request(
+			"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
+			{
+				method: "POST",
+				signal: controller.signal,
+				headers: { "x-goog-api-key": "placeholder", accept: "text/event-stream" },
+				body: JSON.stringify({ contents: [] }),
+			},
+		);
+
+		await fetch(request);
+
+		expect(requestedInput).toBe(request.url);
+		expect(requestedBody).toBe(JSON.stringify({ contents: [] }));
+		expect(apiKeyHeader).toBeNull();
+		expect(sawSignal).toBe(true);
+	});
+
 	it("rewrites Google parametersJsonSchema tools to legacy parameters before upstream fetch", async () => {
 		const credentials = { refresh: "refresh", access: "access", expires: Date.now() + 60_000 };
 		let requestedBody: unknown;
