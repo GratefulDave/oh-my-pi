@@ -77,28 +77,31 @@ Key behaviors:
 
 ---
 
-## 3. IRC Messaging
+## 3. IRC Messaging & Multi-Agent Actor System
 
-`packages/coding-agent/src/tools/irc.ts`, `packages/coding-agent/src/registry/agent-registry.ts`
+`packages/coding-agent/src/tools/irc.ts`, `packages/coding-agent/src/registry/agent-registry.ts`, `packages/coding-agent/src/registry/mailbox.ts`
 
-**`AgentRegistry`** is a process-global singleton. Every agent session (main + all subagents) registers at creation with a structured ID like `"0-Main"`, `"3-AuthLoader"`.
+The IRC tool is layered over a thread-safe, process-global **Actor System** that decouples multi-agent communication into asynchronous, volatile mailboxes:
+
++- **Durable Actor Mailboxes (`mailbox.ts`):** Every agent (active or planned) is allocated an `ActorMailbox` owned by the process-wide `AgentRegistry`. Mailboxes hold FIFO unread queues of `ActorMessage` objects.
++- **Offline Buffering:** If a target agent has not booted yet (meaning it is unregistered or currently spawning), the sender's message is safely enqueued and buffered offline inside the registry. The recipient receives it immediately upon registering during startup.
++- **Autonomous Wake-up Loop:** `AgentSession` subscribes to registry `message_queued` events. When a message lands in its mailbox, if the agent is currently idle, it autonomously triggers an `agent.continue()` turn to wake up and process the coworkers' DMs! Mailbox DMs are cleanly flushed as `irc_message` history entries before the next model generation begins.
 
 ### `irc.list`
 
-Calls `registry.listVisibleTo(senderId)` → returns all running/idle agents except the caller. Output: `"3 peer(s):"` + list of `{ id, displayName, kind, status }`.
+Calls `registry.listVisibleTo(senderId)` → returns all active agents except the caller. Output includes the unread mailbox count for each coworker: `"3 peer(s):"` + list of `[id · name · status] (N unread)`.
 
 ### `irc.send(to, message, awaitReply?)`
 
-1. Resolves targets from registry. `"all"` broadcasts to all visible peers.
-2. For each target, calls `targetSession.respondAsBackground({ from, message, awaitReply, signal })`.
-3. `respondAsBackground()` creates an **ephemeral side-channel turn**:
+1. Resolves targets from the registry. `"all"` broadcasts a copy of the message into every coworker's mailbox.
+2. Calls `registry.routeMessage(senderId, targetId, message)` to place the message in the recipient's unread mailbox.
+3. If the recipient is active and `awaitReply: true` is requested, OMP falls back to the synchronous **ephemeral side-channel turn** for backward compatibility:
+   - Runs `respondAsBackground()` on the recipient's session.
    - Builds incoming prompt: `"[IRC from 0-Main → you] Should I prefer JWT or session cookies?"`
-   - Calls `runEphemeralTurn()` — uses the recipient's model, system prompt, and history to generate a reply **without blocking the recipient's main loop**. The recipient could be mid-tool-call and still reply.
-   - Both the incoming message and auto-reply are queued as `irc:incoming` / `irc:autoreply` custom messages for deferred injection into the recipient's persisted history.
-4. Replies are collected and returned to the sender.
+   - Generates a reply asynchronously without blocking the recipient's main execution loop.
+   - The synchronous reply is enqueued back to the sender's mailbox.
 
 ---
-
 ## How They Fit Together
 
 ```
