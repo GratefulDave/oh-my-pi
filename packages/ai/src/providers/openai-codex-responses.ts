@@ -49,6 +49,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream";
 import { finalizeErrorMessage, type RawHttpRequestDump } from "../utils/http-inspector";
 import { getOpenAIStreamIdleTimeoutMs, iterateWithIdleTimeout } from "../utils/idle-iterator";
 import { parseStreamingJson } from "../utils/json-parse";
+import { createRequestDebugSession, isRequestDebugEnabled, type RequestDebugResponseLog } from "../utils/request-debug";
 import { adaptSchemaForStrict, NO_STRICT, sanitizeSchemaForOpenAIResponses, toolWireSchema } from "../utils/schema";
 import { compactGrammarDefinition } from "./grammar";
 import { CODEX_BASE_URL, getCodexAccountId, OPENAI_HEADER_VALUES, OPENAI_HEADERS } from "./openai-codex/constants";
@@ -1905,6 +1906,8 @@ class CodexWebSocketConnection {
 	#waiters: Array<() => void> = [];
 	#connectPromise?: Promise<void>;
 	#activeRequest = false;
+	#handshakeHeaders?: Headers;
+	#debugResponseLog?: RequestDebugResponseLog;
 
 	constructor(url: string, headers: Record<string, string>, options: CodexWebSocketConnectionOptions) {
 		this.#url = url;
@@ -2010,6 +2013,7 @@ class CodexWebSocketConnection {
 			this.#push(null);
 		};
 		socket.onmessage = event => {
+			this.#writeDebugWebSocketFrame(event.data);
 			try {
 				const text = typeof event.data === "string" ? event.data : Buffer.from(event.data).toString("utf-8");
 				if (!text) return;
@@ -2061,6 +2065,19 @@ class CodexWebSocketConnection {
 		}
 
 		try {
+			const debugSession = isRequestDebugEnabled()
+				? await createRequestDebugSession({
+						protocol: "websocket",
+						method: "POST",
+						url: this.#url,
+						headers: this.#headers,
+						body: request,
+					})
+				: undefined;
+			this.#debugResponseLog = debugSession
+				? await debugSession.openResponseLog("WebSocket 101 Switching Protocols", this.#handshakeHeaders)
+				: undefined;
+
 			this.#socket.send(JSON.stringify(request));
 			let sawFirstEvent = false;
 			let lastProgressAt = Date.now();
@@ -2103,14 +2120,35 @@ class CodexWebSocketConnection {
 			if (signal) {
 				signal.removeEventListener("abort", onAbort);
 			}
+			const debugResponseLog = this.#debugResponseLog;
+			this.#debugResponseLog = undefined;
+			await debugResponseLog?.close();
 		}
 	}
 
 	#captureHandshakeHeaders(socket: Bun.WebSocket, openEvent?: Event): void {
-		if (!this.#onHandshakeHeaders) return;
 		const headers = extractCodexWebSocketHandshakeHeaders(socket, openEvent);
 		if (!headers) return;
-		this.#onHandshakeHeaders(headers);
+		this.#handshakeHeaders = headers;
+		this.#onHandshakeHeaders?.(headers);
+	}
+
+	#writeDebugWebSocketFrame(data: unknown): void {
+		const log = this.#debugResponseLog;
+		if (!log) return;
+		if (typeof data === "string") {
+			log.write(data);
+			return;
+		}
+		if (data instanceof Uint8Array) {
+			log.write(data);
+			return;
+		}
+		if (data instanceof ArrayBuffer) {
+			log.write(new Uint8Array(data));
+			return;
+		}
+		log.write(String(data));
 	}
 
 	#push(item: Record<string, unknown> | Error | null): void {
