@@ -10,6 +10,7 @@ import {
 	getMinimizerGainPath,
 	getMinimizerGainStatus,
 	loadMinimizerGainContext,
+	type MinimizerGainRecord,
 	readMinimizerGain,
 	recordMinimizerGain,
 	resetMinimizerGainStatusForTesting,
@@ -625,15 +626,13 @@ describe("minimizer gain analytics", () => {
 	});
 
 	// -------------------------------------------------------------------
-	// Token savings ratio (% tokens saved)
+	// Savings ratio (% output reduced)
 	// -------------------------------------------------------------------
 
-	it("summarizeMinimizerGain computes tokensSavedRatio = estimatedTokensSaved / estimatedInputTokens", () => {
-		// 1 record: inputBytes=1000, savedBytes=750, savedTokens=undefined
-		// estimatedInputTokens = floor(1000/4) = 250
-		// estimatedTokensSaved = floor(750/4) = 187
-		// tokensSavedRatio = 187/250 = 0.748
-		const records: import("../src/minimizer-gain").MinimizerGainRecord[] = [
+	it("summarizeMinimizerGain computes tokensSavedRatio from byte reduction", () => {
+		// 1 record: inputBytes=1000, savedBytes=750
+		// tokensSavedRatio = 750/1000 = 0.75
+		const records: MinimizerGainRecord[] = [
 			{
 				timestamp: "2026-05-20T00:00:00.000Z",
 				cwd: "/repo",
@@ -649,7 +648,28 @@ describe("minimizer gain analytics", () => {
 		const summary = summarizeMinimizerGain(records);
 		expect(summary.estimatedInputTokens).toBe(250);
 		expect(summary.tokensSavedRatio).not.toBeNull();
-		expect(summary.tokensSavedRatio!).toBeCloseTo(187 / 250, 5);
+		expect(summary.tokensSavedRatio!).toBeCloseTo(0.75, 5);
+	});
+
+	it("summarizeMinimizerGain bounds tokensSavedRatio when savedTokens exceeds estimated input tokens", () => {
+		const records: MinimizerGainRecord[] = [
+			{
+				timestamp: "2026-05-20T00:00:00.000Z",
+				cwd: "/repo",
+				command: "git diff",
+				filter: "git",
+				inputBytes: 1000,
+				outputBytes: 250,
+				savedBytes: 750,
+				savedTokens: 400,
+				exitCode: 0,
+				kind: "saved",
+			},
+		];
+		const summary = summarizeMinimizerGain(records);
+		expect(summary.estimatedTokensSaved).toBe(400);
+		expect(summary.estimatedInputTokens).toBe(250);
+		expect(summary.tokensSavedRatio).toBe(0.75);
 	});
 
 	it("summarizeMinimizerGain tokensSavedRatio is null when no savings records", () => {

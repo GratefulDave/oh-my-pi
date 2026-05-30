@@ -346,7 +346,7 @@ function buildGainReportLines(context: MinimizerGainContext): string[] {
 		`${formatTokensSavedLabel(summary.usesEstimatedTokensSaved)}: ${formatNumber(summary.estimatedTokensSaved)}`,
 	];
 	if (summary.tokensSavedRatio !== null) {
-		lines.push(`% Tokens Saved: ${(summary.tokensSavedRatio * 100).toFixed(1)}%`);
+		lines.push(`% Output Reduced: ${(summary.tokensSavedRatio * 100).toFixed(1)}%`);
 	}
 	lines.push("", "Gain:");
 	if (summary.byFilter.length > 0) {
@@ -415,7 +415,8 @@ function pushGainRows<T extends GainSlashRow>(
 	limit: number,
 ): void {
 	for (const row of rows.slice(0, limit)) {
-		const pctPart = row.tokensSavedRatio !== null ? `, ${(row.tokensSavedRatio * 100).toFixed(1)}% tokens saved` : "";
+		const pctPart =
+			row.tokensSavedRatio !== null ? `, ${(row.tokensSavedRatio * 100).toFixed(1)}% output reduced` : "";
 		lines.push(
 			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}${pctPart}`,
 		);

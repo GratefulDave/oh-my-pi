@@ -444,7 +444,7 @@ describe("ACP builtin slash commands", () => {
 		}
 	});
 
-	it("/gain shows % tokens saved when savings exist", async () => {
+	it("/gain shows % output reduced when savings exist", async () => {
 		const previousAgentDir = getAgentDir();
 		const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-acp-gain-pct-"));
 		try {
@@ -467,8 +467,8 @@ describe("ACP builtin slash commands", () => {
 			const current = createRuntime();
 			const result = await executeAcpBuiltinSlashCommand("/gain", current.runtime);
 			expect(result).toEqual({ consumed: true });
-			// tokensSavedRatio is estimated: floor(750/4)/floor(1000/4) = 187/250 = 74.8%
-			expect(current.output[0]).toContain("% Tokens Saved");
+			// tokensSavedRatio is byte reduction: 750/1000 = 75%.
+			expect(current.output[0]).toContain("% Output Reduced");
 		} finally {
 			setAgentDir(previousAgentDir);
 			await fs.rm(agentDir, { recursive: true, force: true });

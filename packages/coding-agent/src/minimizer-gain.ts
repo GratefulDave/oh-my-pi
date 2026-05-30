@@ -569,8 +569,11 @@ function addRecord(totals: MinimizerGainTotals, record: MinimizerGainRecord): vo
 }
 
 function finalizeTotals<T extends MinimizerGainTotals>(totals: T): T {
-	totals.tokensSavedRatio =
-		totals.estimatedInputTokens > 0 ? totals.estimatedTokensSaved / totals.estimatedInputTokens : null;
+	// `estimatedTokensSaved` may use exact tokenizer deltas when a record has
+	// `savedTokens`, while `estimatedInputTokens` is byte-derived legacy data.
+	// Mixing those units can report impossible >100% savings. Use byte reduction
+	// for the ratio; it is available for every record and is bounded by input.
+	totals.tokensSavedRatio = totals.inputBytes > 0 ? totals.savedBytes / totals.inputBytes : null;
 	return totals;
 }
 

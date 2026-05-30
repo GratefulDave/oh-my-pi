@@ -202,7 +202,7 @@ function printGainSummary(input: GainContext): void {
 		`  ${formatTokensSavedLabel(summary.usesEstimatedTokensSaved)}: ${formatNumber(summary.estimatedTokensSaved)}\n`,
 	);
 	if (summary.tokensSavedRatio !== null) {
-		process.stdout.write(`  % Tokens Saved: ${(summary.tokensSavedRatio * 100).toFixed(1)}%\n`);
+		process.stdout.write(`  % Output Reduced: ${(summary.tokensSavedRatio * 100).toFixed(1)}%\n`);
 	}
 
 	printRows("Top Filters", summary.byFilter, row => row.filter);
@@ -279,7 +279,8 @@ function printRows<T extends GainRow>(title: string, rows: T[], label: (row: T) 
 		return;
 	}
 	for (const row of rows.slice(0, 10)) {
-		const pctPart = row.tokensSavedRatio !== null ? `, ${(row.tokensSavedRatio * 100).toFixed(1)}% tokens saved` : "";
+		const pctPart =
+			row.tokensSavedRatio !== null ? `, ${(row.tokensSavedRatio * 100).toFixed(1)}% output reduced` : "";
 		process.stdout.write(
 			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes saved, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}${pctPart}\n`,
 		);
