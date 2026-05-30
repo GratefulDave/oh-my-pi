@@ -121,7 +121,7 @@ export function createOpencodeAntigravityStream(
 		const upstreamId = buildUpstreamModelId(model, options?.reasoning);
 		const stream = googleStream(toGoogleStreamModel(model, upstreamId), context, {
 			...options,
-			apiKey: "opencode-antigravity-bridge",
+			apiKey: "antigravity-adapter",
 			fetch: async (input, init) => {
 				const loader = await createUpstreamLoader(auth, credentials);
 				return createBridgeFetch(loader.fetch)(input, stripBodyThinkingConfig(init));

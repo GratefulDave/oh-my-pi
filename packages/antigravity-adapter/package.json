@@ -1,15 +1,15 @@
 {
 	"type": "module",
-	"name": "@oh-my-pi/opencode-antigravity-bridge",
+	"name": "@oh-my-pi/antigravity-adapter",
 	"version": "15.5.10",
-	"description": "OMP provider bridge for the OpenCode Antigravity auth plugin",
+	"description": "OMP provider adapter for the OpenCode Antigravity auth plugin",
 	"homepage": "https://omp.sh",
 	"author": "Derek Rynd",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/can1357/oh-my-pi.git",
-		"directory": "packages/opencode-antigravity-bridge"
+		"directory": "packages/antigravity-adapter"
 	},
 	"bugs": {
 		"url": "https://github.com/can1357/oh-my-pi/issues"
