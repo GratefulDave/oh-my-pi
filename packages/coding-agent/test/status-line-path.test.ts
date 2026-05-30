@@ -45,6 +45,7 @@ function createPathContext(): SegmentContext {
 		contextWindow: 0,
 		autoCompactEnabled: false,
 		subagentCount: 0,
+		subagentQueued: 0,
 		sessionStartTime: Date.now(),
 		git: {
 			branch: null,

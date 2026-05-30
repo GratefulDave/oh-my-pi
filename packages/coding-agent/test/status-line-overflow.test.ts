@@ -58,6 +58,7 @@ function createCtx(overrides?: { pathMaxLength?: number; branch?: string | null 
 		contextWindow: 0,
 		autoCompactEnabled: false,
 		subagentCount: 0,
+		subagentQueued: 0,
 		sessionStartTime: Date.now(),
 		git: {
 			branch: overrides?.branch ?? null,

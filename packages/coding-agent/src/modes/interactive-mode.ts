@@ -98,7 +98,7 @@ import {
 	parseLoopLimitArgs,
 } from "./loop-limit";
 import { OAuthManualInputManager } from "./oauth-manual-input";
-import { SessionObserverRegistry } from "./session-observer-registry";
+import { type ObservableSession, SessionObserverRegistry } from "./session-observer-registry";
 import type { Theme } from "./theme/theme";
 import {
 	getEditorTheme,
@@ -181,6 +181,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	pendingMessagesContainer: Container;
 	statusContainer: Container;
 	todoContainer: Container;
+	observerCardsContainer: Container;
 	btwContainer: Container;
 	editor: CustomEditor;
 	editorContainer: Container;
@@ -311,6 +312,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
 		this.todoContainer = new Container();
+		this.observerCardsContainer = new Container();
 		this.btwContainer = new Container();
 		this.editor = new CustomEditor(getEditorTheme());
 		this.editor.setUseTerminalCursor(this.ui.getShowHardwareCursor());
@@ -464,6 +466,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.ui.addChild(this.pendingMessagesContainer);
 		this.ui.addChild(this.statusContainer);
 		this.ui.addChild(this.todoContainer);
+		this.ui.addChild(this.observerCardsContainer);
 		this.ui.addChild(this.btwContainer);
 		this.ui.addChild(this.statusLine); // Only renders hook statuses (main status in editor border)
 		this.ui.addChild(this.hookWidgetContainerAbove);
@@ -482,7 +485,11 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#observerRegistry.onChange(() => {
 			this.#reconcileTodosWithSubagents();
 			this.#renderTodoList();
-			this.statusLine.setSubagentCount(this.#observerRegistry.getActiveSubagentCount());
+			this.#renderObserverCards();
+			this.statusLine.setSubagentCounts(
+				this.#observerRegistry.getRunningSubagentCount(),
+				this.#observerRegistry.getQueuedSubagentCount(),
+			);
 			this.ui.requestRender();
 		});
 
@@ -973,6 +980,134 @@ export class InteractiveMode implements InteractiveModeContext {
 		});
 
 		this.todoContainer.addChild(new Text(lines.join("\n"), 1, 0));
+	}
+
+	/** Render the persistent ● Agents inline tree panel showing active/recent subagent sessions. */
+	#renderObserverCards(): void {
+		this.observerCardsContainer.clear();
+		const allSessions = this.#observerRegistry.getSessions();
+		// Running: active and not pending/queued
+		const running = allSessions.filter(
+			s => s.kind === "subagent" && s.status === "active" && s.progress?.status !== "pending",
+		);
+		// Queued: active but pending (not yet started by semaphore)
+		const queuedCount = allSessions.filter(
+			s => s.kind === "subagent" && s.status === "active" && s.progress?.status === "pending",
+		).length;
+		const terminal = allSessions.filter(
+			s => s.kind === "subagent" && (s.status === "completed" || s.status === "failed" || s.status === "aborted"),
+		);
+		// Only show panel when there is at least one active (running or queued) subagent.
+		if (running.length === 0 && queuedCount === 0) return;
+		// Show up to 2 recent completed/failed while active sessions exist.
+		const recent = terminal.sort((a, b) => b.lastUpdate - a.lastUpdate).slice(0, 2);
+		// Cards to render: running first, then recent terminal; pending queued aggregate appended last.
+		const cards = [...running, ...recent];
+		const maxLabelWidth = 40;
+		const indent = "  ";
+		const { branch, last, vertical } = theme.tree;
+		const lines: string[] = ["", `${indent}${theme.bold(theme.fg("accent", "● Agents"))}`];
+		cards.forEach((s, idx) => {
+			const isLastRow = idx === cards.length - 1 && queuedCount === 0;
+			const connector = isLastRow ? last : branch;
+			const statusIcon = this.#agentCardStatusIcon(s.status);
+			const typeTag = this.#agentCardTypeTag(s);
+			const meta = this.#agentCardMeta(s);
+			const rawLabel = this.#agentCardLabel(s).slice(0, maxLabelWidth);
+			const label =
+				s.status === "active"
+					? theme.fg("accent", rawLabel)
+					: s.status === "completed"
+						? theme.fg("success", rawLabel)
+						: theme.fg("error", rawLabel);
+			lines.push(`${indent}${connector} ${statusIcon} ${label}${typeTag}${meta}`);
+			// Detail child line: shown for active (running) cards.
+			if (s.status === "active") {
+				const continuationBar = isLastRow ? " " : vertical;
+				const detail = this.#agentCardDetailLine(s);
+				if (detail) {
+					lines.push(`${indent}${continuationBar}  ${theme.tree.hook} ${detail}`);
+				}
+			}
+		});
+		// Queued aggregate row.
+		if (queuedCount > 0) {
+			lines.push(`${indent}${last} ${theme.fg("muted", `${theme.status.shadowed} ${queuedCount} queued`)}`);
+		}
+		// Sanity: if we produced only the header, skip render.
+		if (lines.length <= 2) return;
+		this.observerCardsContainer.addChild(new Text(lines.join("\n"), 0, 1));
+	}
+
+	#agentCardStatusIcon(status: "active" | "completed" | "failed" | "aborted"): string {
+		switch (status) {
+			case "active":
+				return theme.fg("accent", theme.status.running);
+			case "completed":
+				return theme.fg("success", theme.status.success);
+			case "failed":
+				return theme.fg("error", theme.status.error);
+			case "aborted":
+				return theme.fg("muted", theme.status.aborted);
+		}
+	}
+
+	#agentCardLabel(s: ObservableSession): string {
+		return s.description?.trim() || s.label?.trim() || s.id;
+	}
+
+	#agentCardMeta(s: ObservableSession): string {
+		const parts: string[] = [];
+		if (s.progress) {
+			if (s.progress.toolCount > 0) parts.push(`${s.progress.toolCount} tools`);
+			if (s.progress.durationMs > 0) parts.push(formatDuration(s.progress.durationMs));
+		}
+		return parts.length > 0 ? theme.fg("muted", ` ${theme.sep.dot}${parts.join(theme.sep.dot)}`) : "";
+	}
+
+	/**
+	 * Build the single detail child line for an active card.
+	 * For external pane agents: show backend/pane metadata.
+	 * For embedded tasks/jobs: show activity text (current tool, intent, progress).
+	 */
+	#agentCardDetailLine(s: ObservableSession): string {
+		const presentation = s.runMetadata?.presentation;
+		// External pane agents: surface backend info.
+		if (presentation && (presentation.mode === "pane" || presentation.mode === "window")) {
+			const parts: string[] = [];
+			if (presentation.backend) parts.push(presentation.backend);
+			if (presentation.session) parts.push(presentation.session);
+			if (presentation.paneId) parts.push(`pane:${presentation.paneId}`);
+			if (presentation.mode === "window") parts.push("window");
+			const locationText = parts.join(" ");
+			return theme.fg("muted", locationText || presentation.mode);
+		}
+		// Embedded: activity text.
+		const text = s.description ?? s.progress?.lastIntent ?? s.progress?.currentTool;
+		const preview = this.#agentCardFirstLine(text);
+		if (preview) return theme.fg("dim", preview.slice(0, 50));
+		// Fallback for bare running state.
+		if (s.status === "active") return theme.fg("dim", "thinking\u2026");
+		return "";
+	}
+
+	#agentCardFirstLine(text: string | undefined): string | undefined {
+		if (!text) return undefined;
+		for (const line of text.split(/\r?\n/)) {
+			const trimmed = line.trim();
+			if (trimmed) return trimmed;
+		}
+		return undefined;
+	}
+
+	/** Type tag shown in card row (compact — no backend in normal row for pane agents). */
+	#agentCardTypeTag(s: ObservableSession): string {
+		if (s.source) {
+			const kind = s.source.jobType ?? s.source.kind;
+			return theme.fg("muted", ` [${kind}]`);
+		}
+		if (s.agent) return theme.fg("muted", ` [${s.agent}]`);
+		return "";
 	}
 	#reconcileTodosWithSubagents(): void {
 		const completedDescs: string[] = [];

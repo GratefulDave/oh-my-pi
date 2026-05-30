@@ -38,11 +38,15 @@ When the main agent calls `task`, two paths exist:
 3. Returns immediately with job IDs and `async: { state: "running", jobId }`.
 4. The caller later calls `job.poll([id])` to wait for completion.
 
-### Observer cards
+### Observer cards (`● Agents` inline tree)
 
-Task subagents and async jobs also surface through the session observer registry. Sync and async task runs publish lifecycle/progress events with the task label, agent name, status, latest progress, and optional `sessionFile`. The `AgentRunMetadata` (`runId`, cwd/worktree, presentation metadata when supplied, artifacts) is optional and producer-dependent. Current native sync task lifecycle/progress events expose lifecycle, progress, and `sessionFile`, while async task-job and plugin paths supply run metadata for observer cards. Native `task` and async jobs use embedded observer-card presentation by default; they do not spawn tmux/cmux panes or windows. Visible pane/window details are presentation metadata reported by a pane/window-capable backend or plugin. Async task-job progress is correlated by the async job id and `runMetadata.runId`, not by the original task item id. Async bash jobs publish job lifecycle/progress metadata through `AsyncJobManager`. The observer overlay renders a transcript only when `sessionFile` exists and can be parsed. Otherwise it still renders the observable card metadata and states that captured transcript is unavailable.
+Task subagents and async jobs surface through the session observer registry as inline `● Agents` cards shown in the status area of the TUI. Sync and async task runs publish lifecycle/progress events with the task label, agent name, status, latest progress, optional `sessionFile`, and `AgentRunMetadata` (`runId`, cwd/worktree, embedded presentation, artifacts). Native `task` subagents, async bash jobs, async task jobs, and nested jobs spawned by agents all appear as inline cards in this tree. They do not spawn tmux/cmux panes or windows.
 
-Async jobs remain controlled through `job`: observer cards show run state, but polling, cancellation, and completion delivery still use the `job` tool.
+Visible pane/window agents are separate runs. They must be spawned through the cmux/pi-subagents integration path, which publishes real `AgentRunMetadata.presentation` fields such as `mode`, `backend=cmux`, `session`, `paneId`, and `windowId` when available. Even for pane/window agents, the inline `● Agents` card displays those metadata fields. Observer cards never synthesize pane/window IDs.
+
+**Status line** distinguishes between agents/jobs that are actively running versus those that are queued (pending a concurrency slot). A running agent/job shows its label and live status; a queued one shows as pending until a slot frees up.
+
+**Observer overlay (modal detail view)**: the session-observer shortcut opens a full-screen overlay for detail inspection — it is a manual, on-demand view, not an automatically opened surface. Enter expands the selected transcript/detail entry. Terminal mouse click on a transcript entry toggles selection, but **terminal mouse is off by default** to preserve normal text selection and copy behavior; it is opt-in via `PI_TUI_MOUSE=1`. Async jobs remain controlled through `job`: observer cards and the overlay show run state, while `job list`, `job poll`, and `job cancel` are the polling/cancellation/delivery controls.
 
 ---
 
