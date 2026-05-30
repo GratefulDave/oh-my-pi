@@ -701,6 +701,16 @@ export function buildSessionContext(
 		}
 	}
 
+	const lastMessage = messages[messages.length - 1];
+	if (lastMessage?.role === "assistant" && lastMessage.content.some(block => block.type === "toolCall")) {
+		const withoutToolCalls = lastMessage.content.filter(block => block.type !== "toolCall");
+		if (withoutToolCalls.length === 0) {
+			messages.pop();
+		} else {
+			messages[messages.length - 1] = { ...lastMessage, content: withoutToolCalls };
+		}
+	}
+
 	return {
 		messages,
 		thinkingLevel,

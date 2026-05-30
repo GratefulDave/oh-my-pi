@@ -139,6 +139,43 @@ export function getLatestTodoPhasesFromEntries(entries: SessionEntry[]): TodoPha
 	return [];
 }
 
+export function selectStickyTodoWindow(
+	tasks: TodoItem[],
+	maxVisible = 5,
+): { visible: TodoItem[]; hiddenOpenCount: number } {
+	if (maxVisible <= 0) return { visible: [], hiddenOpenCount: 0 };
+	const openTasks = tasks.filter(task => task.status === "pending" || task.status === "in_progress");
+	if (openTasks.length === 0) {
+		return { visible: tasks.slice(Math.max(0, tasks.length - maxVisible)), hiddenOpenCount: 0 };
+	}
+	return {
+		visible: openTasks.slice(0, maxVisible),
+		hiddenOpenCount: Math.max(0, openTasks.length - maxVisible),
+	};
+}
+
+const TODO_DESCRIPTION_MIN_OVERLAP = 6;
+
+function normalizeForTodoMatch(value: string): string {
+	return value
+		.toLowerCase()
+		.replace(/[^\p{L}\p{N}]+/gu, " ")
+		.trim();
+}
+
+export function todoMatchesAnyDescription(content: string, descriptions: readonly string[]): boolean {
+	const target = normalizeForTodoMatch(content);
+	if (!target) return false;
+	for (const desc of descriptions) {
+		const candidate = normalizeForTodoMatch(desc);
+		if (!candidate) continue;
+		if (target === candidate) return true;
+		if (target.length >= TODO_DESCRIPTION_MIN_OVERLAP && candidate.includes(target)) return true;
+		if (candidate.length >= TODO_DESCRIPTION_MIN_OVERLAP && target.includes(candidate)) return true;
+	}
+	return false;
+}
+
 function resolveTaskOrError(
 	phases: TodoPhase[],
 	content: string | undefined,

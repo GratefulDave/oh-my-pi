@@ -400,8 +400,6 @@ function buildHashlineNaturalOrderPreviews(
 				if (!currentPath) continue;
 				ensure(currentPath).push(`+${token.text}`);
 				continue;
-			case "payload-repeat":
-				continue;
 		}
 	}
 

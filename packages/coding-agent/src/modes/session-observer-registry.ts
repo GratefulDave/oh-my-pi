@@ -68,6 +68,25 @@ export class SessionObserverRegistry {
 		return count;
 	}
 
+	getActiveSubagentDescriptions(): string[] {
+		const descriptions: string[] = [];
+		for (const session of this.#sessions.values()) {
+			if (session.kind !== "subagent" || session.status !== "active") continue;
+			const description = session.description ?? session.label;
+			if (description) descriptions.push(description);
+		}
+		return descriptions;
+	}
+	getCompletedSubagentDescriptions(): string[] {
+		const descriptions: string[] = [];
+		for (const session of this.#sessions.values()) {
+			if (session.kind !== "subagent" || session.status !== "completed") continue;
+			const description = session.description ?? session.label;
+			if (description) descriptions.push(description);
+		}
+		return descriptions;
+	}
+
 	/** Clear all tracked sessions (e.g. on session switch). Keeps EventBus subscriptions and listeners. */
 	resetSessions(): void {
 		this.#sessions.clear();

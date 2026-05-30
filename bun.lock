@@ -91,6 +91,7 @@
       "version": "15.5.10",
       "dependencies": {
         "diff": "catalog:",
+        "lru-cache": "catalog:",
       },
       "devDependencies": {
         "@types/bun": "catalog:",

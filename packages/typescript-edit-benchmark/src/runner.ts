@@ -603,7 +603,7 @@ function buildGuidedHashlinePatch(file: string, actual: string, expected: string
 	flush();
 
 	if (ops.length === 0) return null;
-	const tag = new InMemorySnapshotStore().recordContiguous(file, 1, actual.split("\n"), { fullText: actual });
+	const tag = new InMemorySnapshotStore().record(file, actual);
 	const header = `¶${file}#${tag}`;
 	return `${header}\n${ops.join("\n")}`;
 }

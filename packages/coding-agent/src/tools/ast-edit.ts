@@ -6,7 +6,7 @@ import type { Component } from "@oh-my-pi/pi-tui";
 import { Text } from "@oh-my-pi/pi-tui";
 import { $envpos, prompt, untilAborted } from "@oh-my-pi/pi-utils";
 import * as z from "zod/v4";
-import { getFileSnapshotStore } from "../edit/file-snapshot-store";
+import { recordFileSnapshot } from "../edit/file-snapshot-store";
 import type { RenderResultOptions } from "../extensibility/custom-tools/types";
 import type { Theme } from "../modes/theme/theme";
 import astEditDescription from "../prompts/tools/ast-edit.md" with { type: "text" };
@@ -258,22 +258,12 @@ export class AstEditTool implements AgentTool<typeof astEditSchema, AstEditToolD
 			}
 
 			const useHashLines = resolveFileDisplayMode(this.session).hashLines;
-			const hashContexts = new Map<string, { fileHash: string }>();
+			const hashContexts = new Map<string, { tag: string }>();
 			if (useHashLines) {
 				for (const relativePath of fileList) {
 					const absolutePath = path.resolve(this.session.cwd, relativePath);
-					try {
-						const fullText = await Bun.file(absolutePath).text();
-						const fileHash = getFileSnapshotStore(this.session).recordContiguous(
-							absolutePath,
-							1,
-							fullText.split("\n"),
-							{ fullText },
-						);
-						hashContexts.set(relativePath, { fileHash });
-					} catch {
-						// Best-effort: if a file disappears between ast-edit and rendering, emit plain line output.
-					}
+					const tag = await recordFileSnapshot(this.session, absolutePath);
+					if (tag) hashContexts.set(relativePath, { tag });
 				}
 			}
 			const outputLines: string[] = [];
@@ -308,7 +298,7 @@ export class AstEditTool implements AgentTool<typeof astEditSchema, AstEditToolD
 					const rendered = renderChangesForFile(relativePath);
 					const count = fileReplacementCounts.get(relativePath) ?? 0;
 					const hashContext = hashContexts.get(relativePath);
-					const hashSuffix = hashContext ? `#${hashContext.fileHash}` : "";
+					const hashSuffix = hashContext ? `#${hashContext.tag}` : "";
 					return {
 						headerSuffix: `${hashSuffix} (${formatCount("replacement", count)})`,
 						modelLines: rendered.model,
@@ -327,9 +317,7 @@ export class AstEditTool implements AgentTool<typeof astEditSchema, AstEditToolD
 						displayLines.push("");
 					}
 					const hashContext = hashContexts.get(relativePath);
-					if (hashContext) {
-						outputLines.push(formatHashlineHeader(relativePath, hashContext.fileHash));
-					}
+					if (hashContext) outputLines.push(formatHashlineHeader(relativePath, hashContext.tag));
 					outputLines.push(...rendered.model);
 					displayLines.push(...rendered.display);
 				}

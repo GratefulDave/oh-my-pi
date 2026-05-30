@@ -43,7 +43,6 @@ async function readSectionText(absolutePath: string, sectionPath: string): Promi
 		throw new Error(message || `Unable to read ${sectionPath}`);
 	}
 }
-
 export async function computeHashlineSectionDiff(
 	section: PatchSection,
 	cwd: string,

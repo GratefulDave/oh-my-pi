@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { formatHashlineHeader, InMemorySnapshotStore } from "@oh-my-pi/hashline";
 import {
 	adjustIndentation,
 	computeEditDiff,
@@ -235,11 +236,12 @@ describe("computeHashlineDiff", () => {
 		const line = "unchanged content";
 		await Bun.write(sourcePath, `${line}\n`);
 
-		// `1:` with the same line as payload is a true no-op: the edit
+		// `replace 1..1:` with the same line in the body is a true no-op: the edit
 		// fires through computeHashlineDiff but produces identical content.
-		// The preview path parses the `#hash` tag structurally but never
-		// resolves it against a snapshot store, so any valid 3-hex tag works.
-		const input = `¶${sourcePath}#0A3\n1:${line}\n`;
+		const text = `${line}\n`;
+		const snapshotStore = new InMemorySnapshotStore();
+		const tag = snapshotStore.record(sourcePath, text);
+		const input = `${formatHashlineHeader(sourcePath, tag)}\nreplace 1..1:\n+${line}\n`;
 		const result = await computeHashlineDiff({ input }, tempDir);
 		expect("error" in result).toBe(true);
 		if ("error" in result) {
@@ -251,14 +253,14 @@ describe("computeHashlineDiff", () => {
 		const sourcePath = path.join(tempDir, "source.txt");
 		await Bun.write(sourcePath, "first\n");
 
-		const result = await computeHashlineDiff({ input: `¶${sourcePath}\nEOF↓\nsecond` }, tempDir);
+		const result = await computeHashlineDiff({ input: `¶${sourcePath}\ninsert tail:\n+second` }, tempDir, {});
 		expect("diff" in result).toBe(true);
 		if ("diff" in result) {
 			expect(result.diff).toContain("second");
 		}
 	});
 	test("returns a handled error when the source path is a local URL", async () => {
-		const result = await computeHashlineDiff({ input: "¶local://PLAN.md\nEOF↓\n" }, tempDir);
+		const result = await computeHashlineDiff({ input: "¶local://PLAN.md\ninsert tail:\n+x" }, tempDir, {});
 
 		expect("error" in result).toBe(true);
 		if ("error" in result) {
