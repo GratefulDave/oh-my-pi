@@ -15,7 +15,7 @@
  *   - Enter on main session -> close overlay (jump back)
  */
 import type { ToolResultMessage } from "@oh-my-pi/pi-ai";
-import { Container, Markdown, type MarkdownTheme, matchesKey } from "@oh-my-pi/pi-tui";
+import { Container, type LocalMouseEvent, Markdown, type MarkdownTheme, matchesKey } from "@oh-my-pi/pi-tui";
 import { formatDuration, formatNumber, logger } from "@oh-my-pi/pi-utils";
 import type { KeyId } from "../../config/keybindings";
 import { isSilentAbort } from "../../session/messages";
@@ -177,6 +177,8 @@ export class SessionObserverOverlayComponent extends Container {
 
 		if (!session) {
 			contentLines.push(theme.fg("dim", "Session no longer available."));
+		} else if (!session.sessionFile && session.source?.kind === "async-job") {
+			this.#buildAsyncJobLines(session, contentLines);
 		} else if (!session.sessionFile) {
 			this.#buildObservableMetadataLines(session, contentLines);
 		} else if (!messageEntries) {
@@ -286,6 +288,65 @@ export class SessionObserverOverlayComponent extends Container {
 		return parts.join(theme.sep.dot);
 	}
 
+	#buildAsyncJobLines(session: ObservableSession, lines: string[]): void {
+		const job = session.asyncJob;
+		const progress = session.progress;
+		const kind = session.source?.jobType === "bash" ? "Bash job" : "Task agent";
+		const status = job?.status ?? session.status;
+		const statusTone =
+			status === "running" || session.status === "active"
+				? "success"
+				: status === "failed"
+					? "error"
+					: status === "cancelled" || session.status === "aborted"
+						? "warning"
+						: "dim";
+		const icon =
+			status === "running" || session.status === "active"
+				? "●"
+				: status === "failed"
+					? "✕"
+					: status === "cancelled" || session.status === "aborted"
+						? "■"
+						: "✓";
+		const elapsedMs = job?.startTime ? Math.max(0, Date.now() - job.startTime) : 0;
+		const titleParts = [
+			theme.fg(statusTone, icon),
+			theme.bold(kind),
+			theme.fg(statusTone, `[${status}]`),
+			elapsedMs > 0 ? theme.fg("dim", formatDuration(elapsedMs)) : "",
+		].filter(Boolean);
+
+		lines.push(
+			`${titleParts.join(" ")} ${theme.fg("muted", sanitizeLine(job?.label ?? session.label, contentWidth()))}`,
+		);
+		const description = progress?.description ?? session.description;
+		if (description && description !== job?.label) {
+			lines.push(`${INDENT}${theme.fg("dim", "↳")} ${sanitizeLine(description, contentWidth())}`);
+		}
+		if (progress?.currentTool) {
+			const currentTool = progress.currentToolArgs
+				? `${progress.currentTool} ${progress.currentToolArgs}`
+				: progress.currentTool;
+			lines.push(`${INDENT}${theme.fg("dim", "tool")} ${sanitizeLine(currentTool, contentWidth())}`);
+		}
+		const statsLine = this.#buildStatsLine(session);
+		if (statsLine) lines.push(`${INDENT}${statsLine}`);
+
+		const output = job?.errorText ?? job?.resultText ?? job?.progressText;
+		if (output) {
+			const tone = job?.errorText ? "error" : job?.resultText ? "dim" : "muted";
+			const label = job?.errorText ? "error" : job?.resultText ? "output" : "progress";
+			lines.push(`${INDENT}${theme.fg("dim", `${label}:`)}`);
+			for (const outputLine of output
+				.split("\n")
+				.filter(line => line.length > 0)
+				.slice(0, PREVIEW_LIMITS.COLLAPSED_LINES)) {
+				lines.push(`${INDENT}  ${theme.fg(tone, sanitizeLine(outputLine, contentWidth("      ")))}`);
+			}
+		}
+	}
+
 	#buildObservableMetadataLines(session: ObservableSession, lines: string[]): void {
 		const progress = session.progress;
 		const metadata = session.runMetadata ?? progress?.runMetadata;
@@ -308,6 +369,15 @@ export class SessionObserverOverlayComponent extends Container {
 			metadata?.status ? `${session.status} (${metadata.status})` : session.status,
 		);
 		this.#appendMetadataLine(lines, "Label", session.label);
+		if (session.asyncJob) {
+			this.#appendMetadataLine(lines, "Job", session.asyncJob.id);
+			this.#appendMetadataLine(lines, "Type", session.asyncJob.type);
+			this.#appendMetadataLine(
+				lines,
+				"Started",
+				formatDuration(Math.max(0, Date.now() - session.asyncJob.startTime)),
+			);
+		}
 		if (session.description && session.description !== session.label)
 			this.#appendMetadataLine(lines, "Description", session.description);
 		this.#appendMetadataLine(lines, "Agent", session.agent ?? metadata?.agent);
@@ -342,6 +412,7 @@ export class SessionObserverOverlayComponent extends Container {
 					presentation.backend ? `backend=${presentation.backend}` : "",
 					presentation.session ? `session=${presentation.session}` : "",
 					presentation.paneId ? `paneId=${presentation.paneId}` : "",
+					presentation.windowId ? `windowId=${presentation.windowId}` : "",
 				]
 					.filter(Boolean)
 					.join(" · "),
@@ -351,6 +422,19 @@ export class SessionObserverOverlayComponent extends Container {
 		if (metadata?.worktree && metadata.worktree !== metadata.cwd)
 			this.#appendMetadataLine(lines, "Worktree", this.#formatMetadataPath(metadata.worktree));
 
+		const asyncPreview =
+			session.asyncJob?.errorText ?? session.asyncJob?.resultText ?? session.asyncJob?.progressText;
+		if (asyncPreview) {
+			lines.push("");
+			lines.push(theme.bold(session.asyncJob?.errorText ? "Error output" : "Latest output"));
+			const previewLines = asyncPreview
+				.split(/\r?\n/)
+				.filter(line => line.trim())
+				.slice(0, PREVIEW_LIMITS.COLLAPSED_LINES);
+			for (const previewLine of previewLines) {
+				lines.push(`${INDENT}${theme.fg("dim", sanitizeLine(previewLine, contentWidth()))}`);
+			}
+		}
 		if (progress) {
 			lines.push("");
 			lines.push(theme.bold("Progress"));
@@ -763,6 +847,25 @@ export class SessionObserverOverlayComponent extends Container {
 		}
 
 		this.#handleViewerInput(keyData);
+	}
+
+	handleMouse(event: LocalMouseEvent): void {
+		if (event.released || event.button !== 0) return;
+		const headerChrome = this.#viewerHeaderLines.length + 2;
+		const renderedLineIndex = event.localY - 1 - headerChrome + this.#scrollOffset;
+		if (renderedLineIndex < 0) return;
+		for (let index = 0; index < this.#viewerEntries.length; index++) {
+			const entry = this.#viewerEntries[index];
+			if (renderedLineIndex < entry.lineStart || renderedLineIndex >= entry.lineStart + entry.lineCount) continue;
+			this.#selectedEntryIndex = index;
+			if (this.#expandedEntries.has(index)) {
+				this.#expandedEntries.delete(index);
+			} else {
+				this.#expandedEntries.add(index);
+			}
+			this.#rebuildAndScroll();
+			return;
+		}
 	}
 
 	#handleViewerInput(keyData: string): void {

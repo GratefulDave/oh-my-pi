@@ -35,6 +35,7 @@ export function emergencyTerminalRestore(): void {
 			// This avoids writing escape sequences for non-TUI commands (grep, commit, etc.)
 			process.stdout.write(
 				"\x1b[?2004l" + // Disable bracketed paste
+					"\x1b[?1000l\x1b[?1006l" + // Disable mouse reporting (harmless if not enabled)
 					"\x1b[?2031l" + // Disable Mode 2031 appearance notifications
 					"\x1b[<u" + // Pop kitty keyboard protocol
 					"\x1b[>4;0m" + // Disable modifyOtherKeys fallback
@@ -138,6 +139,9 @@ export class ProcessTerminal implements Terminal {
 	#osc11PollTimer?: Timer;
 	#mode2031DebounceTimer?: Timer;
 	#progressTimer?: ReturnType<typeof setInterval>;
+	// Mouse reporting is disabled by default to preserve terminal text selection.
+	// Set PI_TUI_MOUSE=1 to opt in to SGR mouse event reporting (enables click-to-expand).
+	#mouseEnabled = !!$env.PI_TUI_MOUSE;
 
 	get kittyProtocolActive(): boolean {
 		return this.#kittyProtocolActive;
@@ -169,6 +173,12 @@ export class ProcessTerminal implements Terminal {
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		this.#safeWrite("\x1b[?2004h");
+		// Mouse reporting is gated behind PI_TUI_MOUSE=1.
+		// Enabling ?1000h globally prevents the terminal emulator from intercepting
+		// pointer drags for text selection, so we leave it off by default.
+		if (this.#mouseEnabled) {
+			this.#safeWrite("\x1b[?1000h\x1b[?1006h");
+		}
 
 		// Set up resize handler immediately
 		process.stdout.on("resize", this.#resizeHandler);
@@ -596,6 +606,10 @@ export class ProcessTerminal implements Terminal {
 
 		// Disable bracketed paste mode
 		this.#safeWrite("\x1b[?2004l");
+		// Disable SGR mouse button events only if they were enabled
+		if (this.#mouseEnabled) {
+			this.#safeWrite("\x1b[?1000l\x1b[?1006l");
+		}
 
 		// Disable Mode 2031 appearance change notifications
 		this.#safeWrite("\x1b[?2031l");

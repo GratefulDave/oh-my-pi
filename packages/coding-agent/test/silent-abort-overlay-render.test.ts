@@ -211,4 +211,72 @@ describe("Observer overlay silent-abort regression", () => {
 		expect(renderedText).toContain("path=~/repo/build.log");
 		expect(renderedText).not.toContain(homeDir);
 	});
+
+	it("renders pane and window metadata when supplied by the run producer", () => {
+		const registry = makeSubagentRegistry([
+			{
+				id: "plugin-cmux",
+				kind: "subagent",
+				label: "Visible agent",
+				agent: "coder",
+				status: "active",
+				lastUpdate: Date.now(),
+				runMetadata: {
+					runId: "plugin-cmux",
+					agent: "coder",
+					cwd: tmpDir,
+					status: "running",
+					presentation: {
+						mode: "window",
+						backend: "cmux",
+						session: "session-1",
+						paneId: "pane-1",
+						windowId: "window-1",
+					},
+					artifacts: [],
+				},
+			},
+		]);
+
+		const renderedText = new SessionObserverOverlayComponent(registry, () => {}, ["ctrl+s"]).render(180).join("\n");
+		expect(renderedText).toContain("window");
+		expect(renderedText).toContain("backend=cmux");
+		expect(renderedText).toContain("session=session-1");
+		expect(renderedText).toContain("paneId=pane-1");
+		expect(renderedText).toContain("windowId=wind");
+	});
+
+	it("expands transcript entries with Enter and mouse click", () => {
+		const hiddenTail = "VISIBLE_AFTER_EXPANSION";
+		const longText = `${"x".repeat(260)} ${hiddenTail}`;
+		const sessionFile = makeJsonlSessionFile(tmpDir, [
+			{ type: "session", version: 3, id: SESSION_ID, timestamp: new Date().toISOString() },
+			{
+				type: "message",
+				id: "msg-user-long",
+				parentId: null,
+				timestamp: new Date().toISOString(),
+				message: { role: "user", content: longText, timestamp: Date.now() },
+			},
+		]);
+		const registry = makeSubagentRegistry([
+			{
+				id: SESSION_ID,
+				kind: "subagent",
+				label: "Expandable Subagent",
+				status: "active",
+				sessionFile,
+				lastUpdate: Date.now(),
+			},
+		]);
+		const overlay = new SessionObserverOverlayComponent(registry, () => {}, ["ctrl+s"]);
+
+		expect(overlay.render(120).join("\n")).not.toContain(hiddenTail);
+		overlay.handleInput("\r");
+		expect(overlay.render(120).join("\n")).toContain(hiddenTail);
+		overlay.handleInput("\r");
+		expect(overlay.render(120).join("\n")).not.toContain(hiddenTail);
+		overlay.handleMouse({ button: 0, x: 2, y: 6, localX: 2, localY: 6, released: false });
+		expect(overlay.render(120).join("\n")).toContain(hiddenTail);
+	});
 });

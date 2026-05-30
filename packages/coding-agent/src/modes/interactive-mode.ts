@@ -98,7 +98,7 @@ import {
 	parseLoopLimitArgs,
 } from "./loop-limit";
 import { OAuthManualInputManager } from "./oauth-manual-input";
-import { SessionObserverRegistry } from "./session-observer-registry";
+import { type ObservableSession, SessionObserverRegistry } from "./session-observer-registry";
 import type { Theme } from "./theme/theme";
 import {
 	getEditorTheme,
@@ -181,6 +181,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	pendingMessagesContainer: Container;
 	statusContainer: Container;
 	todoContainer: Container;
+	observerCardsContainer: Container;
 	btwContainer: Container;
 	editor: CustomEditor;
 	editorContainer: Container;
@@ -311,6 +312,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
 		this.todoContainer = new Container();
+		this.observerCardsContainer = new Container();
 		this.btwContainer = new Container();
 		this.editor = new CustomEditor(getEditorTheme());
 		this.editor.setUseTerminalCursor(this.ui.getShowHardwareCursor());
@@ -464,6 +466,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.ui.addChild(this.pendingMessagesContainer);
 		this.ui.addChild(this.statusContainer);
 		this.ui.addChild(this.todoContainer);
+		this.ui.addChild(this.observerCardsContainer);
 		this.ui.addChild(this.btwContainer);
 		this.ui.addChild(this.statusLine); // Only renders hook statuses (main status in editor border)
 		this.ui.addChild(this.hookWidgetContainerAbove);
@@ -482,7 +485,11 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#observerRegistry.onChange(() => {
 			this.#reconcileTodosWithSubagents();
 			this.#renderTodoList();
+			this.#renderObserverCards();
 			this.statusLine.setSubagentCount(this.#observerRegistry.getActiveSubagentCount());
+			if (this.#observerRegistry.shouldAutoOpen()) {
+				this.showSessionObserver();
+			}
 			this.ui.requestRender();
 		});
 
@@ -973,6 +980,101 @@ export class InteractiveMode implements InteractiveModeContext {
 		});
 
 		this.todoContainer.addChild(new Text(lines.join("\n"), 1, 0));
+	}
+
+	/** Render the persistent observer cards panel showing active/recent subagent sessions. */
+	#renderObserverCards(): void {
+		this.observerCardsContainer.clear();
+		const allSessions = this.#observerRegistry.getSessions();
+		const active = allSessions.filter(s => s.kind === "subagent" && s.status === "active");
+		const terminal = allSessions.filter(
+			s => s.kind === "subagent" && (s.status === "completed" || s.status === "failed" || s.status === "aborted"),
+		);
+		// Only show panel when there is at least one active subagent; include last 2 completed/failed.
+		if (active.length === 0) return;
+		const recent = terminal.sort((a, b) => b.lastUpdate - a.lastUpdate).slice(0, 2);
+		const cards = [...active, ...recent];
+		const maxLabelWidth = 40;
+		const indent = "  ";
+		const hook = theme.tree.hook;
+		const lines: string[] = ["", `${indent}${theme.bold(theme.fg("accent", "Tasks"))}`];
+		for (const s of cards) {
+			const statusIcon = this.#observerCardStatusIcon(s.status);
+			const typeTag = this.#observerCardTypeTag(s);
+			const meta = this.#observerCardMeta(s);
+			const activity = this.#observerCardActivity(s);
+			const rawLabel = this.#observerCardLabel(s).slice(0, maxLabelWidth);
+			const label =
+				s.status === "active"
+					? theme.fg("accent", rawLabel)
+					: s.status === "completed"
+						? theme.fg("success", rawLabel)
+						: theme.fg("error", rawLabel);
+			lines.push(`${indent}${hook} ${statusIcon} ${label}${typeTag}${meta}${activity}`);
+		}
+		this.observerCardsContainer.addChild(new Text(lines.join("\n"), 0, 1));
+	}
+
+	#observerCardStatusIcon(status: "active" | "completed" | "failed" | "aborted"): string {
+		switch (status) {
+			case "active":
+				return theme.fg("accent", theme.status.running);
+			case "completed":
+				return theme.fg("success", theme.status.success);
+			case "failed":
+				return theme.fg("error", theme.status.error);
+			case "aborted":
+				return theme.fg("muted", theme.status.aborted);
+		}
+	}
+
+	#observerCardLabel(s: ObservableSession): string {
+		if (s.asyncJob) return s.label?.trim() || s.asyncJob.id;
+		return s.description?.trim() || s.label?.trim() || s.id;
+	}
+
+	#observerCardMeta(s: ObservableSession): string {
+		const parts: string[] = [];
+		if (s.asyncJob) {
+			parts.push(s.asyncJob.id);
+			const elapsedMs = Math.max(0, Date.now() - s.asyncJob.startTime);
+			if (Number.isFinite(elapsedMs)) parts.push(formatDuration(elapsedMs));
+		} else if (s.progress) {
+			if (s.progress.toolCount > 0) parts.push(`${s.progress.toolCount} tools`);
+			if (s.progress.tokens > 0) parts.push(`${s.progress.tokens} tokens`);
+			if (s.progress.durationMs > 0) parts.push(formatDuration(s.progress.durationMs));
+		}
+		return parts.length > 0 ? theme.fg("muted", ` ${theme.sep.dot}${parts.join(theme.sep.dot)}`) : "";
+	}
+
+	#observerCardActivity(s: ObservableSession): string {
+		const text =
+			s.asyncJob?.errorText ??
+			s.asyncJob?.resultText ??
+			s.asyncJob?.progressText ??
+			s.progress?.lastIntent ??
+			s.progress?.currentToolArgs ??
+			s.progress?.currentTool;
+		const preview = this.#firstObserverPreviewLine(text);
+		return preview ? theme.fg("dim", ` — ${preview.slice(0, 48)}`) : "";
+	}
+
+	#firstObserverPreviewLine(text: string | undefined): string | undefined {
+		if (!text) return undefined;
+		for (const line of text.split(/\r?\n/)) {
+			const trimmed = line.trim();
+			if (trimmed) return trimmed;
+		}
+		return undefined;
+	}
+
+	#observerCardTypeTag(s: ObservableSession): string {
+		if (s.source) {
+			const kind = s.source.jobType ?? s.source.kind;
+			return theme.fg("muted", ` [${kind}]`);
+		}
+		if (s.agent) return theme.fg("muted", ` [${s.agent}]`);
+		return "";
 	}
 	#reconcileTodosWithSubagents(): void {
 		const completedDescs: string[] = [];
@@ -2479,6 +2581,7 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	resetObserverRegistry(): void {
 		this.#observerRegistry.resetSessions();
+		this.#observerRegistry.resetAutoOpen();
 		this.#observerRegistry.setMainSession(this.sessionManager.getSessionFile() ?? undefined);
 	}
 

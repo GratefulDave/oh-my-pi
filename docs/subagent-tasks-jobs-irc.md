@@ -40,9 +40,11 @@ When the main agent calls `task`, two paths exist:
 
 ### Observer cards
 
-Task subagents and async jobs also surface through the session observer registry. Sync and async task runs publish lifecycle/progress events with the task label, agent name, status, latest progress, and optional `sessionFile`. The `AgentRunMetadata` (`runId`, cwd/worktree, presentation metadata when supplied, artifacts) is optional and producer-dependent. Current native sync task lifecycle/progress events expose lifecycle, progress, and `sessionFile`, while async task-job and plugin paths supply run metadata for observer cards. Native `task` and async jobs use embedded observer-card presentation by default; they do not spawn tmux/cmux panes or windows. Visible pane/window details are presentation metadata reported by a pane/window-capable backend or plugin. Async task-job progress is correlated by the async job id and `runMetadata.runId`, not by the original task item id. Async bash jobs publish job lifecycle/progress metadata through `AsyncJobManager`. The observer overlay renders a transcript only when `sessionFile` exists and can be parsed. Otherwise it still renders the observable card metadata and states that captured transcript is unavailable.
+Task subagents and async jobs also surface through the session observer registry. Sync and async task runs publish lifecycle/progress events with the task label, agent name, status, latest progress, optional `sessionFile`, and `AgentRunMetadata` (`runId`, cwd/worktree, embedded presentation, artifacts). Native `task` and async jobs use embedded observer-card presentation by default; they do not spawn tmux/cmux panes or windows.
 
-Async jobs remain controlled through `job`: observer cards show run state, but polling, cancellation, and completion delivery still use the `job` tool.
+Visible pane/window agents are separate runs. They must be spawned through the cmux/pi-subagents integration path, which publishes real `AgentRunMetadata.presentation` fields such as `mode`, `backend=cmux`, `session`, `paneId`, and `windowId` when available. Observer cards display those fields but do not synthesize pane/window IDs.
+
+Monitor observer cards with the session-observer shortcut. Enter expands the selected transcript/detail entry; mouse click on a transcript entry selects and toggles it in terminals that emit SGR mouse events. Async jobs remain controlled through `job`: observer cards show run state, while `job list`, `job poll`, and `job cancel` remain the polling/cancellation/delivery controls.
 
 ---
 

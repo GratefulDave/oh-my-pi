@@ -38,6 +38,19 @@ const PAINT_BEGIN = `${HIDE_CURSOR}\x1b[?2026h\x1b[?7l`;
 const PAINT_END = "\x1b[?7h\x1b[?2026l";
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
+
+export interface MouseEvent {
+	button: number;
+	x: number;
+	y: number;
+	released: boolean;
+}
+
+export interface LocalMouseEvent extends MouseEvent {
+	localX: number;
+	localY: number;
+}
+
 type InputListener = (data: string) => InputListenerResult;
 
 /**
@@ -55,6 +68,13 @@ export interface Component {
 	 * Optional handler for keyboard input when component has focus
 	 */
 	handleInput?(data: string): void;
+
+	/**
+	 * Optional handler for mouse input when component has focus.
+	 * Coordinates are 1-based terminal cells; local coordinates are relative to
+	 * the focused overlay when available.
+	 */
+	handleMouse?(event: LocalMouseEvent): void;
 
 	/**
 	 * If true, component receives key release events (Kitty protocol).
@@ -282,6 +302,25 @@ type RenderIntent =
 	| { kind: "shrink" }
 	| { kind: "diff"; firstChanged: number; lastChanged: number; appendedLines: boolean };
 
+interface OverlayLayoutSnapshot {
+	component: Component;
+	row: number;
+	col: number;
+	width: number;
+	height: number;
+}
+
+function parseSgrMouse(data: string): MouseEvent | undefined {
+	const match = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(data);
+	if (!match) return undefined;
+	return {
+		button: Number(match[1]),
+		x: Number(match[2]),
+		y: Number(match[3]),
+		released: match[4] === "m",
+	};
+}
+
 /**
  * TUI - Main class for managing terminal UI with differential rendering
  */
@@ -332,6 +371,7 @@ export class TUI extends Container {
 		preFocus: Component | null;
 		hidden: boolean;
 	}[] = [];
+	#overlayLayouts: OverlayLayoutSnapshot[] = [];
 
 	constructor(terminal: Terminal, showHardwareCursor?: boolean) {
 		super();
@@ -752,6 +792,18 @@ export class TUI extends Container {
 			return;
 		}
 
+		const mouse = parseSgrMouse(data);
+		if (mouse) {
+			const focused = this.#focusedComponent;
+			if (!focused?.handleMouse) return;
+			const overlayLayout = this.#overlayLayouts.find(layout => layout.component === focused);
+			const localX = overlayLayout ? mouse.x - overlayLayout.col + 1 : mouse.x;
+			const localY = overlayLayout ? mouse.y - overlayLayout.row + 1 : mouse.y;
+			focused.handleMouse({ ...mouse, localX, localY });
+			this.requestRender();
+			return;
+		}
+
 		// Global debug key handler (Shift+Ctrl+D)
 		if (matchesKey(data, "shift+ctrl+d") && this.onDebug) {
 			this.onDebug();
@@ -944,11 +996,15 @@ export class TUI extends Container {
 
 	/** Composite all overlays into content lines (in stack order, later = on top). */
 	#compositeOverlays(lines: string[], termWidth: number, termHeight: number): string[] {
-		if (this.overlayStack.length === 0) return lines;
+		if (this.overlayStack.length === 0) {
+			this.#overlayLayouts = [];
+			return lines;
+		}
 		const result = [...lines];
 
 		// Pre-render all visible overlays and calculate positions
-		const rendered: { overlayLines: string[]; row: number; col: number; w: number }[] = [];
+		const rendered: { component: Component; overlayLines: string[]; row: number; col: number; w: number }[] = [];
+		const layouts: OverlayLayoutSnapshot[] = [];
 		let minLinesNeeded = result.length;
 
 		for (const entry of this.overlayStack) {
@@ -972,9 +1028,11 @@ export class TUI extends Container {
 			// Get final row/col with actual overlay height
 			const { row, col } = this.#resolveOverlayLayout(options, overlayLines.length, termWidth, termHeight);
 
-			rendered.push({ overlayLines, row, col, w: width });
+			rendered.push({ component, overlayLines, row, col, w: width });
+			layouts.push({ component, row, col, width, height: overlayLines.length });
 			minLinesNeeded = Math.max(minLinesNeeded, row + overlayLines.length);
 		}
+		this.#overlayLayouts = layouts;
 
 		// Ensure result is tall enough for overlay placement.
 		// NOTE: Do not pad to maxLinesRendered.

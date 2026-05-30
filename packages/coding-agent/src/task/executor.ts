@@ -42,6 +42,7 @@ import { subprocessToolRegistry } from "./subprocess-tool-registry";
 import {
 	type AgentDefinition,
 	type AgentProgress,
+	type AgentRunMetadata,
 	MAX_OUTPUT_BYTES,
 	MAX_OUTPUT_LINES,
 	type ReviewFinding,
@@ -159,6 +160,7 @@ export interface ExecutorOptions {
 	enableLsp?: boolean;
 	parentEvalSessionId?: string;
 	signal?: AbortSignal;
+	runMetadata?: AgentRunMetadata;
 	onProgress?: (progress: AgentProgress) => void;
 	sessionFile?: string | null;
 	persistArtifacts?: boolean;
@@ -516,6 +518,34 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		durationMs: 0,
 		modelOverride,
 	};
+	if (options.runMetadata) {
+		progress.runMetadata = options.runMetadata;
+	}
+
+	const ensureRunMetadata = (): AgentRunMetadata => {
+		const existing = progress.runMetadata;
+		if (existing) return existing;
+		const metadata: AgentRunMetadata = {
+			runId: id,
+			agent: agent.name,
+			cwd: worktree ?? cwd,
+			status: progress.status,
+			presentation: { mode: "embedded", backend: "core" },
+			artifacts: [],
+		};
+		progress.runMetadata = metadata;
+		return metadata;
+	};
+	const syncRunMetadataStatus = (): AgentRunMetadata => {
+		const metadata = ensureRunMetadata();
+		metadata.status = progress.status;
+		return metadata;
+	};
+	const addRunArtifact = (kind: AgentRunMetadata["artifacts"][number]["kind"], artifactPath: string): void => {
+		const metadata = ensureRunMetadata();
+		if (metadata.artifacts.some(artifact => artifact.path === artifactPath)) return;
+		metadata.artifacts.push({ kind, path: artifactPath });
+	};
 
 	// Check if already aborted
 	if (signal?.aborted) {
@@ -544,6 +574,9 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 	let subtaskSessionFile: string | undefined;
 	if (options.artifactsDir) {
 		subtaskSessionFile = path.join(options.artifactsDir, `${id}.jsonl`);
+	}
+	if (subtaskSessionFile) {
+		addRunArtifact("transcript", subtaskSessionFile);
 	}
 
 	const settings = options.settings ?? Settings.isolated();
@@ -688,6 +721,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 
 	const emitProgressNow = () => {
 		progress.durationMs = Date.now() - startTime;
+		const runMetadata = syncRunMetadataStatus();
 		onProgress?.({ ...progress });
 		if (options.eventBus) {
 			options.eventBus.emit(TASK_SUBAGENT_PROGRESS_CHANNEL, {
@@ -697,6 +731,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				task,
 				assignment,
 				progress: { ...progress },
+				runMetadata,
 				sessionFile: subtaskSessionFile,
 			});
 		}
@@ -1166,6 +1201,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 					description: options.description,
 					status: "started",
 					sessionFile: subtaskSessionFile,
+					runMetadata: syncRunMetadataStatus(),
 					index,
 				});
 			}
@@ -1419,6 +1455,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		outputPath = path.join(options.artifactsDir, `${id}.md`);
 		try {
 			await Bun.write(outputPath, rawOutput);
+			addRunArtifact("raw", outputPath);
 			outputMeta = {
 				lineCount: rawOutput.split("\n").length,
 				charCount: rawOutput.length,
@@ -1446,6 +1483,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				: (done.abortReason ?? (signal?.aborted ? resolveSignalAbortReason() : resolveAbortReasonText()))
 		: undefined;
 	progress.status = wasAborted ? "aborted" : exitCode === 0 ? "completed" : "failed";
+	syncRunMetadataStatus();
 	scheduleProgress(true);
 
 	// Emit lifecycle end event after finalization so yield status is reflected
@@ -1457,6 +1495,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			description: options.description,
 			status: progress.status as "completed" | "failed" | "aborted",
 			sessionFile: subtaskSessionFile,
+			runMetadata: syncRunMetadataStatus(),
 			index,
 		});
 	}

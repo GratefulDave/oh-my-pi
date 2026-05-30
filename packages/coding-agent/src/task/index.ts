@@ -115,6 +115,19 @@ function setAgentProgressStatus(progress: AgentProgress | undefined, status: Age
 	if (progress.runMetadata) progress.runMetadata.status = status;
 }
 
+function createEmbeddedRunMetadata(id: string, agent: string, cwd: string, taskId?: string): AgentRunMetadata {
+	const metadata: AgentRunMetadata = {
+		runId: id,
+		agent,
+		cwd,
+		status: "pending",
+		presentation: { mode: "embedded", backend: "core" },
+		artifacts: [],
+	};
+	if (taskId) metadata.taskId = taskId;
+	return metadata;
+}
+
 // Re-export types and utilities
 export { loadBundledAgents as BUNDLED_AGENTS } from "./agents";
 export { discoverCommands, expandCommand, getCommand } from "./commands";
@@ -319,15 +332,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			const taskItem = taskItems[index];
 			const assignment = taskItem.assignment.trim();
 			const runId = uniqueIds[index];
-			const runMetadata: AgentRunMetadata = {
-				runId,
-				taskId: taskItem.id,
-				agent: params.agent,
-				cwd: this.session.cwd,
-				status: "pending",
-				presentation: { mode: "embedded", backend: "core" },
-				artifacts: [],
-			};
+			const runMetadata = createEmbeddedRunMetadata(runId, params.agent, this.session.cwd, taskItem.id);
 			progressByTaskId.set(taskItem.id, {
 				index,
 				id: runId,
@@ -854,6 +859,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			for (let i = 0; i < tasksWithUniqueIds.length; i++) {
 				const taskItem = tasksWithUniqueIds[i];
 				const assignment = taskItem.assignment.trim();
+				const runMetadata = createEmbeddedRunMetadata(taskItem.id, agentName, this.session.cwd, taskItem.id);
 				progressMap.set(i, {
 					index: i,
 					id: taskItem.id,
@@ -870,6 +876,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 					durationMs: 0,
 					modelOverride,
 					description: taskItem.description,
+					runMetadata,
 				});
 			}
 			emitProgress();
@@ -893,6 +900,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 						sessionFile,
 						persistArtifacts: !!artifactsDir,
 						artifactsDir: effectiveArtifactsDir,
+						runMetadata: progressMap.get(index)?.runMetadata,
 						contextFile: contextFilePath,
 						enableLsp: subagentLspEnabled,
 						parentEvalSessionId,
@@ -948,6 +956,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 						sessionFile,
 						persistArtifacts: !!artifactsDir,
 						artifactsDir: effectiveArtifactsDir,
+						runMetadata: progressMap.get(index)?.runMetadata,
 						contextFile: contextFilePath,
 						enableLsp: subagentLspEnabled,
 						parentEvalSessionId,

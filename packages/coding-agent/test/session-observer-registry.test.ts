@@ -18,6 +18,7 @@ import {
 	type AgentRunMetadata,
 	type SubagentLifecyclePayload,
 	TASK_SUBAGENT_LIFECYCLE_CHANNEL,
+	TASK_SUBAGENT_PROGRESS_CHANNEL,
 } from "../src/task/types";
 import { EventBus } from "../src/utils/event-bus";
 
@@ -125,6 +126,63 @@ describe("core TASK_SUBAGENT_LIFECYCLE_CHANNEL (regression)", () => {
 	});
 });
 
+it("preserves native run metadata from lifecycle and progress events", () => {
+	const { bus, registry } = makeRegistry();
+	const runMetadata: AgentRunMetadata = {
+		runId: "core-agent-meta",
+		taskId: "task-meta",
+		agent: "task",
+		cwd: "/repo",
+		status: "running",
+		presentation: { mode: "embedded", backend: "core" },
+		artifacts: [{ kind: "transcript", path: "/tmp/core-agent-meta.jsonl" }],
+	};
+	bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+		id: "core-agent-meta",
+		agent: "task",
+		agentSource: "bundled",
+		description: "Native task agent",
+		status: "started",
+		index: 4,
+		runMetadata,
+	} satisfies SubagentLifecyclePayload);
+
+	const running = subagentById(registry, "core-agent-meta");
+	expect(running?.runMetadata).toEqual(runMetadata);
+	expect(running?.status).toBe("active");
+
+	const progress: AgentProgress = {
+		index: 4,
+		id: "core-agent-meta",
+		agent: "task",
+		agentSource: "bundled",
+		status: "completed",
+		task: "native task",
+		description: "Native task completed",
+		recentTools: [],
+		recentOutput: ["done"],
+		toolCount: 1,
+		tokens: 10,
+		cost: 0,
+		durationMs: 25,
+		runMetadata: { ...runMetadata, status: "completed" },
+	};
+	bus.emit(TASK_SUBAGENT_PROGRESS_CHANNEL, {
+		index: 4,
+		agent: "task",
+		agentSource: "bundled",
+		task: "native task",
+		progress,
+		runMetadata: progress.runMetadata,
+	});
+
+	const completed = subagentById(registry, "core-agent-meta");
+	expect(completed?.status).toBe("completed");
+	expect(completed?.label).toBe("Native task completed");
+	expect(completed?.progress).toEqual(progress);
+	expect(completed?.runMetadata?.status).toBe("completed");
+});
+
 // ---------------------------------------------------------------------------
 // Plugin bridge — subagents:started
 // ---------------------------------------------------------------------------
@@ -156,6 +214,32 @@ describe("plugin bridge: subagents:started", () => {
 
 		const session = subagentById(registry, "plugin-agent-2");
 		expect(session?.agent).toBe("reviewer");
+	});
+
+	it("surfaces real cmux pane and window presentation metadata from plugin payloads", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit("subagents:started", {
+			id: "plugin-cmux-pane",
+			type: "coder",
+			description: "Visible cmux agent",
+			mode: "window",
+			backend: "cmux",
+			session: "cmux-session-1",
+			paneId: "pane-1",
+			windowId: "window-1",
+			command: ["cmux", "new-split", "right"],
+		});
+
+		const session = subagentById(registry, "plugin-cmux-pane");
+		expect(session?.runMetadata?.presentation).toEqual({
+			mode: "window",
+			backend: "cmux",
+			session: "cmux-session-1",
+			paneId: "pane-1",
+			windowId: "window-1",
+			command: ["cmux", "new-split", "right"],
+		});
 	});
 
 	it("stores description on the session", () => {
@@ -589,7 +673,7 @@ describe("async job bridge: async background jobs", () => {
 		expect(session?.sessionFile).toBeUndefined();
 	});
 
-	it("reflects bash progress text without inventing transcript artifacts", () => {
+	it("stores bash progress on the async job payload without replacing the command label", () => {
 		const { bus, registry } = makeRegistry();
 
 		bus.emit(ASYNC_JOB_OBSERVER_CHANNEL, {
@@ -610,7 +694,9 @@ describe("async job bridge: async background jobs", () => {
 		} satisfies AsyncJobObserverPayload);
 
 		const session = subagentById(registry, "job:bg_progress");
-		expect(session?.description).toBe("compiled 42 files");
+		expect(session?.label).toBe("tail build");
+		expect(session?.description).toBeUndefined();
+		expect(session?.asyncJob?.progressText).toBe("compiled 42 files");
 		expect(session?.status).toBe("active");
 		expect(session?.runMetadata?.artifacts).toEqual([]);
 	});
@@ -718,5 +804,105 @@ describe("dispose", () => {
 		} satisfies SubagentLifecyclePayload);
 
 		expect(registry.getSessions()).toHaveLength(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Auto-open gating — shouldAutoOpen fires once per activity burst
+// ---------------------------------------------------------------------------
+
+describe("auto-open gating", () => {
+	it("returns false when no active subagents exist", () => {
+		const { registry } = makeRegistry();
+		expect(registry.shouldAutoOpen()).toBe(false);
+	});
+
+	it("returns true the first time an active subagent appears", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			id: "auto-open-1",
+			agent: "task",
+			agentSource: "bundled",
+			description: "First task",
+			status: "started",
+			index: 0,
+		} satisfies SubagentLifecyclePayload);
+
+		expect(registry.shouldAutoOpen()).toBe(true);
+	});
+
+	it("returns false on subsequent calls after the first auto-open", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			id: "auto-open-2",
+			agent: "task",
+			agentSource: "bundled",
+			description: "Task A",
+			status: "started",
+			index: 0,
+		} satisfies SubagentLifecyclePayload);
+
+		expect(registry.shouldAutoOpen()).toBe(true);
+		// Second subagent arrives — should not re-trigger
+		bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			id: "auto-open-3",
+			agent: "task",
+			agentSource: "bundled",
+			description: "Task B",
+			status: "started",
+			index: 1,
+		} satisfies SubagentLifecyclePayload);
+
+		expect(registry.shouldAutoOpen()).toBe(false);
+	});
+
+	it("re-arms after resetAutoOpen so a new burst can trigger", () => {
+		const { bus, registry } = makeRegistry();
+
+		bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			id: "auto-open-4",
+			agent: "task",
+			agentSource: "bundled",
+			description: "Burst 1",
+			status: "started",
+			index: 0,
+		} satisfies SubagentLifecyclePayload);
+
+		expect(registry.shouldAutoOpen()).toBe(true);
+
+		// Simulate session switch
+		registry.resetSessions();
+		registry.resetAutoOpen();
+
+		// New activity after reset
+		bus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			id: "auto-open-5",
+			agent: "task",
+			agentSource: "bundled",
+			description: "Burst 2",
+			status: "started",
+			index: 0,
+		} satisfies SubagentLifecyclePayload);
+
+		expect(registry.shouldAutoOpen()).toBe(true);
+	});
+
+	it("fires for async job activations, not only lifecycle events", () => {
+		const { bus, registry } = makeRegistry();
+
+		const jobPayload: AsyncJobObserverPayload = {
+			id: "job-auto-1",
+			type: "bash",
+			label: "Async bash job",
+			status: "running",
+			startTime: Date.now(),
+		};
+		bus.emit(ASYNC_JOB_OBSERVER_CHANNEL, jobPayload);
+
+		expect(registry.shouldAutoOpen()).toBe(true);
+		// Still one-shot
+		expect(registry.shouldAutoOpen()).toBe(false);
 	});
 });

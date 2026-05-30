@@ -22,6 +22,7 @@ export interface ObservableSession {
 	/** Latest progress snapshot from the subagent executor */
 	progress?: AgentProgress;
 	runMetadata?: AgentRunMetadata;
+	asyncJob?: AsyncJobObserverPayload;
 	source?: {
 		kind: "plugin" | "async-job";
 		name: string;
@@ -52,10 +53,19 @@ const ASYNC_JOB_PROGRESS_STATUS_MAP: Record<AsyncJobObserverPayload["status"], A
 	cancelled: "aborted",
 };
 
+const TASK_PROGRESS_STATUS_MAP: Record<AgentProgress["status"], ObservableSession["status"]> = {
+	pending: "active",
+	running: "active",
+	completed: "completed",
+	failed: "failed",
+	aborted: "aborted",
+};
+
 export class SessionObserverRegistry {
 	#sessions = new Map<string, ObservableSession>();
 	#listeners = new Set<() => void>();
 	#eventBusUnsubscribers: Array<() => void> = [];
+	#autoOpenFired = false;
 
 	/** Add a change listener. Returns unsubscribe function. */
 	onChange(cb: () => void): () => void {
@@ -96,6 +106,23 @@ export class SessionObserverRegistry {
 			if (s.kind === "subagent" && s.status === "active") count++;
 		}
 		return count;
+	}
+
+	/**
+	 * One-shot auto-open gate: returns true the first time an active subagent
+	 * appears in this registry instance (or after a reset). Subsequent calls
+	 * return false so the observer does not reopen after the user closes it.
+	 */
+	shouldAutoOpen(): boolean {
+		if (this.#autoOpenFired) return false;
+		if (this.getActiveSubagentCount() === 0) return false;
+		this.#autoOpenFired = true;
+		return true;
+	}
+
+	/** Reset the auto-open gate (e.g. on session switch). */
+	resetAutoOpen(): void {
+		this.#autoOpenFired = false;
 	}
 
 	getActiveSubagentDescriptions(): string[] {
@@ -145,7 +172,10 @@ export class SessionObserverRegistry {
 				if (existing) {
 					existing.status = status;
 					existing.lastUpdate = Date.now();
-					if (payload.description) existing.description = payload.description;
+					if (payload.description) {
+						existing.description = payload.description;
+						existing.label = payload.description;
+					}
 					if (payload.sessionFile) existing.sessionFile = payload.sessionFile;
 					if (payload.runMetadata) existing.runMetadata = payload.runMetadata;
 				} else {
@@ -173,11 +203,16 @@ export class SessionObserverRegistry {
 				const existing = this.#sessions.get(id);
 
 				if (existing) {
+					existing.status = TASK_PROGRESS_STATUS_MAP[progress.status] ?? existing.status;
 					existing.lastUpdate = Date.now();
 					existing.progress = progress;
-					if (progress.description) existing.description = progress.description;
+					if (progress.description) {
+						existing.description = progress.description;
+						existing.label = progress.description;
+					}
 					if (payload.sessionFile) existing.sessionFile = payload.sessionFile;
-					if (payload.runMetadata) existing.runMetadata = payload.runMetadata;
+					if (payload.runMetadata ?? progress.runMetadata)
+						existing.runMetadata = payload.runMetadata ?? progress.runMetadata;
 				} else {
 					this.#sessions.set(id, {
 						id,
@@ -213,7 +248,7 @@ export class SessionObserverRegistry {
 		const progress = payload.type === "task" ? findAsyncTaskProgress(payload) : undefined;
 		const runMetadata = buildAsyncJobRunMetadata(payload, progress);
 		const existing = this.#sessions.get(id);
-		const description = progress?.description ?? payload.progressText;
+		const description = payload.type === "task" ? (progress?.description ?? payload.progressText) : undefined;
 		const source: ObservableSession["source"] = {
 			kind: "async-job",
 			name: "AsyncJobManager",
@@ -226,8 +261,10 @@ export class SessionObserverRegistry {
 			existing.lastUpdate = Date.now();
 			existing.runMetadata = runMetadata;
 			existing.source = source;
+			existing.asyncJob = payload;
 			if (progress) existing.progress = progress;
 			if (description) existing.description = description;
+			else if (payload.type === "bash") existing.description = undefined;
 		} else {
 			this.#sessions.set(id, {
 				id,
@@ -240,6 +277,7 @@ export class SessionObserverRegistry {
 				progress,
 				runMetadata,
 				source,
+				asyncJob: payload,
 			});
 		}
 		this.#notifyListeners();
@@ -382,6 +420,7 @@ function extractPluginPresentation(payload: Record<string, unknown>): AgentRunPr
 	const presentation: AgentRunPresentation = { mode, backend };
 	if (typeof payload.session === "string") presentation.session = payload.session;
 	if (typeof payload.paneId === "string") presentation.paneId = payload.paneId;
+	if (typeof payload.windowId === "string") presentation.windowId = payload.windowId;
 	if (Array.isArray(payload.command) && payload.command.every(part => typeof part === "string")) {
 		presentation.command = payload.command;
 	}

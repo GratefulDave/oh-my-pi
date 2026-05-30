@@ -45,6 +45,7 @@ export interface AgentRunPresentation {
 	backend?: "core" | "acpx" | "tmux" | "cmux";
 	session?: string;
 	paneId?: string;
+	windowId?: string;
 	command?: string[];
 }
 
