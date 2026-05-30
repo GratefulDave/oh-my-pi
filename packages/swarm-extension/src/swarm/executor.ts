@@ -14,9 +14,9 @@ import type {
 	Settings,
 	SingleResult,
 } from "@oh-my-pi/pi-coding-agent";
-import { runSubprocess } from "@oh-my-pi/pi-coding-agent";
 import type { SwarmAgent } from "./schema";
 import type { StateTracker } from "./state";
+import type { RunSubprocessFn } from "./types";
 
 export interface SwarmExecutorOptions {
 	workspace: string;
@@ -29,6 +29,8 @@ export interface SwarmExecutorOptions {
 	modelRegistry?: ModelRegistry;
 	settings?: Settings;
 	stateTracker: StateTracker;
+	/** Injected runSubprocess — avoids runtime @oh-my-pi/* import in compiled binary. */
+	runSubprocess: RunSubprocessFn;
 }
 
 /**
@@ -56,6 +58,7 @@ export async function executeSwarmAgent(
 		modelRegistry,
 		settings,
 		stateTracker,
+		runSubprocess,
 	} = options;
 
 	const agentId = `swarm-${swarmName}-${agent.name}-${iteration}`;

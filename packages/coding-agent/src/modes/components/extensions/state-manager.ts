@@ -21,6 +21,8 @@ import {
 	isProviderEnabled,
 	loadCapability,
 } from "../../../discovery";
+import { getExtensionNameFromPath } from "../../../discovery/helpers";
+import { getAllPluginExtensionEntries } from "../../../extensibility/plugins/loader";
 import type {
 	DashboardState,
 	Extension,
@@ -138,6 +140,36 @@ export async function loadAllExtensions(cwd?: string, disabledIds?: string[]): P
 		addItems(nativeModules, "extension-module");
 	} catch (error) {
 		logger.warn("Failed to load extension-modules capability", { error: String(error) });
+	}
+	try {
+		const entries = await getAllPluginExtensionEntries(cwd ?? process.cwd());
+		const entryCounts = new Map<string, number>();
+		for (const entry of entries) {
+			entryCounts.set(entry.pluginName, (entryCounts.get(entry.pluginName) ?? 0) + 1);
+		}
+		for (const entry of entries) {
+			const moduleName = getExtensionNameFromPath(entry.path);
+			const name = entryCounts.get(entry.pluginName) === 1 ? entry.pluginName : `${entry.pluginName}:${moduleName}`;
+			const id = makeExtensionId("extension-module", name);
+			const isDisabled = disabledExtensions.has(id);
+			extensions.push({
+				id,
+				kind: "extension-module",
+				name,
+				displayName: name,
+				path: entry.path,
+				source: {
+					provider: "plugins",
+					providerName: "Plugins",
+					level: "user",
+				},
+				state: isDisabled ? "disabled" : "active",
+				disabledReason: isDisabled ? "item-disabled" : undefined,
+				raw: { name, path: entry.path, pluginName: entry.pluginName },
+			});
+		}
+	} catch (error) {
+		logger.warn("Failed to load plugin extension modules", { error: String(error) });
 	}
 
 	// Load MCP servers

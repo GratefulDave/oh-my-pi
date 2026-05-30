@@ -69,7 +69,7 @@ describe("software-factory scaffold", () => {
 		const settings = (await Bun.file(path.join(cwd, ".omp", "settings.json")).json()) as {
 			memory: { backend: string };
 		};
-		expect(settings.memory.backend).toBe("icm");
+		expect(settings.memory.backend).toBe("hindsight");
 		expect(await Bun.file(path.join(cwd, ".omp", "factory", "imported", ".claude", "notes.md")).exists()).toBe(true);
 		expect(await Bun.file(path.join(cwd, ".omp", "factory", "imported", "import-report.json")).exists()).toBe(true);
 		const doctor = await runFactoryDoctor(cwd);

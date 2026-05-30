@@ -34,6 +34,7 @@ const commands: CommandEntry[] = [
 	{ name: "gain", load: () => import("./commands/gain").then(m => m.default) },
 	{ name: "grievances", load: () => import("./commands/grievances").then(m => m.default) },
 	{ name: "plugin", load: () => import("./commands/plugin").then(m => m.default) },
+	{ name: "install", load: () => import("./commands/install").then(m => m.default) },
 	{ name: "profile", load: () => import("./commands/profile").then(m => m.default) },
 	{ name: "setup", load: () => import("./commands/setup").then(m => m.default) },
 	{ name: "shell", load: () => import("./commands/shell").then(m => m.default) },

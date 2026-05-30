@@ -159,7 +159,7 @@ async function renderTemplateContent(
 		.split("__FACTORY_VERIFY_COMMANDS__")
 		.join(verifySuggestionLines(repo.verifySuggestions))
 		.split("__FACTORY_MEMORY_BACKEND__")
-		.join(options.enableMemory ? "icm" : "off");
+		.join(options.enableMemory ? "hindsight" : "off");
 	if (source === ".omp/factory/factory.json") {
 		const json = JSON.parse(rendered) as {
 			verifier: { enabled: boolean };
@@ -189,7 +189,7 @@ function mergeSettings(
 ): Record<string, unknown> | undefined {
 	if (!enableMemory) return existing;
 	const next = { ...(existing ?? {}) };
-	const memory = { ...((next.memory as Record<string, unknown> | undefined) ?? {}), backend: "icm" };
+	const memory = { ...((next.memory as Record<string, unknown> | undefined) ?? {}), backend: "hindsight" };
 	return { ...next, memory };
 }
 
@@ -237,7 +237,7 @@ export async function buildFactoryScaffoldPlan(options: FactoryInitOptions): Pro
 		cwd: options.cwd,
 		repoName: repo.repoName,
 		repoKind: repo.repoKind,
-		memoryBackend: options.enableMemory ? "icm" : "off",
+		memoryBackend: options.enableMemory ? "hindsight" : "off",
 		files,
 		imports,
 		warnings,

@@ -10,6 +10,10 @@
 
 ### Fixed
 
+- Fixed top-level `lex install npm:<package>` compatibility so it routes to plugin installation, strips the explicit `npm:` scheme before npm package validation, and no longer falls through to a launched chat session.
+- Fixed npm plugin installs failing on stale `~/.lex/plugins/package.json` dependencies that are no longer present in the plugin runtime lock; installs now prune those stale dependency entries before invoking Bun.
+- Fixed npm plugin extension modules (for example `pi-cmux`) being loaded at runtime but missing from the `/extensions` Extension Control Center inventory.
+- Fixed legacy Pi extension SDK compatibility so installed packages that import `@mariozechner/*` or `@earendil-works/pi-coding-agent` can load in Lex without bundling the full host CLI or failing on extensionless dependency `main` entries.
 - Fixed compaction surfacing raw HTTP 401/403 envelopes (e.g. `Compaction failed: 401 {"type":"error","error":{"type":"authentication_error",…}}`) instead of routing to an authenticated fallback model. The compaction layer now attaches the provider-reported HTTP status onto the thrown error, and `AgentSession`'s auth-failure detector branches on `error.status === 401 || 403` in addition to the existing `auth_unavailable` regex. When a fallback model role (e.g. `modelRoles.smol`) is configured, compaction retries it transparently; otherwise the user sees the actionable "Compaction requires usable credentials for …" hint instead of the raw provider envelope.
 - Fixed plan-mode re-entry after approval reopening a fresh `local://PLAN.md` instead of the approved titled plan artifact, which could duplicate plan content and fail approval on an existing destination.
 - Fixed `read` URL reader mode aborting after a stalled Jina request instead of falling back to trafilatura/lynx/native: Jina (and Parallel extract) now have their own per-attempt sub-budget capped at 10s, the catch handler honours only real user cancellation, and the in-process native renderer is always attempted on already-loaded HTML ([#1449](https://github.com/can1357/oh-my-pi/issues/1449))

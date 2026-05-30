@@ -19,6 +19,7 @@ import { EventBus } from "../../utils/event-bus";
 import { installLegacyPiSpecifierShim, loadLegacyPiModule } from "../plugins/legacy-pi-compat";
 import { getAllPluginExtensionPaths } from "../plugins/loader";
 import * as TypeBox from "../typebox";
+import * as LegacyPiFacade from "../plugins/legacy-pi-facade";
 
 import { resolvePath } from "../utils";
 import type {
@@ -294,7 +295,7 @@ async function loadExtension(
 
 		const extension = createExtension(extensionPath, resolvedPath);
 		const api = new ConcreteExtensionAPI(
-			await import("@oh-my-pi/pi-coding-agent"),
+			LegacyPiFacade as unknown as typeof import("@oh-my-pi/pi-coding-agent"),
 			extension,
 			runtime,
 			cwd,
@@ -479,6 +480,59 @@ async function discoverExtensionsInDir(dir: string): Promise<string[]> {
 }
 
 /**
+ * Discover extension entry points declared by workspace packages.
+ *
+ * Walks up from `cwd` to the nearest `package.json` with a `workspaces`
+ * field, resolves each workspace glob, and returns extension paths from
+ * packages that declare `omp.extensions` (or `pi.extensions`).
+ */
+async function getWorkspacePackageExtensionPaths(cwd: string): Promise<string[]> {
+	let dir = cwd;
+	for (;;) {
+		try {
+			const pkg = (await Bun.file(path.join(dir, "package.json")).json()) as {
+				workspaces?: string[] | { packages?: string[] };
+			};
+			if (pkg.workspaces) {
+				const patterns: string[] = Array.isArray(pkg.workspaces) ? pkg.workspaces : (pkg.workspaces.packages ?? []);
+				return resolveWorkspaceExtensions(dir, patterns);
+			}
+		} catch {
+			// no package.json or parse error — keep walking
+		}
+		const parent = path.dirname(dir);
+		if (parent === dir) break;
+		dir = parent;
+	}
+	return [];
+}
+
+async function resolveWorkspaceExtensions(root: string, patterns: string[]): Promise<string[]> {
+	const result: string[] = [];
+	for (const pattern of patterns) {
+		if (!pattern.includes("*")) {
+			const entries = await resolveExtensionEntries(path.join(root, pattern));
+			if (entries) result.push(...entries);
+			continue;
+		}
+		// Simple trailing glob (e.g. "packages/*") — readdir the parent.
+		const parentDir = path.join(root, pattern.replace(/\/?\*$/, ""));
+		let dirents: import("node:fs").Dirent[];
+		try {
+			dirents = await fs.readdir(parentDir, { withFileTypes: true });
+		} catch {
+			continue;
+		}
+		for (const d of dirents) {
+			if (!d.isDirectory() && !d.isSymbolicLink()) continue;
+			const entries = await resolveExtensionEntries(path.join(parentDir, d.name));
+			if (entries) result.push(...entries);
+		}
+	}
+	return result;
+}
+
+/**
  * Discover and load extensions from standard locations.
  */
 export async function discoverAndLoadExtensions(
@@ -519,7 +573,10 @@ export async function discoverAndLoadExtensions(
 	// 2. Discover extension entry points from installed plugins
 	addPaths(await getAllPluginExtensionPaths(cwd));
 
-	// 3. Explicitly configured paths
+	// 3. Discover extensions from workspace packages (omp.extensions in package.json)
+	addPaths(await getWorkspacePackageExtensionPaths(cwd));
+
+	// 4. Explicitly configured paths
 	for (const configuredPath of configuredPaths) {
 		const resolved = resolvePath(configuredPath, cwd);
 

@@ -213,7 +213,11 @@ export function resolvePluginExtensionPaths(plugin: InstalledPlugin): string[] {
 	return resolvePluginPaths(plugin, "extensions");
 }
 
-// =============================================================================
+export interface PluginExtensionEntry {
+	pluginName: string;
+	path: string;
+}
+
 // Aggregated Discovery
 // =============================================================================
 
@@ -262,15 +266,21 @@ export async function getAllPluginCommandPaths(cwd: string): Promise<string[]> {
 /**
  * Get all extension module paths from all enabled plugins.
  */
-export async function getAllPluginExtensionPaths(cwd: string): Promise<string[]> {
+export async function getAllPluginExtensionEntries(cwd: string): Promise<PluginExtensionEntry[]> {
 	const plugins = await getEnabledPlugins(cwd);
-	const paths: string[] = [];
+	const entries: PluginExtensionEntry[] = [];
 
 	for (const plugin of plugins) {
-		paths.push(...resolvePluginExtensionPaths(plugin));
+		for (const extensionPath of resolvePluginExtensionPaths(plugin)) {
+			entries.push({ pluginName: plugin.name, path: extensionPath });
+		}
 	}
 
-	return paths;
+	return entries;
+}
+
+export async function getAllPluginExtensionPaths(cwd: string): Promise<string[]> {
+	return (await getAllPluginExtensionEntries(cwd)).map(entry => entry.path);
 }
 
 /**

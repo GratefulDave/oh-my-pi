@@ -188,6 +188,22 @@ Each candidate path is loaded with dynamic import:
 
 If export is not a function, that path fails with a structured error and loading continues.
 
+### Compiled binary `.js` bundle resolution
+
+In compiled binaries, `Bun.plugin` `onResolve`/`onLoad` hooks do not fire for imports within dynamically `import()`-ed `.js` files. This means pre-built `.js` bundles that contain bare `@oh-my-pi/*` specifiers will fail to resolve at runtime.
+
+`loadLegacyPiModule` handles this by inspecting `.js`/`.mjs`/`.cjs` files before import:
+
+1. Read the file contents.
+2. Check whether any `@oh-my-pi/*` package name appears as a bare import (substring match against `PI_PACKAGE_NAMES`).
+3. If **no** bare pi imports are found → direct `import()` (fast path).
+4. If bare pi imports **are** found → fall through to the `Bun.build()` path, which uses build-time plugins to resolve all bare specifiers transitively.
+
+Extension authors shipping pre-built `.js` bundles should either:
+
+- **Self-contain** all `@oh-my-pi/*` dependencies (inline them into the bundle) and mark `@oh-my-pi/pi-coding-agent` as external, or
+- Ship `.ts` source and let the loader's `Bun.build()` path handle resolution.
+
 ---
 
 ## Failure handling and isolation

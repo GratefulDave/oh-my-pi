@@ -40,7 +40,7 @@ describe("/skills slash command", () => {
 	});
 
 	async function createProjectWithSkill(cwd: string): Promise<void> {
-		const ompSkills = path.join(cwd, ".omp", "skills", "test-skill");
+		const ompSkills = path.join(cwd, ".lex", "skills", "test-skill");
 		await fs.mkdir(ompSkills, { recursive: true });
 		await fs.writeFile(
 			path.join(ompSkills, "SKILL.md"),
@@ -105,6 +105,6 @@ describe("/skills slash command", () => {
 		const result = await executeAcpBuiltinSlashCommand("/skills edit test-skill", runtime);
 
 		expect(result).toEqual({ consumed: true });
-		expect(output.join("\n")).toContain(path.join(".omp", "skills", "test-skill", "SKILL.md"));
+		expect(output.join("\n")).toContain(path.join(".lex", "skills", "test-skill", "SKILL.md"));
 	});
 });

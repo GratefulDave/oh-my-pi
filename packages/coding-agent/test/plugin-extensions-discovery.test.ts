@@ -5,6 +5,8 @@ import * as path from "node:path";
 import { discoverAndLoadExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 import { getAgentDir, getPluginsDir, setAgentDir, TempDir } from "@oh-my-pi/pi-utils";
 
+import { loadAllExtensions } from "../src/modes/components/extensions/state-manager";
+
 const currentPiCodingAgentPath = Bun.resolveSync("@oh-my-pi/pi-coding-agent", import.meta.dir);
 const currentPiExtensionsPath = Bun.resolveSync("@oh-my-pi/pi-coding-agent/extensibility/extensions", import.meta.dir);
 
@@ -13,16 +15,20 @@ describe("plugin extension discovery", () => {
 	let tempXdgDataHome = "";
 	let originalXdgDataHome: string | undefined;
 	const originalAgentDir = getAgentDir();
+	let originalPiConfigDir: string | undefined;
 
 	beforeEach(() => {
 		projectDir = TempDir.createSync("@pi-plugin-ext-");
 		originalXdgDataHome = process.env.XDG_DATA_HOME;
+		originalPiConfigDir = process.env.PI_CONFIG_DIR;
 		tempXdgDataHome = fs.mkdtempSync(path.join(os.tmpdir(), "pi-plugin-data-"));
-		fs.mkdirSync(path.join(tempXdgDataHome, "omp"), { recursive: true });
+		fs.mkdirSync(path.join(tempXdgDataHome, "lex"), { recursive: true });
+		process.env.PI_CONFIG_DIR = `.lex-test-${path.basename(tempXdgDataHome)}`;
 		process.env.XDG_DATA_HOME = tempXdgDataHome;
-		// Rebuild path caches after changing XDG env so plugin discovery resolves into the temp root.
-		setAgentDir(originalAgentDir);
+		// Rebuild path caches after changing config env so plugin discovery resolves into the temp root.
+		setAgentDir(path.join(os.homedir(), process.env.PI_CONFIG_DIR, "agent"));
 
+		fs.writeFileSync(path.join(projectDir.path(), "package.json"), JSON.stringify({ private: true, workspaces: [] }));
 		const pluginsDir = getPluginsDir();
 		const pluginDir = path.join(pluginsDir, "node_modules", "@demo", "plugin");
 		fs.mkdirSync(path.join(pluginDir, "dist"), { recursive: true });
@@ -64,6 +70,11 @@ describe("plugin extension discovery", () => {
 		} else {
 			process.env.XDG_DATA_HOME = originalXdgDataHome;
 		}
+		if (originalPiConfigDir === undefined) {
+			delete process.env.PI_CONFIG_DIR;
+		} else {
+			process.env.PI_CONFIG_DIR = originalPiConfigDir;
+		}
 		setAgentDir(originalAgentDir);
 	});
 
@@ -74,6 +85,15 @@ describe("plugin extension discovery", () => {
 		expect(result.errors).toHaveLength(0);
 		expect(extension).toBeDefined();
 		expect(extension?.commands.has("plugin-ext")).toBe(true);
+	});
+
+	it("shows installed plugin extension modules in the extensions dashboard inventory", async () => {
+		const extensions = await loadAllExtensions(projectDir.path());
+		const extension = extensions.find(ext => ext.kind === "extension-module" && ext.name === "@demo/plugin");
+
+		expect(extension).toBeDefined();
+		expect(extension?.source.provider).toBe("plugins");
+		expect(extension?.path).toEndWith(path.join("@demo", "plugin", "dist", "extension.ts"));
 	});
 
 	it("loads installed legacy Pi plugin extensions from Windows drive-letter paths", async () => {

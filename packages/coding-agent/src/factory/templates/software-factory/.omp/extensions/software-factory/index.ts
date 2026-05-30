@@ -73,24 +73,11 @@ function factoryStatusSummary(state: FactoryRuntimeState, cwd: string): string {
 
 async function maybeStoreMemoryCandidate(
 	pi: ExtensionAPI,
-	ctx: ExtensionContext,
+	_ctx: ExtensionContext,
 	candidate: FactoryMemoryCandidate,
 ): Promise<string> {
 	pi.appendEntry("factory-memory-candidate", candidate);
-	if (candidate.backend !== "icm") {
-		return `Stored repo-local factory memory candidate (${candidate.kind}); active backend: ${candidate.backend}.`;
-	}
-	const keywords = candidate.keywords.length > 0 ? candidate.keywords.join(",") : `kind:${candidate.kind}`;
-	const summary = `${candidate.summary}${candidate.verification ? ` | verification: ${candidate.verification}` : ""}`;
-	const result = await pi.exec("icm-store-project", ["--keywords", keywords, summary], {
-		cwd: ctx.cwd,
-		timeout: 15_000,
-	});
-	if (result.code === 0) {
-		return `Stored factory lesson in ICM and session cache.`;
-	}
-	pi.logger.warn("factory remember fallback", { stderr: result.stderr, stdout: result.stdout });
-	return `Saved factory memory candidate locally; ICM store command unavailable or failed.`;
+	return `Stored repo-local factory memory candidate (${candidate.kind}); active backend: ${candidate.backend}.`;
 }
 
 export default function softwareFactoryExtension(pi: ExtensionAPI) {
