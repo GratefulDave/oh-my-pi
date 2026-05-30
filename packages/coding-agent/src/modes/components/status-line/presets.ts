@@ -62,8 +62,7 @@ export const STATUS_LINE_PRESETS: Record<StatusLinePreset, PresetDef> = {
 			"session_name",
 			"token_in",
 			"token_out",
-			"cache_read",
-			"cache_write",
+			"cache_hit",
 			"token_rate",
 			"cost",
 			"context_pct",
@@ -77,6 +76,18 @@ export const STATUS_LINE_PRESETS: Record<StatusLinePreset, PresetDef> = {
 			path: { abbreviate: true, maxLength: 60 },
 			git: { showBranch: true, showStaged: true, showUnstaged: true, showUntracked: true },
 			time: { format: "24h", showSeconds: true },
+		},
+	},
+
+	debug: {
+		// Mid-session debugging preset focused on cache visibility and spend/context.
+		leftSegments: ["model", "mode", "path", "git", "pr"],
+		rightSegments: ["session_name", "cache_hit", "cache_read", "cache_write", "token_rate", "cost", "context_pct"],
+		separator: "powerline-thin",
+		segmentOptions: {
+			model: { showThinkingLevel: true },
+			path: { abbreviate: true, maxLength: 45 },
+			git: { showBranch: true, showStaged: true, showUnstaged: true, showUntracked: true },
 		},
 	},
 

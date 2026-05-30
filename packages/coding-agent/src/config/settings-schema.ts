@@ -406,7 +406,7 @@ export const SETTINGS_SCHEMA = {
 	// Status line
 	"statusLine.preset": {
 		type: "enum",
-		values: ["default", "minimal", "compact", "full", "nerd", "ascii", "custom"] as const,
+		values: ["default", "minimal", "compact", "full", "nerd", "debug", "ascii", "custom"] as const,
 		default: "default",
 		ui: {
 			tab: "appearance",
@@ -418,6 +418,7 @@ export const SETTINGS_SCHEMA = {
 				{ value: "compact", label: "Compact", description: "Model, git, cost, context" },
 				{ value: "full", label: "Full", description: "All segments including time" },
 				{ value: "nerd", label: "Nerd", description: "Maximum info with Nerd Font icons" },
+				{ value: "debug", label: "Debug", description: "Cache, rate, cost, and context details" },
 				{ value: "ascii", label: "ASCII", description: "No special characters" },
 				{ value: "custom", label: "Custom", description: "User-defined segments" },
 			],
