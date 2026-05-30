@@ -13,6 +13,7 @@
 import { describe, expect, it } from "bun:test";
 import { ASYNC_JOB_OBSERVER_CHANNEL, type AsyncJobObserverPayload } from "../src/async";
 import { type ObservableSession, SessionObserverRegistry } from "../src/modes/session-observer-registry";
+import type { CustomMessage } from "../src/session/messages";
 import {
 	type AgentProgress,
 	type AgentRunMetadata,
@@ -181,6 +182,65 @@ it("preserves native run metadata from lifecycle and progress events", () => {
 	expect(completed?.label).toBe("Native task completed");
 	expect(completed?.progress).toEqual(progress);
 	expect(completed?.runMetadata?.status).toBe("completed");
+});
+
+describe("IRC conversation rows", () => {
+	it("records relay messages as directional conversation rows", () => {
+		const registry = new SessionObserverRegistry();
+
+		registry.recordIrcMessage({
+			role: "custom",
+			customType: "irc:relay",
+			content: "[IRC `A` → `B`]\n\nNeed ownership?",
+			display: true,
+			details: { from: "A", to: "B", body: "Need ownership?", kind: "message" },
+			timestamp: 10,
+		} satisfies CustomMessage);
+		registry.recordIrcMessage({
+			role: "custom",
+			customType: "irc:relay",
+			content: "[IRC `B` → (auto) `A`]\n\nTake it.",
+			display: true,
+			details: { from: "B", to: "A", body: "Take it.", kind: "reply" },
+			timestamp: 11,
+		} satisfies CustomMessage);
+
+		expect(registry.getIrcConversationRows()).toEqual([
+			{
+				id: "irc:relay:A:B:10:Need ownership?",
+				from: "A",
+				to: "B",
+				body: "Need ownership?",
+				kind: "message",
+				timestamp: 10,
+			},
+			{
+				id: "irc:relay:B:A:11:Take it.",
+				from: "B",
+				to: "A",
+				body: "Take it.",
+				kind: "reply",
+				timestamp: 11,
+			},
+		]);
+	});
+
+	it("deduplicates repeated IRC event delivery", () => {
+		const registry = new SessionObserverRegistry();
+		const message = {
+			role: "custom",
+			customType: "irc:relay",
+			content: "Body",
+			display: true,
+			details: { from: "A", to: "B", body: "Body", kind: "message" },
+			timestamp: 12,
+		} satisfies CustomMessage;
+
+		registry.recordIrcMessage(message);
+		registry.recordIrcMessage(message);
+
+		expect(registry.getIrcConversationRows()).toHaveLength(1);
+	});
 });
 
 // ---------------------------------------------------------------------------

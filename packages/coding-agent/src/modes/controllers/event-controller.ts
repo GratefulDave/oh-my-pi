@@ -247,6 +247,7 @@ export class EventController {
 			return;
 		}
 		this.#renderedCustomMessages.add(signature);
+		this.ctx.recordIrcMessage(event.message);
 		this.#resetReadGroup();
 		const components = this.ctx.addMessageToChat(event.message);
 		this.#scheduleIrcExpiry(signature, components);

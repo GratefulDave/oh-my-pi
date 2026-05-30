@@ -15,6 +15,7 @@ import type { MCPManager } from "../mcp";
 import type { PlanApprovalDetails } from "../plan-mode/approved-plan";
 import type { AgentSession, AgentSessionEvent } from "../session/agent-session";
 import type { HistoryStorage } from "../session/history-storage";
+import type { CustomMessage } from "../session/messages";
 import type { SessionContext, SessionManager } from "../session/session-manager";
 import type { LspStartupServerInfo } from "../tools";
 import type { AssistantMessageComponent } from "./components/assistant-message";
@@ -250,6 +251,7 @@ export interface InteractiveModeContext {
 	showHookConfirm(title: string, message: string): Promise<boolean>;
 	showDebugSelector(): void;
 	showSessionObserver(): void;
+	recordIrcMessage(message: CustomMessage): void;
 	resetObserverRegistry(): void;
 
 	// Input handling

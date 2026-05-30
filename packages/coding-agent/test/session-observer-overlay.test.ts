@@ -133,11 +133,7 @@ describe("SessionObserverOverlayComponent — overview pane", () => {
 	});
 
 	it("allocates enough overview width for useful task labels", async () => {
-		const { registry } = makeRegistryWithAgent(
-			"sa-005-wide",
-			"oracle",
-			"Implement payment reconciliation worker",
-		);
+		const { registry } = makeRegistryWithAgent("sa-005-wide", "oracle", "Implement payment reconciliation worker");
 
 		const overlay = new SessionObserverOverlayComponent(registry, () => {}, []);
 		const fullText = stripAnsi(overlay.render(120).join("\n"));
@@ -351,6 +347,35 @@ describe("SessionObserverOverlayComponent — getObserverRows integration", () =
 		const overlay = new SessionObserverOverlayComponent(registry, () => {}, []);
 		const fullText = stripAnsi(overlay.render(120).join("\n"));
 		expect(fullText).toContain("cancelled");
+	});
+
+	it("renders live IRC conversation rows in overview", () => {
+		const { registry } = makeRegistryWithAgent("sa-irc-overview", "task", "Coordinate files");
+		registry.recordIrcMessage({
+			role: "custom",
+			customType: "irc:relay",
+			content: "Need src/foo.ts?",
+			display: true,
+			details: { from: "A", to: "B", body: "Need src/foo.ts?", kind: "message" },
+			timestamp: 100,
+		});
+		registry.recordIrcMessage({
+			role: "custom",
+			customType: "irc:relay",
+			content: "No, take it.",
+			display: true,
+			details: { from: "B", to: "A", body: "No, take it.", kind: "reply" },
+			timestamp: 101,
+		});
+
+		const overlay = new SessionObserverOverlayComponent(registry, () => {}, []);
+		const fullText = stripAnsi(overlay.render(120).join("\n"));
+
+		expect(fullText).toContain("IRC conversations");
+		expect(fullText).toContain("A → B");
+		expect(fullText).toContain("B ← A");
+		expect(fullText).toContain("Need src/foo.ts?");
+		expect(fullText).toContain("No, take it.");
 	});
 });
 

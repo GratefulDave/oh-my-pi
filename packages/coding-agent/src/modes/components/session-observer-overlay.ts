@@ -24,7 +24,12 @@ import { isSilentAbort } from "../../session/messages";
 import type { CustomMessageEntry, SessionMessageEntry } from "../../session/session-manager";
 import { parseSessionEntries } from "../../session/session-manager";
 import { PREVIEW_LIMITS, replaceTabs, shortenPath, TRUNCATE_LENGTHS, truncateToWidth } from "../../tools/render-utils";
-import type { ObservableSession, ObserverRow, SessionObserverRegistry } from "../session-observer-registry";
+import type {
+	IrcConversationRow,
+	ObservableSession,
+	ObserverRow,
+	SessionObserverRegistry,
+} from "../session-observer-registry";
 import { getMarkdownTheme, theme } from "../theme/theme";
 import { DynamicBorder } from "./dynamic-border";
 
@@ -38,6 +43,8 @@ const OVERVIEW_MIN_TASK_WIDTH = 12;
 const OVERVIEW_MIN_MESSAGE_WIDTH = 12;
 const OVERVIEW_MAX_TASK_FRACTION = 0.45;
 const OVERVIEW_TARGET_TASK_FRACTION = 0.34;
+const OVERVIEW_IRC_DIRECTION_WIDTH = 28;
+const OVERVIEW_IRC_ROW_CHROME_WIDTH = 7; // leading marker + " │ "
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.min(Math.max(value, min), max);
@@ -228,7 +235,32 @@ export class SessionObserverOverlayComponent extends Container {
 			const renderedRow = `${cursor} ${pad(agentStr, agentW)} │ ${pad(taskStr, taskW)} │ ${statusStr} │ ${msgStr}`;
 			this.#overviewContentLines.push(renderedRow);
 		}
+
+		const ircRows = this.#registry.getIrcConversationRows();
+		if (ircRows.length > 0) {
+			const directionW = Math.min(OVERVIEW_IRC_DIRECTION_WIDTH, Math.max(12, Math.floor(width * 0.3)));
+			const bodyW = Math.max(1, width - directionW - OVERVIEW_IRC_ROW_CHROME_WIDTH);
+			this.#overviewContentLines.push("");
+			this.#overviewContentLines.push(theme.fg("accent", "IRC conversations"));
+			this.#overviewContentLines.push(`${pad(theme.bold("Direction"), directionW)} │ ${theme.bold("Message")}`);
+			this.#overviewContentLines.push(theme.fg("dim", `${"─".repeat(directionW)}─┼─${"─".repeat(bodyW)}`));
+			for (const row of ircRows.slice(-20)) {
+				this.#overviewContentLines.push(this.#renderIrcOverviewRow(row, directionW, bodyW, pad));
+			}
+		}
 		this.#overviewFooterLines = [theme.fg("dim", "↑/↓ select  Enter open  Esc/Ctrl+S close  r refresh")];
+	}
+
+	#renderIrcOverviewRow(
+		row: IrcConversationRow,
+		directionW: number,
+		bodyW: number,
+		pad: (s: string, w: number) => string,
+	): string {
+		const arrow = row.kind === "reply" ? "←" : "→";
+		const direction = sanitizeLine(`${row.from} ${arrow} ${row.to}`, directionW);
+		const body = sanitizeLine(row.body.split("\n")[0] ?? "", bodyW);
+		return `  ${pad(theme.fg("accent", direction), directionW)} │ ${theme.fg("dim", body)}`;
 	}
 
 	/** Render the overview pane into terminal lines */

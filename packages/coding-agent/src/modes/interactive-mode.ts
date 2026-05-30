@@ -54,6 +54,7 @@ import planModeCompactInstructionsPrompt from "../prompts/system/plan-mode-compa
 };
 import type { AgentSession, AgentSessionEvent } from "../session/agent-session";
 import { HistoryStorage } from "../session/history-storage";
+import type { CustomMessage } from "../session/messages";
 import type { SessionContext, SessionManager } from "../session/session-manager";
 import { getRecentSessions } from "../session/session-manager";
 import { formatDuration } from "../slash-commands/helpers/format";
@@ -2593,6 +2594,10 @@ export class InteractiveMode implements InteractiveModeContext {
 			return;
 		}
 		this.#selectorController.showSessionObserver(this.#observerRegistry);
+	}
+
+	recordIrcMessage(message: CustomMessage): void {
+		this.#observerRegistry.recordIrcMessage(message);
 	}
 
 	resetObserverRegistry(): void {

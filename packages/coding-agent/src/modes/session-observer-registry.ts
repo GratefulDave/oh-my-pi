@@ -1,4 +1,6 @@
+import type { TextContent } from "@oh-my-pi/pi-ai";
 import { ASYNC_JOB_OBSERVER_CHANNEL, type AsyncJobObserverPayload } from "../async";
+import type { CustomMessage } from "../session/messages";
 import type {
 	AgentProgress,
 	AgentRunArtifactRef,
@@ -41,6 +43,15 @@ export interface ObserverRow {
 	status: "running" | "queued" | "completed" | "failed" | "cancelled";
 	message: string;
 	session: ObservableSession;
+}
+
+export interface IrcConversationRow {
+	id: string;
+	from: string;
+	to: string;
+	body: string;
+	kind: "message" | "reply";
+	timestamp: number;
 }
 
 const STATUS_MAP: Record<string, ObservableSession["status"]> = {
@@ -129,8 +140,73 @@ function deriveObserverRow(session: ObservableSession): ObserverRow {
 	return { id: session.id, agent, task, status, message, session };
 }
 
+const MAX_IRC_CONVERSATION_ROWS = 100;
+
+function textFromContent(content: CustomMessage["content"]): string {
+	if (typeof content === "string") return content;
+	return content
+		.filter((block): block is TextContent => block.type === "text")
+		.map(block => block.text)
+		.join("\n");
+}
+
+function stringField(value: unknown): string | undefined {
+	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function normalizeIrcMessage(message: CustomMessage): IrcConversationRow | undefined {
+	if (
+		message.customType !== "irc:incoming" &&
+		message.customType !== "irc:autoreply" &&
+		message.customType !== "irc:relay" &&
+		message.customType !== "irc_message"
+	) {
+		return undefined;
+	}
+
+	const details = message.details as Record<string, unknown> | undefined;
+	const content = textFromContent(message.content).trim();
+	const timestamp = message.timestamp;
+	let from: string | undefined;
+	let to: string | undefined;
+	let body: string | undefined;
+	let kind: IrcConversationRow["kind"] = "message";
+
+	if (message.customType === "irc:incoming") {
+		from = stringField(details?.from);
+		to = "you";
+		body = stringField(details?.message) ?? content;
+	} else if (message.customType === "irc:autoreply") {
+		from = "you";
+		to = stringField(details?.to);
+		body = stringField(details?.reply) ?? content;
+		kind = "reply";
+	} else if (message.customType === "irc:relay") {
+		from = stringField(details?.from);
+		to = stringField(details?.to);
+		body = stringField(details?.body) ?? content;
+		kind = details?.kind === "reply" ? "reply" : "message";
+	} else {
+		from = stringField(details?.from);
+		to = stringField(details?.to);
+		body = content;
+	}
+
+	if (!from || !to) return undefined;
+	return {
+		id: `${message.customType}:${from}:${to}:${timestamp}:${body}`,
+		from,
+		to,
+		body,
+		kind,
+		timestamp,
+	};
+}
+
 export class SessionObserverRegistry {
 	#sessions = new Map<string, ObservableSession>();
+	#ircConversations: IrcConversationRow[] = [];
+	#ircConversationIds = new Set<string>();
 	#listeners = new Set<() => void>();
 	#eventBusUnsubscribers: Array<() => void> = [];
 	#autoOpenFired = false;
@@ -174,6 +250,22 @@ export class SessionObserverRegistry {
 		const active = sessions.filter(s => s.status === "active").sort((a, b) => b.lastUpdate - a.lastUpdate);
 		const inactive = sessions.filter(s => s.status !== "active").sort((a, b) => b.lastUpdate - a.lastUpdate);
 		return [...active, ...inactive].map(s => deriveObserverRow(s));
+	}
+
+	getIrcConversationRows(): IrcConversationRow[] {
+		return [...this.#ircConversations].sort((a, b) => a.timestamp - b.timestamp);
+	}
+
+	recordIrcMessage(message: CustomMessage): void {
+		const row = normalizeIrcMessage(message);
+		if (!row || this.#ircConversationIds.has(row.id)) return;
+		this.#ircConversations.push(row);
+		this.#ircConversationIds.add(row.id);
+		while (this.#ircConversations.length > MAX_IRC_CONVERSATION_ROWS) {
+			const removed = this.#ircConversations.shift();
+			if (removed) this.#ircConversationIds.delete(removed.id);
+		}
+		this.#notifyListeners();
 	}
 
 	getActiveSubagentCount(): number {
@@ -242,6 +334,8 @@ export class SessionObserverRegistry {
 	/** Clear all tracked sessions (e.g. on session switch). Keeps EventBus subscriptions and listeners. */
 	resetSessions(): void {
 		this.#sessions.clear();
+		this.#ircConversations = [];
+		this.#ircConversationIds.clear();
 		this.#notifyListeners();
 	}
 
