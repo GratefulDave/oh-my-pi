@@ -362,6 +362,8 @@ export interface BuildSystemPromptOptions {
 	secretsEnabled?: boolean;
 	/** Pre-loaded workspace tree (skips discovery if provided). May be a Promise to allow early kick-off. */
 	workspaceTree?: WorkspaceTree | Promise<WorkspaceTree>;
+	/** Whether the local memory://root summary is active. */
+	memoryRootEnabled?: boolean;
 }
 
 /** Result of building provider-facing system prompt messages. */
@@ -394,6 +396,7 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		eagerTasks = false,
 		secretsEnabled = false,
 		workspaceTree: providedWorkspaceTree,
+		memoryRootEnabled = false,
 	} = options;
 	const resolvedCwd = cwd ?? getProjectDir();
 
@@ -572,6 +575,7 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		eagerTasks,
 		secretsEnabled,
 		hasObsidian: hasObsidian(),
+		hasMemoryRoot: memoryRootEnabled,
 	};
 	const rendered = prompt.render(resolvedCustomPrompt ? customSystemPromptTemplate : systemPromptTemplate, data);
 	const systemPrompt = [rendered];

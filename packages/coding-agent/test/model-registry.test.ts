@@ -394,6 +394,59 @@ describe("ModelRegistry", () => {
 			expect(resolved?.provider).toBe("demo");
 			expect(resolved?.id).toBe("anthropic/claude-sonnet-4.5");
 		});
+
+		test("collapses leading-bracket proxy model ids into the upstream canonical id", () => {
+			writeRawModelsJson({
+				kiro: providerConfig("https://kiro.example.com/v1", [
+					{ id: "[Kiro] claude-opus-4-7" },
+					{ id: "[Kiro] claude-sonnet-4-5" },
+				]),
+			});
+			const registry = new ModelRegistry(authStorage, modelsJsonPath);
+			const opusVariants = registry.getCanonicalVariants("claude-opus-4-7");
+			const sonnetVariants = registry.getCanonicalVariants("claude-sonnet-4-5");
+			expect(opusVariants.some(variant => variant.selector === "kiro/[Kiro] claude-opus-4-7")).toBe(true);
+			expect(sonnetVariants.some(variant => variant.selector === "kiro/[Kiro] claude-sonnet-4-5")).toBe(true);
+		});
+		test("proxy model with bracket-prefixed id inherits bundled metadata while preserving custom transport", () => {
+			// Raw config: omit cost, contextWindow, maxTokens, and reasoning so the
+			// bundled reference (looked up via bracket-strip) fills them in.
+			writeRawModelsJson({
+				kiro: {
+					baseUrl: "https://kiro.example.com/v1",
+					apiKey: "TEST_KEY",
+					api: "anthropic-messages",
+					models: [
+						{
+							id: "[Kiro] claude-opus-4-7",
+							name: "Claude Opus 4.7 (Kiro)",
+							input: ["text"],
+						},
+					],
+				},
+			});
+
+			const registry = new ModelRegistry(authStorage, modelsJsonPath);
+			const model = registry.find("kiro", "[Kiro] claude-opus-4-7");
+			const variants = registry.getCanonicalVariants("claude-opus-4-7");
+
+			// Transport preserved: custom provider, original bracket id, custom base URL.
+			expect(model?.provider).toBe("kiro");
+			expect(model?.id).toBe("[Kiro] claude-opus-4-7");
+			expect(model?.baseUrl).toBe("https://kiro.example.com/v1");
+
+			// Bundled metadata inherited via resolveCustomModelReference bracket-strip path.
+			expect(model?.contextWindow).toBe(1_000_000);
+			expect(model?.maxTokens).toBe(128_000);
+			// cost from bundled reference (no cost in custom config).
+			expect(model?.cost.cacheRead).toBeGreaterThan(0);
+			// reasoning + thinking from bundled reference.
+			expect(model?.reasoning).toBe(true);
+			expect(model?.thinking?.maxLevel).toBe(Effort.XHigh);
+
+			// Canonical grouping: variant appears under the stripped canonical id.
+			expect(variants.some(variant => variant.selector === "kiro/[Kiro] claude-opus-4-7")).toBe(true);
+		});
 	});
 
 	describe("OpenRouter routed suffix fallback", () => {
@@ -2282,7 +2335,10 @@ describe("ModelRegistry", () => {
 	});
 
 	describe("proxy discovery (discovery.type: proxy)", () => {
-		function mockProxyModels(url: string, models: Array<{ id: string; supported_endpoint_types?: string[] }>) {
+		function mockProxyModels(
+			url: string,
+			models: Array<{ id: string; name?: string; supported_endpoint_types?: string[] }>,
+		) {
 			return hookFetch(input => {
 				const requestUrl = String(input);
 				if (requestUrl === url) {
@@ -2385,6 +2441,43 @@ describe("ModelRegistry", () => {
 			expect(compat?.supportsStore).toBe(false);
 			expect(compat?.supportsDeveloperRole).toBe(false);
 			expect(compat?.supportsReasoningEffort).toBe(false);
+		});
+
+		test("bracket-prefixed proxy discovery inherits bundled metadata while preserving proxy pricing", async () => {
+			writeRawModelsJson({
+				"mixed-proxy": {
+					baseUrl: "https://proxy.example.com/v1",
+					apiKey: "TEST_KEY",
+					discovery: { type: "proxy" },
+				},
+			});
+
+			using _hook = mockProxyModels("https://proxy.example.com/v1/models", [
+				{
+					id: "[Kiro] claude-opus-4-7",
+					name: "Proxy Opus",
+					supported_endpoint_types: ["anthropic"],
+				},
+			]);
+
+			const registry = new ModelRegistry(authStorage, modelsJsonPath);
+			await registry.refreshProvider("mixed-proxy", "online");
+
+			const model = registry.find("mixed-proxy", "[Kiro] claude-opus-4-7");
+			const variants = registry.getCanonicalVariants("claude-opus-4-7");
+
+			expect(model?.provider).toBe("mixed-proxy");
+			expect(model?.id).toBe("[Kiro] claude-opus-4-7");
+			expect(model?.name).toBe("Claude Opus 4.7");
+			expect(model?.baseUrl).toBe("https://proxy.example.com/v1");
+			expect(model?.api).toBe("anthropic-messages");
+			expect(model?.contextWindow).toBe(1_000_000);
+			expect(model?.maxTokens).toBe(128_000);
+			expect(model?.reasoning).toBe(true);
+			expect(model?.thinking?.maxLevel).toBe(Effort.XHigh);
+			expect(model?.input).toContain("image");
+			expect(model?.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+			expect(variants.some(variant => variant.selector === "mixed-proxy/[Kiro] claude-opus-4-7")).toBe(true);
 		});
 	});
 });

@@ -40,4 +40,19 @@ describe("text utils", () => {
 		expect(result.after.startsWith("\x1b[31m")).toBe(true);
 		expect(result.afterWidth).toBeGreaterThan(0);
 	});
+
+	it("counts ANSI-styled ZWJ emoji sequences as 2 columns (regression #369)", () => {
+		// Family ZWJ sequence: 👨‍👩‍👧‍👦 (U+1F468 ZWJ U+1F469 ZWJ U+1F467 ZWJ U+1F466)
+		const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}";
+		// Skin-tone + ZWJ sequence: 👨🏻‍💻 (U+1F468 U+1F3FB ZWJ U+1F4BB)
+		const devLight = "\u{1F468}\u{1F3FB}\u200D\u{1F4BB}";
+		// Rainbow flag: 🏳️‍🌈
+		const rainbow = "\u{1F3F3}\uFE0F\u200D\u{1F308}";
+		// Bare ZWJ sequences must be 2 columns, not 4+ (pre-#369 bug split them)
+		expect(visibleWidth(family)).toBe(2);
+		expect(visibleWidth(devLight)).toBe(2);
+		expect(visibleWidth(rainbow)).toBe(2);
+		// ANSI-wrapped ZWJ must not inflate the width
+		expect(visibleWidth(`\x1b[32m${family}\x1b[0m`)).toBe(2);
+	});
 });

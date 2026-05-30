@@ -11,6 +11,7 @@ import type { GoalModeState, GoalRuntime } from "../goals";
 import { GoalTool } from "../goals/tools/goal-tool";
 import type { HindsightSessionState } from "../hindsight/state";
 import { LspTool } from "../lsp";
+import type { MnemosyneSessionState } from "../mnemosyne/state";
 import type { PlanModeState } from "../plan-mode/state";
 import { type AgentRegistry, MAIN_AGENT_ID } from "../registry/agent-registry";
 import type { ArtifactManager } from "../session/artifacts";
@@ -34,12 +35,13 @@ import { DebugTool } from "./debug";
 import { EvalTool } from "./eval";
 import { FindTool } from "./find";
 import { GithubTool } from "./gh";
-import { HindsightRecallTool } from "./hindsight-recall";
-import { HindsightReflectTool } from "./hindsight-reflect";
-import { HindsightRetainTool } from "./hindsight-retain";
 import { InspectImageTool } from "./inspect-image";
 import { IrcTool } from "./irc";
 import { JobTool } from "./job";
+import { MemoryEditTool } from "./memory-edit";
+import { MemoryRecallTool } from "./memory-recall";
+import { MemoryReflectTool } from "./memory-reflect";
+import { MemoryRetainTool } from "./memory-retain";
 import { wrapToolWithMetaNotice } from "./output-meta";
 import { ReadTool } from "./read";
 import { RecipeTool } from "./recipe";
@@ -75,13 +77,14 @@ export * from "./debug";
 export * from "./eval";
 export * from "./find";
 export * from "./gh";
-export * from "./hindsight-recall";
-export * from "./hindsight-reflect";
-export * from "./hindsight-retain";
 export * from "./image-gen";
 export * from "./inspect-image";
 export * from "./irc";
 export * from "./job";
+export * from "./memory-edit";
+export * from "./memory-recall";
+export * from "./memory-reflect";
+export * from "./memory-retain";
 export * from "./read";
 export * from "./recipe";
 export * from "./render-mermaid";
@@ -153,6 +156,8 @@ export interface ToolSession {
 	getSessionId?: () => string | null;
 	/** Get Hindsight runtime state for this agent session. */
 	getHindsightSessionState?: () => HindsightSessionState | undefined;
+	/** Get Mnemosyne runtime state for this agent session. */
+	getMnemosyneSessionState?: () => MnemosyneSessionState | undefined;
 	/** Agent identity used for IRC routing. Returns the registry id (e.g. "0-Main", "0-AuthLoader"). */
 	getAgentId?: () => string | null;
 	/** Look up a registered tool by name (used by the eval js backend's tool bridge). */
@@ -303,9 +308,10 @@ export const BUILTIN_TOOLS: Record<string, ToolFactory> = {
 	web_search: s => new WebSearchTool(s),
 	search_tool_bm25: SearchToolBm25Tool.createIf,
 	write: s => new WriteTool(s),
-	retain: HindsightRetainTool.createIf,
-	recall: HindsightRecallTool.createIf,
-	reflect: HindsightReflectTool.createIf,
+	retain: MemoryRetainTool.createIf,
+	recall: MemoryRecallTool.createIf,
+	reflect: MemoryReflectTool.createIf,
+	memory_edit: MemoryEditTool.createIf,
 };
 
 export const HIDDEN_TOOLS: Record<string, ToolFactory> = {
@@ -419,9 +425,13 @@ export async function createTools(session: ToolSession, toolNames?: string[]): P
 		) {
 			requestedTools.push("recipe");
 		}
-		if (session.settings.get("memory.backend") === "hindsight") {
+		const memBackend = session.settings.get("memory.backend") as string;
+		if (memBackend === "hindsight" || memBackend === "mnemosyne") {
 			for (const name of ["recall", "retain", "reflect"]) {
 				if (!requestedTools.includes(name)) requestedTools.push(name);
+			}
+			if (memBackend === "mnemosyne" && !requestedTools.includes("memory_edit")) {
+				requestedTools.push("memory_edit");
 			}
 		}
 	}
@@ -466,7 +476,11 @@ export async function createTools(session: ToolSession, toolNames?: string[]): P
 		}
 		if (name === "recipe") return session.settings.get("recipe.enabled");
 		if (name === "retain" || name === "recall" || name === "reflect") {
-			return session.settings.get("memory.backend") === "hindsight";
+			const backend = session.settings.get("memory.backend") as string;
+			return backend === "hindsight" || backend === "mnemosyne";
+		}
+		if (name === "memory_edit") {
+			return (session.settings.get("memory.backend") as string) === "mnemosyne";
 		}
 		if (name === "task") {
 			const maxDepth = session.settings.get("task.maxRecursionDepth") ?? 2;
