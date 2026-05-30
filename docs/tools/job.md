@@ -50,7 +50,7 @@ Observer interaction:
 
 ## Flow
 1. `JobTool.createIf(...)` in `packages/coding-agent/src/tools/job.ts` only exposes the tool when `isBackgroundJobSupportEnabled(...)` returns true for either `async.enabled` or `bash.autoBackground.enabled`.
-2. `execute(...)` fetches `session.asyncJobManager`. If absent, it returns `Async execution is disabled; no background jobs are available.`
+2. `execute(...)` fetches `AsyncJobManager.instance()`. If absent, it returns `Async execution is disabled; no background jobs are available.`
 3. `cancel` ids are processed first:
    - `manager.getJob(id)` missing → `not_found`.
    - existing job with `status !== "running"` → `already_completed`.
@@ -84,7 +84,7 @@ Observer interaction:
 
 Spawn paths that produce jobs:
 - `packages/coding-agent/src/tools/bash.ts`
-  - `async: true` always registers a `type: "bash"` job with `AsyncJobManager.register(...)` and returns a start message.
+  - `async: true` always registers a `type: "bash"` job with `AsyncJobManager.instance().register(...)` and returns a start message.
   - auto-background mode (`bash.autoBackground.enabled`) starts the same managed job path for non-PTY commands, waits up to `min(bash.autoBackground.thresholdMs, timeoutMs - 1000)`, and if the command is still running returns a background-job start result instead of inline command output.
 - `packages/coding-agent/src/task/index.ts`
   - when `async.enabled` is on, the chosen agent is not blocking, and `tasks.length > 0`, each task item is registered as a `type: "task"` job.
@@ -99,7 +99,7 @@ Lifecycle and exact state names:
   - None in `job.ts` itself.
   - Jobs being observed may already have written artifacts/results through their own tool runtimes.
 - Session state (transcript, memory, jobs, checkpoints, registries)
-  - Reads and mutates `session.asyncJobManager` state.
+  - Reads and mutates `AsyncJobManager.instance()` state.
   - `watchJobs(...)` / `unwatchJobs(...)` toggle delivery suppression for the watched ids.
   - `acknowledgeDeliveries(...)` marks completed ids as suppressed and removes queued deliveries for them.
   - `cancel(...)` aborts running jobs through each job's `AbortController`.

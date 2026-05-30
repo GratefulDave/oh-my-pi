@@ -12,13 +12,13 @@ This is an in-file leaf move, not a new session export.
 - Rebuilds visible chat from the new leaf path
 - Optionally prefills editor text when selecting a user/custom message
 
-Primary implementation:
+Primary implementation lives under `packages/coding-agent/src/`:
 
-- `src/modes/controllers/input-controller.ts` (`/tree`, keybinding wiring, double-escape behavior)
-- `src/modes/controllers/selector-controller.ts` (tree UI launch + summary prompt flow)
-- `src/modes/components/tree-selector.ts` (navigation, filters, search, labels, rendering)
-- `src/session/agent-session.ts` (`navigateTree` leaf switching + optional summary)
-- `src/session/session-manager.ts` (`getTree`, `branch`, `branchWithSummary`, `resetLeaf`, label persistence)
+- `modes/controllers/input-controller.ts` (`/tree`, keybinding wiring, double-escape behavior)
+- `modes/controllers/selector-controller.ts` (tree UI launch + summary prompt flow)
+- `modes/components/tree-selector.ts` (navigation, filters, search, labels, rendering)
+- `session/agent-session.ts` (`navigateTree` leaf switching + optional summary)
+- `session/session-manager.ts` (`getTree`, `branch`, `branchWithSummary`, `resetLeaf`, label persistence)
 
 ## How to open it
 

@@ -13,9 +13,12 @@ Example hooks for intercepting tool calls, adding safety gates, and integrating 
 ### [custom-tools/](custom-tools/)
 Example custom tools that extend the agent's capabilities.
 
+### [extensions/](extensions/)
+Example extensions demonstrating API hooks, reload/runtime behavior, plan mode, tools, and dependency-backed extensions.
+
 ## Documentation
 
 - [SDK Reference](sdk/README.md)
-- [Hooks Documentation](../docs/hooks.md)
-- [Custom Tools Documentation](../docs/custom-tools.md)
-- [Skills Documentation](../docs/skills.md)
+- [Hooks Documentation](../../../docs/hooks.md)
+- [Custom Tools Documentation](../../../docs/custom-tools.md)
+- [Skills Documentation](../../../docs/skills.md)

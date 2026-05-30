@@ -136,7 +136,7 @@ Current template can:
 - require confirmation for secret files and manifest/lockfile changes
 - warn on risky operations
 
-It cannot guarantee safety against all indirect or encoded paths. For stronger isolation, use task/worktree isolation or future sandbox backends.
+It cannot guarantee safety against all indirect or encoded paths. For stronger isolation, use task PAL isolation or future sandbox backends.
 
 ## Verifier model
 

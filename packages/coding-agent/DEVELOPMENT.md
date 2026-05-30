@@ -16,10 +16,10 @@ src/
 ├── extensibility/       # extensions, hooks, custom tools/commands, plugins, skills
 ├── mcp/                 # MCP transport/manager/loader/tool bridge
 ├── lsp/                 # language server client/runtime integration
-├── internal-urls/       # protocol router + handlers (agent://, docs://, rule://, ...)
+├── internal-urls/       # protocol router + handlers (agent://, artifact://, memory://, omp://, rule://, skill://, local://, issue://, pr://, ...)
 ├── exec/ eval/ ssh/     # execution backends (shell, eval runtimes, ssh)
 ├── web/                 # search providers + domain scrapers
-├── patch/               # edit/patch parser + applicator + diff utilities
+├── edit/                # edit pipeline, patch mode, apply-patch parser/applicator, diff utilities
 └── config/ utils/ tui/  # settings, helpers, low-level TUI primitives
 ```
 
@@ -643,7 +643,7 @@ MCP configs ──► MCPManager ──► connect/list tools ──► bridged 
 
 LSP feature calls ──► lsp/client.ts ──► JSON-RPC transport ──► language server process
 
-internal URL input (rule://, docs://, ...)
+internal URL input (rule://, skill://, artifact://, agent://, ...)
                   │
                   ▼
           InternalUrlRouter
@@ -903,10 +903,10 @@ Despite the name `runSubprocess`, `packages/coding-agent/src/task/executor.ts` c
 
 What _is_ isolated is execution context and artifacts, not process memory:
 
-- Optional filesystem isolation is controlled by the `task.isolation.mode` setting (`"none"`, `"worktree"`, `"fuse-overlay"`, or `"fuse-projfs"`).
-  - **worktree**: `ensureWorktree(...)`, `applyBaseline(...)`, `captureDeltaPatch(...)`, `cleanupWorktree(...)`. Nested non-submodule git repos are discovered and handled independently.
-  - **fuse-overlay**: `ensureFuseOverlay(...)`, `captureDeltaPatch(...)`, `cleanupFuseOverlay(...)` using `fuse-overlayfs` on Unix hosts. On Windows, this mode falls back to `worktree` with a system notification.
-  - **fuse-projfs**: `ensureProjfsOverlay(...)`, `captureDeltaPatch(...)`, `cleanupProjfsOverlay(...)` using ProjFS on Windows. Missing ProjFS prerequisites fall back to `worktree` with a system notification; non-prerequisite startup errors still fail the task.
+- Optional filesystem isolation is controlled by the `task.isolation.mode` setting (`"none"`, `"auto"`, or an explicit PAL backend such as `"apfs"`, `"btrfs"`, `"zfs"`, `"reflink"`, `"overlayfs"`, `"projfs"`, `"block-clone"`, or `"rcopy"`).
+  - `parseIsolationMode(...)` accepts legacy aliases (`"worktree"`, `"fuse-overlay"`, `"fuse-projfs"`) and maps them to current PAL backends.
+  - `ensureIsolation(...)` materialises the selected backend and falls back only according to PAL/backend rules.
+  - Nested non-submodule git repos are discovered and handled independently during patch capture/apply.
 - The `task.isolation.merge` setting controls how isolated changes are integrated back:
   - **patch** (default): captures a diff via `captureDeltaPatch(...)`, combines patches, and applies with `git apply`.
   - **branch**: each task commits to a temp branch (`omp/task/<id>`) via `commitToBranch(...)`, then `mergeTaskBranches(...)` cherry-picks them sequentially onto HEAD. If `git apply` fails inside `commitToBranch`, the error is non-fatal — the agent result is preserved with a `merge failed` status.
@@ -1102,8 +1102,10 @@ This section covers the day-to-day commands and three common extension paths in 
 
 Use only script names that exist in `packages/coding-agent/package.json`:
 
-- Typecheck package:
+- Run package check (Biome + typecheck):
   - `bun --cwd=packages/coding-agent run check`
+- Typecheck package only:
+  - `bun --cwd=packages/coding-agent run check:types`
 - Run package tests:
   - `bun --cwd=packages/coding-agent run test`
 - Reformat prompt assets used by this package:

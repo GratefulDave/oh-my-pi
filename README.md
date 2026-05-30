@@ -460,16 +460,21 @@ For architecture and contribution guidelines, see [packages/coding-agent/DEVELOP
 
 ## Monorepo Packages
 
-| Package                                                   | Description                                                                |
-| --------------------------------------------------------- | -------------------------------------------------------------------------- |
-| **[@oh-my-pi/pi-ai](packages/ai)**                        | Multi-provider LLM client with streaming and model/provider integration    |
-| **[@oh-my-pi/pi-agent-core](packages/agent)**             | Agent runtime with tool calling and state management                       |
-| **[@oh-my-pi/pi-coding-agent](packages/coding-agent)**    | Interactive coding agent CLI and SDK                                       |
-| **[@oh-my-pi/pi-tui](packages/tui)**                      | Terminal UI library with differential rendering                            |
-| **[@oh-my-pi/pi-natives](packages/natives)**              | N-API bindings for grep, shell, image, text, syntax highlighting, and more |
-| **[@oh-my-pi/omp-stats](packages/stats)**                 | Local observability dashboard for AI usage statistics                      |
-| **[@oh-my-pi/pi-utils](packages/utils)**                  | Shared utilities (logging, streams, dirs/env/process helpers)              |
-| **[@oh-my-pi/swarm-extension](packages/swarm-extension)** | Swarm orchestration extension package                                      |
+| Package                                                             | Description                                                                |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| **[@oh-my-pi/pi-ai](packages/ai)**                                  | Multi-provider LLM client with streaming and model/provider integration    |
+| **[@oh-my-pi/pi-agent-core](packages/agent)**                       | Agent runtime with tool calling and state management                       |
+| **[@oh-my-pi/pi-coding-agent](packages/coding-agent)**              | Interactive coding agent CLI and SDK                                       |
+| **[@oh-my-pi/pi-tui](packages/tui)**                                | Terminal UI library with differential rendering                            |
+| **[@oh-my-pi/pi-natives](packages/natives)**                        | N-API bindings for grep, shell, image, syntax highlighting, PTY, and more  |
+| **[@oh-my-pi/omp-stats](packages/stats)**                           | Local observability dashboard for AI usage statistics                      |
+| **[@oh-my-pi/pi-utils](packages/utils)**                            | Shared utilities (logging, streams, dirs/env/process helpers)              |
+| **[@oh-my-pi/pi-mnemosyne](packages/mnemosyne)**                    | Local SQLite memory engine for agents                                      |
+| **[@oh-my-pi/hashline](packages/hashline)**                         | Line-anchored patch language and applier                                   |
+| **[@oh-my-pi/antigravity-adapter](packages/antigravity-adapter)**   | OpenCode Antigravity provider adapter                                      |
+| **[@oh-my-pi/swarm-extension](packages/swarm-extension)**           | Swarm orchestration extension package                                      |
+| **[@oh-my-pi/typescript-edit-benchmark](packages/typescript-edit-benchmark)** | TypeScript edit benchmark suite                                  |
+| **[robomp web](python/robomp/web)**                                 | Workspace package for the robomp web UI                                    |
 
 ### Rust Crates
 

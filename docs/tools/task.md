@@ -11,8 +11,7 @@
   - `packages/coding-agent/src/task/agents.ts` — bundled agent definitions and frontmatter parsing.
   - `packages/coding-agent/src/task/executor.ts` — create child sessions, run subagents, collect output.
   - `packages/coding-agent/src/task/parallel.ts` — concurrency-limited scheduling and async semaphore.
-  - `packages/coding-agent/src/task/isolation-backend.ts` — isolation backend resolution and platform fallback.
-  - `packages/coding-agent/src/task/worktree.ts` — worktree / FUSE / ProjFS setup, patch capture, branch merge.
+  - `packages/coding-agent/src/task/worktree.ts` — isolation mode parsing/PAL backend materialisation, patch capture, branch merge.
   - `packages/coding-agent/src/task/output-manager.ts` — session-scoped `agent://` id allocation.
   - `packages/coding-agent/src/task/simple-mode.ts` — `default` / `schema-free` / `independent` field gating.
   - `packages/coding-agent/src/internal-urls/agent-protocol.ts` — resolve `agent://<id>` to saved subagent output.
@@ -27,8 +26,8 @@
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `agent` | `string` | Yes | Exact agent name for every task item. Resolved at execution time through `discoverAgents(...)`. |
-| `tasks` | `Array<{ id: string; description: string; assignment: string }>` | Yes | Batch of small, self-contained task items. `id` max length 48 in schema; duplicate ids are rejected case-insensitively at runtime. |
+| `agent` | `string` | Yes | Default agent name, or `auto` for deterministic content-based routing. Each task may override with optional `tasks[].agent`. |
+| `tasks` | `Array<{ id: string; description: string; assignment: string; agent?: string }>` | Yes | Batch of small, self-contained task items. `id` max length 48 in schema; duplicate ids are rejected case-insensitively at runtime. |
 | `context` | `string` | No | Shared background prepended to every subagent system prompt. Trimmed before use. |
 | `schema` | `string` | No | JSON-encoded JTD schema. Overrides agent/session output schema when this mode allows task-level schemas. |
 | `isolated` | `boolean` | No | Only present when the tool is created with isolation enabled. Requests isolated execution for the whole batch. |
@@ -43,8 +42,8 @@ Same as default, except `schema` is rejected by `validateTaskModeParams(...)` in
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `agent` | `string` | Yes | Exact agent name. |
-| `tasks` | `Array<{ id: string; description: string; assignment: string }>` | Yes | Same item shape, but each `assignment` must carry all required background because shared `context` is disabled. |
+| `agent` | `string` | Yes | Default agent name, or `auto` for deterministic content-based routing. Each task may override with optional `tasks[].agent`. |
+| `tasks` | `Array<{ id: string; description: string; assignment: string; agent?: string }>` | Yes | Same item shape, but each `assignment` must carry all required background because shared `context` is disabled. |
 | `isolated` | `boolean` | No | Same conditional field as above. |
 
 In this mode both `context` and `schema` are rejected.
@@ -85,7 +84,7 @@ Artifacts and side channels:
    - otherwise async job scheduling
 4. Async path:
    - allocate unique output ids with `AgentOutputManager.allocateBatch(...)`
-   - create one async job per task through `session.asyncJobManager.register(...)`
+   - create one async job per task through `AsyncJobManager.instance().register(...)`
    - limit concurrent job bodies with `Semaphore(task.maxConcurrency)` from `packages/coding-agent/src/task/parallel.ts`
    - each job body calls `#executeSync(...)` with a one-task batch and the preallocated id
    - `onUpdate(...)` emits aggregate `progress` snapshots and `details.async`
@@ -93,14 +92,14 @@ Artifacts and side channels:
 6. It resolves the requested agent with `getAgent(...)`, rejects unknown or disabled agents, and enforces parent spawn policy plus `PI_BLOCKED_AGENT` self-recursion prevention.
 7. It derives the effective output schema in priority order: task call `schema` (if allowed) → agent frontmatter `output` → inherited parent session schema.
 8. It validates task ids: missing ids and case-insensitive duplicates are immediate errors.
-9. If `isolated` was requested, it requires a git repo (`getRepoRoot(...)` / `captureBaseline(...)`) and resolves the actual backend through `resolveIsolationBackendForTaskExecution(...)`.
-10. It chooses an artifacts dir from the parent session when available, otherwise a temp dir, and writes `context.md` there when `session.getCompactContext?.()` returns content.
+9. If `isolated` was requested, it requires a git repo (`getRepoRoot(...)` / `captureBaseline(...)`), maps `task.isolation.mode` through `parseIsolationMode(...)`, and materialises the actual backend through `ensureIsolation(...)`.
+10. It chooses an artifacts dir from the parent session when available, otherwise a temp dir, and writes `context.md` there when IRC is disabled and `session.getCompactContext?.()` returns content.
 11. It allocates unique ids again if the caller did not preallocate them, then builds `tasksWithUniqueIds`.
 12. For each task, it seeds an `AgentProgress` entry and runs `runTask(...)` through `mapWithConcurrencyLimit(...)` using `task.maxConcurrency`.
 13. Non-isolated `runTask(...)` calls `runSubprocess(...)` directly with parent cwd.
 14. Isolated `runTask(...)`:
-   - creates an isolation workspace (`ensureWorktree(...)`, `ensureFuseOverlay(...)`, or `ensureProjfsOverlay(...)`)
-   - applies the captured baseline for worktrees
+   - creates an isolation workspace through `ensureIsolation(...)` using the PAL backend selected by `task.isolation.mode`
+   - applies the captured baseline when required by the backend
    - runs `runSubprocess(...)` inside that workspace
    - on success, either commits to a per-task branch (`mergeMode === "branch"`) or captures a patch with `captureDeltaPatch(...)`
    - always cleans up the isolation workspace/backend
@@ -134,9 +133,9 @@ Artifacts and side channels:
   - `independent` — rejects `context` and `schema`; each assignment stands alone.
 - Isolation backend
   - `none` — no isolation.
-  - `worktree` — detached git worktree plus baseline replay.
-  - `fuse-overlay` — Unix FUSE overlay mount.
-  - `fuse-projfs` — Windows ProjFS overlay.
+  - `auto` — choose the best available PAL backend for the current platform/filesystem.
+  - `apfs`, `btrfs`, `zfs`, `reflink`, `overlayfs`, `projfs`, `block-clone`, `rcopy` — explicit PAL backend selection.
+  - Legacy aliases are still accepted: `worktree` maps to `rcopy`; `fuse-overlay` maps to `overlayfs`; `fuse-projfs` maps to `projfs`.
 - Isolation merge strategy
   - Patch mode — capture/apply root patches, keep patch artifacts when application fails.
   - Branch mode — commit each task onto `omp/task/<id>` branch, cherry-pick into parent, preserve failed branches for manual resolution.
@@ -152,23 +151,23 @@ Artifacts and side channels:
   - `task` — general-purpose worker with full capabilities.
   - `quick_task` — low-reasoning mechanical worker using the same task prompt body.
   - `librarian` — source-grounded external API/library researcher.
+  - `oracle` — senior-engineer consultation/delegation agent; may spawn `explore`.
 
 ## Side Effects
 - Filesystem
-  - Writes `context.md`, `<id>.jsonl`, and `<id>.md` under the session artifacts dir or a temp task dir.
+  - Writes `context.md` when IRC is disabled, plus `<id>.jsonl` and `<id>.md` under the session artifacts dir or a temp task dir.
   - In isolated patch mode writes `<id>.patch` artifacts.
-  - Creates/removes worktrees or overlay mount directories.
+  - Creates/removes PAL isolation workspace directories/backends.
   - In branch mode creates temporary worktrees and task branches.
 - Network
   - Child sessions may use whichever networked tools/models their active tool set permits.
   - MCP proxy tools can call existing parent MCP connections with a 60_000 ms timeout.
 - Subprocesses / native bindings
-  - `fuse-overlayfs` and `fusermount`/`fusermount3` for FUSE isolation.
-  - ProjFS native bindings via `@oh-my-pi/pi-natives` on Windows.
-  - Git operations for baseline capture, patch apply, worktrees, branches, stash, cherry-pick, commits.
+  - PAL/native isolation operations through `@oh-my-pi/pi-natives`.
+  - Git operations for baseline capture, patch apply, branches, cherry-pick, commits.
 - Session state (transcript, memory, jobs, checkpoints, registries)
   - Creates child `AgentSession` instances with isolated settings snapshots.
-  - Registers async jobs in `session.asyncJobManager` for background task mode.
+  - Registers async jobs in `AsyncJobManager.instance()` for background task mode.
   - Emits `task:subagent:event`, `task:subagent:progress`, and `task:subagent:lifecycle` on the parent event bus.
   - Allocates session-scoped output ids through `AgentOutputManager` so `agent://` remains unique across invocations and resumes.
   - Shares the parent `local://` root with subagents by passing `localProtocolOptions` through `createAgentSession(...)`.

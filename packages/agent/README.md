@@ -1,23 +1,23 @@
-# @oh-my-pi/pi-agent
+# @oh-my-pi/pi-agent-core
 
 Stateful agent with tool execution and event streaming. Built on `@oh-my-pi/pi-ai`.
 
 ## Installation
 
 ```bash
-npm install @oh-my-pi/pi-agent
+npm install @oh-my-pi/pi-agent-core
 ```
 
 ## Quick Start
 
 ```typescript
-import { Agent } from "@oh-my-pi/pi-agent";
-import { getModel } from "@oh-my-pi/pi-ai";
+import { Agent } from "@oh-my-pi/pi-agent-core";
+import { getBundledModel } from "@oh-my-pi/pi-ai";
 
 const agent = new Agent({
 	initialState: {
 		systemPrompt: ["You are a helpful assistant."],
-		model: getModel("anthropic", "claude-sonnet-4-20250514"),
+		model: getBundledModel("anthropic", "claude-sonnet-4-5"),
 	},
 });
 
@@ -199,7 +199,7 @@ await agent.continue();
 
 ```typescript
 agent.setSystemPrompt("New prompt");
-agent.setModel(getModel("openai", "gpt-4o"));
+agent.setModel(getBundledModel("openai", "gpt-4o"));
 agent.setThinkingLevel("medium");
 agent.setTools([myTool]);
 agent.replaceMessages(newMessages);
@@ -255,7 +255,7 @@ steering until the current turn completes.
 Extend `AgentMessage` via declaration merging:
 
 ```typescript
-declare module "@oh-my-pi/pi-agent" {
+declare module "@oh-my-pi/pi-agent-core" {
 	interface CustomAgentMessages {
 		notification: { role: "notification"; text: string; timestamp: number };
 	}
@@ -328,7 +328,7 @@ Thrown errors are caught by the agent and reported to the LLM as tool errors wit
 For browser apps that proxy through a backend:
 
 ```typescript
-import { Agent, streamProxy } from "@oh-my-pi/pi-agent";
+import { Agent, streamProxy } from "@oh-my-pi/pi-agent-core";
 
 const agent = new Agent({
 	streamFn: (model, context, options) =>
@@ -345,7 +345,8 @@ const agent = new Agent({
 For direct control without the Agent class:
 
 ```typescript
-import { agentLoop, agentLoopContinue } from "@oh-my-pi/pi-agent";
+import { agentLoop, agentLoopContinue } from "@oh-my-pi/pi-agent-core";
+import { getBundledModel } from "@oh-my-pi/pi-ai";
 
 const context: AgentContext = {
 	systemPrompt: ["You are helpful."],
@@ -354,7 +355,7 @@ const context: AgentContext = {
 };
 
 const config: AgentLoopConfig = {
-	model: getModel("openai", "gpt-4o"),
+	model: getBundledModel("openai", "gpt-4o"),
 	convertToLlm: (msgs) => msgs.filter((m) => ["user", "assistant", "toolResult"].includes(m.role)),
 };
 
@@ -445,7 +446,7 @@ fold N summaries with `aggregateAgentRunSummaries` / `aggregateAgentRunCoverage`
 import {
 	aggregateAgentRunSummaries,
 	aggregateAgentRunCoverage,
-} from "@oh-my-pi/pi-agent";
+} from "@oh-my-pi/pi-agent-core";
 
 const summaries: AgentRunSummary[] = [];
 const coverages: AgentRunCoverage[] = [];

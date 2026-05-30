@@ -5,7 +5,7 @@ Native Rust functionality via N-API.
 ## What's Inside
 
 - **Grep**: Regex-based search powered by ripgrep's engine with native file walking and matching
-- **Find**: Glob-based file/directory discovery with gitignore support (pure TypeScript via `globPaths`)
+- **Glob**: Native glob-based file/directory discovery with gitignore support
 - **SIXEL**: Terminal image encoding for SIXEL-capable terminals (decode, resize, encode in one pass)
 
 General-purpose image processing (decode/resize/encode for files and buffers)
@@ -16,7 +16,7 @@ that terminal protocol.
 ## Usage
 
 ```typescript
-import { grep, find, encodeSixel } from "@oh-my-pi/pi-natives";
+import { grep, glob, encodeSixel } from "@oh-my-pi/pi-natives";
 
 // Grep for a pattern
 const results = await grep({
@@ -26,8 +26,8 @@ const results = await grep({
 	context: 2,
 });
 
-// Find files
-const files = await find({
+// Glob files
+const files = await glob({
 	pattern: "*.rs",
 	path: "/path/to/project",
 	fileType: "file",
@@ -67,9 +67,7 @@ native/                  # Core loader files and local/CI native build outputs
 npm/<platform>-<arch>/   # Generated at publish time, not committed
   package.json           # @oh-my-pi/pi-natives-<platform>-<arch>
   *.node                 # Only that platform's addon binary or x64 ISA variants
-src/                     # TypeScript wrappers and generated declarations source
-  native.ts
-  index.ts
+native/index.d.ts        # Generated declarations for public native export surface
 ```
 
 The published core package contains only the JS loader, declarations, README,

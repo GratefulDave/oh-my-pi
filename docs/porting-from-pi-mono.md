@@ -197,7 +197,7 @@ If the diff shows the file was **reworked** (not just patched):
 
 Then you must **read the new implementation thoroughly** before porting. Blind merging of reworked code loses functionality because:
 
-Note: interactive mode was recently split into controllers/utils/types. When backporting related changes, port updates into the individual files we created and ensure `interactive-mode.ts` wiring stays in sync.
+Note: interactive mode was split into controllers/utils/types. When backporting related changes, port updates into the split files under `packages/coding-agent/src/modes/` and keep the wiring across controllers, utils, and types in sync.
 
 1. **Defaults change silently** - A new variable `defaultFoo = [a, b]` may replace an old `getAllFoo()` that returned `[a, b, c, d, e]`.
 

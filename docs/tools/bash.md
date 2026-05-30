@@ -77,9 +77,9 @@ Stdout and stderr are merged before the model sees them. Non-zero exit codes are
    - Supports interactive input; `Esc` kills the session from the overlay.
 3. Explicit background job
    - Requires `async: true` and `async.enabled`.
-   - Registers a job with `session.asyncJobManager` and returns `{ state: "running", jobId }` immediately.
+   - Registers a job with `AsyncJobManager.instance()` and returns `{ state: "running", jobId }` immediately.
 4. Auto-backgrounded non-PTY job
-   - Requires `bash.autoBackground.enabled`, no PTY, and an async job manager.
+   - Requires `bash.autoBackground.enabled`, no PTY, and background job support.
    - Starts like a foreground managed job, then backgrounds it when it outlives the wait window.
 5. Intercepted command
    - No subprocess created.
@@ -95,7 +95,7 @@ Stdout and stderr are merged before the model sees them. Non-zero exit codes are
   - PTY uses native `PtySession.start()`.
 - Session state
   - Reads session settings for async, auto-background, interceptor, tool availability, and shell configuration.
-  - Registers jobs with `session.asyncJobManager` for explicit/auto background runs.
+  - Registers jobs with `AsyncJobManager.instance()` for explicit/auto background runs.
   - Uses `session.getSessionId()` to isolate shell reuse and async session keys.
   - Uses `session.allocateOutputArtifact()` for spill files.
 - User-visible prompts / interactive UI

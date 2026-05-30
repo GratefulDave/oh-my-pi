@@ -21,7 +21,7 @@ When the main agent calls `task`, two paths exist:
 ### Sync path (default, or when `async.enabled` is false, or agent is `blocking`)
 
 1. `TaskTool.execute()` validates the agent exists, is not disabled, and recursion depth isn't exceeded.
-2. Optionally sets up **worktree isolation** (git worktree so subagent can commit/patch in isolation).
+2. Optionally sets up task isolation via the PAL backend selected by `task.isolation.mode` (for example APFS/Btrfs/ZFS/reflink/overlayfs/ProjFS/block-clone/rcopy, with legacy aliases accepted).
 3. Runs tasks in parallel via `mapWithConcurrencyLimit(tasks, maxConcurrency, runTask)` using a semaphore.
 4. Each `runTask` calls `runSubprocess()` in `executor.ts`:
    - Creates an `AgentSession` with a subagent-specific system prompt (includes context, output schema, IRC peer roster).
@@ -34,7 +34,7 @@ When the main agent calls `task`, two paths exist:
 ### Async path (when `async.enabled` is true and agent is non-blocking)
 
 1. Allocates output IDs via `AgentOutputManager.allocateBatch()`.
-2. For each task item, calls **`AsyncJobManager.register("task", label, runFn)`** — each job internally acquires a semaphore and runs the same `#executeSync()` logic.
+2. For each task item, calls **`AsyncJobManager.instance().register("task", label, runFn)`** — each job internally acquires a semaphore and runs the same `#executeSync()` logic.
 3. Returns immediately with job IDs and `async: { state: "running", jobId }`.
 4. The caller later calls `job.poll([id])` to wait for completion.
 
@@ -59,11 +59,14 @@ interface AsyncJob {
   id: string;
   type: "bash" | "task";
   status: "running" | "completed" | "failed" | "cancelled";
+  startTime: number;
+  label: string;
   abortController: AbortController;
   promise: Promise<void>;   // resolves when work is done
   resultText?: string;
   errorText?: string;
   ownerId?: string;         // agent registry id (e.g. "0-Main")
+  runMetadata?: AgentRunMetadata;
 }
 ```
 
@@ -81,11 +84,11 @@ Key behaviors:
 
 `packages/coding-agent/src/tools/irc.ts`, `packages/coding-agent/src/registry/agent-registry.ts`, `packages/coding-agent/src/registry/mailbox.ts`
 
-The IRC tool is layered over a thread-safe, process-global **Actor System** that decouples multi-agent communication into asynchronous, volatile mailboxes:
+The IRC tool uses process-global in-memory actor mailboxes:
 
-+- **Durable Actor Mailboxes (`mailbox.ts`):** Every agent (active or planned) is allocated an `ActorMailbox` owned by the process-wide `AgentRegistry`. Mailboxes hold FIFO unread queues of `ActorMessage` objects.
-+- **Offline Buffering:** If a target agent has not booted yet (meaning it is unregistered or currently spawning), the sender's message is safely enqueued and buffered offline inside the registry. The recipient receives it immediately upon registering during startup.
-+- **Autonomous Wake-up Loop:** `AgentSession` subscribes to registry `message_queued` events. When a message lands in its mailbox, if the agent is currently idle, it autonomously triggers an `agent.continue()` turn to wake up and process the coworkers' DMs! Mailbox DMs are cleanly flushed as `irc_message` history entries before the next model generation begins.
+- **Actor Mailboxes (`mailbox.ts`):** Active agents have an `ActorMailbox` owned by the process-wide `AgentRegistry`. Mailboxes hold FIFO unread queues of `ActorMessage` objects.
+- **Limited Offline Buffering:** Messages to previously registered-but-currently-offline IDs can be buffered. Unknown or merely planned IDs are reported as unavailable.
+- **Autonomous Wake-up Loop:** `AgentSession` subscribes to registry `message_queued` events. When a message lands in its mailbox, if the agent is currently idle, it autonomously triggers an `agent.continue()` turn to wake up and process the coworkers' DMs. Mailbox DMs are flushed as `irc_message` history entries before the next model generation begins.
 
 ### `irc.list`
 
@@ -93,13 +96,13 @@ Calls `registry.listVisibleTo(senderId)` → returns all active agents except th
 
 ### `irc.send(to, message, awaitReply?)`
 
-1. Resolves targets from the registry. `"all"` broadcasts a copy of the message into every coworker's mailbox.
-2. Calls `registry.routeMessage(senderId, targetId, message)` to place the message in the recipient's unread mailbox.
-3. If the recipient is active and `awaitReply: true` is requested, OMP falls back to the synchronous **ephemeral side-channel turn** for backward compatibility:
-   - Runs `respondAsBackground()` on the recipient's session.
+1. Resolves targets from the registry. `"all"` broadcasts a copy of the message to every visible coworker.
+2. For active targets with a requested reply, runs `respondAsBackground()` on the recipient's session before queueing the delivered message:
    - Builds incoming prompt: `"[IRC from 0-Main → you] Should I prefer JWT or session cookies?"`
    - Generates a reply asynchronously without blocking the recipient's main execution loop.
-   - The synchronous reply is enqueued back to the sender's mailbox.
+3. Enqueues the delivered message via `registry.routeMessage(senderId, targetId, message)`.
+4. If a reply is produced, enqueues it back to the sender's mailbox.
+5. For inactive previously registered IDs, routes directly to the offline mailbox.
 
 ---
 ## How They Fit Together
@@ -140,7 +143,7 @@ In the async case, jobs and IRC are doubly useful — the main agent can fire of
 
 | File | Role |
 |------|------|
-| `packages/coding-agent/src/task/index.ts` | `TaskTool` — spawns subagents, sync/async orchestration, worktree isolation, patch/branch merge |
+| `packages/coding-agent/src/task/index.ts` | `TaskTool` — spawns subagents, sync/async orchestration, PAL isolation, patch/branch merge |
 | `packages/coding-agent/src/task/executor.ts` | `runSubprocess()` — in-process subagent execution; creates AgentSession, tracks progress, finalizes output |
 | `packages/coding-agent/src/task/types.ts` | Shared types: `AgentDefinition`, `AgentProgress`, `AgentRunMetadata`, `SingleResult`, `TaskParams`, schemas |
 | `packages/coding-agent/src/task/discovery.ts` | `discoverAgents()` — loads agent definitions from bundled + user + project directories |

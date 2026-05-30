@@ -579,8 +579,8 @@ providers:
     api: anthropic-messages
     disableStrictTools: true
     models:
-      - id: claude-sonnet-4-20250514
-        name: Claude Sonnet 4 (Bedrock)
+      - id: claude-sonnet-4-5
+        name: Claude Sonnet 4.5 (Bedrock)
         input: [text, image]
         contextWindow: 200000
         maxTokens: 16384
@@ -626,8 +626,8 @@ providers:
     authHeader: true
     disableStrictTools: true  # if the proxy doesn't support strict tool schemas
     models:
-      - id: claude-sonnet-4-20250514
-        name: Claude Sonnet 4 (Proxy)
+      - id: claude-sonnet-4-5
+        name: Claude Sonnet 4.5 (Proxy)
         reasoning: true
         input: [text, image]
 ```

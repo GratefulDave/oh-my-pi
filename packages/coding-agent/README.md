@@ -20,11 +20,12 @@ Use `lex factory init` to scaffold project-scoped `.omp` assets for verifier loo
 
 ## Memory backends
 
-The agent supports three mutually-exclusive memory backends, selected via the `memory.backend` setting (Settings → Memory tab, or `~/.omp/config.yml`):
+The agent supports four mutually-exclusive memory backends, selected via the `memory.backend` setting (Settings → Memory tab, or `~/.omp/config.yml`):
 
 - `off` (default) — no memory subsystem runs.
 - `local` — existing rollout-summarisation pipeline; writes `memory_summary.md` and consolidated artifacts under the agent dir.
 - `hindsight` — talks to a [Hindsight](https://hindsight.vectorize.io) server (Cloud or self-hosted Docker), retains transcripts every Nth user turn, recalls memories on the first turn of a session, and exposes `retain`, `recall`, and `reflect`.
+- `mnemosyne` — uses the Mnemosyne backend and exposes `retain`, `recall`, `reflect`, plus `memory_edit`.
 
 ### Hindsight quickstart
 

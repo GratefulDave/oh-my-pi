@@ -138,7 +138,7 @@ Central helpers:
 Current mutation tool callsites:
 
 - `packages/coding-agent/src/tools/write.ts`
-- `packages/coding-agent/src/patch/index.ts` (hashline/patch/replace flows)
+- `packages/coding-agent/src/edit/index.ts` and `packages/coding-agent/src/edit/modes/*` (hashline/patch/replace flows)
 
 Rule: if a flow mutates filesystem content or location and bypasses these helpers, cache staleness bugs are expected.
 

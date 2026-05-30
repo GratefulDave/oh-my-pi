@@ -8,16 +8,26 @@ This repo contains multiple packages, but **`packages/coding-agent/`** is the pr
 
 ### Package Structure
 
-| Package                 | Description                                          |
-| ----------------------- | ---------------------------------------------------- |
-| `packages/ai`           | Multi-provider LLM client with streaming support     |
-| `packages/agent`        | Agent runtime with tool calling and state management |
-| `packages/coding-agent` | Main CLI application (primary focus)                 |
-| `packages/tui`          | Terminal UI library with differential rendering      |
-| `packages/natives`      | Bindings for native text/image/grep operations       |
-| `packages/stats`        | Local observability dashboard (`omp stats`)          |
-| `packages/utils`        | Shared utilities (logger, streams, temp files)       |
-| `crates/pi-natives`     | Rust crate for performance-critical text/grep ops    |
+| Package                              | Description                                           |
+| ------------------------------------ | ----------------------------------------------------- |
+| `packages/ai`                        | Multi-provider LLM client with streaming support      |
+| `packages/agent`                     | Agent runtime with tool calling and state management  |
+| `packages/coding-agent`              | Main CLI application (primary focus)                  |
+| `packages/tui`                       | Terminal UI library with differential rendering       |
+| `packages/natives`                   | Native Rust bindings for grep, shell, image, and PTY  |
+| `packages/stats`                     | Local observability dashboard (`omp stats`)           |
+| `packages/utils`                     | Shared utilities (logger, streams, temp files)        |
+| `packages/mnemosyne`                 | Local SQLite memory engine for agents                 |
+| `packages/hashline`                  | Line-anchored patch language and applier              |
+| `packages/antigravity-adapter`       | OpenCode Antigravity provider adapter                 |
+| `packages/swarm-extension`           | Swarm orchestration extension                         |
+| `packages/typescript-edit-benchmark` | TypeScript edit benchmark suite                       |
+| `python/omp-rpc`                     | Python RPC server/client helpers for OMP automation   |
+| `python/robomp`                      | Dockerized orchestration service for repo automation  |
+| `crates/pi-natives`                  | Rust crate for performance-critical native operations |
+| `crates/pi-shell`                    | Embedded shell, PTY, and process management crate     |
+| `crates/pi-ast`                      | Tree-sitter code summarizer and AST utilities         |
+| `crates/pi-iso`                      | Task isolation backend resolver                       |
 
 ### Fork namespace debt
 
