@@ -55,10 +55,17 @@ function formatRow(label: string, value: string, width: number): string {
 }
 
 function formatGainRow<
-	T extends { commands: number; savedBytes: number; estimatedTokensSaved: number; usesEstimatedTokensSaved: boolean },
+	T extends {
+		commands: number;
+		savedBytes: number;
+		estimatedTokensSaved: number;
+		usesEstimatedTokensSaved: boolean;
+		tokensSavedRatio: number | null;
+	},
 >(label: string, row: T, width: number): string {
+	const pctPart = row.tokensSavedRatio !== null ? `, ${(row.tokensSavedRatio * 100).toFixed(1)}% saved` : "";
 	return clean(
-		`  ${label}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} saved, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}`,
+		`  ${label}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} saved, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}${pctPart}`,
 		width,
 	);
 }
@@ -178,6 +185,12 @@ export class MinimizerGainOverlayComponent implements Component {
 				width,
 			),
 		);
+		lines.push(
+			clean(
+				`  Recent hit ratio (last 50): ${diag.recentHitRatio === null ? "-" : diag.recentHitRatio.toFixed(3)}`,
+				width,
+			),
+		);
 		if (diag.minimizerAppearsInactive) {
 			lines.push(clean(theme.fg("accent", "  ⚠ Minimizer appears inactive"), width));
 		}
@@ -264,6 +277,9 @@ export class MinimizerGainOverlayComponent implements Component {
 					width,
 				),
 			);
+			if (context.summary.tokensSavedRatio !== null) {
+				lines.push(formatRow("% Tokens Saved", `${(context.summary.tokensSavedRatio * 100).toFixed(1)}%`, width));
+			}
 			lines.push("");
 			lines.push(clean(theme.fg("muted", "Top filters"), width));
 			if (context.summary.byFilter.length === 0) {
@@ -300,6 +316,20 @@ export class MinimizerGainOverlayComponent implements Component {
 			} else {
 				for (const row of context.missed.commands.slice(0, 8)) {
 					lines.push(formatMissedRow(row.command, row, contentWidth));
+				}
+			}
+			lines.push("");
+			lines.push(clean(theme.fg("accent", theme.bold("Highest potential token savings")), width));
+			if (context.missed.potentialTokenSavings.length === 0) {
+				lines.push(clean(theme.fg("dim", "No potential token savings data."), width));
+			} else {
+				for (const row of context.missed.potentialTokenSavings.slice(0, 8)) {
+					lines.push(
+						clean(
+							`  ${row.command}: ${formatNumber(row.commands)} cmds × ${formatNumber(row.avgEstimatedPotentialTokensSaved)} avg = ${formatNumber(row.estimatedPotentialTokensSaved)} est. tokens, exit=${formatExitCodes(row.exitCodes)}`,
+							contentWidth,
+						),
+					);
 				}
 			}
 		}

@@ -33,6 +33,7 @@ type GainRow = {
 	savedBytes: number;
 	estimatedTokensSaved: number;
 	usesEstimatedTokensSaved: boolean;
+	tokensSavedRatio: number | null;
 };
 
 type GainContext = {
@@ -85,6 +86,9 @@ function writeDiagnosticOutput(mode: "diag" | "diag-json", diagnostic: Minimizer
 	process.stdout.write(`  Most Recent Timestamp: ${diagnostic.mostRecentTimestamp ?? "-"}\n`);
 	process.stdout.write(
 		`  Recent Missed Ratio (last 50): ${diagnostic.recentMissedRatio === null ? "-" : diagnostic.recentMissedRatio.toFixed(3)}\n`,
+	);
+	process.stdout.write(
+		`  Recent Hit Ratio (last 50): ${diagnostic.recentHitRatio === null ? "-" : diagnostic.recentHitRatio.toFixed(3)}\n`,
 	);
 	process.stdout.write(`  Minimizer Appears Inactive: ${diagnostic.minimizerAppearsInactive}\n`);
 	process.stdout.write(
@@ -193,12 +197,13 @@ function printGainSummary(input: GainContext): void {
 
 	process.stdout.write(chalk.bold("Summary:\n"));
 	process.stdout.write(`  Commands: ${formatNumber(summary.commands)}\n`);
-	process.stdout.write(`  Input Bytes: ${formatNumber(summary.inputBytes)}\n`);
-	process.stdout.write(`  Output Bytes: ${formatNumber(summary.outputBytes)}\n`);
 	process.stdout.write(`  Saved Bytes: ${formatNumber(summary.savedBytes)}\n`);
 	process.stdout.write(
 		`  ${formatTokensSavedLabel(summary.usesEstimatedTokensSaved)}: ${formatNumber(summary.estimatedTokensSaved)}\n`,
 	);
+	if (summary.tokensSavedRatio !== null) {
+		process.stdout.write(`  % Tokens Saved: ${(summary.tokensSavedRatio * 100).toFixed(1)}%\n`);
+	}
 
 	printRows("Top Filters", summary.byFilter, row => row.filter);
 	printRows("Top Commands", summary.byCommand, row => row.command);
@@ -233,6 +238,17 @@ function printMissedSummary(input: GainContext): void {
 			);
 		}
 	}
+	process.stdout.write("\n");
+	if (input.missed.potentialTokenSavings.length === 0) {
+		process.stdout.write("No potential token savings data.\n");
+	} else {
+		process.stdout.write(chalk.bold("Highest potential token savings:\n"));
+		for (const row of input.missed.potentialTokenSavings) {
+			process.stdout.write(
+				`  ${row.command}: ${formatNumber(row.commands)} cmds × ${formatNumber(row.avgEstimatedPotentialTokensSaved)} avg = ${formatNumber(row.estimatedPotentialTokensSaved)} est. tokens, exit=${formatExitCodes(row.exitCodes)}\n`,
+			);
+		}
+	}
 	printScope(input);
 }
 
@@ -263,8 +279,9 @@ function printRows<T extends GainRow>(title: string, rows: T[], label: (row: T) 
 		return;
 	}
 	for (const row of rows.slice(0, 10)) {
+		const pctPart = row.tokensSavedRatio !== null ? `, ${(row.tokensSavedRatio * 100).toFixed(1)}% tokens saved` : "";
 		process.stdout.write(
-			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes saved, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}\n`,
+			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes saved, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}${pctPart}\n`,
 		);
 	}
 }

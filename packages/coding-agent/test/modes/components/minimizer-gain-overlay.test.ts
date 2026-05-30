@@ -17,6 +17,8 @@ function makeContext(): MinimizerGainContext {
 			savedBytes: 2600,
 			estimatedTokensSaved: 650,
 			usesEstimatedTokensSaved: true,
+			estimatedInputTokens: 875,
+			tokensSavedRatio: 650 / 875,
 			byFilter: [
 				{
 					filter: "git\tstatus",
@@ -26,6 +28,8 @@ function makeContext(): MinimizerGainContext {
 					savedBytes: 2600,
 					estimatedTokensSaved: 650,
 					usesEstimatedTokensSaved: true,
+					estimatedInputTokens: 875,
+					tokensSavedRatio: 650 / 875,
 				},
 			],
 			byCommand: [
@@ -37,6 +41,8 @@ function makeContext(): MinimizerGainContext {
 					savedBytes: 2600,
 					estimatedTokensSaved: 650,
 					usesEstimatedTokensSaved: true,
+					estimatedInputTokens: 875,
+					tokensSavedRatio: 650 / 875,
 				},
 			],
 			byCwd: [],
@@ -51,6 +57,21 @@ function makeContext(): MinimizerGainContext {
 					outputBytes: 12000,
 					avgInputBytes: 4000,
 					exitCodes: [0, 1],
+					estimatedPotentialTokensSaved: 3000,
+					avgEstimatedPotentialTokensSaved: 1000,
+				},
+			],
+			potentialTokenSavings: [
+				{
+					command: "cargo test --workspace --no-fail-fast --\tverbose",
+					filter: "missed",
+					commands: 3,
+					inputBytes: 12000,
+					outputBytes: 12000,
+					avgInputBytes: 4000,
+					exitCodes: [0, 1],
+					estimatedPotentialTokensSaved: 3000,
+					avgEstimatedPotentialTokensSaved: 1000,
 				},
 			],
 		},
@@ -73,6 +94,8 @@ function makeDualContext(): DualContext {
 					savedBytes: 2600,
 					estimatedTokensSaved: 650,
 					usesEstimatedTokensSaved: true,
+					estimatedInputTokens: 875,
+					tokensSavedRatio: 650 / 875,
 				},
 			],
 		},
@@ -148,6 +171,8 @@ describe("MinimizerGainOverlayComponent", () => {
 						savedBytes: 3100,
 						estimatedTokensSaved: 775,
 						usesEstimatedTokensSaved: true,
+						estimatedInputTokens: 875,
+						tokensSavedRatio: 775 / 875,
 					},
 				],
 			},
@@ -189,6 +214,7 @@ describe("MinimizerGainOverlayComponent", () => {
 				missedCount: 12,
 				mostRecentTimestamp: "2026-05-28T00:00:00.000Z",
 				recentMissedRatio: 0.25,
+				recentHitRatio: 0.75,
 				minimizerAppearsInactive: false,
 				avgSavedRatio: 0.85,
 				loadDurationMs: 7,
@@ -237,5 +263,77 @@ describe("MinimizerGainOverlayComponent", () => {
 		component.handleInput("\t");
 		const output = render(component);
 		expect(output).toContain("Diagnostic error: stat ENOENT");
+	});
+
+	it("Missed tab renders both largest-output and highest-potential-token-savings views", () => {
+		const component = new MinimizerGainOverlayComponent(
+			makeDualContext(),
+			() => {},
+			() => {},
+		);
+		// Navigate to Missed tab (Tab from Gain)
+		component.handleInput("\t");
+		const output = render(component);
+		expect(output).toContain("Largest unminimized shell outputs");
+		expect(output).toContain("Highest potential token savings");
+		// New formula: cmds × avg = total est. tokens
+		// 3 cmds × 1000 avg → 1K, 3000 total → 3K
+		expect(output).toContain("3 cmds × 1K avg = 3K est. tokens");
+		expect(output).toContain("cargo test");
+	});
+
+	it("Status tab shows recent hit ratio", () => {
+		const dual: DualContext = {
+			...makeDualContext(),
+			diagnostic: {
+				recordsFilePath: "/agent/minimizer-gain.jsonl",
+				exists: true,
+				fileSizeBytes: 12345,
+				mtime: "2026-05-28T00:00:00.000Z",
+				recordCount: 100,
+				recordCountInScope: 50,
+				savedCount: 30,
+				missedCount: 20,
+				mostRecentTimestamp: "2026-05-28T00:00:00.000Z",
+				recentMissedRatio: 0.4,
+				recentHitRatio: 0.6,
+				minimizerAppearsInactive: false,
+				avgSavedRatio: 0.75,
+				loadDurationMs: 5,
+				writeErrorCount: 0,
+				lastWriteError: null,
+				readErrorCount: 0,
+				lastReadError: null,
+				parseErrorCount: 0,
+				lastParseError: null,
+				minimizerEnabled: true,
+				nativeBindingLoaded: true,
+				cwdFilter: "/repo",
+				distinctCwdsCount: 2,
+				distinctCwdsSample: ["/repo"],
+			},
+		};
+		const component = new MinimizerGainOverlayComponent(
+			dual,
+			() => {},
+			() => {},
+		);
+		// Navigate to Status tab (Tab × 2 from Gain)
+		component.handleInput("\t");
+		component.handleInput("\t");
+		const output = render(component);
+		expect(output).toContain("Recent hit ratio (last 50): 0.600");
+		expect(output).toContain("Recent missed ratio (last 50): 0.400");
+	});
+
+	it("Gain tab shows % Tokens Saved when tokensSavedRatio is present", () => {
+		const component = new MinimizerGainOverlayComponent(
+			makeDualContext(),
+			() => {},
+			() => {},
+		);
+		const output = render(component);
+		// makeContext has tokensSavedRatio = 650/875 ≈ 0.743 → 74.3%
+		expect(output).toContain("% Tokens Saved");
 	});
 });

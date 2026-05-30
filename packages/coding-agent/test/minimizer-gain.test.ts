@@ -490,6 +490,245 @@ describe("minimizer gain analytics", () => {
 	});
 
 	// -------------------------------------------------------------------
+	// Missed summary — potentialTokenSavings view and sorting
+	// -------------------------------------------------------------------
+
+	it("summarizeMissedMinimizerGain returns both commands and potentialTokenSavings views", () => {
+		// cargo test: 3 runs × 8000 bytes each = 24000 bytes → floor(24000/4)=6000 potential tokens
+		// git diff:   2 runs × 4000 bytes each =  8000 bytes → floor( 8000/4)=2000 potential tokens
+		// commands view sorted by inputBytes desc → cargo test first
+		// potentialTokenSavings view sorted by estimatedPotentialTokensSaved desc → cargo test first (same order here)
+		const records: import("../src/minimizer-gain").MinimizerGainRecord[] = [
+			{
+				timestamp: "2026-05-20T00:00:00.000Z",
+				cwd: "/repo",
+				command: "cargo test",
+				filter: "missed",
+				inputBytes: 8000,
+				outputBytes: 8000,
+				savedBytes: 0,
+				exitCode: 0,
+				kind: "missed",
+			},
+			{
+				timestamp: "2026-05-20T00:01:00.000Z",
+				cwd: "/repo",
+				command: "cargo test",
+				filter: "missed",
+				inputBytes: 8000,
+				outputBytes: 8000,
+				savedBytes: 0,
+				exitCode: 1,
+				kind: "missed",
+			},
+			{
+				timestamp: "2026-05-20T00:02:00.000Z",
+				cwd: "/repo",
+				command: "cargo test",
+				filter: "missed",
+				inputBytes: 8000,
+				outputBytes: 8000,
+				savedBytes: 0,
+				exitCode: 0,
+				kind: "missed",
+			},
+			{
+				timestamp: "2026-05-20T00:03:00.000Z",
+				cwd: "/repo",
+				command: "git diff",
+				filter: "missed",
+				inputBytes: 4000,
+				outputBytes: 4000,
+				savedBytes: 0,
+				exitCode: 0,
+				kind: "missed",
+			},
+			{
+				timestamp: "2026-05-20T00:04:00.000Z",
+				cwd: "/repo",
+				command: "git diff",
+				filter: "missed",
+				inputBytes: 4000,
+				outputBytes: 4000,
+				savedBytes: 0,
+				exitCode: 0,
+				kind: "missed",
+			},
+		];
+
+		const summary = summarizeMissedMinimizerGain(records);
+
+		// commands view: sorted by inputBytes desc
+		expect(summary.commands[0]!.command).toBe("cargo test");
+		expect(summary.commands[0]!.commands).toBe(3);
+		expect(summary.commands[0]!.inputBytes).toBe(24000);
+		expect(summary.commands[0]!.estimatedPotentialTokensSaved).toBe(6000);
+		expect(summary.commands[0]!.avgEstimatedPotentialTokensSaved).toBe(2000);
+
+		expect(summary.commands[1]!.command).toBe("git diff");
+		expect(summary.commands[1]!.commands).toBe(2);
+		expect(summary.commands[1]!.inputBytes).toBe(8000);
+		expect(summary.commands[1]!.estimatedPotentialTokensSaved).toBe(2000);
+		expect(summary.commands[1]!.avgEstimatedPotentialTokensSaved).toBe(1000);
+
+		// potentialTokenSavings view: sorted by estimatedPotentialTokensSaved desc — same order
+		expect(summary.potentialTokenSavings[0]!.command).toBe("cargo test");
+		expect(summary.potentialTokenSavings[0]!.estimatedPotentialTokensSaved).toBe(6000);
+		expect(summary.potentialTokenSavings[1]!.command).toBe("git diff");
+		expect(summary.potentialTokenSavings[1]!.estimatedPotentialTokensSaved).toBe(2000);
+	});
+
+	it("summarizeMissedMinimizerGain potentialTokenSavings sorts by impact not count", () => {
+		// high-count low-bytes vs low-count high-bytes
+		// many-small: 10 runs × 100 bytes = 1000 bytes → 250 potential tokens
+		// few-large:   2 runs × 800 bytes = 1600 bytes → 400 potential tokens
+		// potentialTokenSavings must put few-large first
+		const records: import("../src/minimizer-gain").MinimizerGainRecord[] = [];
+		for (let i = 0; i < 10; i++) {
+			records.push({
+				timestamp: `2026-05-20T00:${String(i).padStart(2, "0")}:00.000Z`,
+				cwd: "/repo",
+				command: "many-small",
+				filter: "missed",
+				inputBytes: 100,
+				outputBytes: 100,
+				savedBytes: 0,
+				exitCode: 0,
+				kind: "missed",
+			});
+		}
+		for (let i = 0; i < 2; i++) {
+			records.push({
+				timestamp: `2026-05-20T00:${String(i + 10).padStart(2, "0")}:00.000Z`,
+				cwd: "/repo",
+				command: "few-large",
+				filter: "missed",
+				inputBytes: 800,
+				outputBytes: 800,
+				savedBytes: 0,
+				exitCode: 0,
+				kind: "missed",
+			});
+		}
+
+		const summary = summarizeMissedMinimizerGain(records);
+
+		// commands view: many-small first (1000 > 800 total inputBytes per run × count)
+		// Wait: many-small total=1000 bytes, few-large total=1600 bytes
+		// commands view (by inputBytes desc): few-large=1600 first
+		expect(summary.commands[0]!.command).toBe("few-large");
+		// potentialTokenSavings view: few-large 400 > many-small 250
+		expect(summary.potentialTokenSavings[0]!.command).toBe("few-large");
+		expect(summary.potentialTokenSavings[0]!.estimatedPotentialTokensSaved).toBe(400); // floor(1600/4)
+		expect(summary.potentialTokenSavings[1]!.command).toBe("many-small");
+		expect(summary.potentialTokenSavings[1]!.estimatedPotentialTokensSaved).toBe(250); // floor(1000/4)
+	});
+
+	// -------------------------------------------------------------------
+	// Token savings ratio (% tokens saved)
+	// -------------------------------------------------------------------
+
+	it("summarizeMinimizerGain computes tokensSavedRatio = estimatedTokensSaved / estimatedInputTokens", () => {
+		// 1 record: inputBytes=1000, savedBytes=750, savedTokens=undefined
+		// estimatedInputTokens = floor(1000/4) = 250
+		// estimatedTokensSaved = floor(750/4) = 187
+		// tokensSavedRatio = 187/250 = 0.748
+		const records: import("../src/minimizer-gain").MinimizerGainRecord[] = [
+			{
+				timestamp: "2026-05-20T00:00:00.000Z",
+				cwd: "/repo",
+				command: "git diff",
+				filter: "git",
+				inputBytes: 1000,
+				outputBytes: 250,
+				savedBytes: 750,
+				exitCode: 0,
+				kind: "saved",
+			},
+		];
+		const summary = summarizeMinimizerGain(records);
+		expect(summary.estimatedInputTokens).toBe(250);
+		expect(summary.tokensSavedRatio).not.toBeNull();
+		expect(summary.tokensSavedRatio!).toBeCloseTo(187 / 250, 5);
+	});
+
+	it("summarizeMinimizerGain tokensSavedRatio is null when no savings records", () => {
+		const summary = summarizeMinimizerGain([]);
+		expect(summary.tokensSavedRatio).toBeNull();
+		expect(summary.estimatedInputTokens).toBe(0);
+	});
+
+	// -------------------------------------------------------------------
+	// Diagnostic — recentHitRatio + timestamp-sorted window
+	// -------------------------------------------------------------------
+
+	it("buildMinimizerGainDiagnostic computes recentHitRatio = saved/(saved+missed) over last 50", async () => {
+		await withTempAgentDir(async agentDir => {
+			resetMinimizerGainStatusForTesting();
+			// Write 40 missed then 10 saved — sorted by timestamp last 50 → 10 saved, 40 missed
+			for (let i = 0; i < 40; i++) {
+				await recordMinimizerGain(
+					{
+						timestamp: `2026-05-20T00:${String(i).padStart(2, "0")}:00.000Z`,
+						cwd: "/repo",
+						command: "x",
+						filter: "missed",
+						inputBytes: 100,
+						outputBytes: 100,
+						savedBytes: 0,
+						exitCode: 0,
+						kind: "missed",
+					},
+					{ agentDir },
+				);
+			}
+			for (let i = 0; i < 10; i++) {
+				await recordMinimizerGain(
+					{
+						timestamp: `2026-05-20T01:${String(i).padStart(2, "0")}:00.000Z`,
+						cwd: "/repo",
+						command: "git status",
+						filter: "git",
+						inputBytes: 100,
+						outputBytes: 30,
+						savedBytes: 70,
+						exitCode: 0,
+						kind: "saved",
+					},
+					{ agentDir },
+				);
+			}
+			const diag = await buildMinimizerGainDiagnostic({ agentDir });
+			// window = last 50 records (timestamp-sorted): 40 missed + 10 saved
+			expect(diag.recentMissedRatio).toBeCloseTo(0.8, 5); // 40/50
+			expect(diag.recentHitRatio).toBeCloseTo(0.2, 5); // 10/50
+			expect(diag.recentMissedRatio! + diag.recentHitRatio!).toBeCloseTo(1.0, 5);
+		});
+	});
+
+	it("buildMinimizerGainDiagnostic recentHitRatio is null when fewer than 50 scoped records", async () => {
+		await withTempAgentDir(async agentDir => {
+			resetMinimizerGainStatusForTesting();
+			await recordMinimizerGain(
+				{
+					timestamp: "2026-05-20T00:00:00.000Z",
+					cwd: "/repo",
+					command: "x",
+					filter: "missed",
+					inputBytes: 100,
+					outputBytes: 100,
+					savedBytes: 0,
+					exitCode: 0,
+					kind: "missed",
+				},
+				{ agentDir },
+			);
+			const diag = await buildMinimizerGainDiagnostic({ agentDir });
+			expect(diag.recentHitRatio).toBeNull();
+		});
+	});
+
+	// -------------------------------------------------------------------
 	// Diagnostic (gain-slash-remediation T3) + Shape α (T2)
 	// -------------------------------------------------------------------
 

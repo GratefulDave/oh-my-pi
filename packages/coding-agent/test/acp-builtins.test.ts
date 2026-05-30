@@ -392,6 +392,89 @@ describe("ACP builtin slash commands", () => {
 		}
 	});
 
+	it("/gain --missed shows both largest-output and highest-potential-token-savings views", async () => {
+		const previousAgentDir = getAgentDir();
+		const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-acp-gain-missed-dual-"));
+		try {
+			setAgentDir(agentDir);
+			// cargo test: 2 runs × 8000 bytes = 16000 total bytes → floor(16000/4)=4000 potential tokens
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/project",
+					command: "cargo test",
+					filter: "missed",
+					inputBytes: 8000,
+					outputBytes: 8000,
+					savedBytes: 0,
+					exitCode: 1,
+					kind: "missed",
+				},
+				{ agentDir },
+			);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/project",
+					command: "cargo test",
+					filter: "missed",
+					inputBytes: 8000,
+					outputBytes: 8000,
+					savedBytes: 0,
+					exitCode: 0,
+					kind: "missed",
+				},
+				{ agentDir },
+			);
+
+			const current = createRuntime();
+			const result = await executeAcpBuiltinSlashCommand("/gain --missed", current.runtime);
+			expect(result).toEqual({ consumed: true });
+			// Should contain the largest-output view section
+			expect(current.output[0]).toContain("Largest unminimized command outputs");
+			expect(current.output[0]).toContain("cargo test");
+			// Should contain the highest-potential-token-savings view section
+			expect(current.output[0]).toContain("Highest potential token savings");
+			// New formula: cmds × avg = total est. tokens
+			// 2 runs × floor(8000/4)=2000 avg → 2K, floor(16000/4)=4000 total → 4K
+			expect(current.output[0]).toContain("2 cmds × 2K avg = 4K est. tokens");
+		} finally {
+			setAgentDir(previousAgentDir);
+			await fs.rm(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("/gain shows % tokens saved when savings exist", async () => {
+		const previousAgentDir = getAgentDir();
+		const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-acp-gain-pct-"));
+		try {
+			setAgentDir(agentDir);
+			await recordMinimizerGain(
+				{
+					timestamp: new Date().toISOString(),
+					cwd: "/tmp/project",
+					command: "git diff",
+					filter: "git",
+					inputBytes: 1000,
+					outputBytes: 250,
+					savedBytes: 750,
+					exitCode: 0,
+					kind: "saved",
+				},
+				{ agentDir },
+			);
+
+			const current = createRuntime();
+			const result = await executeAcpBuiltinSlashCommand("/gain", current.runtime);
+			expect(result).toEqual({ consumed: true });
+			// tokensSavedRatio is estimated: floor(750/4)/floor(1000/4) = 187/250 = 74.8%
+			expect(current.output[0]).toContain("% Tokens Saved");
+		} finally {
+			setAgentDir(previousAgentDir);
+			await fs.rm(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("forces a tool and returns remaining prompt text", async () => {
 		const { output, runtime } = createRuntime();
 

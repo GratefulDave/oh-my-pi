@@ -230,6 +230,7 @@ type GainSlashRow = {
 	savedBytes: number;
 	estimatedTokensSaved: number;
 	usesEstimatedTokensSaved: boolean;
+	tokensSavedRatio: number | null;
 };
 
 type GainSlashMode = "summary" | "discover" | "missed";
@@ -269,7 +270,14 @@ function parseGainSlashArgs(args: string): GainSlashArgs {
 
 async function buildGainSlashReport(cwd: string, parsed: GainSlashArgs): Promise<string> {
 	const context = await loadMinimizerGainContext({ cwd, all: parsed.all, days: parsed.days });
-	const lines = parsed.mode === "discover" ? buildGainDiscoverLines(context) : buildGainReportLines(context);
+	let lines: string[];
+	if (parsed.mode === "discover") {
+		lines = buildGainDiscoverLines(context);
+	} else if (parsed.mode === "missed") {
+		lines = buildGainMissedLines(context);
+	} else {
+		lines = buildGainReportLines(context);
+	}
 	lines.push("", `Path: ${shortenPath(context.path)}`);
 	return lines.join("\n");
 }
@@ -328,29 +336,32 @@ async function showGainOverlay(runtime: TuiSlashCommandRuntime, initialScope: 0 
 		});
 }
 function buildGainReportLines(context: MinimizerGainContext): string[] {
+	const { summary } = context;
 	const lines = [
 		context.all
 			? `Minimizer savings across all repos (${context.days}d)`
 			: `Minimizer savings for ${shortenPath(context.cwd ?? context.path)} (${context.days}d)`,
-		`Commands: ${formatNumber(context.summary.commands)}`,
-		`Saved Bytes: ${formatNumber(context.summary.savedBytes)}`,
-		`${formatTokensSavedLabel(context.summary.usesEstimatedTokensSaved)}: ${formatNumber(context.summary.estimatedTokensSaved)}`,
-		"",
-		"Gain:",
+		`Commands: ${formatNumber(summary.commands)}`,
+		`Saved Bytes: ${formatNumber(summary.savedBytes)}`,
+		`${formatTokensSavedLabel(summary.usesEstimatedTokensSaved)}: ${formatNumber(summary.estimatedTokensSaved)}`,
 	];
-	if (context.summary.byFilter.length > 0) {
+	if (summary.tokensSavedRatio !== null) {
+		lines.push(`% Tokens Saved: ${(summary.tokensSavedRatio * 100).toFixed(1)}%`);
+	}
+	lines.push("", "Gain:");
+	if (summary.byFilter.length > 0) {
 		lines.push("Top filters:");
-		pushGainRows(lines, context.summary.byFilter, row => row.filter, 5);
+		pushGainRows(lines, summary.byFilter, row => row.filter, 5);
 	}
-	if (context.summary.byCommand.length > 0) {
+	if (summary.byCommand.length > 0) {
 		lines.push("", "Top commands:");
-		pushGainRows(lines, context.summary.byCommand, row => row.command, 5);
+		pushGainRows(lines, summary.byCommand, row => row.command, 5);
 	}
-	if (context.all && context.summary.byCwd.length > 0) {
+	if (context.all && summary.byCwd.length > 0) {
 		lines.push("", "Repositories:");
-		pushGainRows(lines, context.summary.byCwd, row => shortenPath(row.cwd), 5);
+		pushGainRows(lines, summary.byCwd, row => shortenPath(row.cwd), 5);
 	}
-	if (context.summary.commands === 0) {
+	if (summary.commands === 0) {
 		lines.push("", "No positive native minimizer savings recorded for this scope yet.");
 		const missedCommands = context.missed.commands.reduce((total, row) => total + row.commands, 0);
 		if (missedCommands > 0) {
@@ -370,6 +381,33 @@ function buildGainReportLines(context: MinimizerGainContext): string[] {
 	return lines;
 }
 
+function buildGainMissedLines(context: MinimizerGainContext): string[] {
+	const label = context.all
+		? `Minimizer misses across all repos (${context.days}d)`
+		: `Minimizer misses for ${shortenPath(context.cwd ?? context.path)} (${context.days}d)`;
+	const lines = [label, "", "Largest unminimized command outputs:"];
+	if (context.missed.commands.length === 0) {
+		lines.push("  No unminimized shell output recorded for this scope yet.");
+	} else {
+		for (const row of context.missed.commands) {
+			lines.push(
+				`  ${row.command}: ${formatNumber(row.inputBytes)} bytes total (${formatNumber(row.avgInputBytes)} avg), ${formatNumber(row.commands)} cmds, exit=${formatExitCodes(row.exitCodes)}`,
+			);
+		}
+	}
+	lines.push("", "Highest potential token savings:");
+	if (context.missed.potentialTokenSavings.length === 0) {
+		lines.push("  No potential token savings data.");
+	} else {
+		for (const row of context.missed.potentialTokenSavings) {
+			lines.push(
+				`  ${row.command}: ${formatNumber(row.commands)} cmds × ${formatNumber(row.avgEstimatedPotentialTokensSaved)} avg = ${formatNumber(row.estimatedPotentialTokensSaved)} est. tokens, exit=${formatExitCodes(row.exitCodes)}`,
+			);
+		}
+	}
+	return lines;
+}
+
 function pushGainRows<T extends GainSlashRow>(
 	lines: string[],
 	rows: T[],
@@ -377,8 +415,9 @@ function pushGainRows<T extends GainSlashRow>(
 	limit: number,
 ): void {
 	for (const row of rows.slice(0, limit)) {
+		const pctPart = row.tokensSavedRatio !== null ? `, ${(row.tokensSavedRatio * 100).toFixed(1)}% tokens saved` : "";
 		lines.push(
-			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}`,
+			`  ${label(row)}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} bytes, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}${pctPart}`,
 		);
 	}
 }
