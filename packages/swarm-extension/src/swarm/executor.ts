@@ -5,14 +5,15 @@
  * Each agent runs in the swarm workspace with its task instructions as the user prompt.
  */
 import * as path from "node:path";
-import type {
-	AgentDefinition,
-	AgentProgress,
-	AgentSource,
-	AuthStorage,
-	ModelRegistry,
-	Settings,
-	SingleResult,
+import {
+	ActorOrchestrator,
+	type AgentDefinition,
+	type AgentProgress,
+	type AgentSource,
+	type AuthStorage,
+	type ModelRegistry,
+	type Settings,
+	type SingleResult,
 } from "@oh-my-pi/pi-coding-agent";
 import type { SwarmAgent } from "./schema";
 import type { StateTracker } from "./state";
@@ -62,6 +63,13 @@ export async function executeSwarmAgent(
 	} = options;
 
 	const agentId = `swarm-${swarmName}-${agent.name}-${iteration}`;
+	const actorOrchestrator = new ActorOrchestrator();
+	actorOrchestrator.plan({
+		id: agentId,
+		agentName: agent.name,
+		assignment: agent.task,
+		description: `Swarm agent: ${agent.role}`,
+	});
 
 	const agentDef: AgentDefinition = {
 		name: agent.name,
@@ -94,7 +102,10 @@ export async function executeSwarmAgent(
 			id: agentId,
 			modelOverride,
 			signal,
-			onProgress: progress => onProgress?.(agent.name, progress),
+			onProgress: progress => {
+				if (progress.lastIntent) actorOrchestrator.update(agentId, { lastIntent: progress.lastIntent });
+				onProgress?.(agent.name, progress);
+			},
 			authStorage,
 			modelRegistry,
 			settings,
@@ -102,6 +113,7 @@ export async function executeSwarmAgent(
 			artifactsDir: path.join(stateTracker.swarmDir, "context"),
 		});
 
+		actorOrchestrator.complete({ result });
 		const status = result.exitCode === 0 ? ("completed" as const) : ("failed" as const);
 		await stateTracker.updateAgent(agent.name, {
 			status,
@@ -125,6 +137,12 @@ export async function executeSwarmAgent(
 		return result;
 	} catch (err) {
 		const error = err instanceof Error ? err.message : String(err);
+		actorOrchestrator.update(agentId, {
+			status: "failed",
+			completedAt: Date.now(),
+			failureKind: "execution_failed",
+			failureMessage: error,
+		});
 		await stateTracker.updateAgent(agent.name, {
 			status: "failed",
 			completedAt: Date.now(),

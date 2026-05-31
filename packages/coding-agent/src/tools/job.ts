@@ -3,6 +3,8 @@ import type { Component } from "@oh-my-pi/pi-tui";
 import { Text } from "@oh-my-pi/pi-tui";
 import { prompt } from "@oh-my-pi/pi-utils";
 import * as z from "zod/v4";
+import { ActorRunStore } from "../actor/run-state";
+import type { ActorFailureKind, ActorRunStatus } from "../actor/types";
 import { type AsyncJob, AsyncJobManager, isBackgroundJobSupportEnabled } from "../async";
 import type { RenderResultOptions } from "../extensibility/custom-tools/types";
 import type { Theme } from "../modes/theme/theme";
@@ -50,6 +52,11 @@ interface JobSnapshot {
 	durationMs: number;
 	resultText?: string;
 	errorText?: string;
+	actorStatus?: ActorRunStatus;
+	actorFailureKind?: ActorFailureKind;
+	actorFailureMessage?: string;
+	actorArtifactUri?: string;
+	actorLastIntent?: string;
 }
 
 type CancelStatus = "cancelled" | "not_found" | "already_completed";
@@ -255,6 +262,7 @@ export class JobTool implements AgentTool<typeof jobSchema, JobToolDetails> {
 		return jobs.map(j => {
 			const current = AsyncJobManager.instance()?.getJob(j.id);
 			const latest = current ?? j;
+			const actor = latest.type === "task" ? ActorRunStore.global().get(latest.id) : undefined;
 			return {
 				id: latest.id,
 				type: latest.type,
@@ -263,6 +271,11 @@ export class JobTool implements AgentTool<typeof jobSchema, JobToolDetails> {
 				durationMs: Math.max(0, now - latest.startTime),
 				...(latest.resultText ? { resultText: latest.resultText } : {}),
 				...(latest.errorText ? { errorText: latest.errorText } : {}),
+				...(actor ? { actorStatus: actor.status } : {}),
+				...(actor?.failureKind ? { actorFailureKind: actor.failureKind } : {}),
+				...(actor?.failureMessage ? { actorFailureMessage: actor.failureMessage } : {}),
+				...(actor?.artifactUri ? { actorArtifactUri: actor.artifactUri } : {}),
+				...(actor?.lastIntent ? { actorLastIntent: actor.lastIntent } : {}),
 			};
 		});
 	}
@@ -307,11 +320,23 @@ export class JobTool implements AgentTool<typeof jobSchema, JobToolDetails> {
 			for (const j of completed) {
 				lines.push(`### ${j.id} [${j.type}] — ${j.status}`);
 				lines.push(`Label: ${j.label}`);
+				if (j.actorStatus) {
+					lines.push(`Actor: ${j.actorStatus}${j.actorFailureKind ? ` (${j.actorFailureKind})` : ""}`);
+				}
+				if (j.actorLastIntent) {
+					lines.push(`Last intent: ${j.actorLastIntent}`);
+				}
+				if (j.actorArtifactUri) {
+					lines.push(`Artifact: ${j.actorArtifactUri}`);
+				}
 				if (j.resultText) {
 					lines.push("```", j.resultText, "```");
 				}
 				if (j.errorText) {
 					lines.push(`Error: ${j.errorText}`);
+				}
+				if (j.actorFailureMessage && !j.errorText) {
+					lines.push(`Error: ${j.actorFailureMessage}`);
 				}
 				lines.push("");
 			}
@@ -320,7 +345,7 @@ export class JobTool implements AgentTool<typeof jobSchema, JobToolDetails> {
 		if (running.length > 0) {
 			lines.push(`## Still Running (${running.length})\n`);
 			for (const j of running) {
-				lines.push(`- \`${j.id}\` [${j.type}] — ${j.label}`);
+				lines.push(`- \`${j.id}\` [${j.type}] — ${j.label}${j.actorStatus ? ` (${j.actorStatus})` : ""}`);
 			}
 		}
 

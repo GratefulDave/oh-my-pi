@@ -83,6 +83,7 @@ import {
 	prompt,
 	Snowflake,
 } from "@oh-my-pi/pi-utils";
+import { sanitizeIrcReplyText } from "../actor/mailbox-router";
 import { type AsyncJob, type AsyncJobDeliveryState, AsyncJobManager } from "../async";
 import { reset as resetCapabilities } from "../capability";
 import type { Rule } from "../capability/rule";
@@ -8186,7 +8187,10 @@ export class AgentSession {
 		if (!assistantMessage) {
 			throw new Error("Ephemeral turn ended without a final message");
 		}
-		return { replyText: dedupeIrcReply(replyText.trim()), assistantMessage };
+		return {
+			replyText: sanitizeIrcReplyText(dedupeIrcReply(replyText.trim())).text ?? "No prose reply.",
+			assistantMessage,
+		};
 	}
 
 	/**

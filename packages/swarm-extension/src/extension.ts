@@ -10,7 +10,12 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { AuthStorage, ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
+import {
+	AgentRegistry,
+	type AuthStorage,
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+} from "@oh-my-pi/pi-coding-agent";
 import { buildDependencyGraph, buildExecutionWaves, detectCycles } from "./swarm/dag";
 import { renderSwarmEvents } from "./swarm/events";
 import { formatDuration } from "./swarm/format";
@@ -294,14 +299,17 @@ async function handleSend(args: string[], ctx: ExtensionCommandContext): Promise
 	}
 	try {
 		const inspection = await loadSwarmInspection(name, ctx.cwd);
+		const registry = AgentRegistry.global();
+		const targetId = registry.get(to)?.id ?? `swarm-${name}-${to}-${inspection.state.iteration}`;
+		registry.routeMessage("user", targetId, message);
 		await inspection.stateTracker.appendEvent({
 			type: "message",
 			channel: "memory",
 			from: "user",
-			to,
+			to: targetId,
 			message,
 		});
-		ctx.ui.notify(`Message recorded for '${to}' in swarm '${name}'`, "info");
+		ctx.ui.notify(`Message routed to '${targetId}' in swarm '${name}'`, "info");
 	} catch (err) {
 		ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
 	}

@@ -6,6 +6,7 @@ import { HookEditorComponent, HookInputComponent, HookSelectorComponent } from "
 export { Container, Markdown, Spacer, Text } from "@oh-my-pi/pi-tui";
 // Logging
 export { getAgentDir, logger, VERSION } from "@oh-my-pi/pi-utils";
+export * from "./actor";
 export * from "./config/keybindings";
 export * from "./config/model-registry";
 // Prompt templates
@@ -35,6 +36,7 @@ export * from "./modes/components";
 // Theme utilities for custom tools
 export * from "./modes/theme/theme";
 // SDK for programmatic usage
+export * from "./registry/agent-registry";
 export * from "./sdk";
 export * from "./session/agent-session";
 // Auth and model registry

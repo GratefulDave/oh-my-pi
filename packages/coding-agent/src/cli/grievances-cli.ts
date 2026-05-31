@@ -11,6 +11,7 @@ interface GrievanceRow {
 	version: string;
 	tool: string;
 	report: string;
+	created_at: number | null;
 }
 
 export interface ListGrievancesOptions {
@@ -34,6 +35,11 @@ export interface PushGrievancesOptions {
 	/** Emit the {@link FlushResult} as JSON instead of a status line. */
 	json?: boolean;
 }
+
+function formatCreatedAt(createdAt: number | null): string {
+	if (createdAt === null) return "date unknown";
+	return new Date(createdAt * 1000).toISOString();
+}
 export async function listGrievances(options: ListGrievancesOptions): Promise<void> {
 	const db = openAutoQaDb();
 	if (!db) {
@@ -51,11 +57,13 @@ export async function listGrievances(options: ListGrievancesOptions): Promise<vo
 		let rows: GrievanceRow[];
 		if (options.tool) {
 			rows = db
-				.prepare("SELECT id, model, version, tool, report FROM grievances WHERE tool = ? ORDER BY id DESC LIMIT ?")
+				.prepare(
+					"SELECT id, model, version, tool, report, created_at FROM grievances WHERE tool = ? ORDER BY id DESC LIMIT ?",
+				)
 				.all(options.tool, options.limit) as GrievanceRow[];
 		} else {
 			rows = db
-				.prepare("SELECT id, model, version, tool, report FROM grievances ORDER BY id DESC LIMIT ?")
+				.prepare("SELECT id, model, version, tool, report, created_at FROM grievances ORDER BY id DESC LIMIT ?")
 				.all(options.limit) as GrievanceRow[];
 		}
 
@@ -71,7 +79,7 @@ export async function listGrievances(options: ListGrievancesOptions): Promise<vo
 
 		for (const row of rows) {
 			console.log(
-				`${chalk.dim(`#${row.id}`)} ${chalk.cyan(row.tool)} ${chalk.dim(`(${row.model} v${row.version})`)}`,
+				`${chalk.dim(`#${row.id}`)} ${chalk.cyan(row.tool)} ${chalk.dim(formatCreatedAt(row.created_at))} ${chalk.dim(`(${row.model} v${row.version})`)}`,
 			);
 			console.log(`  ${row.report}`);
 			console.log();

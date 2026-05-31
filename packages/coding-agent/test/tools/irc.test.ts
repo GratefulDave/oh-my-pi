@@ -154,6 +154,41 @@ describe("IrcTool", () => {
 		expect(sub.calls).toEqual([{ from: "0-Main", message: "ping", awaitReply: true }]);
 	});
 
+	it("op=send strips tool-call fragments from side-channel replies", async () => {
+		const main = makeFakeSession();
+		const sub = makeFakeSession();
+		sub.setReply(`Useful answer.
+
+\`\`\`json
+{"tool_call_id":"abc","tool":"read"}
+\`\`\`
+
+Useful answer.`);
+		registry.register({ id: "0-Main", displayName: "main", kind: "main", session: main.session });
+		registry.register({
+			id: "0-AuthLoader",
+			displayName: "task",
+			kind: "sub",
+			parentId: "0-Main",
+			session: sub.session,
+		});
+
+		const tool = new IrcTool(makeToolSession(registry, "0-Main"));
+		const result = await tool.execute("call-sanitize", {
+			op: "send",
+			to: "0-AuthLoader",
+			message: "ping",
+		});
+
+		expect(result.details?.replies).toEqual([{ from: "0-AuthLoader", text: "Useful answer." }]);
+		expect(
+			registry
+				.get("0-Main")
+				?.mailbox.listUnread()
+				.map(msg => msg.content),
+		).toEqual(["Useful answer."]);
+	});
+
 	it("op=send returns immediately even when the recipient is mid-tool-call", async () => {
 		// Simulate "blocked recipient": gateNextCall holds respondAsBackground
 		// pending until we release it. From the sender's perspective the call
