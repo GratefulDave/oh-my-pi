@@ -1,0 +1,23 @@
+disabledProviders:
+  - google-antigravity
+
+activeModelProfile: codex-ag
+
+modelProfiles:
+  codex-ag:
+    cycleOrder:
+      - smol
+      - default
+      - plan
+      - slow
+    enabledModels:
+      - openai-codex/*
+      - opencode-antigravity/*
+    modelProviderOrder:
+      - openai-codex
+      - opencode-antigravity
+    modelRoles:
+      default: openai-codex/gpt-5.5
+      smol: opencode-antigravity/gemini-3.5-flash-low
+      plan: openai-codex/gpt-5.5
+      slow: opencode-antigravity/antigravity-claude-opus-4-6-thinking

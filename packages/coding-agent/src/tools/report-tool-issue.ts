@@ -59,12 +59,16 @@ function ensureGrievancesSchema(db: Database): void {
 			version TEXT NOT NULL,
 			tool TEXT NOT NULL,
 			report TEXT NOT NULL,
-			pushed INTEGER NOT NULL DEFAULT 0
+			pushed INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER
 		);
 	`);
 	const cols = db.prepare("PRAGMA table_info(grievances)").all() as Array<{ name: string }>;
 	if (!cols.some(c => c.name === "pushed")) {
 		db.run("ALTER TABLE grievances ADD COLUMN pushed INTEGER NOT NULL DEFAULT 0");
+	}
+	if (!cols.some(c => c.name === "created_at")) {
+		db.run("ALTER TABLE grievances ADD COLUMN created_at INTEGER");
 	}
 	db.run("CREATE INDEX IF NOT EXISTS grievances_pushed_idx ON grievances(pushed, id)");
 }
@@ -82,21 +86,29 @@ function importLegacyAutoQaRows(target: Database): void {
 		if (tables.length === 0) return;
 		const cols = legacy.prepare("PRAGMA table_info(grievances)").all() as Array<{ name: string }>;
 		const hasPushed = cols.some(c => c.name === "pushed");
+		const hasCreatedAt = cols.some(c => c.name === "created_at");
 		const rows = legacy
 			.prepare(
-				`SELECT model, version, tool, report, ${hasPushed ? "pushed" : "0 AS pushed"} FROM grievances ORDER BY id ASC`,
+				`SELECT model, version, tool, report, ${hasPushed ? "pushed" : "0 AS pushed"}, ${hasCreatedAt ? "created_at" : "NULL AS created_at"} FROM grievances ORDER BY id ASC`,
 			)
-			.all() as Array<{ model: string; version: string; tool: string; report: string; pushed: number }>;
+			.all() as Array<{
+			model: string;
+			version: string;
+			tool: string;
+			report: string;
+			pushed: number;
+			created_at: number | null;
+		}>;
 		const exists = target.prepare(
 			"SELECT 1 FROM grievances WHERE model = ? AND version = ? AND tool = ? AND report = ? LIMIT 1",
 		);
 		const insert = target.prepare(
-			"INSERT INTO grievances (model, version, tool, report, pushed) VALUES (?, ?, ?, ?, ?)",
+			"INSERT INTO grievances (model, version, tool, report, pushed, created_at) VALUES (?, ?, ?, ?, ?, ?)",
 		);
 		const copy = target.transaction((items: typeof rows) => {
 			for (const row of items) {
 				if (exists.get(row.model, row.version, row.tool, row.report)) continue;
-				insert.run(row.model, row.version, row.tool, row.report, row.pushed ? 1 : 0);
+				insert.run(row.model, row.version, row.tool, row.report, row.pushed ? 1 : 0, row.created_at);
 			}
 		});
 		copy(rows);
@@ -229,11 +241,12 @@ interface GrievanceRow {
 	version: string;
 	tool: string;
 	report: string;
+	created_at: number | null;
 }
 
 async function performFlush(db: Database, config: PushConfig, options: FlushOptions = {}): Promise<FlushResult> {
 	const selectStmt = db.prepare(
-		"SELECT id, model, version, tool, report FROM grievances WHERE pushed = 0 ORDER BY id ASC LIMIT ?",
+		"SELECT id, model, version, tool, report, created_at FROM grievances WHERE pushed = 0 ORDER BY id ASC LIMIT ?",
 	);
 	// Planning snapshot — fires once so progress reporters can size their bar.
 	// Mid-flight inserts are NOT folded in (the worker drains them too, but
@@ -386,12 +399,9 @@ export function createReportToolIssueTool(session: ToolSession, activeBuiltinNam
 				}
 				const db = openAutoQaDb();
 				if (db) {
-					db.prepare("INSERT INTO grievances (model, version, tool, report) VALUES (?, ?, ?, ?)").run(
-						getModel(),
-						VERSION,
-						canonicalTool,
-						params.report,
-					);
+					db.prepare(
+						"INSERT INTO grievances (model, version, tool, report, created_at) VALUES (?, ?, ?, ?, ?)",
+					).run(getModel(), VERSION, canonicalTool, params.report, Math.floor(Date.now() / 1000));
 					// Local-only path: remote publishing is reserved for explicit
 					// `lex grievances push` with an endpoint configured by the user.
 				}

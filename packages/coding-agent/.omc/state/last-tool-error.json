@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"rtk grep -E \\\"(pass$|fail$|Ran [0-9]+ tests)\\\" /tmp/parity-natives.out | rtk proxy tail; echo \\\"---\\\"; rtk grep -cE \\\"fail\\\\)\\\" /tmp/parity-natives.out\",\"description\":\"Natives test summary...",
+  "error": "Exit code 1\n---\n0",
+  "timestamp": "2026-05-28T12:14:40.266Z",
+  "retry_count": 1
+}

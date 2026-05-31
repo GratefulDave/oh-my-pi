@@ -1,0 +1,7 @@
+{"t":0,"agent":"acf520c","agent_type":"code-reviewer","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a4ac01b","agent_type":"security-reviewer","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a4ac01b","agent_type":"security-reviewer","event":"agent_stop","success":true,"duration_ms":49178}
+{"t":0,"agent":"acf520c","agent_type":"code-reviewer","event":"agent_stop","success":true,"duration_ms":88989}
+{"t":0,"agent":"system","event":"skill_invoked","skill_name":"oh-my-claudecode:cancel"}
+{"t":0,"agent":"system","event":"keyword_detected","keyword":"autopilot"}
+{"t":0,"agent":"system","event":"mode_change","mode_from":"none","mode_to":"autopilot"}

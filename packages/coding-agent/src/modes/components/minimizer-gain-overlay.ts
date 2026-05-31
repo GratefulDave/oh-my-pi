@@ -23,6 +23,12 @@ export interface DiagnosticErrorSentinel {
 	buildError: string;
 }
 
+function formatFullNumber(n: number): string {
+	return Math.round(n)
+		.toString()
+		.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
 interface DualContext {
 	current: MinimizerGainContext;
 	all: MinimizerGainContext;
@@ -66,7 +72,7 @@ function formatGainRow<
 >(label: string, row: T, width: number): string {
 	const pctPart = row.tokensSavedRatio !== null ? `, ${(row.tokensSavedRatio * 100).toFixed(1)}% saved` : "";
 	return clean(
-		`  ${label}: ${formatNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} saved, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}${pctPart}`,
+		`  ${label}: ${formatFullNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} saved, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}${pctPart}`,
 		width,
 	);
 }
@@ -138,7 +144,7 @@ function renderByCommandTable(
 	rows.slice(0, 10).forEach((row, idx) => {
 		const num = `${idx + 1}.`.padStart(GAIN_COL_NUM);
 		const cmd = clean(row.command, cmdWidth).padEnd(cmdWidth);
-		const count = formatNumber(row.commands).padStart(GAIN_COL_COUNT);
+		const count = formatFullNumber(row.commands).padStart(GAIN_COL_COUNT);
 		const saved = formatNumber(row.estimatedTokensSaved).padStart(GAIN_COL_SAVED);
 		const avgPct =
 			row.tokensSavedRatio !== null
@@ -219,7 +225,7 @@ function renderLargestOutputTable(
 				tableRow(
 					cmd,
 					cmdWidth,
-					formatNumber(row.commands),
+					formatFullNumber(row.commands),
 					`${formatNumber(row.inputBytes)}B`,
 					COL_TOTAL,
 					`${formatNumber(row.avgInputBytes)}B`,
@@ -259,7 +265,7 @@ function renderPotentialTable(
 				tableRow(
 					cmd,
 					cmdWidth,
-					formatNumber(row.commands),
+					formatFullNumber(row.commands),
 					formatNumber(row.avgEstimatedPotentialTokensSaved),
 					COL_AVG_EST,
 					formatNumber(row.estimatedPotentialTokensSaved),
@@ -365,9 +371,11 @@ export class MinimizerGainOverlayComponent implements Component {
 			return lines;
 		}
 		lines.push(clean(theme.fg("accent", theme.bold("Diagnostic")), width));
-		lines.push(clean(`  Records (file-wide): ${formatNumber(diag.recordCount)}`, width));
-		lines.push(clean(`  Records (in scope): ${formatNumber(diag.recordCountInScope)}`, width));
-		lines.push(clean(`  Saved: ${formatNumber(diag.savedCount)}  Missed: ${formatNumber(diag.missedCount)}`, width));
+		lines.push(clean(`  Records (file-wide): ${formatFullNumber(diag.recordCount)}`, width));
+		lines.push(clean(`  Records (in scope): ${formatFullNumber(diag.recordCountInScope)}`, width));
+		lines.push(
+			clean(`  Saved: ${formatFullNumber(diag.savedCount)}  Missed: ${formatFullNumber(diag.missedCount)}`, width),
+		);
 		lines.push(clean(`  Most recent: ${diag.mostRecentTimestamp ?? "-"}`, width));
 		lines.push(
 			clean(`  Avg saved ratio: ${diag.avgSavedRatio === null ? "-" : diag.avgSavedRatio.toFixed(3)}`, width),
@@ -409,7 +417,7 @@ export class MinimizerGainOverlayComponent implements Component {
 		lines.push(clean(`  Minimizer enabled: ${diag.minimizerEnabled}`, width));
 		lines.push(clean(`  Native binding loaded: ${diag.nativeBindingLoaded}`, width));
 		lines.push(clean(`  CWD filter: ${diag.cwdFilter ?? "(all)"}`, width));
-		lines.push(clean(`  Distinct cwds: ${formatNumber(diag.distinctCwdsCount)}`, width));
+		lines.push(clean(`  Distinct cwds: ${formatFullNumber(diag.distinctCwdsCount)}`, width));
 		if (diag.recordCountInScope === 0 && diag.distinctCwdsCount > 0) {
 			lines.push(clean(theme.fg("dim", "  (scope empty but file has records under other cwds)"), width));
 			for (const cwd of diag.distinctCwdsSample) {
@@ -461,7 +469,7 @@ export class MinimizerGainOverlayComponent implements Component {
 			const scopeLabel = context.all ? "Global Scope" : "Current Scope";
 			lines.push(clean(theme.fg("accent", theme.bold(`Token Savings (${scopeLabel})`)), width));
 			lines.push(border(contentWidth));
-			lines.push(formatRow("Total commands", formatNumber(context.summary.commands), width));
+			lines.push(formatRow("Total commands", formatFullNumber(context.summary.commands), width));
 			const inputTok = context.summary.estimatedInputTokens;
 			lines.push(formatRow("Input tokens", formatNumber(inputTok), width));
 			const savedTok = context.summary.estimatedTokensSaved;

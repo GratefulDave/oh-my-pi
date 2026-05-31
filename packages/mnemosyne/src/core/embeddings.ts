@@ -1,6 +1,17 @@
 import * as fs from "node:fs";
-import { EmbeddingModel, FlagEmbedding } from "fastembed";
+import { createRequire } from "node:module";
+import type { EmbeddingModel as EmbeddingModelType } from "fastembed";
 import { getMnemosyneRuntimeOptions, resolveEmbeddingProvider } from "./runtime-options";
+
+const require = createRequire(import.meta.url);
+
+let fastembedModule: any = null;
+function getFastembed() {
+	if (!fastembedModule) {
+		fastembedModule = require("fastembed");
+	}
+	return fastembedModule;
+}
 
 export type Vector = number[];
 export type EmbeddingMatrix = Vector[];
@@ -10,7 +21,7 @@ export interface EmbeddingProvider {
 	available?(): boolean | Promise<boolean>;
 }
 
-type StandardEmbeddingModel = Exclude<EmbeddingModel, EmbeddingModel.CUSTOM>;
+type StandardEmbeddingModel = Exclude<EmbeddingModelType, EmbeddingModelType.CUSTOM>;
 
 interface LocalEmbeddingModel {
 	embed(texts: string[], batchSize?: number): unknown;
@@ -34,7 +45,7 @@ let apiCallCount = 0;
 const queryCache = new Map<string, Vector>();
 
 function defaultLocalModelInitializer(options: LocalModelInitOptions): Promise<LocalEmbeddingModel> {
-	return FlagEmbedding.init(options) as Promise<LocalEmbeddingModel>;
+	return getFastembed().FlagEmbedding.init(options) as Promise<LocalEmbeddingModel>;
 }
 
 function activeEmbeddingOptions() {
@@ -243,14 +254,15 @@ function cacheSet(key: string, value: Vector): void {
 }
 
 function fastembedModelName(modelName: string): StandardEmbeddingModel | null {
-	const known: Record<string, StandardEmbeddingModel> = {
-		"BAAI/bge-small-en-v1.5": EmbeddingModel.BGESmallENV15,
-		"BAAI/bge-base-en-v1.5": EmbeddingModel.BGEBaseENV15,
-		"BAAI/bge-small-en": EmbeddingModel.BGESmallEN,
-		"BAAI/bge-base-en": EmbeddingModel.BGEBaseEN,
-		"BAAI/bge-small-zh-v1.5": EmbeddingModel.BGESmallZH,
-		"intfloat/multilingual-e5-large": EmbeddingModel.MLE5Large,
-		"sentence-transformers/all-MiniLM-L6-v2": EmbeddingModel.AllMiniLML6V2,
+	const EmbeddingModelObj = getFastembed().EmbeddingModel;
+	const known: Record<string, any> = {
+		"BAAI/bge-small-en-v1.5": EmbeddingModelObj.BGESmallENV15,
+		"BAAI/bge-base-en-v1.5": EmbeddingModelObj.BGEBaseENV15,
+		"BAAI/bge-small-en": EmbeddingModelObj.BGESmallEN,
+		"BAAI/bge-base-en": EmbeddingModelObj.BGEBaseEN,
+		"BAAI/bge-small-zh-v1.5": EmbeddingModelObj.BGESmallZH,
+		"intfloat/multilingual-e5-large": EmbeddingModelObj.MLE5Large,
+		"sentence-transformers/all-MiniLM-L6-v2": EmbeddingModelObj.AllMiniLML6V2,
 	};
 	return known[modelName] ?? null;
 }

@@ -15,6 +15,9 @@ import {
 } from "@oh-my-pi/pi-coding-agent/tools/report-tool-issue";
 import * as piUtils from "@oh-my-pi/pi-utils";
 import { hookFetch } from "@oh-my-pi/pi-utils";
+import { listGrievances } from "../../src/cli/grievances-cli";
+
+const TEST_CREATED_AT = 1_700_000_000;
 
 function openTempDb(): Database {
 	const db = new Database(":memory:");
@@ -25,7 +28,8 @@ function openTempDb(): Database {
 			version TEXT NOT NULL,
 			tool TEXT NOT NULL,
 			report TEXT NOT NULL,
-			pushed INTEGER NOT NULL DEFAULT 0
+			pushed INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER
 		);
 	`);
 	return db;
@@ -33,8 +37,8 @@ function openTempDb(): Database {
 
 function insertGrievance(db: Database, tool: string, report: string): number {
 	const info = db
-		.prepare("INSERT INTO grievances (model, version, tool, report) VALUES (?, ?, ?, ?)")
-		.run("test-model", "test-version", tool, report);
+		.prepare("INSERT INTO grievances (model, version, tool, report, created_at) VALUES (?, ?, ?, ?, ?)")
+		.run("test-model", "test-version", tool, report, TEST_CREATED_AT);
 	return Number(info.lastInsertRowid);
 }
 
@@ -161,8 +165,22 @@ describe("flushGrievances", () => {
 		expect(typeof body.arch).toBe("string");
 		expect(body.installId).toBe("11111111-2222-3333-4444-555555555555");
 		expect(body.entries).toEqual([
-			{ id: 1, model: "test-model", version: "test-version", tool: "find", report: "weird ordering" },
-			{ id: 2, model: "test-model", version: "test-version", tool: "read", report: "selector ignored" },
+			{
+				id: 1,
+				model: "test-model",
+				version: "test-version",
+				tool: "find",
+				report: "weird ordering",
+				created_at: TEST_CREATED_AT,
+			},
+			{
+				id: 2,
+				model: "test-model",
+				version: "test-version",
+				tool: "read",
+				report: "selector ignored",
+				created_at: TEST_CREATED_AT,
+			},
 		]);
 
 		// Rows are retained for inspection — `pushed=1` flips, but the data
@@ -366,11 +384,18 @@ describe("report_tool_issue local storage", () => {
 		const db = openAutoQaDb();
 		expect(db).not.toBeNull();
 		const rows = db
-			?.prepare("SELECT model, version, tool, report, pushed FROM grievances ORDER BY id ASC")
-			.all() as Array<{ model: string; version: string; tool: string; report: string; pushed: number }>;
+			?.prepare("SELECT model, version, tool, report, pushed, created_at FROM grievances ORDER BY id ASC")
+			.all() as Array<{
+			model: string;
+			version: string;
+			tool: string;
+			report: string;
+			pushed: number;
+			created_at: number | null;
+		}>;
 
 		expect(rows).toEqual([
-			{ model: "model-a", version: "version-a", tool: "read", report: "legacy report", pushed: 1 },
+			{ model: "model-a", version: "version-a", tool: "read", report: "legacy report", pushed: 1, created_at: null },
 		]);
 		expect(await Bun.file(legacyPath).exists()).toBe(true);
 
@@ -378,6 +403,59 @@ describe("report_tool_issue local storage", () => {
 		const reopened = openAutoQaDb();
 		const count = reopened?.prepare("SELECT COUNT(*) AS n FROM grievances").get() as { n: number };
 		expect(count.n).toBe(1);
+	});
+
+	it("migrates existing OMP databases to include created_at", async () => {
+		const dbPath = getAutoQaDbPath();
+		await fs.mkdir(path.dirname(dbPath), { recursive: true });
+		const oldDb = new Database(dbPath);
+		oldDb.run(`
+			CREATE TABLE grievances (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				model TEXT NOT NULL,
+				version TEXT NOT NULL,
+				tool TEXT NOT NULL,
+				report TEXT NOT NULL,
+				pushed INTEGER NOT NULL DEFAULT 0
+			);
+		`);
+		oldDb
+			.prepare("INSERT INTO grievances (model, version, tool, report, pushed) VALUES (?, ?, ?, ?, ?)")
+			.run("model-a", "version-a", "edit", "old report", 0);
+		oldDb.close();
+
+		const db = openAutoQaDb();
+		const cols = db?.prepare("PRAGMA table_info(grievances)").all() as Array<{ name: string }>;
+		expect(cols.some(c => c.name === "created_at")).toBe(true);
+		const row = db?.prepare("SELECT report, created_at FROM grievances").get() as {
+			report: string;
+			created_at: number | null;
+		};
+		expect(row).toEqual({ report: "old report", created_at: null });
+	});
+
+	it("lists grievance timestamps in JSON output", async () => {
+		const db = openAutoQaDb();
+		expect(db).not.toBeNull();
+		db?.prepare("INSERT INTO grievances (model, version, tool, report, created_at) VALUES (?, ?, ?, ?, ?)").run(
+			"model-a",
+			"version-a",
+			"read",
+			"dated report",
+			TEST_CREATED_AT,
+		);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		await listGrievances({ limit: 1, json: true });
+
+		expect(logSpy).toHaveBeenCalledTimes(1);
+		const rows = JSON.parse(String(logSpy.mock.calls[0]?.[0])) as Array<{ report: string; created_at: number }>;
+		expect(rows).toEqual([
+			expect.objectContaining({
+				report: "dated report",
+				created_at: TEST_CREATED_AT,
+			}),
+		]);
 	});
 
 	it("records a local row and never fetches even with old auto-QA consent settings enabled", async () => {
@@ -394,12 +472,17 @@ describe("report_tool_issue local storage", () => {
 
 		expect(fetchSpy).not.toHaveBeenCalled();
 		const db = openAutoQaDb();
-		const row = db?.prepare("SELECT model, tool, report, pushed FROM grievances").get() as {
+		const row = db?.prepare("SELECT model, tool, report, pushed, created_at FROM grievances").get() as {
 			model: string;
 			tool: string;
 			report: string;
 			pushed: number;
+			created_at: number;
 		};
-		expect(row).toEqual({ model: "test-model", tool: "read", report: "local report", pushed: 0 });
+		expect(row.model).toBe("test-model");
+		expect(row.tool).toBe("read");
+		expect(row.report).toBe("local report");
+		expect(row.pushed).toBe(0);
+		expect(row.created_at).toBeGreaterThan(0);
 	});
 });

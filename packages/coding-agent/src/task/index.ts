@@ -19,6 +19,7 @@ import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@oh-my
 import type { Usage } from "@oh-my-pi/pi-ai";
 import { $env, prompt, Snowflake } from "@oh-my-pi/pi-utils";
 import type { ToolSession } from "..";
+import { ActorOrchestrator } from "../actor/orchestrator";
 import { AsyncJobManager } from "../async";
 import { resolveAgentModelPatterns } from "../config/model-resolver";
 import { MCPManager } from "../mcp/manager";
@@ -394,6 +395,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 
 		const outputManager =
 			this.session.agentOutputManager ?? new AgentOutputManager(this.session.getArtifactsDir ?? (() => null));
+		const actorOrchestrator = new ActorOrchestrator();
+		const ownerId = this.session.getAgentId?.() ?? undefined;
 		const uniqueIds = await outputManager.allocateBatch(taskItems.map(t => t.id));
 		const progressByTaskId = new Map<string, AgentProgress>();
 		for (let index = 0; index < taskItems.length; index++) {
@@ -403,6 +406,14 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			const assignment = taskItem.assignment.trim();
 			const runId = uniqueIds[index];
 			const runMetadata = createEmbeddedRunMetadata(runId, routeAgentName, this.session.cwd, taskItem.id);
+			actorOrchestrator.plan({
+				id: runId,
+				agentName: routeAgentName,
+				assignment,
+				description: taskItem.description,
+				ownerId,
+				jobId: runId,
+			});
 			progressByTaskId.set(taskItem.id, {
 				index,
 				id: runId,
@@ -458,11 +469,18 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			if (!route?.agent) {
 				failedSchedules.push(`${taskItem.id}: unknown agent "${route?.agentName ?? params.agent}"`);
 				setAgentProgressStatus(progressByTaskId.get(taskItem.id), "failed");
+				actorOrchestrator.update(uniqueIds[i], {
+					status: "failed",
+					completedAt: Date.now(),
+					failureKind: "execution_failed",
+					failureMessage: `unknown agent "${route?.agentName ?? params.agent}"`,
+				});
 				continue;
 			}
 			if (signal?.aborted) {
 				failedSchedules.push(`${taskItem.id}: cancelled before scheduling`);
 				setAgentProgressStatus(progressByTaskId.get(taskItem.id), "aborted");
+				actorOrchestrator.setStatus(uniqueIds[i], "aborted");
 				continue;
 			}
 
@@ -484,9 +502,11 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 						if (runSignal.aborted) {
 							semaphore.release();
 							setAgentProgressStatus(progress, "aborted");
+							actorOrchestrator.setStatus(uniqueId, "aborted");
 							throw new Error("Aborted before execution");
 						}
 						setAgentProgressStatus(progress, "running");
+						actorOrchestrator.setStatus(uniqueId, "running");
 						await reportProgress(
 							`Running background task ${taskItem.id}...`,
 							buildAsyncDetails("running", startedJobs[0]?.jobId ?? label) as unknown as Record<string, unknown>,
@@ -504,6 +524,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 										? "completed"
 										: "failed";
 								setAgentProgressStatus(progress, status);
+								if (singleResult?.lastIntent)
+									actorOrchestrator.update(uniqueId, { lastIntent: singleResult.lastIntent });
 								progress.durationMs = singleResult?.durationMs ?? Math.max(0, Date.now() - startedAt);
 								progress.tokens = singleResult?.tokens ?? 0;
 								progress.contextTokens = singleResult?.contextTokens;
@@ -511,6 +533,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 								progress.cost = singleResult?.usage?.cost.total ?? 0;
 								progress.extractedToolData = singleResult?.extractedToolData;
 							}
+							if (singleResult) actorOrchestrator.complete({ result: singleResult });
 							completedJobs += 1;
 							if (singleResult && ((singleResult.aborted ?? false) || singleResult.exitCode !== 0)) {
 								failedJobs += 1;
@@ -538,6 +561,12 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 								setAgentProgressStatus(progress, "failed");
 								progress.durationMs = Math.max(0, Date.now() - startedAt);
 							}
+							actorOrchestrator.update(uniqueId, {
+								status: "failed",
+								completedAt: Date.now(),
+								failureKind: "execution_failed",
+								failureMessage: error instanceof Error ? error.message : String(error),
+							});
 							completedJobs += 1;
 							failedJobs += 1;
 							const remaining = taskItems.length - completedJobs;
@@ -579,6 +608,12 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				const message = error instanceof Error ? error.message : String(error);
 				failedSchedules.push(`${taskItem.id}: ${message}`);
 				setAgentProgressStatus(progressByTaskId.get(taskItem.id), "failed");
+				actorOrchestrator.update(uniqueId, {
+					status: "failed",
+					completedAt: Date.now(),
+					failureKind: "execution_failed",
+					failureMessage: message,
+				});
 			}
 		}
 
@@ -1023,6 +1058,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			// Write parent conversation context for subagents. When IRC is available,
 			// subagents should ask live peers instead of reading a stale markdown dump.
 			await fs.mkdir(effectiveArtifactsDir, { recursive: true });
+			const actorOrchestrator = new ActorOrchestrator();
 			const shouldWriteConversationContext = this.session.settings.get("irc.enabled") !== true;
 			const compactContext = shouldWriteConversationContext ? this.session.getCompactContext?.() : undefined;
 			let contextFilePath: string | undefined;
@@ -1054,6 +1090,13 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				const taskItem = tasksWithUniqueIds[i];
 				const assignment = taskItem.assignment.trim();
 				const runMetadata = createEmbeddedRunMetadata(taskItem.id, agentName, this.session.cwd, taskItem.id);
+				actorOrchestrator.plan({
+					id: taskItem.id,
+					agentName,
+					assignment,
+					description: taskItem.description,
+					ownerId: this.session.getAgentId?.() ?? undefined,
+				});
 				progressMap.set(i, {
 					index: i,
 					id: taskItem.id,
@@ -1076,8 +1119,9 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			emitProgress();
 
 			const runTask = async (task: (typeof tasksWithUniqueIds)[number], index: number) => {
+				actorOrchestrator.setStatus(task.id, "running");
 				if (!isIsolated) {
-					return runSubprocess({
+					const result = await runSubprocess({
 						cwd: this.session.cwd,
 						agent: effectiveAgent,
 						task: renderSubagentUserPrompt(task.assignment, simpleMode),
@@ -1104,6 +1148,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 							progressMap.set(index, {
 								...structuredClone(progress),
 							});
+							if (progress.lastIntent) actorOrchestrator.update(task.id, { lastIntent: progress.lastIntent });
 							emitProgress();
 						},
 						authStorage: this.session.authStorage,
@@ -1120,6 +1165,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 						parentMnemosyneSessionState: this.session.getMnemosyneSessionState?.(),
 						parentTelemetry: this.session.getTelemetry?.(),
 					});
+					actorOrchestrator.complete({ result });
+					return result;
 				}
 
 				const taskStart = Date.now();
@@ -1161,6 +1208,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 							progressMap.set(index, {
 								...structuredClone(progress),
 							});
+							if (progress.lastIntent) actorOrchestrator.update(task.id, { lastIntent: progress.lastIntent });
 							emitProgress();
 						},
 						authStorage: this.session.authStorage,
@@ -1177,6 +1225,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 						parentMnemosyneSessionState: this.session.getMnemosyneSessionState?.(),
 						parentTelemetry: this.session.getTelemetry?.(),
 					});
+					actorOrchestrator.complete({ result });
 					if (mergeMode === "branch" && result.exitCode === 0) {
 						try {
 							const commitMsg =
@@ -1229,7 +1278,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const assignment = task.assignment.trim();
-					return {
+					const failResult: SingleResult = {
 						index,
 						id: task.id,
 						agent: agent.name,
@@ -1246,6 +1295,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 						modelOverride,
 						error: message,
 					};
+					actorOrchestrator.complete({ result: failResult });
+					return failResult;
 				} finally {
 					if (isolationHandle) {
 						await cleanupIsolation(isolationHandle);
@@ -1268,7 +1319,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				}
 				const task = tasksWithUniqueIds[index];
 				const assignment = task.assignment.trim();
-				return {
+				const skippedResult: SingleResult = {
 					index,
 					id: task.id,
 					agent: agentName,
@@ -1287,6 +1338,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 					aborted: true,
 					abortReason: "Cancelled before start",
 				};
+				actorOrchestrator.complete({ result: skippedResult });
+				return skippedResult;
 			});
 
 			// Aggregate usage from executor results (already accumulated incrementally)

@@ -83,6 +83,7 @@ import {
 	prompt,
 	Snowflake,
 } from "@oh-my-pi/pi-utils";
+import { sanitizeIrcReplyText } from "../actor/mailbox-router";
 import { type AsyncJob, type AsyncJobDeliveryState, AsyncJobManager } from "../async";
 import { reset as resetCapabilities } from "../capability";
 import type { Rule } from "../capability/rule";
@@ -8186,7 +8187,10 @@ export class AgentSession {
 		if (!assistantMessage) {
 			throw new Error("Ephemeral turn ended without a final message");
 		}
-		return { replyText: dedupeIrcReply(replyText.trim()), assistantMessage };
+		return {
+			replyText: sanitizeIrcReplyText(dedupeIrcReply(replyText.trim())).text ?? "No prose reply.",
+			assistantMessage,
+		};
 	}
 
 	/**
@@ -8922,6 +8926,18 @@ export class AgentSession {
 		});
 	}
 
+	static #messageTokenCache = new WeakMap<any, { contentKey: string; tokens: number }>();
+
+	static #getCachedMessageTokens(message: any): number {
+		const contentKey = `${message.role || ""}:${typeof message.content === "string" ? message.content : JSON.stringify(message.content || "")}`;
+		const cached = AgentSession.#messageTokenCache.get(message);
+		if (cached && cached.contentKey === contentKey) {
+			return cached.tokens;
+		}
+		const tokens = estimateTokens(message);
+		AgentSession.#messageTokenCache.set(message, { contentKey, tokens });
+		return tokens;
+	}
 	/**
 	 * Estimate context tokens from messages, using the last assistant usage when available.
 	 */
@@ -8949,7 +8965,7 @@ export class AgentSession {
 			// No usage data - estimate all messages
 			let estimated = 0;
 			for (const message of messages) {
-				estimated += estimateTokens(message);
+				estimated += AgentSession.#getCachedMessageTokens(message);
 			}
 			return {
 				tokens: estimated,
@@ -8959,9 +8975,8 @@ export class AgentSession {
 		const usageTokens = calculatePromptTokens(lastUsage);
 		let trailingTokens = 0;
 		for (let i = lastUsageIndex + 1; i < messages.length; i++) {
-			trailingTokens += estimateTokens(messages[i]);
+			trailingTokens += AgentSession.#getCachedMessageTokens(messages[i]);
 		}
-
 		return {
 			tokens: usageTokens + trailingTokens,
 		};

@@ -1,0 +1,52 @@
+{
+  "global_objective": "Achieve upstream parity for lex fork (GratefulDave/oh-my-pi, fork of can1357/oh-my-pi) against upstream v15.5.7..v15.5.9 (~36 commits), preserving all fork-specific divergence (4132 commits ahead). Selective port in tiers A/B/C — no blind git merge upstream/main.",
+  "completed_tasks": [
+    "Tier A (PR #5 MERGED): 10 clean cherry-picks — natives addon tarball, Wafer Pass/Serverless providers, auth-gateway status-precedence, DSML stream healing, Anthropic >=20-image downscale, #emit listener isolation, shebang auto-chmod",
+    "Tier B (PR #6 MERGED): 3 selective ports — auth-broker logger setTransports fix (3d5f0d886), MCP HTTP SSE bounded startup (c0c9049cc+2266fdae8), shared Python kernel eval<->shortcut (e46ee155a)",
+    "Tier C Group O (PR #7 MERGED): Obsidian + vault:// protocol (1709172bf+509963bd6), vault.enabled default false, security fns verbatim",
+    "Tier C Group V (PR #8 MERGED): Vertex Claude rawPredict + catalog refresh (3ea4981ee+e8b510160+ac7f6e4d1), fetch-wrapper arch, fork non-Vertex catalog preserved",
+    "Tier C Group K (PR #9 MERGED): EventLoopKeepalive busy-wait fix (6fb1983fb+af2011f5a+c1fa0e9f5 squashed) + idle-CPU regression test",
+    "Tier C Group I (PR #10 MERGED): incomplete stop recovery (5053a6a4d surgical manual port, cherry-pick hit 41 conflict markers)",
+    "Tier C Group A (PR #11 MERGED): auth-gateway strict mode + completion-probe (6491fff8f) + 429 usage-limit rotation (b4238b10d) + biome fix; markUsageLimitReached signature matched upstream exactly",
+    "Tier C Group H (PR #12 MERGED): hashline rewrite atomic replace from v15.5.9 (91d15b2ec+7c6457652+7fa55750f+7dd00c015) + computeFileHash shim + diff.ts/execute.ts/streaming.ts migration",
+    "library skill: registered factory-orchestrator for omp coder in lex repo"
+  ],
+  "modified_files": [
+    ".omc/autopilot/spec.md, SUMMARY.md, qa-evidence.md, tier-b-plan.md, tier-b-progress.txt, tier-c-plan.md, tier-c-progress.md",
+    ".omc/autopilot/tier-c/hashline/{discovery,architecture,followups}.md",
+    ".omc/autopilot/tier-c/{auth-gateway,vertex-claude,vault,keepalive}/{discovery,architecture}.md",
+    ".omc/autopilot/tier-c/incomplete-recovery/discovery.md",
+    "packages/hashline/ (wholesale replace from v15.5.9 + computeFileHash shim in src/format.ts)",
+    "packages/coding-agent/src/edit/hashline/diff.ts, execute.ts",
+    "packages/coding-agent/src/edit/streaming.ts",
+    "packages/ai/src/auth-storage.ts, auth-gateway/server.ts, stream.ts",
+    "packages/coding-agent/src/sdk.ts",
+    "packages/utils/src/fetch-retry.ts",
+    "packages/coding-agent/src/internal-urls/vault-protocol.ts",
+    "packages/agent/src/utils/yield.ts (EventLoopKeepalive)"
+  ],
+  "current_issues": [
+    "H shim leaves DEFERRED TS errors (runtime unaffected): 5x SnapshotMetadata.fileHash in A4b consumers (read.ts, search.ts, ast-edit.ts, ast-grep.ts, file-mentions.ts) + 19 in hashline.test.ts (A6 re-author deferred). Bun ignores at runtime.",
+    "Worktree-vs-repo path resolution causes spurious test 'regressions' — filterUserScoped surfaces extra extension discovery failures when worktree path != repo path. Always capture true baseline ON SAME WORKTREE at parent commit before comparing.",
+    "coding-agent worktree baseline = 312 pass / 378 fail due to pi_natives.darwin-arm64.node missing in fresh worktrees (run packages/natives build first or accept as baseline floor). NOT code related.",
+    "Discovery agents twice underestimated scope: Group H (claimed 1 consumer, real 8); Group I (claimed clean cherry-pick, real 41 conflict markers). Future discovery prompts must demand exhaustive import grep.",
+    "rtk hook strips relative flag args (grep -n, tail -N, wc -l) — use awk/sed/Read tool instead, or rtk proxy."
+  ],
+  "constraints": [
+    "NO git merge upstream/main — fork 4132 commits diverged, selective port only",
+    "NO version bump until all Tier C + follow-ups land (defer to single bump)",
+    "Each PR cherry-pick must carry (cherry picked from commit <SHA>) provenance trailer",
+    "Worktree-per-group for parallelism; serialize groups sharing stream.ts/sdk.ts/agent-session.ts",
+    "Commit messages end with Co-Authored-By: Claude; PR bodies end with Generated with Claude Code",
+    "PRs target GratefulDave/oh-my-pi via gh --repo flag (default-repo resolution needs explicit flag)",
+    "vault.enabled default false (security-cautious); vault security fns ported verbatim no fork edits",
+    "Caveman mode full active; code/commits/PRs written normal"
+  ],
+  "current_state": "ALL 6 Tier C groups MERGED (PRs #7-#12). Tier A+B+C complete. Local main at 204494e0a. All worktrees removed. Autopilot state cleared. ~26 of 36 upstream commits landed (rest are docs/CHANGELOG/codex-removed-in-fork/non-applicable). H landed via shim approach — 6 consumer-migration follow-up PRs + 1 shim-removal PR still pending per .omc/autopilot/tier-c/hashline/followups.md.",
+  "next_steps": [
+    "Execute 6 H-migration follow-up PRs (parallel worktrees, executor haiku): migrate read.ts/search.ts/ast-edit.ts/ast-grep.ts/file-mentions.ts/typescript-edit-benchmark-runner.ts off computeFileHash shim to SnapshotStore.recordContiguous direct calls",
+    "After 6 migrations merge: H shim-removal PR — delete computeFileHash from packages/hashline/src/format.ts, re-author packages/coding-agent/test/core/hashline.test.ts (~10 sites, 957 LOC) against new snapshot-store API, verify grep -rn computeFileHash returns 0",
+    "Version bump 15.5.7 -> 15.5.10 (or 15.6.0 if H breaking for downstream) + cumulative CHANGELOG for Tier A+B+C",
+    "Optional: apply security-reviewer defense-in-depth to natives loader-state.js (gunzip maxOutputLength, crypto.randomBytes tmp filename, mode 0o600)"
+  ]
+}

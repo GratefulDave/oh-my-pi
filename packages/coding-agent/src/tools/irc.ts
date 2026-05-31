@@ -21,6 +21,7 @@
 import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
 import { prompt } from "@oh-my-pi/pi-utils";
 import * as z from "zod/v4";
+import { sanitizeIrcReplyText } from "../actor/mailbox-router";
 import ircDescription from "../prompts/tools/irc.md" with { type: "text" };
 import type { AgentRef, AgentRegistry } from "../registry/agent-registry";
 import type { ToolSession } from ".";
@@ -196,9 +197,12 @@ export class IrcTool implements AgentTool<typeof ircSchema, IrcDetails> {
 				registry.routeMessage(senderId, target.id, message);
 				delivered.push(target.id);
 				if (awaitReply && result.replyText) {
-					replies.push({ from: target.id, text: result.replyText });
-					// Route the auto-reply back to the sender's own mailbox asynchronously
-					registry.routeMessage(target.id, senderId, result.replyText);
+					const sanitized = sanitizeIrcReplyText(result.replyText);
+					if (sanitized.text) {
+						replies.push({ from: target.id, text: sanitized.text });
+						// Route the auto-reply back to the sender's own mailbox asynchronously.
+						registry.routeMessage(target.id, senderId, sanitized.text);
+					}
 				}
 			} catch (err) {
 				failed.push({ id: target.id, error: err instanceof Error ? err.message : String(err) });

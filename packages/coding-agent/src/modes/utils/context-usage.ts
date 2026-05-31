@@ -18,6 +18,41 @@ const CELL_FILLED_MESSAGES = "⛃";
 const CELL_FREE = "⛶";
 const CELL_BUFFER = "⛝";
 
+const messageTokenCache = new WeakMap<any, { contentKey: string; tokens: number }>();
+
+function getCachedMessageTokens(message: any): number {
+	const contentKey = `${message.role || ""}:${typeof message.content === "string" ? message.content : JSON.stringify(message.content || "")}`;
+	const cached = messageTokenCache.get(message);
+	if (cached && cached.contentKey === contentKey) {
+		return cached.tokens;
+	}
+	const tokens = estimateTokens(message);
+	messageTokenCache.set(message, { contentKey, tokens });
+	return tokens;
+}
+
+const stringTokenCache = new Map<string, number>();
+
+function getCachedStringTokens(text: string): number {
+	const cached = stringTokenCache.get(text);
+	if (cached !== undefined) {
+		return cached;
+	}
+	const tokens = countTokens(text);
+	stringTokenCache.set(text, tokens);
+	return tokens;
+}
+
+function getCachedStringArrayTokens(parts: string[]): number {
+	const key = parts.join("\n");
+	const cached = stringTokenCache.get(key);
+	if (cached !== undefined) {
+		return cached;
+	}
+	const tokens = countTokens(parts);
+	stringTokenCache.set(key, tokens);
+	return tokens;
+}
 type CategoryId = "systemPrompt" | "systemContext" | "systemTools" | "skills" | "messages";
 
 interface CategoryInfo {
@@ -75,7 +110,7 @@ export function computeContextBreakdown(session: AgentSession): ContextBreakdown
 	const convo = session.messages;
 	if (convo) {
 		for (const message of convo) {
-			messagesTokens += estimateTokens(message);
+			messagesTokens += getCachedMessageTokens(message);
 		}
 	}
 
@@ -86,8 +121,8 @@ export function computeContextBreakdown(session: AgentSession): ContextBreakdown
 	//   Skills        = the skill list embedded in the system prompt
 	//   Messages      = conversation messages
 	const systemPromptParts = session.systemPrompt;
-	const systemPromptTokens = Math.max(0, countTokens(systemPromptParts?.[0] ?? "") - skillsTokens);
-	const systemContextTokens = countTokens(systemPromptParts?.slice(1) ?? []);
+	const systemPromptTokens = Math.max(0, getCachedStringTokens(systemPromptParts?.[0] ?? "") - skillsTokens);
+	const systemContextTokens = getCachedStringArrayTokens(systemPromptParts?.slice(1) ?? []);
 
 	const categories: CategoryInfo[] = [
 		{ id: "systemPrompt", label: "System prompt", tokens: systemPromptTokens, color: "accent", glyph: CELL_FILLED },

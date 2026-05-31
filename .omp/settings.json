@@ -1,0 +1,35 @@
+{
+  "extensions": [
+    "packages/antigravity-adapter/dist/extension.bundle.js"
+  ],
+  "disabledProviders": [
+    "google-antigravity"
+  ],
+  "activeModelProfile": "codex-ag",
+  "modelProfiles": {
+    "codex-ag": {
+      "cycleOrder": [
+        "smol",
+        "default",
+        "plan",
+        "slow"
+      ],
+      "defaultThinkingLevel": "medium",
+      "enabledModels": [
+        "openai-codex/*",
+        "AG-*",
+        "opencode-antigravity/*"
+      ],
+      "modelProviderOrder": [
+        "openai-codex",
+        "opencode-antigravity"
+      ],
+      "modelRoles": {
+        "default": "openai-codex/gpt-5.5:high",
+        "smol": "AG-gemini-3.5-flash:medium",
+        "plan": "AG-claude-sonnet-4.6-thinking:medium",
+        "slow": "AG-claude-opus-4.6-thinking:xhigh"
+      }
+    }
+  }
+}
