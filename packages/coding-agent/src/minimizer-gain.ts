@@ -237,11 +237,23 @@ export function buildMinimizerMissedRecord(input: {
 	exitCode: number | null;
 	filter?: string;
 }): MinimizerGainRecord | null {
-	if (input.totalBytes <= 0) return null;
+	if (input.totalBytes <= 40) return null;
+	let cleanCommand = input.command.trim();
+	if (cleanCommand.includes("\n")) {
+		const lines = cleanCommand.split("\n");
+		const firstLine = lines[0].trim();
+		if (firstLine.includes("python3") || firstLine.includes("python")) {
+			cleanCommand = "python3 <stdin>";
+		} else if (firstLine.includes("bash") || firstLine.includes("sh")) {
+			cleanCommand = "bash <stdin>";
+		} else {
+			cleanCommand = `${firstLine} ...`;
+		}
+	}
 	return {
 		timestamp: input.timestamp,
 		...(input.cwd === undefined ? {} : { cwd: input.cwd }),
-		command: input.command,
+		command: cleanCommand,
 		filter: input.filter ?? MISSED_FILTER,
 		inputBytes: input.totalBytes,
 		outputBytes: input.totalBytes,
