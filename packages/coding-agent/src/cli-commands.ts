@@ -18,6 +18,8 @@ export const commands: CommandEntry[] = [
 	{ name: "agents", load: () => import("./commands/agents").then(m => m.default) },
 	{ name: "commit", load: () => import("./commands/commit").then(m => m.default) },
 	{ name: "config", load: () => import("./commands/config").then(m => m.default) },
+	{ name: "gain", load: () => import("./commands/gain").then(m => m.default) },
+	{ name: "discover", load: () => import("./commands/discover").then(m => m.default) },
 	{ name: "grep", load: () => import("./commands/grep").then(m => m.default) },
 	{ name: "grievances", load: () => import("./commands/grievances").then(m => m.default) },
 	{ name: "install", load: () => import("./commands/install").then(m => m.default) },
