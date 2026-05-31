@@ -194,7 +194,7 @@ export interface ModelTagsSettings {
 
 export interface ModelProfileSettings {
 	modelRoles?: Record<string, string>;
-	defaultThinkingLevel?: (typeof THINKING_EFFORTS)[number];
+	defaultThinkingLevel?: (typeof THINKING_EFFORTS)[number] | "auto";
 	enabledModels?: string[];
 	cycleOrder?: string[];
 	modelProviderOrder?: string[];
@@ -686,13 +686,13 @@ export const SETTINGS_SCHEMA = {
 	// Reasoning and prompts
 	defaultThinkingLevel: {
 		type: "enum",
-		values: THINKING_EFFORTS,
+		values: ["auto", ...THINKING_EFFORTS] as const,
 		default: "high",
 		ui: {
 			tab: "model",
 			label: "Thinking Level",
 			description: "Reasoning depth for thinking-capable models",
-			options: [...THINKING_EFFORTS.map(getThinkingLevelMetadata)],
+			options: [getThinkingLevelMetadata("auto"), ...THINKING_EFFORTS.map(getThinkingLevelMetadata)],
 		},
 	},
 
@@ -2912,6 +2912,28 @@ export const SETTINGS_SCHEMA = {
 			label: "Tiny Model",
 			description: "Session-title model: online pi/smol by default, or a local on-device model",
 			options: TINY_TITLE_MODEL_OPTIONS,
+		},
+	},
+	"providers.autoThinkingModel": {
+		type: "enum",
+		values: TINY_TITLE_MODEL_VALUES,
+		default: ONLINE_TINY_TITLE_MODEL_KEY,
+		ui: {
+			tab: "providers",
+			label: "Auto Thinking Model",
+			description: "Turn-based auto-reasoning classification: online pi/smol by default, or a local model",
+			options: TINY_TITLE_MODEL_OPTIONS,
+		},
+	},
+	"providers.shakeSummaryModel": {
+		type: "enum",
+		values: TINY_MEMORY_MODEL_VALUES,
+		default: "qwen3-1.7b",
+		ui: {
+			tab: "providers",
+			label: "Shake Summary Model",
+			description: "Model used for extractive summarization in shake context compaction",
+			options: TINY_MEMORY_MODEL_OPTIONS,
 		},
 	},
 

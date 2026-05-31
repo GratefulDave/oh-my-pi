@@ -293,7 +293,7 @@ export class AstEditTool implements AgentTool<typeof astEditSchema, AstEditToolD
 				return { model: modelOut, display: displayOut };
 			};
 
-			if (isDirectory) {
+			if (isDirectory || multiTargets) {
 				const grouped = formatGroupedFiles(fileList, relativePath => {
 					const rendered = renderChangesForFile(relativePath);
 					const count = fileReplacementCounts.get(relativePath) ?? 0;

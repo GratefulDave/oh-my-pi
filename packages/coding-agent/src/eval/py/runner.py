@@ -811,6 +811,7 @@ def _handle_request(req: dict) -> None:
     _STATE.current_id = rid
     _STATE.cancel_requested = False
     _STATE.execution_count += 1
+    _STATE.user_ns["__omp_run_id__"] = rid
     _emit({"type": "started", "id": rid})
 
     status: str = "ok"

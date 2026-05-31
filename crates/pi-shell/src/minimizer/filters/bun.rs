@@ -13,6 +13,8 @@ const BUN_TOOL_SUBCOMMANDS: &[&str] =
 	&["tsc", "eslint", "biome", "next", "prettier", "prisma", "jest", "vitest", "playwright"];
 const BUN_CPP_TOOL_SUBCOMMANDS: &[&str] = &["cmake", "ctest", "ninja", "gtest", "gtest-parallel"];
 
+const LEX_REBUILD_SCRIPT: &str = "rebuild-lex.zsh";
+
 pub fn supports(program: &str, subcommand: Option<&str>) -> bool {
 	match program {
 		"bun" => subcommand.is_some_and(|subcommand| {
@@ -26,11 +28,15 @@ pub fn supports(program: &str, subcommand: Option<&str>) -> bool {
 			BUN_TOOL_SUBCOMMANDS.contains(&subcommand)
 				|| BUN_CPP_TOOL_SUBCOMMANDS.contains(&subcommand)
 		}),
+		LEX_REBUILD_SCRIPT => true,
 		_ => false,
 	}
 }
 
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
+	if ctx.program == LEX_REBUILD_SCRIPT {
+		return filter_rebuild_lex(input, exit_code).labeled("rebuild-lex");
+	}
 	let subcommand = ctx.subcommand;
 	if matches!((ctx.program, subcommand), ("bun", Some(subcommand)) if is_non_exec_package_subcommand(subcommand))
 	{
@@ -306,6 +312,50 @@ fn is_bun_build_noise(line: &str, exit_code: i32) -> bool {
 		|| lower.starts_with("saved lockfile")
 }
 
+fn filter_rebuild_lex(input: &str, exit_code: i32) -> MinimizerOutput {
+	let cleaned = primitives::strip_ansi(input);
+	let mut out = String::new();
+	for line in cleaned.lines() {
+		let trimmed = line.trim();
+		if trimmed.is_empty() || is_rebuild_lex_noise(trimmed, exit_code) {
+			continue;
+		}
+		out.push_str(line.trim_end());
+		out.push('\n');
+	}
+	let compacted = primitives::dedup_consecutive_lines(&out);
+	let text = if compacted.trim().is_empty() {
+		primitives::head_tail_lines(&cleaned, 120, 80)
+	} else {
+		primitives::head_tail_lines(&compacted, 120, 80)
+	};
+	if text == input {
+		MinimizerOutput::passthrough(input)
+	} else {
+		MinimizerOutput::transformed(text, input.len())
+	}
+}
+
+fn is_rebuild_lex_noise(line: &str, exit_code: i32) -> bool {
+	if line.starts_with("==> ") || line.starts_with("omp path:") || line.starts_with("lex path:") {
+		return false;
+	}
+	if exit_code != 0 && is_important(line) {
+		return false;
+	}
+	let lower = line.to_ascii_lowercase();
+	lower.starts_with("bun install ")
+		|| lower.starts_with("bun run build")
+		|| lower.starts_with("resolving dependencies")
+		|| lower.starts_with("resolved, downloaded and extracted")
+		|| lower.starts_with("saved lockfile")
+		|| lower.starts_with("checked ")
+		|| lower.starts_with("installing ")
+		|| lower.starts_with("transpiled ")
+		|| (lower.starts_with("bundled ") && lower.contains(" in "))
+		|| lower.starts_with('+')
+}
+
 fn is_important(line: &str) -> bool {
 	let lower = line.to_ascii_lowercase();
 	lower.contains("error")
@@ -335,6 +385,7 @@ mod tests {
 		}
 		assert!(supports("bunx", Some("vitest")));
 		assert!(supports("bunx", Some("cmake")));
+		assert!(supports(LEX_REBUILD_SCRIPT, Some("build")));
 		assert!(!supports("bun", Some("unknown")));
 	}
 
@@ -381,6 +432,27 @@ mod tests {
 			assert!(out.text.contains("Built in 34.2s"));
 			assert!(!out.text.contains("Creating an optimized"));
 		}
+	}
+
+	#[test]
+	fn rebuild_lex_filters_bun_install_and_build_noise() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx(LEX_REBUILD_SCRIPT, Some("build"), "./rebuild-lex.zsh", &cfg);
+		let out = filter(
+			&ctx,
+			"==> Building fork from /repo\nbun install v1.3.14\nResolving dependencies\nSaved \
+			 lockfile\nbun run build\nBundled 42 modules in 30ms\n==> Verification\nlex path: \
+			 /Users/me/.local/bin/lex\nlex 0.1.0\n",
+			0,
+		);
+		assert!(out.changed);
+		assert_eq!(out.filter, "rebuild-lex");
+		assert!(out.text.contains("==> Building fork from /repo"));
+		assert!(out.text.contains("==> Verification"));
+		assert!(out.text.contains("lex path: /Users/me/.local/bin/lex"));
+		assert!(!out.text.contains("bun install v1.3.14"));
+		assert!(!out.text.contains("Resolving dependencies"));
+		assert!(!out.text.contains("Bundled 42 modules in 30ms"));
 	}
 
 	#[test]

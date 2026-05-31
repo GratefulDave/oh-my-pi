@@ -608,6 +608,19 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 		|keycode: i32, m: u32| -> bool { mok.is_some_and(|(mm, kk)| kk == keycode && mm == m) };
 
 	// Named keys (case-insensitive)
+	// Mixed-mode Alt handling: terminals can still send ESC-prefixed legacy CSI/SS3
+	// sequences (for example `\x1b\x1b[A` for Alt+Up) even while Kitty protocol
+	// reporting is active. `parse_key_inner` recognizes these as `alt+...`; mirror
+	// that behavior here so `matches_key("alt+up")` agrees with `parse_key()`.
+	if modifier == MOD_ALT
+		&& bytes.len() > 2
+		&& bytes[0] == 0x1b
+		&& bytes[1] == 0x1b
+		&& (bytes[2] == b'[' || bytes[2] == b'O')
+		&& let Some(inner_key) = parse_key_inner(&bytes[1..], true)
+	{
+		return inner_key.eq_ignore_ascii_case(key);
+	}
 	if key.eq_ignore_ascii_case("escape") || key.eq_ignore_ascii_case("esc") {
 		if modifier != 0 {
 			return false;

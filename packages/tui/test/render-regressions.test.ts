@@ -885,6 +885,38 @@ describe("TUI terminal-state regressions", () => {
 				tui.stop();
 			}
 		});
+		it("keeps viewport advancing during offscreen growth when native viewport is unknown", async () => {
+			const term = new UnknownViewportTerminal(32, 6);
+			const tui = new TUI(term);
+			const logLines = rows("line-", 6);
+			let tick = 0;
+			const component = new MutableLinesComponent([`status-${tick}`, ...logLines]);
+			tui.addChild(component);
+
+			try {
+				tui.start();
+				await settle(term);
+
+				for (let i = 6; i < 40; i++) {
+					tick += 1;
+					logLines.push(`line-${i}`);
+					component.setLines([`status-${tick}`, ...logLines]);
+					tui.requestRender();
+					await settle(term);
+				}
+
+				const viewport = visible(term).map(line => line.trim());
+				expect(viewport.at(-1)).toBe("line-39");
+				for (let i = 1; i < viewport.length; i++) {
+					const prev = Number.parseInt(viewport[i - 1]!.slice(5), 10);
+					const next = Number.parseInt(viewport[i]!.slice(5), 10);
+					expect(next - prev).toBe(1);
+				}
+				expect(tui.refreshNativeScrollbackIfDirty()).toBe(false);
+			} finally {
+				tui.stop();
+			}
+		});
 		it("repaints viewport when offscreen expansion and append land together", async () => {
 			const term = new VirtualTerminal(32, 6);
 			const tui = new TUI(term);
@@ -1067,6 +1099,36 @@ describe("TUI terminal-state regressions", () => {
 				tui.stop();
 			}
 		});
+		it("allows unknown POSIX viewport state to keep live startup mutations rendering", async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, "platform", { configurable: true, value: "darwin" });
+			const term = new UnknownViewportTerminal(32, 5);
+			const tui = new TUI(term);
+			const component = new MutableLinesComponent(rows("welcome-", 12));
+			tui.addChild(component);
+
+			try {
+				tui.start();
+				await settle(term);
+
+				component.setLines(rows("ready-", 12));
+				tui.requestRender();
+				await settle(term);
+
+				expect(visible(term).map(line => line.trim())).toEqual([
+					"ready-7",
+					"ready-8",
+					"ready-9",
+					"ready-10",
+					"ready-11",
+				]);
+				expect(tui.refreshNativeScrollbackIfDirty()).toBe(false);
+			} finally {
+				Object.defineProperty(process, "platform", { configurable: true, value: originalPlatform });
+				tui.stop();
+			}
+		});
+
 		it("treats unknown Windows viewport state as scrolled", async () => {
 			const originalPlatform = process.platform;
 			Object.defineProperty(process, "platform", { configurable: true, value: "win32" });

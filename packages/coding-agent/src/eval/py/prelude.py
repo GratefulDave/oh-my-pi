@@ -3,7 +3,7 @@ from __future__ import annotations
 if "__omp_prelude_loaded__" not in globals():
     __omp_prelude_loaded__ = True
     from pathlib import Path
-    import os, json
+    import os, json, math
 
     # __omp_display is injected by runner.py before the prelude executes; it
     # mirrors IPython's display() semantics with the same MIME bundle output.
@@ -449,7 +449,7 @@ if "__omp_prelude_loaded__" not in globals():
 
         __slots__ = ("_base", "_token", "_session")
 
-        def __init__(self, base: str, token: str, session: str):
+        def __init__(self, base: str = "", token: str = "", session: str = ""):
             self._base = base.rstrip("/")
             self._token = token
             self._session = session
@@ -465,7 +465,11 @@ if "__omp_prelude_loaded__" not in globals():
         def __repr__(self) -> str:
             return f"<tool proxy session={self._session}>"
 
-    tool = _ToolProxy(*_tool_proxy_from_env())
+    # Keep tool proxy available even when the bridge is not configured for this
+    # kernel. Direct `tool.<name>(...)` calls still fail lazily inside
+    # `_bridge_call`, but plain Python state sharing should not die during
+    # kernel prelude boot.
+    tool = _ToolProxy()
 
     def llm(prompt, *, model="default", system=None, schema=None):
         """Oneshot, stateless LLM call against a model tier.
@@ -483,3 +487,107 @@ if "__omp_prelude_loaded__" not in globals():
         res = _bridge_call("__llm__", args)
         text = res.get("text") if isinstance(res, dict) else res
         return json.loads(text) if schema is not None else text
+
+    def agent(prompt, *, agent_type="task", model=None, context=None, label=None, schema=None):
+        """Run a subagent and return its final output."""
+        args = {"prompt": prompt}
+        if agent_type is not None:
+            args["agentType"] = agent_type
+        if model is not None:
+            args["model"] = model
+        if context is not None:
+            args["context"] = context
+        if label is not None:
+            args["label"] = label
+        if schema is not None:
+            args["schema"] = schema
+        res = _bridge_call("__agent__", args)
+        text = res.get("text") if isinstance(res, dict) else res
+        return json.loads(text) if schema is not None else text
+
+    def _normalize_concurrency(value):
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            n = 4
+        return max(1, min(16, n))
+
+    def _pool_map(items, fn, concurrency):
+        import concurrent.futures, contextvars
+        items = list(items)
+        if not items:
+            return []
+        workers = min(_normalize_concurrency(concurrency), len(items))
+        results = [None] * len(items)
+        errors = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {}
+            for i, item in enumerate(items):
+                ctx = contextvars.copy_context()
+                futures[pool.submit(ctx.run, fn, item)] = i
+            for fut in concurrent.futures.as_completed(futures):
+                i = futures[fut]
+                try:
+                    results[i] = fut.result()
+                except BaseException as exc:
+                    errors[i] = exc
+        if errors:
+            raise errors[min(errors)]
+        return results
+
+    def parallel(thunks, *, concurrency=4):
+        """Run zero-arg callables concurrently, preserving input order."""
+        thunks = list(thunks)
+        for t in thunks:
+            if not callable(t):
+                raise TypeError("parallel() expects an iterable of zero-arg callables")
+        return _pool_map(thunks, lambda t: t(), concurrency)
+
+    def pipeline(items, *stages, concurrency=4):
+        """Map items through staged barriers, preserving order within each stage."""
+        current = list(items)
+        for stage in stages:
+            if not callable(stage):
+                raise TypeError("pipeline() stages must be callables")
+            current = _pool_map(current, stage, concurrency)
+        return current
+
+    def log(message):
+        _emit_status("log", message=str(message))
+        return None
+
+    def phase(title):
+        globals()["__omp_current_phase__"] = str(title)
+        _emit_status("phase", title=str(title))
+        return None
+
+    class _Budget:
+        @property
+        def total(self):
+            snap = _bridge_call("__budget__", {})
+            return (snap or {}).get("total")
+
+        @property
+        def hard(self):
+            snap = _bridge_call("__budget__", {})
+            return bool((snap or {}).get("hard"))
+
+        def spent(self):
+            snap = _bridge_call("__budget__", {})
+            return int((snap or {}).get("spent") or 0)
+
+        def remaining(self):
+            snap = _bridge_call("__budget__", {}) or {}
+            total = snap.get("total")
+            if total is None:
+                return math.inf
+            return max(0, total - int(snap.get("spent") or 0))
+
+        def __repr__(self):
+            try:
+                snap = _bridge_call("__budget__", {}) or {}
+                return f"<budget total={snap.get('total')} spent={snap.get('spent')}>"
+            except Exception:
+                return "<budget unavailable>"
+
+    budget = _Budget()

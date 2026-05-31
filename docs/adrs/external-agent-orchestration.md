@@ -2,7 +2,7 @@
 
 ## Decision
 
-This fork can spawn real external agent sessions as processes. `/delegate` is the current entrypoint. `/orchestrate` is reserved for in-process subagent orchestration workflows.
+This fork can spawn real external agent sessions as processes. `/delegate` is current external entrypoint. Native in-process orchestration follows upstream behavior: prose `orchestrate` injects hidden orchestration guidance, and prose `workflow` injects eval-workflow guidance.
 
 Supported backends:
 
@@ -20,6 +20,16 @@ Direct provider/API usage runs inside the current agent runtime and uses the run
 
 This is useful when the fork needs another real agent runtime instead of another in-process model call.
 
+
+Native orchestration implementation lives in coding-agent runtime, not in swarm extension:
+
+- `packages/coding-agent/src/modes/orchestrate.ts`
+- `packages/coding-agent/src/modes/workflow.ts`
+- `packages/coding-agent/src/session/agent-session.ts`
+- `packages/coding-agent/src/eval/agent-bridge.ts`
+- `packages/coding-agent/src/eval/budget-bridge.ts`
+
+That path is DAG-oriented for coding work: dependency-aware fan-out, parallel ready nodes, ordered barriers, and verification gates. `/swarm` remains available as explicit opt-in YAML DAG orchestration.
 ## Implementation
 
 Implementation files:

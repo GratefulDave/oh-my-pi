@@ -82,6 +82,23 @@ fn aws_pipe_and_compound_passthrough() {
 }
 
 #[test]
+fn rebuild_lex_script_uses_primary_build_minimizer_path() {
+	let cfg = cfg();
+	let out = apply(
+		"./rebuild-lex.zsh",
+		"==> Building fork from /repo\nbun install v1.3.14\nResolving dependencies\nSaved \
+		 lockfile\nbun run build\nBundled 42 modules in 30ms\n==> Verification\nlex path: \
+		 /Users/me/.local/bin/lex\nlex 0.1.0\n",
+		0,
+		&cfg,
+	);
+	assert!(out.changed);
+	assert_eq!(out.filter, "rebuild-lex");
+	assert!(out.text.contains("==> Verification"));
+	assert!(!out.text.contains("bun install v1.3.14"));
+}
+
+#[test]
 fn aws_malformed_input_passthroughs() {
 	let cfg = cfg();
 	let input = "{not-json";

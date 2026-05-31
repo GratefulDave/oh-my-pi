@@ -1,7 +1,6 @@
 import { isCompiledBinary, logger } from "@oh-my-pi/pi-utils";
 import {
 	isTinyLocalModelKey,
-	isTinyMemoryLocalModelKey,
 	isTinyTitleLocalModelKey,
 	type TinyLocalModelKey,
 	type TinyMemoryLocalModelKey,
@@ -158,14 +157,14 @@ export class TinyTitleClient {
 		prompt: string,
 		options: { maxTokens?: number; signal?: AbortSignal } = {},
 	): Promise<string | null> {
-		if (!isTinyMemoryLocalModelKey(modelKey)) return null;
+		if (!isTinyLocalModelKey(modelKey)) return null;
 		if (options.signal?.aborted) return null;
 
 		try {
 			const worker = this.#ensureWorker();
 			const id = String(++this.#nextRequestId);
 			const { promise, resolve } = Promise.withResolvers<string | null>();
-			this.#pending.set(id, { kind: "complete", modelKey, resolve });
+			this.#pending.set(id, { kind: "complete", modelKey: modelKey as any, resolve });
 			const abort = (): void => {
 				const pending = this.#pending.get(id);
 				if (pending?.kind !== "complete") return;

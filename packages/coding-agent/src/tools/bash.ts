@@ -74,6 +74,9 @@ export interface BashToolDetails {
 	timeoutSeconds?: number;
 	requestedTimeoutSeconds?: number;
 	terminalId?: string;
+	exitCode?: number;
+	timedOut?: boolean;
+	cancelled?: boolean;
 	async?: {
 		state: "running" | "completed" | "failed";
 		jobId: string;
@@ -261,32 +264,28 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 		return outputText || "(no output)";
 	}
 
-	#buildResultText(result: BashResult | BashInteractiveResult, timeoutSec: number, outputText: string): string {
-		if (result.cancelled) {
-			throw new ToolError(normalizeResultOutput(result) || "Command aborted");
-		}
-		if (isInteractiveResult(result) && result.timedOut) {
-			throw new ToolError(normalizeResultOutput(result) || `Command timed out after ${timeoutSec} seconds`);
-		}
-		if (result.exitCode === undefined) {
-			throw new ToolError(`${outputText}\n\nCommand failed: missing exit status`);
-		}
-		if (result.exitCode !== 0) {
-			throw new ToolError(`${outputText}\n\nCommand exited with code ${result.exitCode}`);
-		}
-		return outputText;
-	}
-
 	#buildCompletedResult(
 		result: BashResult | BashInteractiveResult,
 		timeoutSec: number,
 		options: { requestedTimeoutSec?: number; notices?: readonly string[]; terminalId?: string } = {},
 	): AgentToolResult<BashToolDetails> {
+		const exitCode = result.exitCode;
+		const failedExit = exitCode !== undefined && exitCode !== 0;
+
 		const outputLines = [this.#formatResultOutput(result)];
 		const notices = options.notices?.filter(Boolean) ?? [];
 		if (notices.length > 0) outputLines.push("", ...notices);
+		if (failedExit) outputLines.push("", `Command exited with code ${exitCode}`);
 		const outputText = outputLines.join("\n");
-		const details: BashToolDetails = { timeoutSeconds: timeoutSec };
+
+		const details: BashToolDetails = {
+			timeoutSeconds: timeoutSec,
+			timedOut: isInteractiveResult(result) ? result.timedOut : false,
+			cancelled: result.cancelled,
+		};
+		if (failedExit) {
+			details.exitCode = exitCode;
+		}
 		if (options.requestedTimeoutSec !== undefined && options.requestedTimeoutSec !== timeoutSec) {
 			details.requestedTimeoutSeconds = options.requestedTimeoutSec;
 		}
@@ -294,8 +293,11 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 			details.terminalId = options.terminalId;
 		}
 		const resultBuilder = toolResult(details).text(outputText).truncationFromSummary(result, { direction: "tail" });
-		this.#buildResultText(result, timeoutSec, outputText);
-		return resultBuilder.done();
+		const completed = resultBuilder.done();
+		if (failedExit) {
+			completed.isError = true;
+		}
+		return completed;
 	}
 
 	#buildBackgroundStartResult(
@@ -722,22 +724,12 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 									error,
 								});
 							}
-							const timedOutResult: BashInteractiveResult = {
-								output: current.output,
-								exitCode: undefined,
-								cancelled: false,
-								timedOut: true,
-								truncated: current.truncated,
-								totalLines: current.output.length > 0 ? current.output.split("\n").length : 0,
-								totalBytes: current.output.length,
-								outputLines: current.output.length > 0 ? current.output.split("\n").length : 0,
-								outputBytes: current.output.length,
-							};
-							return this.#buildCompletedResult(timedOutResult, timeoutSec, {
-								requestedTimeoutSec,
-								notices: pendingNotices,
-								terminalId: handle.terminalId,
-							});
+							// Throw so the tool call fails rather than resolving with
+							// an error result — consistent with the local executeBash
+							// timeout behaviour. The `handle.release()` outer finally
+							// still runs.
+							const timeoutOutput = current.output ? `${current.output}\n\n` : "";
+							throw new ToolError(`${timeoutOutput}Command timed out after ${timeoutSec} seconds`);
 						}
 
 						if (raced.kind === "exit") {
@@ -835,14 +827,16 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					onChunk: streamTailUpdates(tailBuffer, onUpdate),
 					onMinimizedSave: originalText => saveBashOriginalArtifact(this.session, originalText),
 				});
-		if (result.cancelled) {
+		if (result.cancelled || (isInteractiveResult(result) && result.timedOut)) {
 			if (signal?.aborted) {
 				throw new ToolAbortError(normalizeResultOutput(result) || "Command aborted");
 			}
-			throw new ToolError(normalizeResultOutput(result) || "Command aborted");
+			throw new ToolError(normalizeResultOutput(result) || "Command timed out");
 		}
-		if (isInteractiveResult(result) && result.timedOut) {
-			throw new ToolError(normalizeResultOutput(result) || `Command timed out after ${timeoutSec} seconds`);
+		if (result.exitCode === undefined) {
+			throw new ToolError(
+				`${normalizeResultOutput(result) || "(no output)"}\n\nCommand failed: missing exit status`,
+			);
 		}
 		return this.#buildCompletedResult(result, timeoutSec, {
 			requestedTimeoutSec,
@@ -999,6 +993,22 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 						warningLine = formatStyledTruncationWarning(details.meta, uiTheme) ?? undefined;
 					}
 
+					// Build status line for exit code / timeout / abort
+					let statusLabel: string | undefined;
+					if (!options.isPartial) {
+						if (details?.exitCode !== undefined && details.exitCode !== 0) {
+							statusLabel = `Command exited with code ${details.exitCode}`;
+						} else if (details?.timedOut) {
+							statusLabel = `Command timed out after ${timeoutSeconds} seconds`;
+						} else if (details?.cancelled) {
+							statusLabel = "Command aborted";
+						}
+					}
+					const statusLine =
+						statusLabel !== undefined
+							? uiTheme.fg("dim", `${uiTheme.format.bracketLeft}${statusLabel}${uiTheme.format.bracketRight}`)
+							: undefined;
+
 					const outputLines: string[] = [];
 					const hasOutput = displayOutput.trim().length > 0;
 					const rawOutputLines = displayOutput.split("\n");
@@ -1031,6 +1041,7 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 							outputLines.push(...result.visualLines);
 						}
 					}
+					if (statusLine) outputLines.push(statusLine);
 					if (timeoutLine) outputLines.push(timeoutLine);
 					if (warningLine) outputLines.push(warningLine);
 

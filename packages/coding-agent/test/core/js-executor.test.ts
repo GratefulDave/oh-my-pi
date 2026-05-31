@@ -464,6 +464,31 @@ describe("executeJs", () => {
 		expect(result.output.trim().endsWith("done")).toBe(true);
 	});
 
+	it("resolves cyclic relative circular imports correctly", async () => {
+		await Bun.write(
+			path.join(tempDir.path(), "cyclic-a.js"),
+			'import { b } from "./cyclic-b.js"; export const a = b + 1;',
+		);
+		await Bun.write(path.join(tempDir.path(), "cyclic-b.js"), "export const b = 41;");
+
+		const result = await executeJs('const m = await import("./cyclic-a.js"); return m.a;', {
+			sessionId,
+			session,
+			sessionFile,
+			reset: true,
+		});
+
+		expect(result.exitCode).toBe(0);
+		expect(result.output.trim()).toBe("42");
+
+		await Bun.file(path.join(tempDir.path(), "cyclic-a.js"))
+			.delete()
+			.catch(() => {});
+		await Bun.file(path.join(tempDir.path(), "cyclic-b.js"))
+			.delete()
+			.catch(() => {});
+	});
+
 	it("cancels execution when the timeout expires", async () => {
 		const result = await executeJs("await new Promise(() => {})", {
 			sessionId,

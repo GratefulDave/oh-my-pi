@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as url from "node:url";
+import { isCompiledBinary } from "@oh-my-pi/pi-utils";
 
 // Canonical scope for in-process pi packages. Plugins published against any of
 // the aliased scopes below (mariozechner's original publish, earendil-works'
@@ -13,13 +14,11 @@ import * as url from "node:url";
 // scope name they happened to declare in their peerDependencies.
 const CANONICAL_PI_SCOPE = "@oh-my-pi";
 
-// Scopes that have historically been used to publish (or alias) internal
-// pi-* packages. `@earendil-works` is included in the filter so plugin-local
-// installs can be resolved by the bare fallback below, but is intentionally not
-// canonicalized: several Pi plugins depend on its published runtime surface and
-// should not be forced through Lex's current SDK during bundling.
+// Scopes that have historically been used to publish or alias internal pi-*
+// packages. Every one of them must resolve to the in-process bundled copy so
+// plugin code never pulls a duplicate module graph from its own node_modules.
 const PI_SCOPE_ALIASES = ["oh-my-pi", "mariozechner", "earendil-works"] as const;
-const CANONICALIZED_PI_SCOPE_ALIASES = ["oh-my-pi", "mariozechner"] as const;
+const CANONICALIZED_PI_SCOPE_ALIASES = PI_SCOPE_ALIASES;
 
 // Internal pi-* package basenames bundled inside the omp binary.
 const PI_PACKAGE_NAMES = ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-natives", "pi-tui", "pi-utils"] as const;
@@ -90,7 +89,7 @@ function getResolvedSpecifier(specifier: string): string {
 		return cached;
 	}
 
-	const resolved = Bun.resolveSync(specifier, import.meta.dir);
+	const resolved = resolveBareFallback(specifier, import.meta.dir) ?? Bun.resolveSync(specifier, import.meta.dir);
 	resolvedSpecifierFallbacks.set(specifier, resolved);
 	return resolved;
 }
@@ -189,6 +188,30 @@ function resolveViaExports(exports: Record<string, unknown>, subpath: string, pk
 	return null;
 }
 
+function rewriteFileUrlImportsForBuild(source: string): string {
+	return source.replace(ANY_IMPORT_SPECIFIER_REGEX, (match, prefix: string, specifier: string, suffix: string) => {
+		if (!specifier.startsWith("file://")) {
+			return match;
+		}
+		try {
+			return `${prefix}${url.fileURLToPath(specifier)}${suffix}`;
+		} catch {
+			return match;
+		}
+	});
+}
+function rewriteRelativeImportsForExecution(source: string, importerPath: string): string {
+	const importerDir = path.dirname(importerPath);
+	return source.replace(ANY_IMPORT_SPECIFIER_REGEX, (match, prefix: string, specifier: string, suffix: string) => {
+		if (!specifier.startsWith(".")) {
+			return match;
+		}
+		const resolved =
+			resolveExistingImportPath(path.resolve(importerDir, specifier)) ?? path.resolve(importerDir, specifier);
+		return `${prefix}${toImportSpecifier(resolved)}${suffix}`;
+	});
+}
+
 const IMPORT_FILE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".jsx"] as const;
 
 function resolveExistingImportPath(candidate: string): string | null {
@@ -206,9 +229,9 @@ function resolveExistingImportPath(candidate: string): string | null {
 	} catch {}
 
 	for (const extension of IMPORT_FILE_EXTENSIONS) {
-		const filePath = `${candidate}${extension}`;
+		const withExt = `${candidate}${extension}`;
 		try {
-			if (fs1.statSync(filePath).isFile()) return filePath;
+			if (fs1.statSync(withExt).isFile()) return withExt;
 		} catch {}
 	}
 
@@ -224,21 +247,24 @@ function resolveBareFallback(specifier: string, importerDir: string): string | n
 		try {
 			const raw = fs1.readFileSync(pkgJsonPath, "utf-8");
 			const pkg = JSON.parse(raw) as { main?: string; module?: string; exports?: Record<string, unknown> };
-			const subpath = specifier.slice(pkgName.length); // e.g. "/providers/google" or ""
+			const subpath = specifier.slice(pkgName.length);
 			const pkgDir = path.dirname(pkgJsonPath);
-			const exportSubpath = subpath ? `.${subpath}` : "."; // e.g. "./providers/google" or "."
+			const exportSubpath = subpath ? `.${subpath}` : ".";
 
-			// Try exports map first.
 			if (pkg.exports) {
 				const resolved = resolveViaExports(pkg.exports, exportSubpath, pkgDir);
 				if (resolved) return resolveExistingImportPath(resolved) ?? resolved;
 			}
 
-			// Fallback: main/module for root imports, direct path for subpaths.
 			const candidate = !subpath
 				? path.resolve(pkgDir, pkg.module ?? pkg.main ?? "index.js")
 				: path.resolve(pkgDir, `.${subpath}`);
-			return resolveExistingImportPath(candidate) ?? candidate;
+			const existingCandidate = resolveExistingImportPath(candidate);
+			if (existingCandidate) return existingCandidate;
+			try {
+				if (fs1.statSync(candidate).isDirectory()) return null;
+			} catch {}
+			return candidate;
 		} catch {}
 		const parent = path.dirname(dir);
 		if (parent === dir) return null;
@@ -249,7 +275,6 @@ function resolveBareFallback(specifier: string, importerDir: string): string | n
 function rewriteBareImportsForLegacyExtension(source: string, importerPath: string): string {
 	const importerDir = path.dirname(importerPath);
 	return source.replace(ANY_IMPORT_SPECIFIER_REGEX, (match, prefix: string, specifier: string, suffix: string) => {
-		// Skip relative, absolute, URL-style, and already-resolved Node specifiers.
 		if (shouldPreserveImportSpecifier(specifier)) {
 			return match;
 		}
@@ -260,7 +285,10 @@ function rewriteBareImportsForLegacyExtension(source: string, importerPath: stri
 			const resolved = Bun.resolveSync(specifier, importerDir);
 			return `${prefix}${toRewrittenImportSpecifier(resolved)}${suffix}`;
 		} catch {
-			const fallback = resolveBareFallback(specifier, importerDir);
+			const fallback =
+				resolveBareFallback(specifier, importerDir) ??
+				resolveBareFallback(specifier, process.cwd()) ??
+				resolveBareFallback(specifier, path.resolve(import.meta.dir, "../../../"));
 			if (fallback) return `${prefix}${toRewrittenImportSpecifier(fallback)}${suffix}`;
 			return match;
 		}
@@ -269,11 +297,6 @@ function rewriteBareImportsForLegacyExtension(source: string, importerPath: stri
 
 export async function loadLegacyPiModule(resolvedPath: string): Promise<unknown> {
 	if (resolvedPath.endsWith(".js") || resolvedPath.endsWith(".mjs") || resolvedPath.endsWith(".cjs")) {
-		// In compiled binaries, Bun.plugin onResolve/onLoad hooks do not fire
-		// for imports within dynamically import()-ed .js files. Check whether
-		// the bundle contains bare @oh-my-pi/* imports that need resolution;
-		// if not, import directly. Otherwise fall through to the Bun.build()
-		// path which transitively resolves all bare specifiers via plugins.
 		const raw = await Bun.file(resolvedPath).text();
 		const hasBarePiImports = PI_PACKAGE_NAMES.some(pkg => raw.includes(`/${pkg}`));
 		const hasTypeBox = raw.includes(TYPEBOX_SPECIFIER);
@@ -286,36 +309,27 @@ export async function loadLegacyPiModule(resolvedPath: string): Promise<unknown>
 	await fs.rm(root, { recursive: true, force: true });
 	await fs.mkdir(root, { recursive: true });
 
-	const extensionDir = path.dirname(resolvedPath);
 	const outfile = path.join(root, "bundle.mjs");
+	const raw = await Bun.file(resolvedPath).text();
+	const withLegacyRemap = rewriteLegacyPiImports(raw);
+	const withBareResolved = rewriteBareImportsForLegacyExtension(withLegacyRemap, resolvedPath);
+	const rewrittenEntrySource = rewriteFileUrlImportsForBuild(withBareResolved);
+	const rewrittenEntryPath = path.join(root, `entry${path.extname(resolvedPath) || ".ts"}`);
+	const runtimeEntrySource = rewriteRelativeImportsForExecution(rewrittenEntrySource, resolvedPath);
+	await Bun.write(rewrittenEntryPath, isCompiledBinary() ? rewrittenEntrySource : runtimeEntrySource);
+
+	if (!isCompiledBinary()) {
+		return import(`${toImportSpecifier(rewrittenEntryPath)}?mtime=${Date.now()}`);
+	}
+
 	let result: Bun.BuildOutput;
 	try {
 		result = await Bun.build({
-			entrypoints: [resolvedPath],
+			entrypoints: [rewrittenEntryPath],
 			outdir: root,
 			target: "bun",
 			format: "esm",
 			naming: "bundle.mjs",
-			plugins: [
-				{
-					name: "omp:legacy-pi-build-shim",
-					setup(build) {
-						build.onResolve({ filter: LEGACY_PI_SPECIFIER_FILTER }, args => {
-							const resolved = resolveRemappedLegacyPiSpecifier(args.path);
-							return resolved ? { path: resolved } : undefined;
-						});
-						build.onResolve({ filter: TYPEBOX_SPECIFIER_FILTER }, () => ({
-							path: TYPEBOX_SHIM_PATH,
-						}));
-						build.onResolve({ filter: /^[@a-zA-Z]/ }, args => {
-							const dir = args.resolveDir || extensionDir;
-							const resolved = resolveBareFallback(args.path, dir);
-							if (resolved) return { path: resolved };
-							return undefined;
-						});
-					},
-				},
-			],
 		});
 	} catch (err) {
 		const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);

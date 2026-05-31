@@ -7,6 +7,8 @@ pub struct CommandIdentity {
 	pub subcommand: Option<String>,
 }
 
+const LEX_REBUILD_SCRIPT: &str = "rebuild-lex.zsh";
+
 /// Extract the executable and the relevant subcommand from a shell command.
 ///
 /// The detector intentionally handles the common interactive subset instead
@@ -22,6 +24,9 @@ pub fn detect_tokens(tokens: &[String]) -> Option<CommandIdentity> {
 	let tokens = strip_launch_prefix(tokens)?;
 	let (program, rest) = tokens.split_first()?;
 	let normalized = normalize_program(program)?;
+	if let Some(identity) = detect_shell_script_wrapper(&normalized, rest) {
+		return Some(identity);
+	}
 	let subcommand = detect_subcommand(&normalized, rest);
 	Some(CommandIdentity { program: normalized, subcommand })
 }
@@ -88,6 +93,26 @@ fn normalize_program(program: &str) -> Option<String> {
 		return None;
 	}
 	Some(name.to_lowercase())
+}
+
+fn detect_shell_script_wrapper(program: &str, args: &[String]) -> Option<CommandIdentity> {
+	if matches!(program, "bash" | "sh" | "zsh")
+		&& let Some(script) = args
+			.iter()
+			.find(|arg| !arg.starts_with('-'))
+			.and_then(|arg| normalize_script_program(arg))
+	{
+		return Some(CommandIdentity { program: script, subcommand: Some("build".to_string()) });
+	}
+	None
+}
+
+fn normalize_script_program(program: &str) -> Option<String> {
+	let name = normalize_program(program)?;
+	if name == LEX_REBUILD_SCRIPT {
+		return Some(name);
+	}
+	None
 }
 
 fn skip_env_options(tokens: &[String], mut index: usize) -> Option<usize> {
@@ -246,6 +271,7 @@ fn skip_option_value(tokens: &[String], index: usize) -> Option<usize> {
 
 fn detect_subcommand(program: &str, args: &[String]) -> Option<String> {
 	match program {
+		LEX_REBUILD_SCRIPT => Some("build".to_string()),
 		"git" | "yadm" => first_non_global_arg(
 			args,
 			&["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--html-path"],
@@ -611,6 +637,17 @@ mod tests {
 			let detected = detect(&command).expect("aws command is detected");
 			assert_eq!(detected.subcommand.as_deref(), Some("lambda"), "{command}");
 		}
+	}
+
+	#[test]
+	fn detects_rebuild_lex_script_directly_and_through_zsh() {
+		let direct = detect("./rebuild-lex.zsh").expect("direct rebuild script is detected");
+		assert_eq!(direct.program, LEX_REBUILD_SCRIPT);
+		assert_eq!(direct.subcommand.as_deref(), Some("build"));
+
+		let wrapped = detect("zsh ./rebuild-lex.zsh").expect("wrapped rebuild script is detected");
+		assert_eq!(wrapped.program, LEX_REBUILD_SCRIPT);
+		assert_eq!(wrapped.subcommand.as_deref(), Some("build"));
 	}
 }
 

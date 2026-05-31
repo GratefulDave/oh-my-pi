@@ -132,7 +132,7 @@ export const streamAzureOpenAIResponses: StreamFunction<"azure-openai-responses"
 			};
 			const openaiStream = await client.responses.create(
 				params,
-				createSdkStreamRequestOptions(requestSignal, options?.streamFirstEventTimeoutMs),
+				createSdkStreamRequestOptions(requestSignal, undefined),
 			);
 			const firstEventWatchdog = createWatchdog(
 				options?.streamFirstEventTimeoutMs ?? getStreamFirstEventTimeoutMs(idleTimeoutMs),

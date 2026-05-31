@@ -127,10 +127,10 @@ function formatJsonScalar(value: unknown, _theme: Theme): string {
 
 function formatTaskId(id: string): string {
 	const segments = id.split(".");
-	if (segments.length < 2) return id;
-
 	const parsed = segments.map(segment => segment.match(/^(\d+)-(.+)$/));
 	if (parsed.some(match => !match)) return id;
+
+	if (segments.length === 1) return parsed[0]![2];
 
 	const indices = parsed.map(match => match![1]).join(".");
 	const labels = parsed.map(match => match![2]).join(">");
@@ -578,8 +578,9 @@ function renderAgentProgressRow(
 
 	const duration = theme.fg("dim", formatDuration(progress.durationMs));
 
-	// <tree-prefix> <icon> <Agent>  <task-label> · <duration>
-	const row = `${prefix} ${theme.fg(iconColor, icon)} ${theme.bold(progress.agent)}  ${theme.fg("muted", taskLabel)}${theme.sep.dot}${duration}`;
+	const displayId = formatTaskId(progress.id);
+	const idSuffix = displayId && displayId !== progress.id ? ` ${theme.fg("muted", displayId)}` : "";
+	const row = `${prefix} ${theme.fg("accent", theme.nav.expand)} ${theme.fg(iconColor, icon)} ${theme.bold(progress.agent)}${idSuffix}  ${theme.fg("muted", taskLabel)}${theme.sep.dot}${duration}`;
 	lines.push(row);
 
 	// Running: child message line
@@ -668,7 +669,6 @@ function renderAgentsProgress(
 		const isLast = rowIndex === totalRows;
 		lines.push(...renderAgentProgressRow(progress, isLast, expanded, theme, spinnerFrame));
 	}
-
 	if (pending.length > 0) {
 		if (expanded) {
 			for (const progress of pending) {
@@ -676,8 +676,16 @@ function renderAgentsProgress(
 				const isLast = rowIndex === totalRows;
 				lines.push(...renderAgentProgressRow(progress, isLast, expanded, theme, spinnerFrame));
 			}
+		} else if (pending.length === 1) {
+			const progress = pending[0];
+			const queuedIcon = theme.fg("muted", "○");
+			const taskLabel =
+				progress.description?.trim() ||
+				truncateToWidth(replaceTabs((progress.assignment ?? progress.task).split("\n")[0] ?? ""), 50);
+			const displayId = formatTaskId(progress.id);
+			const idSuffix = displayId && displayId !== progress.id ? ` ${theme.fg("muted", displayId)}` : "";
+			lines.push(`${queuedIcon} ${theme.bold(progress.agent)}${idSuffix}  ${theme.fg("muted", taskLabel)}`);
 		} else {
-			// Collapsed: single "└ ○ N queued" summary
 			const queuedIcon = theme.fg("muted", "○");
 			const queuedText = theme.fg("dim", `${pending.length} queued`);
 			lines.push(`${theme.fg("dim", theme.tree.last)} ${queuedIcon} ${queuedText}`);
@@ -1009,6 +1017,22 @@ export function renderResult(
 			if (cached?.key === key) return cached.lines;
 
 			const lines: string[] = [];
+
+			if (details.async) {
+				const stateLabel =
+					details.async.state === "running"
+						? "Running in background"
+						: details.async.state === "completed"
+							? "Completed"
+							: "Failed";
+				const icon =
+					details.async.state === "running"
+						? formatStatusIcon("running", theme, spinnerFrame)
+						: details.async.state === "completed"
+							? formatStatusIcon("success", theme)
+							: formatStatusIcon("error", theme);
+				lines.push(`${theme.fg("accent", icon)} ${stateLabel} (ID: ${details.async.jobId})`);
+			}
 
 			const shouldRenderProgress =
 				Boolean(details.progress && details.progress.length > 0) && (isPartial || details.results.length === 0);

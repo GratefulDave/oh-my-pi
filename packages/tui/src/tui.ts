@@ -174,12 +174,15 @@ function isMultiplexerSession(): boolean {
 	return Boolean(Bun.env.TMUX || Bun.env.STY || Bun.env.ZELLIJ);
 }
 
+function currentPlatform(): string {
+	return Reflect.get(process, "platform") as string;
+}
+
 function requiresNativeViewportProofForReplay(): boolean {
+	const platform = currentPlatform();
 	return (
-		process.platform === "win32" ||
-		(process.platform === "linux" &&
-			Boolean(Bun.env.WT_SESSION) &&
-			Boolean(Bun.env.WSL_DISTRO_NAME || Bun.env.WSL_INTEROP))
+		platform === "win32" ||
+		(platform === "linux" && Boolean(Bun.env.WT_SESSION) && Boolean(Bun.env.WSL_DISTRO_NAME || Bun.env.WSL_INTEROP))
 	);
 }
 
@@ -1203,6 +1206,17 @@ export class TUI extends Container {
 		const widthChanged = this.#previousWidth > 0 && this.#previousWidth !== width;
 		const heightChanged = this.#previousHeight > 0 && this.#previousHeight !== height;
 
+		if (widthChanged && this.#previousWidth > 0 && currentPlatform() !== "win32") {
+			let newHighWater = 0;
+			const offScreenCount = Math.max(0, this.#previousLines.length - height);
+			for (let i = 0; i < offScreenCount; i++) {
+				const line = this.#previousLines[i];
+				const w = visibleWidth(line);
+				const wrappedRows = w === 0 ? 1 : Math.ceil(w / width);
+				newHighWater += wrappedRows;
+			}
+			this.#scrollbackHighWater = newHighWater;
+		}
 		// 3. Classify intent.
 		const intent = this.#planRender(lines, widthChanged, heightChanged, prevViewportTop, height);
 		this.#logRedraw(intent, lines.length, height);
@@ -1473,9 +1487,14 @@ export class TUI extends Container {
 	}
 
 	#nativeViewportIsScrolled(nativeViewportAtBottom: boolean | undefined): boolean {
+		const platform = currentPlatform();
 		return (
 			nativeViewportAtBottom === false ||
-			(nativeViewportAtBottom === undefined && requiresNativeViewportProofForReplay())
+			(nativeViewportAtBottom === undefined &&
+				(platform === "win32" ||
+					(platform === "linux" &&
+						Boolean(Bun.env.WT_SESSION) &&
+						Boolean(Bun.env.WSL_DISTRO_NAME || Bun.env.WSL_INTEROP))))
 		);
 	}
 

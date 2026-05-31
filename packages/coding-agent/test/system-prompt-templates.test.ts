@@ -120,11 +120,11 @@ describe("system Handlebars prompt templates", () => {
 		}
 	});
 
-	test("hashline tool prompt renders helper-generated anchors", () => {
+	test("hashline tool prompt renders concrete prompt examples without unresolved helpers", () => {
 		const rendered = prompt.render(hashlineToolPrompt);
 
-		expect(rendered).toContain('1:const TITLE = "Mr";');
-		expect(rendered).toContain("3-6:	return [");
+		expect(rendered).toContain("1:def greet(name):");
+		expect(rendered).toContain("replace 2..2:");
 		expect(rendered).not.toContain("{{hline");
 		expect(rendered).not.toContain("{{hrefr");
 	});

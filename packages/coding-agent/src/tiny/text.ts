@@ -1,7 +1,12 @@
 export const MAX_TITLE_INPUT_CHARS = 2000;
 
+export function stripCodeBlocks(message: string): string {
+	return message.replace(/```[\s\S]*?```/g, "");
+}
+
 export function truncateTitleInput(message: string): string {
-	return message.length > MAX_TITLE_INPUT_CHARS ? `${message.slice(0, MAX_TITLE_INPUT_CHARS)}…` : message;
+	const stripped = stripCodeBlocks(message);
+	return stripped.length > MAX_TITLE_INPUT_CHARS ? `${stripped.slice(0, MAX_TITLE_INPUT_CHARS)}…` : stripped;
 }
 
 export function formatTitleUserMessage(message: string): string {

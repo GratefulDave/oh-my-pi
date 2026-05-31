@@ -1,8 +1,16 @@
 swarm:
-  name: lex-cherry-pick
+  name: lex-cherry-pick-v15.7.3
   workspace: .
   mode: parallel
   model: claude-sonnet-4-5
+
+  guardrails:
+    executables_and_namespaces: "Preserve executable `lex` and storage namespace `.omp`."
+    auth_plugin: "Do NOT clobber the `opencode-antigravity` auth routing or replace it with `google-antigravity`."
+    omlx_model: "Preserve local OMLX models on port `18790` and custom reasoning flags."
+    actor_swarm: "Keep process-wide `ActorMailbox` (`mailbox.ts`) and background agents intact. Do NOT replace with serial execution loops."
+    shell_minimizer: "Keep Lex-specific minimizer logic (`filter: 'too-large'` on capture overflows)."
+    build_pipeline: "Do NOT run `./rebuild-lex.zsh` during planning/lane execution. All binary linking is deferred until after user approval."
 
   agents:
     fastembed_deferrer:
@@ -11,18 +19,19 @@ swarm:
         Port fastembed deferral and Python enumeration:
         1. Defer importing `FlagEmbedding` from `fastembed` in local model init. Do not load eagerly at module startup to prevent segfaults and reduce startup latency.
         2. Probe multiple Python environments in order (venv, managed, system) via `enumeratePythonRuntimes` to bypass broken envs.
-        3. Skip all lint/formatting gates. Skip tests.
+        3. No project-wide gates; run only directly affected tests/checks.
       reports_to:
         - synthesizer
 
     thinking_implementer:
       role: protocol-engineer
       task: |
-        Port AUTO_THINKING and slash commands:
+        Port AUTO_THINKING and slash commands with v15.7.2 classifiers:
         1. Add `AUTO_THINKING` level to settings schema, SDK, and session flow.
         2. Implement per-turn reasoning classification with online/local prompts, effort clamping, and skip guards.
-        3. Implement `/switch` command to temporarily switch providers mid-session.
-        4. Skip all lint/formatting gates. Skip tests.
+        3. Implement `auto` thinking classifier (`providers.autoThinkingModel`) and footer/status display of `auto → <level>`.
+        4. Add plan model tier selection slider to plan approval prompt using configured `cycleOrder`.
+        5. No project-wide gates; run only directly affected tests/checks.
       reports_to:
         - synthesizer
 
@@ -32,17 +41,20 @@ swarm:
         Port replace block syntax and title code stripping:
         1. Add `replace block N:` grammar and AST resolver in hashline parser.
         2. Implement `stripCodeBlocks` to drop fenced blocks before title generation to save tokens.
-        3. Skip all lint/formatting gates. Skip tests.
+        3. No project-wide gates; run only directly affected tests/checks.
       reports_to:
         - synthesizer
 
     ux_cleanup:
       role: ui-engineer
       task: |
-        Port TUI improvements and clean recipe tool:
-        1. Implement animated pending borders for bash/eval blocks in TUI.
-        2. Delete `RecipeTool`, task runner backends, and prompt template completely to reduce tool/prompt bloat.
-        3. Skip all lint/formatting gates. Skip tests.
+        Port TUI improvements, cyclic module evaluations, throttled JSON stream parsing, shake context compaction, POSIX scrollback, and recipe/bash tool stability:
+        1. Implement animated pending borders for bash/eval blocks in TUI. Ensure cyclic graph JS evaluations run in a single pass link()+evaluate() from root.
+        2. Port `shake` and `/shake` slash command context compaction and `providers.shakeSummaryModel` (`qwen3-1.7b`) summarizer.
+        3. Throttle OpenAI completions streaming JSON parsing from O(N^2) to O(N).
+        4. Treat unknown native POSIX viewports as unsafe for destructive scrollback rebuilds and correct scrollback re-wrapping on widen.
+        5. Return error exit status details with dim styled footer instead of throwing `ToolError` on bash tool non-zero exit.
+        6. No project-wide gates; run only directly affected tests/checks.
       reports_to:
         - synthesizer
 

@@ -89,12 +89,27 @@ const modelSegment: StatusLineSegment = {
 		}
 
 		// Add thinking level with dot separator
-		if (opts.showThinkingLevel !== false && state.model?.thinking) {
-			const level = state.thinkingLevel ?? ThinkingLevel.Off;
-			if (level !== ThinkingLevel.Off) {
-				const thinkingText = theme.thinking[level as keyof typeof theme.thinking];
-				if (thinkingText) {
-					content += `${theme.sep.dot}${thinkingText}`;
+		if (opts.showThinkingLevel !== false && (state.model?.thinking || state.model?.reasoning)) {
+			const configuredLevel = ctx.session.configuredThinkingLevel?.() ?? ctx.session.thinkingLevel;
+			if (configuredLevel === ThinkingLevel.Auto || ctx.session.isAutoThinking) {
+				if (ctx.session.autoThinkingResolving) {
+					content += `${theme.sep.dot}auto`;
+				} else {
+					const resolved = ctx.session.autoResolvedThinkingLevel?.() ?? ctx.session.resolvedAutoThinkingLevel;
+					if (resolved) {
+						const thinkingText = theme.thinking[resolved as keyof typeof theme.thinking] || resolved;
+						content += `${theme.sep.dot}auto → ${thinkingText}`;
+					} else {
+						content += `${theme.sep.dot}auto`;
+					}
+				}
+			} else {
+				const effectiveLevel = state.thinkingLevel ?? configuredLevel ?? ThinkingLevel.Off;
+				if (effectiveLevel !== ThinkingLevel.Off) {
+					const thinkingText = theme.thinking[effectiveLevel as keyof typeof theme.thinking];
+					if (thinkingText) {
+						content += `${theme.sep.dot}${thinkingText}`;
+					}
 				}
 			}
 		}

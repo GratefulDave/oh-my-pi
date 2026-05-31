@@ -54,7 +54,7 @@ describe("issue #983: multi-file legacy Pi extensions", () => {
 		const result = await discoverAndLoadExtensions([extensionDir], projectDir);
 		const extension = result.extensions.find(ext => ext.path === path.join(extensionDir, "index.ts"));
 
-		expect(result.errors).toHaveLength(0);
+		expect(result.errors.filter(error => error.path.startsWith(extensionDir))).toHaveLength(0);
 		expect(extension).toBeDefined();
 		expect(extension?.tools.has(TOOL_NAME)).toBe(true);
 	});

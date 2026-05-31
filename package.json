@@ -161,6 +161,7 @@
 		"*.{js,ts,jsx,tsx,json,jsonc,css}": "biome check --write --no-errors-on-unmatched"
 	},
 	"dependencies": {
+		"context-mode": "1.0.151",
 		"pi-cmux": "0.1.8"
 	}
 }

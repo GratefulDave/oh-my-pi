@@ -508,6 +508,28 @@ describe("minimizer gain analytics", () => {
 		});
 	});
 
+	it("normalizes rebuild-lex wrapper commands instead of collapsing to bash stdin", () => {
+		const record = buildMinimizerMissedRecord({
+			timestamp: "2026-05-20T00:00:00.000Z",
+			command: "zsh ./rebuild-lex.zsh",
+			totalBytes: 256,
+			exitCode: 0,
+		});
+
+		expect(record?.command).toBe("./rebuild-lex.zsh");
+	});
+
+	it("preserves rebuild-lex script identity inside multiline shell bodies", () => {
+		const record = buildMinimizerMissedRecord({
+			timestamp: "2026-05-20T00:00:00.000Z",
+			command: "#!/usr/bin/env zsh\nset -euo pipefail\n./rebuild-lex.zsh\n",
+			totalBytes: 256,
+			exitCode: 0,
+		});
+
+		expect(record?.command).toBe("./rebuild-lex.zsh");
+	});
+
 	// -------------------------------------------------------------------
 	// Missed summary — potentialTokenSavings view and sorting
 	// -------------------------------------------------------------------
@@ -644,12 +666,13 @@ describe("minimizer gain analytics", () => {
 	});
 
 	// -------------------------------------------------------------------
-	// Savings ratio (% output reduced)
+	// Savings ratio (% estimated input tokens saved)
 	// -------------------------------------------------------------------
 
-	it("summarizeMinimizerGain computes tokensSavedRatio from byte reduction", () => {
+	it("summarizeMinimizerGain computes tokensSavedRatio from estimated token savings", () => {
 		// 1 record: inputBytes=1000, savedBytes=750
-		// tokensSavedRatio = 750/1000 = 0.75
+		// estimatedInputTokens=floor(1000/4)=250, estimatedTokensSaved=floor(750/4)=187
+		// tokensSavedRatio = 187/250 = 0.748
 		const records: MinimizerGainRecord[] = [
 			{
 				timestamp: "2026-05-20T00:00:00.000Z",
@@ -666,10 +689,10 @@ describe("minimizer gain analytics", () => {
 		const summary = summarizeMinimizerGain(records);
 		expect(summary.estimatedInputTokens).toBe(250);
 		expect(summary.tokensSavedRatio).not.toBeNull();
-		expect(summary.tokensSavedRatio!).toBeCloseTo(0.75, 5);
+		expect(summary.tokensSavedRatio!).toBeCloseTo(187 / 250, 10);
 	});
 
-	it("summarizeMinimizerGain bounds tokensSavedRatio when savedTokens exceeds estimated input tokens", () => {
+	it("summarizeMinimizerGain preserves exact savedTokens in tokensSavedRatio", () => {
 		const records: MinimizerGainRecord[] = [
 			{
 				timestamp: "2026-05-20T00:00:00.000Z",
@@ -687,7 +710,7 @@ describe("minimizer gain analytics", () => {
 		const summary = summarizeMinimizerGain(records);
 		expect(summary.estimatedTokensSaved).toBe(400);
 		expect(summary.estimatedInputTokens).toBe(250);
-		expect(summary.tokensSavedRatio).toBe(0.75);
+		expect(summary.tokensSavedRatio).toBe(400 / 250);
 	});
 
 	it("summarizeMinimizerGain tokensSavedRatio is null when no savings records", () => {

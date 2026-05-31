@@ -116,6 +116,48 @@ function cloneModelWithRequestedId(model: Model<Api>, requestedId: string): Mode
 		...(model.name === model.id ? { name: requestedId } : {}),
 	};
 }
+const GOOGLE_ANTIGRAVITY_PROVIDER = "google-antigravity";
+const OPENCODE_ANTIGRAVITY_PROVIDER = "opencode-antigravity";
+const ANTIGRAVITY_PREFIX = "antigravity-";
+
+function findOpenCodeAntigravityModel(modelId: string, availableModels: readonly Model<Api>[]): Model<Api> | undefined {
+	const normalizedId = modelId.trim().toLowerCase();
+	if (!normalizedId) return undefined;
+	const candidates = normalizedId.startsWith(ANTIGRAVITY_PREFIX)
+		? [normalizedId]
+		: [`${ANTIGRAVITY_PREFIX}${normalizedId}`, normalizedId];
+	for (const candidate of candidates) {
+		const found = availableModels.find(
+			model =>
+				model.provider.toLowerCase() === OPENCODE_ANTIGRAVITY_PROVIDER && model.id.toLowerCase() === candidate,
+		);
+		if (found) return found;
+	}
+	return undefined;
+}
+
+function hasGoogleAntigravityModel(modelId: string, availableModels: readonly Model<Api>[]): boolean {
+	const normalizedId = modelId.trim().toLowerCase();
+	return availableModels.some(
+		model => model.provider.toLowerCase() === GOOGLE_ANTIGRAVITY_PROVIDER && model.id.toLowerCase() === normalizedId,
+	);
+}
+
+function resolveAntigravityBridgePreference(
+	provider: string | undefined,
+	modelId: string,
+	availableModels: readonly Model<Api>[],
+): Model<Api> | undefined {
+	const normalizedProvider = provider?.trim().toLowerCase();
+	if (normalizedProvider === OPENCODE_ANTIGRAVITY_PROVIDER || normalizedProvider === GOOGLE_ANTIGRAVITY_PROVIDER) {
+		return findOpenCodeAntigravityModel(modelId, availableModels);
+	}
+	if (normalizedProvider) return undefined;
+	if (modelId.startsWith(ANTIGRAVITY_PREFIX) || hasGoogleAntigravityModel(modelId, availableModels)) {
+		return findOpenCodeAntigravityModel(modelId, availableModels);
+	}
+	return undefined;
+}
 
 const kProviderModelIndex = Symbol("model-resolver.providerIndex");
 type ModelsWithProviderIndex = readonly Model<Api>[] & {
@@ -149,6 +191,9 @@ export function resolveProviderModelReference(
 	if (!normalizedProvider || !normalizedModelId) {
 		return undefined;
 	}
+
+	const antigravityBridge = resolveAntigravityBridgePreference(normalizedProvider, modelId, availableModels);
+	if (antigravityBridge) return antigravityBridge;
 
 	const index = getProviderModelIndex(availableModels);
 	const exact = index.get(`${normalizedProvider}\u0000${normalizedModelId}`);
@@ -319,6 +364,11 @@ function tryMatchModel(
 	context: ModelPreferenceContext,
 	options?: { modelRegistry?: CanonicalModelRegistry },
 ): Model<Api> | undefined {
+	const antigravityBridge = resolveAntigravityBridgePreference(undefined, modelPattern, availableModels);
+	if (antigravityBridge) {
+		return antigravityBridge;
+	}
+
 	// Explicit provider/model selectors always bypass canonical coalescing.
 	const exactRefMatch = findExactModelReferenceMatch(modelPattern, availableModels);
 	if (exactRefMatch) {
@@ -678,8 +728,8 @@ export function resolveModelFromString(
 ): Model<Api> | undefined {
 	const parsed = parseModelString(value);
 	if (parsed) {
-		const exact = available.find(model => model.provider === parsed.provider && model.id === parsed.id);
-		if (exact) return exact;
+		const preferred = resolveProviderModelReference(parsed.provider, parsed.id, available);
+		if (preferred) return preferred;
 	}
 	return parseModelPattern(value, available, matchPreferences, { modelRegistry }).model;
 }
@@ -1211,7 +1261,9 @@ export async function findInitialModel(options: {
 			thinkingLevel:
 				scopedThinkingSelector === ThinkingLevel.Off
 					? ThinkingLevel.Off
-					: clampThinkingLevelForModel(scoped.model, scopedThinkingSelector),
+					: scopedThinkingSelector === ThinkingLevel.Auto
+						? ThinkingLevel.Auto
+						: clampThinkingLevelForModel(scoped.model, scopedThinkingSelector as Effort),
 			fallbackMessage: undefined,
 		};
 	}

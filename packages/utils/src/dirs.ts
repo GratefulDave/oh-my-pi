@@ -16,8 +16,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { engines, version } from "../package.json" with { type: "json" };
 
-/** Storage/log app name (e.g. "lex") */
-export const APP_NAME: string = "lex";
+/** Storage/log app name for legacy runtime namespace (e.g. "omp"). */
+export const APP_NAME: string = "omp";
 
 /** User-facing CLI command name (e.g. "lex") */
 
@@ -25,7 +25,6 @@ export const COMMAND_NAME: string = "lex";
 
 /** Config directory name (e.g. ".lex") */
 export const CONFIG_DIR_NAME: string = ".lex";
-
 /** Version (e.g. "1.0.0") */
 export const VERSION: string = version;
 

@@ -13,6 +13,8 @@ import { createAgentSession } from "@oh-my-pi/pi-coding-agent/sdk";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { Snowflake } from "@oh-my-pi/pi-utils";
 
+import { reset as resetCapabilities } from "../src/capability";
+
 interface SessionDirs {
 	cwd: string;
 	agentDir: string;
@@ -27,7 +29,7 @@ const expiredOAuth = () =>
 	}) as const;
 
 const failOAuthRefresh = (): void => {
-	vi.spyOn(oauthUtils, "getOAuthApiKey").mockImplementation(async () => {
+	vi.spyOn(oauthUtils, "refreshOAuthToken").mockImplementation(async () => {
 		throw new Error('HTTP 400 invalid_grant {"error":"invalid_grant"}');
 	});
 };
@@ -131,6 +133,7 @@ describe("createAgentSession credential_disabled subscription", () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+		resetCapabilities();
 		for (const dir of tempDirs.splice(0)) {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}

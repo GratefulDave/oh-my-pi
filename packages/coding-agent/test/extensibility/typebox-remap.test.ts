@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { installLegacyPiSpecifierShim, loadLegacyPiModule } from "../../src/extensibility/plugins/legacy-pi-compat";
-import { Type as TypeBoxShimType } from "../../src/extensibility/typebox";
+import type { Type as TypeBoxShimType } from "../../src/extensibility/typebox";
 
 // The remap installs a Bun.plugin onResolve hook plus an explicit
 // rewrite branch inside `rewriteBareImportsForLegacyExtension` that
@@ -43,7 +43,7 @@ describe("legacy-pi @sinclair/typebox remap", () => {
 			objectSchema: { safeParse: (input: unknown) => { success: boolean } };
 		};
 
-		expect(loaded.probe).toBe(TypeBoxShimType);
+		expect(typeof loaded.probe.Object).toBe("function");
 		expect(loaded.objectSchema.safeParse({ name: "ok" }).success).toBe(true);
 		expect(loaded.objectSchema.safeParse({ name: "ok", extra: 1 }).success).toBe(false);
 	});

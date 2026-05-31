@@ -266,7 +266,24 @@ export class FindTool implements AgentTool<typeof findSchema, FindToolDetails> {
 				const listLimit = applyListLimit(files, { limit: effectiveLimit });
 				const limited = listLimit.items;
 				const limitMeta = listLimit.meta;
-				const baseOutput = limited.join("\n");
+				let baseOutput: string;
+				if (multiPattern !== undefined || limited.some(p => path.posix.isAbsolute(p.replace(/\\/g, "/")))) {
+					// Group files by their parent directory for multi-path find output.
+					const byDir = new Map<string, string[]>();
+					for (const p of limited) {
+						const dir = path.posix.dirname(p.replace(/\\/g, "/"));
+						const dirKey = dir === "." ? "" : `${dir}/`;
+						if (!byDir.has(dirKey)) byDir.set(dirKey, []);
+						byDir.get(dirKey)!.push(path.posix.basename(p.replace(/\\/g, "/")));
+					}
+					const sections: string[] = [];
+					for (const [dirKey, names] of byDir) {
+						sections.push(`# ${dirKey}\n${names.join("\n")}`);
+					}
+					baseOutput = sections.join("\n\n");
+				} else {
+					baseOutput = limited.join("\n");
+				}
 				const trailingNotes: string[] = [];
 				if (notice) trailingNotes.push(notice);
 				if (missingPathsNote) trailingNotes.push(missingPathsNote);

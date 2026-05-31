@@ -668,7 +668,7 @@ export class SearchTool implements AgentTool<typeof searchSchema, SearchToolDeta
 
 					return { model: modelOut, display: displayOut };
 				};
-				if (isDirectory) {
+				if (isDirectory || multiTargets || exactFilePaths) {
 					const grouped = formatGroupedFiles(fileList, relativePath => {
 						const rendered = renderMatchesForFile(relativePath);
 						const hashContext = hashContexts.get(relativePath);

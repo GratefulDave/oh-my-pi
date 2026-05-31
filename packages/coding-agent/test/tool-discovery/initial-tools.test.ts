@@ -9,6 +9,7 @@ import {
 	DEFAULT_ESSENTIAL_TOOL_NAMES,
 	IrcTool,
 	JobTool,
+	MemoryEditTool,
 	RecipeTool,
 	SshTool,
 } from "../../src/tools/index";
@@ -54,6 +55,7 @@ async function getToolMetadata(): Promise<Map<string, { loadMode?: string; summa
 		new JobTool(toolSession),
 		new RecipeTool(toolSession, []),
 		new IrcTool(toolSession),
+		new MemoryEditTool(toolSession),
 	]) {
 		metadata.set(tool.name, { loadMode: tool.loadMode, summary: tool.summary });
 	}

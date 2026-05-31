@@ -722,13 +722,21 @@ export function buildSessionContext(
 	// visible reasoning while removing the immutability/invalid-signature hazard. Drop a
 	// turn left with no content. (Live turns never qualify: their results are persisted
 	// on the same path before any context rebuild.)
+	const preservesOpenAIResponsesBlocks = (message: AgentMessage): boolean =>
+		message.role === "assistant" &&
+		(message.api === "openai-responses" || message.api === "openai-codex-responses") &&
+		message.content.some(
+			block =>
+				(block.type === "text" && block.textSignature !== undefined) ||
+				(block.type === "toolCall" && block.thoughtSignature !== undefined),
+		);
 	const pairedToolResultIds = new Set<string>();
 	for (const message of messages) {
 		if (message.role === "toolResult") pairedToolResultIds.add(message.toolCallId);
 	}
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const message = messages[i];
-		if (message.role !== "assistant") continue;
+		if (message.role !== "assistant" || preservesOpenAIResponsesBlocks(message)) continue;
 		const hasDangling = message.content.some(
 			block => block.type === "toolCall" && !pairedToolResultIds.has(block.id),
 		);
@@ -1777,6 +1785,12 @@ export class SessionManager {
 		premiumRequests: 0,
 		cost: 0,
 	} satisfies UsageStatistics;
+	/** Per-turn output-token budget set by a `+Nk` directive (total null when none this turn). */
+	#turnBudget: { total: number | null; hard: boolean } = { total: null, hard: false };
+	/** Cumulative `output` snapshot captured when the current turn budget window opened. */
+	#turnBaselineOutput = 0;
+	/** Output tokens consumed by eval-spawned subagents in the current turn window. */
+	#turnEvalOutput = 0;
 	#persistWriter: NdjsonFileWriter | undefined;
 	#persistWriterPath: string | undefined;
 	#persistChain: Promise<void> = Promise.resolve();
@@ -2278,6 +2292,21 @@ export class SessionManager {
 	/** Get usage statistics across all assistant messages in the session. */
 	getUsageStatistics(): UsageStatistics {
 		return this.#usageStatistics;
+	}
+
+	beginTurnBudget(total: number | null, hard: boolean): void {
+		this.#turnBudget = { total, hard };
+		this.#turnBaselineOutput = this.#usageStatistics.output;
+		this.#turnEvalOutput = 0;
+	}
+
+	recordEvalSubagentOutput(output: number): void {
+		if (Number.isFinite(output) && output > 0) this.#turnEvalOutput += output;
+	}
+
+	getTurnBudget(): { total: number | null; spent: number; hard: boolean } {
+		const mainDelta = Math.max(0, this.#usageStatistics.output - this.#turnBaselineOutput);
+		return { total: this.#turnBudget.total, spent: mainDelta + this.#turnEvalOutput, hard: this.#turnBudget.hard };
 	}
 
 	getSessionDir(): string {

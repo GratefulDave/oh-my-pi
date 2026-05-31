@@ -276,264 +276,29 @@ async function buildGainSlashReport(cwd: string, parsed: GainSlashArgs): Promise
 	return lines.join("\n");
 }
 
-interface MissedSavingRow {
-	command: string;
-	count: number;
-	rtkEquivalent: string;
-	status: string;
-	estSavings: number;
-}
-
-const mockMissedSavings: MissedSavingRow[] = [
-	{ command: "git add", count: 197, rtkEquivalent: "rtk git", status: "existing", estSavings: 22300 },
-	{ command: 'cat "/Users/davidandr..', count: 92, rtkEquivalent: "rtk read", status: "existing", estSavings: 18600 },
-	{ command: "grep -n", count: 215, rtkEquivalent: "rtk grep", status: "existing", estSavings: 16900 },
-	{ command: "ls -la", count: 288, rtkEquivalent: "rtk ls", status: "existing", estSavings: 11800 },
-	{ command: "find /Users/davidandr..", count: 109, rtkEquivalent: "rtk find", status: "existing", estSavings: 5600 },
-	{ command: "ruff check", count: 19, rtkEquivalent: "rtk ruff", status: "existing", estSavings: 1800 },
-	{ command: "pre-commit run", count: 24, rtkEquivalent: "rtk pre-commit", status: "existing", estSavings: 1600 },
-	{ command: "gh pr", count: 5, rtkEquivalent: "rtk gh", status: "existing", estSavings: 840 },
-	{ command: "wc -l", count: 29, rtkEquivalent: "rtk wc", status: "existing", estSavings: 799 },
-	{ command: ".venv/bin/python -m", count: 16, rtkEquivalent: "rtk pytest", status: "existing", estSavings: 583 },
-	{ command: "docker exec", count: 15, rtkEquivalent: "rtk docker", status: "existing", estSavings: 473 },
-	{ command: "curl -s", count: 15, rtkEquivalent: "rtk curl", status: "existing", estSavings: 336 },
-	{ command: "mypy src/pacer/core/p..", count: 3, rtkEquivalent: "rtk mypy", status: "existing", estSavings: 268 },
-	{ command: "uv sync", count: 5, rtkEquivalent: "rtk uv", status: "existing", estSavings: 202 },
-	{ command: "npx vitest", count: 5, rtkEquivalent: "rtk vitest", status: "existing", estSavings: 115 },
-];
-
-interface UnhandledRow {
-	command: string;
-	count: number;
-	example: string;
-}
-
-const mockUnhandled: UnhandledRow[] = [
-	{ command: "uv run", count: 286, example: 'uv run python -c "\nimport asyncio\nfrom..' },
-	{ command: "python3", count: 26, example: "python3 - << 'PYEOF'\nimport re\n\npath =.." },
-	{ command: "just", count: 20, example: "just --list 2>&1" },
-	{ command: "omc team", count: 19, example: "omc team api claim-task --input '{\"tea.." },
-	{ command: "python", count: 14, example: '.venv/bin/python -c "import structlog;..' },
-	{ command: "black", count: 14, example: "black src/pacer/stages/row_processor/p.." },
-	{ command: "omx team", count: 13, example: "omx team api send-message --input '{\"t.." },
-	{ command: "-u CLAUDECODE", count: 13, example: "env -u CLAUDECODE -u CLAUDE_CODE_ENTRY.." },
-	{ command: 'date "+%H:%M"', count: 12, example: 'date "+%H:%M"' },
-	{ command: "rtk git", count: 11, example: 'SKIP=safety rtk git commit -m "chore(d..' },
-	{ command: "(uv run", count: 11, example: "(uv run python manage.py test legal_da.." },
-	{ command: "node", count: 11, example: "node /Users/davidandrews/.claude/plugi.." },
-	{ command: "ssh", count: 10, example: "ssh -i ~/.ssh/lexgenius-feed.pem ubunt.." },
-	{ command: "date", count: 10, example: 'date -u +"%Y-%m-%dT%H-%M-%SZ"' },
-	{ command: "git restore", count: 9, example: "git restore --staged requirements.txt .." },
-];
-
-function getRtkEquivalent(command: string): { eq: string; savingsPerCmd: number } | null {
-	const trimmed = command.trim();
-	const cmd = trimmed.split(/\s+/)[0];
-	if (cmd === "git" && (trimmed.includes(" add") || trimmed.includes(" commit") || trimmed.includes(" restore"))) {
-		return { eq: "rtk git", savingsPerCmd: 113 };
-	}
-	if (cmd === "cat") return { eq: "rtk read", savingsPerCmd: 202 };
-	if (cmd === "grep") return { eq: "rtk grep", savingsPerCmd: 78 };
-	if (cmd === "ls") return { eq: "rtk ls", savingsPerCmd: 41 };
-	if (cmd === "find") return { eq: "rtk find", savingsPerCmd: 51 };
-	if (cmd === "ruff") return { eq: "rtk ruff", savingsPerCmd: 95 };
-	if (cmd === "pre-commit") return { eq: "rtk pre-commit", savingsPerCmd: 66 };
-	if (cmd === "gh") return { eq: "rtk gh", savingsPerCmd: 168 };
-	if (cmd === "wc") return { eq: "rtk wc", savingsPerCmd: 27 };
-	if (cmd.includes("python") && trimmed.includes("pytest")) return { eq: "rtk pytest", savingsPerCmd: 36 };
-	if (cmd === "docker") return { eq: "rtk docker", savingsPerCmd: 31 };
-	if (cmd === "curl") return { eq: "rtk curl", savingsPerCmd: 22 };
-	if (cmd === "mypy") return { eq: "rtk mypy", savingsPerCmd: 89 };
-	if (cmd === "uv" && trimmed.includes("sync")) return { eq: "rtk uv", savingsPerCmd: 40 };
-	if (cmd === "npx" && trimmed.includes("vitest")) return { eq: "rtk vitest", savingsPerCmd: 23 };
-	if (cmd === "git") return { eq: "rtk git", savingsPerCmd: 110 };
-	return null;
-}
-
-function formatFullNumber(n: number): string {
-	return Math.round(n)
+function formatFullNumber(value: number): string {
+	return Math.round(value)
 		.toString()
 		.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
-function estimateCommandDuration(command: string): number {
-	const cmd = command.toLowerCase().trim();
-	if (cmd.includes("eslint --max")) return 53600;
-	if (cmd.includes("eslint")) return 47500;
-	if (cmd.includes("aws s3")) return 14300;
-	if (cmd.includes("ps aux")) return 274;
-	if (cmd.includes("ls -la data")) return 9000;
-	if (cmd.includes("ls -la .")) return 874;
-	if (cmd.includes("ls")) return 1100;
-	if (cmd.includes("grep")) return 95;
-	if (cmd.includes("read")) return 4;
-	if (cmd.includes("find")) return 946;
-	if (cmd.includes("ruff")) return 80;
-	if (cmd.includes("pytest")) return 1200;
-	if (cmd.includes("mypy")) return 3500;
-
-	let hash = 0;
-	for (let i = 0; i < command.length; i++) {
-		hash = (hash << 5) - hash + command.charCodeAt(i);
-		hash |= 0;
-	}
-	const base = Math.abs(hash) % 1500;
-	return base + 50;
-}
-
-function formatTotalExecTime(ms: number): string {
-	const totalSeconds = Math.round(ms / 1000);
-	const minutes = Math.floor(totalSeconds / 60);
-	const seconds = totalSeconds % 60;
-	if (minutes > 0) {
-		return `${minutes}m${seconds}s`;
-	}
-	return `${totalSeconds}s`;
-}
-
-function formatAvgTime(ms: number): string {
-	const seconds = ms / 1000;
-	if (seconds < 1) {
-		const roundedMs = Math.round(ms);
-		return `${roundedMs}ms`;
-	}
-	return `${seconds.toFixed(1)}s`;
-}
-
-function formatTokensInM(tokens: number): string {
-	const millions = tokens / 1_000_000;
-	return `${millions.toFixed(1)}M`;
-}
-
-function truncateCommand(cmd: string, width: number): string {
-	if (cmd.length <= width) return cmd;
-	if (width <= 5) return cmd.slice(0, width);
-	return `${cmd.slice(0, width - 3)}...`;
-}
-
-const EFFICIENCY_BAR_WIDTH = 24;
-const EFFICIENCY_FILL_CHAR = "\u2588";
-const EFFICIENCY_EMPTY_CHAR = "\u2591";
-
-function formatEfficiencyBar(ratio: number | null): string {
-	if (ratio === null) return "-";
-	const clamped = Math.max(0, Math.min(1, ratio));
-	const filled = Math.round(clamped * EFFICIENCY_BAR_WIDTH);
-	const empty = EFFICIENCY_BAR_WIDTH - filled;
-	return `${EFFICIENCY_FILL_CHAR.repeat(filled) + EFFICIENCY_EMPTY_CHAR.repeat(empty)}`;
-}
-
 function buildGainDiscoverLines(context: MinimizerGainContext): string[] {
-	const lines: string[] = [];
-	lines.push("RTK Discover -- Savings Opportunities");
-	lines.push("====================================================");
+	const header = context.all
+		? `Minimizer discovery across all repos (${context.days}d)`
+		: `Minimizer discovery for ${shortenPath(context.cwd ?? context.path)} (${context.days}d)`;
+	const lines: string[] = [header, ""];
 
-	const days = context.days || 7;
-	const sessions = 615;
-	const totalBashCmds = 6057;
-	lines.push(
-		`Scanned: ${formatFullNumber(sessions)} sessions (last ${days} days), ${formatFullNumber(totalBashCmds)} Bash commands`,
-	);
-
-	const alreadyUsingRtk = Math.round(totalBashCmds * 0.479);
-	const alreadyUsingPct = "47.9";
-	lines.push(`Already using RTK: ${formatFullNumber(alreadyUsingRtk)} commands (${alreadyUsingPct}%)\n`);
-
-	lines.push("MISSED SAVINGS -- Commands RTK already handles");
-	lines.push("------------------------------------------------------------------------");
-
-	const colCmd = 24;
-	const colCount = 8;
-	const colEq = 18;
-	const colStatus = 12;
-	const colSavings = 14;
-
-	const missedHeader =
-		"Command".padEnd(colCmd) +
-		" " +
-		"Count".padStart(colCount) +
-		"    " +
-		"RTK Equivalent".padEnd(colEq) +
-		" " +
-		"Status".padEnd(colStatus) +
-		"  " +
-		"Est. Savings".padStart(colSavings);
-	lines.push(missedHeader);
-	lines.push("------------------------------------------------------------------------");
-
-	const missedList: MissedSavingRow[] = [];
-	for (const row of context.missed.commands) {
-		const eq = getRtkEquivalent(row.command);
-		if (eq) {
-			missedList.push({
-				command: row.command,
-				count: row.commands,
-				rtkEquivalent: eq.eq,
-				status: "existing",
-				estSavings: Math.round(row.commands * eq.savingsPerCmd),
-			});
-		}
+	const byCmd = context.summary.byCommand.slice().sort((a, b) => b.savedBytes - a.savedBytes);
+	if (byCmd.length === 0) {
+		lines.push("No saved minimizer data found for this scope yet.");
+		return lines;
 	}
-	for (const item of mockMissedSavings) {
-		if (!missedList.some(x => x.command === item.command)) {
-			missedList.push(item);
-		}
+	lines.push("Top commands by bytes saved:");
+	for (const row of byCmd.slice(0, 15)) {
+		lines.push(
+			`  ${row.command}: ${formatNumber(row.savedBytes)} bytes saved (${formatNumber(row.commands)} run${row.commands !== 1 ? "s" : ""})`,
+		);
 	}
-	missedList.sort((a, b) => b.count - a.count);
-
-	let totalMissedCmds = 0;
-	let totalMissedSavings = 0;
-
-	missedList.slice(0, 15).forEach(row => {
-		totalMissedCmds += row.count;
-		totalMissedSavings += row.estSavings;
-
-		const cmdStr = truncateCommand(row.command, colCmd).padEnd(colCmd);
-		const countStr = formatFullNumber(row.count).padStart(colCount);
-		const eqStr = row.rtkEquivalent.padEnd(colEq);
-		const statusStr = row.status.padEnd(colStatus);
-		const savingsStr = `~${formatNumber(row.estSavings)} tokens`.padStart(colSavings);
-
-		lines.push(`${cmdStr} ${countStr}    ${eqStr} ${statusStr}  ${savingsStr}`);
-	});
-
-	lines.push("------------------------------------------------------------------------");
-	lines.push(
-		`Total: ${formatFullNumber(totalMissedCmds)} commands -> ~${formatNumber(totalMissedSavings)} tokens saveable\n`,
-	);
-
-	lines.push("TOP UNHANDLED COMMANDS -- open an issue?");
-	lines.push("----------------------------------------------------");
-	lines.push("Command                  Count    Example");
-
-	const unhandledList: UnhandledRow[] = [];
-	for (const row of context.missed.commands) {
-		if (!getRtkEquivalent(row.command)) {
-			unhandledList.push({
-				command: row.command,
-				count: row.commands,
-				example: row.command,
-			});
-		}
-	}
-	for (const item of mockUnhandled) {
-		if (!unhandledList.some(x => x.command === item.command)) {
-			unhandledList.push(item);
-		}
-	}
-	unhandledList.sort((a, b) => b.count - a.count);
-
-	unhandledList.slice(0, 15).forEach(row => {
-		const cmdStr = truncateCommand(row.command, colCmd).padEnd(colCmd);
-		const countStr = formatFullNumber(row.count).padStart(colCount);
-		const exampleStr = truncateCommand(row.example.replace(/\n/g, " "), 40);
-
-		lines.push(`${cmdStr} ${countStr}    ${exampleStr}`);
-	});
-
-	lines.push("----------------------------------------------------");
-	lines.push("-> github.com/rtk-ai/rtk/issues");
-
 	return lines;
 }
 
@@ -573,89 +338,34 @@ async function showGainOverlay(runtime: TuiSlashCommandRuntime, initialScope: 0 
 		});
 }
 function buildGainReportLines(context: MinimizerGainContext): string[] {
-	const { summary } = context;
-	const scopeLabel = context.all ? "Global Scope" : "Current Scope";
-	const lines = [
-		`TK Token Savings (${scopeLabel})`,
-		"════════════════════════════════════════════════════════════",
-		"",
-	];
+	const { summary, missed } = context;
+	const daysStr = ` (${context.days}d)`;
+	const header = context.all
+		? `Minimizer savings across all repos${daysStr}`
+		: `Minimizer savings for ${shortenPath(context.cwd ?? context.path)}${daysStr}`;
+	const lines: string[] = [header, ""];
 
 	const totalCmds = summary.commands;
-	const inputTok = summary.estimatedInputTokens;
-	const savedTok = summary.estimatedTokensSaved;
-	const outputTok = Math.max(0, inputTok - savedTok);
-	const ratio = summary.tokensSavedRatio ?? 0;
+	lines.push(`Commands: ${formatFullNumber(totalCmds)}`);
+	lines.push(`Saved Bytes: ${formatNumber(summary.savedBytes)}`);
 
-	const labelPad = 19;
-	lines.push(`${"Total commands:".padEnd(labelPad)}${formatFullNumber(totalCmds)}`);
-	lines.push(`${"Input tokens:".padEnd(labelPad)}${formatTokensInM(inputTok)}`);
-	lines.push(`${"Output tokens:".padEnd(labelPad)}${formatTokensInM(outputTok)}`);
-	lines.push(`${"Tokens saved:".padEnd(labelPad)}${formatTokensInM(savedTok)} (${(ratio * 100).toFixed(1)}%)`);
+	const tokensLabel = summary.usesEstimatedTokensSaved ? "Estimated Tokens Saved" : "Tokens Saved";
+	lines.push(`${tokensLabel}: ${formatFullNumber(summary.estimatedTokensSaved)}`);
 
-	let totalDurationMs = 0;
-	for (const record of context.records) {
-		totalDurationMs += estimateCommandDuration(record.command);
+	if (summary.tokensSavedRatio !== null && totalCmds > 0) {
+		lines.push(`% Output Reduced: ${(summary.tokensSavedRatio * 100).toFixed(1)}%`);
 	}
-	const avgDurationMs = totalCmds > 0 ? totalDurationMs / totalCmds : 0;
 
-	lines.push(
-		`${"Total exec time:".padEnd(labelPad)}${formatTotalExecTime(totalDurationMs)} (avg ${formatAvgTime(avgDurationMs)})`,
-	);
+	if (totalCmds === 0) {
+		lines.push("");
+		lines.push("No positive native minimizer savings recorded for this scope yet.");
+	}
 
-	const barStr = formatEfficiencyBar(ratio);
-	lines.push(`${"Efficiency meter:".padEnd(18)} ${barStr} ${(ratio * 100).toFixed(1)}%`);
+	const totalMissed = missed.commands.reduce((acc, row) => acc + row.commands, 0);
+	if (totalMissed > 0) {
+		lines.push(`Missed runs: ${formatFullNumber(totalMissed)} (use \`omp gain --missed\`.)`);
+	}
 
-	lines.push("", "By Command");
-	lines.push("─────────────────────────────────────────────────────────────────────────");
-
-	const numWidth = 5;
-	const countWidth = 7;
-	const savedWidth = 10;
-	const avgWidth = 7;
-	const timeWidth = 8;
-	const impactWidth = 10;
-
-	const tableWidth = 73;
-	const fixedWidth = numWidth + 1 + countWidth + 1 + savedWidth + 1 + avgWidth + 1 + timeWidth + 2 + impactWidth;
-	const cmdWidth = Math.max(15, tableWidth - fixedWidth);
-
-	const header =
-		"  #".padEnd(numWidth) +
-		" " +
-		"Command".padEnd(cmdWidth) +
-		" " +
-		"Count".padStart(countWidth) +
-		" " +
-		"Saved".padStart(savedWidth) +
-		" " +
-		"Avg%".padStart(avgWidth) +
-		" " +
-		"Time".padStart(timeWidth) +
-		"  " +
-		"Impact".padEnd(impactWidth);
-	lines.push(header);
-	lines.push("─────────────────────────────────────────────────────────────────────────");
-
-	const maxSaved = summary.byCommand.length > 0 ? Math.max(...summary.byCommand.map(r => r.estimatedTokensSaved)) : 0;
-
-	summary.byCommand.slice(0, 10).forEach((row, idx) => {
-		const numStr = `${`${idx + 1}.`.padStart(numWidth - 1)} `;
-		const cmdStr = truncateCommand(row.command, cmdWidth).padEnd(cmdWidth);
-		const countStr = formatFullNumber(row.commands).padStart(countWidth);
-		const savedStr = formatTokensInM(row.estimatedTokensSaved).padStart(savedWidth);
-		const avgStr =
-			row.tokensSavedRatio !== null
-				? `${(row.tokensSavedRatio * 100).toFixed(1)}%`.padStart(avgWidth)
-				: "-".padStart(avgWidth);
-		const timeStr = formatAvgTime(estimateCommandDuration(row.command)).padStart(timeWidth);
-		const barFill = maxSaved > 0 ? Math.round((row.estimatedTokensSaved / maxSaved) * impactWidth) : 0;
-		const impactStr = EFFICIENCY_FILL_CHAR.repeat(barFill) + EFFICIENCY_EMPTY_CHAR.repeat(impactWidth - barFill);
-
-		lines.push(`${numStr}${cmdStr} ${countStr} ${savedStr} ${avgStr} ${timeStr}  ${impactStr}`);
-	});
-
-	lines.push("─────────────────────────────────────────────────────────────────────────");
 	return lines;
 }
 
@@ -2083,6 +1793,36 @@ ${ruleObj.content || ""}`;
 			const customInstructions = command.args || undefined;
 			runtime.ctx.editor.setText("");
 			await runtime.ctx.handleCompactCommand(customInstructions);
+		},
+	},
+	{
+		name: "shake",
+		description:
+			"Mechanically elide heavy tool call results and large fenced blocks, leaving artifact:// placeholders",
+		acpDescription: "Shake/elide heavy context elements",
+		inlineHint: "[summary]",
+		allowArgs: true,
+		handle: async (command, runtime) => {
+			const useSummary = command.args?.trim().toLowerCase() === "summary";
+			try {
+				const { shakeSession } = require("../utils/shake-compaction");
+				const res = await shakeSession(runtime.session, { summary: useSummary });
+				await runtime.output(`Shake complete. Elided ${res.elidedCount} heavy context regions.`);
+			} catch (err) {
+				return usage(`Shake failed: ${errorMessage(err)}`, runtime);
+			}
+			return commandConsumed();
+		},
+		handleTui: async (command, runtime) => {
+			const useSummary = command.args?.trim().toLowerCase() === "summary";
+			try {
+				const { shakeSession } = require("../utils/shake-compaction");
+				const res = await shakeSession(runtime.ctx.session, { summary: useSummary });
+				runtime.ctx.showStatus(`Shake complete. Elided ${res.elidedCount} heavy context regions.`);
+				runtime.ctx.ui.requestRender();
+			} catch (err) {
+				runtime.ctx.showError(`Shake failed: ${errorMessage(err)}`);
+			}
 		},
 	},
 	{
