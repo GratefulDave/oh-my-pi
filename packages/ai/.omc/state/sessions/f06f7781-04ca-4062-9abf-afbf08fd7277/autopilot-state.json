@@ -1,0 +1,11 @@
+{
+  "active": true,
+  "started_at": "2026-05-28T12:18:48.546Z",
+  "original_prompt": "/autopilot /factory-orchestrator review changes that can improve repo and implement.  library on factory-orchestrator --coder omp",
+  "session_id": "f06f7781-04ca-4062-9abf-afbf08fd7277",
+  "project_path": "/Users/davidandrews/PycharmProjects/lex/packages/ai",
+  "reinforcement_count": 0,
+  "awaiting_confirmation": true,
+  "awaiting_confirmation_set_at": "2026-05-28T12:18:48.546Z",
+  "last_checked_at": "2026-05-28T12:18:48.546Z"
+}

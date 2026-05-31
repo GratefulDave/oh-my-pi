@@ -1423,7 +1423,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			}
 		}
 
-
 		// Extension-provided providers are not visible during the early default-role
 		// resolution above. Re-resolve the settings default after extension
 		// registration so profiles that default to extension models (for example
@@ -1438,11 +1437,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			});
 			if (refreshedDefaultRoleSpec.model) {
 				model = refreshedDefaultRoleSpec.model;
-				if (
-					thinkingLevel === undefined &&
-					!hasThinkingEntry &&
-					refreshedDefaultRoleSpec.explicitThinkingLevel
-				) {
+				if (thinkingLevel === undefined && !hasThinkingEntry && refreshedDefaultRoleSpec.explicitThinkingLevel) {
 					thinkingLevel = refreshedDefaultRoleSpec.thinkingLevel;
 				}
 			}

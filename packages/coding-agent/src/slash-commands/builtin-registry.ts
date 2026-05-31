@@ -1,9 +1,11 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { completeSimple } from "@oh-my-pi/pi-ai";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/utils/oauth";
-import { formatNumber, Snowflake, setProjectDir } from "@oh-my-pi/pi-utils";
+import { formatNumber, prompt, Snowflake, setProjectDir } from "@oh-my-pi/pi-utils";
 import { $ } from "bun";
+import type { Rule } from "../capability/rule";
 import {
 	applyModelProfilePreset,
 	isModelProfilePreset,
@@ -42,7 +44,6 @@ import type {
 	ExternalOrchestrationResult,
 } from "../external-agents";
 import { buildContextSummary, buildExternalOrchestrationReport, runExternalAgentsParallel } from "../external-agents";
-
 import { resolveMemoryBackend } from "../memory-backend";
 import type { MinimizerGainContext } from "../minimizer-gain";
 import { buildMinimizerGainDiagnostic, discoverMinimizerGain, loadMinimizerGainContext } from "../minimizer-gain";
@@ -63,6 +64,7 @@ import { handleSshAcp } from "./helpers/ssh";
 import { handleTodoAcp } from "./helpers/todo";
 import { buildUsageReportText } from "./helpers/usage-report";
 import { parseMarketplaceInstallArgs, parsePluginScopeArgs } from "./marketplace-install-parser";
+import omfgSystemPrompt from "./prompts/omfg-system.md" with { type: "text" };
 import type {
 	BuiltinSlashCommand,
 	ParsedSlashCommand,
@@ -580,6 +582,307 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		handleTui: (_command, runtime) => {
 			runtime.ctx.showSettingsSelector();
 			runtime.ctx.editor.setText("");
+		},
+	},
+	{
+		name: "omfg",
+		description: "Convert prose complaint to valid TTSR rule, test rule against previous turn history, and save",
+		inlineHint: "<complaint>",
+		allowArgs: true,
+		handle: async (command, runtime) => {
+			const complaint = command.args.trim();
+			if (!complaint) {
+				return usage("Usage: /omfg <complaint>", runtime);
+			}
+
+			const model = runtime.session.model;
+			if (!model) {
+				return usage("No model selected in session.", runtime);
+			}
+
+			const apiKey = (await runtime.session.modelRegistry.authStorage.getApiKey(model.provider)) ?? "";
+			const promptText = prompt.render(omfgSystemPrompt, { complaint });
+
+			await runtime.output("Analyzing complaint and generating TTSR rule...");
+
+			let response: string;
+			try {
+				const res = await completeSimple(
+					model,
+					{
+						messages: [
+							{
+								role: "user" as const,
+								content: [{ type: "text" as const, text: promptText }],
+								timestamp: Date.now(),
+							},
+						],
+					},
+					{ apiKey },
+				);
+				const textPart = (res.content as any[]).find(part => part.type === "text");
+				response = textPart?.text ?? "";
+			} catch (err) {
+				return usage(`Failed to generate rule: ${errorMessage(err)}`, runtime);
+			}
+			// Parse JSON response
+			let ruleObj: {
+				name: string;
+				description: string;
+				condition: string[];
+				scope: string[];
+				content: string;
+			};
+			try {
+				const jsonStart = response.indexOf("{");
+				const jsonEnd = response.lastIndexOf("}");
+				if (jsonStart === -1 || jsonEnd === -1) {
+					throw new Error("No JSON object found in response");
+				}
+				const jsonText = response.slice(jsonStart, jsonEnd + 1);
+				ruleObj = JSON.parse(jsonText);
+			} catch {
+				return usage(`Failed to parse rule JSON from response: ${response}`, runtime);
+			}
+
+			// Validate rule fields
+			if (
+				!ruleObj.name ||
+				!ruleObj.condition ||
+				!Array.isArray(ruleObj.condition) ||
+				ruleObj.condition.length === 0
+			) {
+				return usage("Generated rule lacks a valid name or conditions.", runtime);
+			}
+
+			await runtime.output(`Generated rule: "${ruleObj.name}"`);
+
+			// Test against previous turn history
+			const branch = runtime.sessionManager.getBranch();
+			const lastAssistantMessageEntry = [...branch].reverse().find(e => {
+				if (e.type !== "message") return false;
+				const msg = e.message as { role?: string };
+				return msg.role === "assistant";
+			});
+			let lastAssistantContent = "";
+			if (lastAssistantMessageEntry && lastAssistantMessageEntry.type === "message") {
+				const msg = lastAssistantMessageEntry.message as any;
+				if (typeof msg.content === "string") {
+					lastAssistantContent = msg.content;
+				} else if (Array.isArray(msg.content)) {
+					const textPart = msg.content.find((part: any) => part.type === "text");
+					lastAssistantContent = textPart?.text ?? "";
+				}
+			}
+
+			if (lastAssistantContent) {
+				let matched = false;
+				for (const cond of ruleObj.condition) {
+					try {
+						const re = new RegExp(cond);
+						if (re.test(lastAssistantContent)) {
+							matched = true;
+							break;
+						}
+					} catch {}
+				}
+				if (matched) {
+					await runtime.output(
+						"Rule test: Violation detected in the previous turn history! Output matched the regex pattern.",
+					);
+				} else {
+					await runtime.output("Rule test: Checked against the previous turn history; no violation detected.");
+				}
+			} else {
+				await runtime.output("Rule test: No previous assistant messages in history to check.");
+			}
+
+			// Save to project rules directory
+			const projectDir = runtime.cwd || process.cwd();
+			const rulesDir = path.join(projectDir, ".omp", "rules");
+			const filePath = path.join(rulesDir, `${ruleObj.name}.md`);
+
+			const fileContent = `---
+description: ${ruleObj.description || ""}
+condition: ${JSON.stringify(ruleObj.condition)}
+scope: ${JSON.stringify(ruleObj.scope || ["text"])}
+---
+
+${ruleObj.content || ""}`;
+
+			try {
+				await fs.mkdir(rulesDir, { recursive: true });
+				await fs.writeFile(filePath, fileContent, "utf8");
+				await runtime.output(`Saved rule to project rules at: ${shortenPath(filePath)}`);
+			} catch (err) {
+				return usage(`Failed to save rule to disk: ${errorMessage(err)}`, runtime);
+			}
+
+			// Inject rule into active TTSR manager
+			if (runtime.session.ttsrManager) {
+				const rule: Rule = {
+					name: ruleObj.name,
+					path: filePath,
+					content: ruleObj.content || "",
+					description: ruleObj.description,
+					condition: ruleObj.condition,
+					scope: ruleObj.scope || ["text"],
+					_source: { provider: "project", providerName: "project", path: filePath, level: "project" },
+				};
+				runtime.session.ttsrManager.addRule(rule);
+				await runtime.output("Successfully injected rule into active TTSR manager.");
+			}
+
+			return commandConsumed();
+		},
+		handleTui: async (command, runtime) => {
+			const complaint = command.args.trim();
+			if (!complaint) {
+				runtime.ctx.showError("Usage: /omfg <complaint>");
+				return;
+			}
+			runtime.ctx.editor.setText("");
+
+			const model = runtime.ctx.session.model;
+			if (!model) {
+				runtime.ctx.showError("No model selected in session.");
+				return;
+			}
+
+			const apiKey = (await runtime.ctx.session.modelRegistry.authStorage.getApiKey(model.provider)) ?? "";
+			const promptText = prompt.render(omfgSystemPrompt, { complaint });
+
+			runtime.ctx.showStatus("Analyzing complaint and generating TTSR rule...");
+
+			let response: string;
+			try {
+				const res = await completeSimple(
+					model,
+					{
+						messages: [
+							{
+								role: "user" as const,
+								content: [{ type: "text" as const, text: promptText }],
+								timestamp: Date.now(),
+							},
+						],
+					},
+					{ apiKey },
+				);
+				const textPart = (res.content as any[]).find(part => part.type === "text");
+				response = textPart?.text ?? "";
+			} catch (err) {
+				runtime.ctx.showError(`Failed to generate rule: ${errorMessage(err)}`);
+				return;
+			}
+
+			// Parse JSON response
+			let ruleObj: {
+				name: string;
+				description: string;
+				condition: string[];
+				scope: string[];
+				content: string;
+			};
+			try {
+				const jsonStart = response.indexOf("{");
+				const jsonEnd = response.lastIndexOf("}");
+				if (jsonStart === -1 || jsonEnd === -1) {
+					throw new Error("No JSON object found in response");
+				}
+				const jsonText = response.slice(jsonStart, jsonEnd + 1);
+				ruleObj = JSON.parse(jsonText);
+			} catch {
+				runtime.ctx.showError(`Failed to parse rule JSON: ${response}`);
+				return;
+			}
+
+			if (
+				!ruleObj.name ||
+				!ruleObj.condition ||
+				!Array.isArray(ruleObj.condition) ||
+				ruleObj.condition.length === 0
+			) {
+				runtime.ctx.showError("Generated rule lacks a valid name or conditions.");
+				return;
+			}
+
+			runtime.ctx.showStatus(`Generated rule: "${ruleObj.name}"`);
+
+			// Test against previous turn history
+			const branch = runtime.ctx.sessionManager.getBranch();
+			const lastAssistantMessageEntry = [...branch].reverse().find(e => {
+				if (e.type !== "message") return false;
+				const msg = e.message as { role?: string };
+				return msg.role === "assistant";
+			});
+			let lastAssistantContent = "";
+			if (lastAssistantMessageEntry && lastAssistantMessageEntry.type === "message") {
+				const msg = lastAssistantMessageEntry.message as any;
+				if (typeof msg.content === "string") {
+					lastAssistantContent = msg.content;
+				} else if (Array.isArray(msg.content)) {
+					const textPart = msg.content.find((part: any) => part.type === "text");
+					lastAssistantContent = textPart?.text ?? "";
+				}
+			}
+
+			let testResult = "";
+			if (lastAssistantContent) {
+				let matched = false;
+				for (const cond of ruleObj.condition) {
+					try {
+						const re = new RegExp(cond);
+						if (re.test(lastAssistantContent)) {
+							matched = true;
+							break;
+						}
+					} catch {}
+				}
+				if (matched) {
+					testResult = "Violation detected in the previous turn history! Output matched the regex pattern.";
+				} else {
+					testResult = "Checked against the previous turn history; no violation detected.";
+				}
+			} else {
+				testResult = "No previous assistant messages in history to check.";
+			}
+			// Save to project rules directory
+			const projectDir = runtime.ctx.sessionManager.getCwd();
+			const rulesDir = path.join(projectDir, ".omp", "rules");
+			const filePath = path.join(rulesDir, `${ruleObj.name}.md`);
+
+			const fileContent = `---
+description: ${ruleObj.description || ""}
+condition: ${JSON.stringify(ruleObj.condition)}
+scope: ${JSON.stringify(ruleObj.scope || ["text"])}
+---
+
+${ruleObj.content || ""}`;
+
+			try {
+				await fs.mkdir(rulesDir, { recursive: true });
+				await fs.writeFile(filePath, fileContent, "utf8");
+				runtime.ctx.showStatus(`Saved rule to project rules at: ${shortenPath(filePath)}`);
+			} catch (err) {
+				runtime.ctx.showError(`Failed to save rule: ${errorMessage(err)}`);
+				return;
+			}
+
+			// Inject rule into active TTSR manager
+			if (runtime.ctx.session.ttsrManager) {
+				const rule: Rule = {
+					name: ruleObj.name,
+					path: filePath,
+					content: ruleObj.content || "",
+					description: ruleObj.description,
+					condition: ruleObj.condition,
+					scope: ruleObj.scope || ["text"],
+					_source: { provider: "project", providerName: "project", path: filePath, level: "project" },
+				};
+				runtime.ctx.session.ttsrManager.addRule(rule);
+				runtime.ctx.showStatus(`Rule "${ruleObj.name}" active! ${testResult}`);
+			}
 		},
 	},
 

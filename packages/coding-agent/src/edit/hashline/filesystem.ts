@@ -16,6 +16,8 @@
  * (batch request, diagnostics) lives on the instance and isn't safe to
  * share across concurrent edit tools.
  */
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { Filesystem, NotFoundError, type WriteResult } from "@oh-my-pi/hashline";
 import { isEnoent } from "@oh-my-pi/pi-utils";
 import type { FileDiagnosticsResult, WritethroughCallback, WritethroughDeferredHandle } from "../../lsp";
@@ -103,6 +105,14 @@ export class HashlineFilesystem extends Filesystem {
 
 	async preflightWrite(relativePath: string): Promise<void> {
 		enforcePlanModeWrite(this.session, relativePath, { op: "update" });
+		const absolutePath = this.resolveAbsolute(relativePath);
+		try {
+			await fs.promises.access(absolutePath, fs.constants.W_OK);
+			return;
+		} catch (error) {
+			if (!isEnoent(error)) throw error;
+		}
+		await fs.promises.access(path.dirname(absolutePath), fs.constants.W_OK);
 	}
 
 	async writeText(relativePath: string, content: string): Promise<WriteResult> {

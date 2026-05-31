@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"rtk git branch --show-current; rtk git log --oneline main..HEAD | wc -l; rtk ls .omc/autopilot/\",\"description\":\"Confirm prior autopilot state\"}",
+  "error": "Exit code 1\nparity/upstream-15.5.9-tierA\n      10\nls: .omc/autopilot/: No such file or directory",
+  "timestamp": "2026-05-28T12:18:58.767Z",
+  "retry_count": 1
+}

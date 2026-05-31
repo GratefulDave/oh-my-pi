@@ -1,0 +1,43 @@
+# Tier B Implementation Progress
+
+Branch: parity/upstream-15.5.9-tierB
+Base: main (post Tier A merge, commit 1e1efeac1)
+
+## Commits landed (3 of 8 planned)
+
+| # | SHA (local) | Upstream | Story | Files | Tests added |
+|---|-------------|----------|-------|-------|-------------|
+| 1 | aa1c3f249   | 3d5f0d886 | US-L  | packages/coding-agent/src/cli/auth-broker-cli.ts | — |
+| 2 | (post L)    | c0c9049cc + 2266fdae8 | US-M | packages/coding-agent/src/mcp/transports/http.ts + new test | +5 pass |
+| 3 | (post M)    | e46ee155a | US-P  | packages/coding-agent/src/eval/py/index.ts + src/session/agent-session.ts + test addition | +1 pass |
+
+## Stories skipped (with reason in PRD)
+
+| Story | SHAs | Reason |
+|-------|------|--------|
+| US-K  | 6fb1983fb, af2011f5a, c1fa0e9f5 | Fork has no keepalive infra; no fork bug |
+| US-V  | 3ea4981ee, e8b510160, ac7f6e4d1 | Fork Vertex routing diverged architecturally (no createVertexAuthenticatedFetch helpers in stream.ts) |
+| US-A1 | 6491fff8f | auth-storage.ts 72-commit divergence; checkCredentials lifecycle restructure needed |
+| US-A2 | b4238b10d | 7-file blast radius across stream.ts (108)/sdk.ts (211)/server.ts; defer to dedicated lane |
+
+Out of scope (skipped in original Tier B plan):
+- 674d9b00a (codex web search) — files MISSING in fork
+- 5053a6a4d (incomplete recovery) — tangled with vault-protocol; needs discovery
+
+## Test deltas
+
+| Package | Baseline pass / fail | Final pass / fail | Delta |
+|---------|----------------------|-------------------|-------|
+| pi-natives | 46 / 0 | (unchanged) | 0 / 0 |
+| pi-ai | 1191 / 7 | 1191 / 7 | 0 / 0 |
+| pi-coding-agent | 3570 / 9 | 3579 / 9 | +9 / 0 |
+
+Zero regressions across all packages.
+
+## Patterns/Learnings
+
+- Fork's `packages/agent/src/agent.ts` `prompt()` is a thin overload dispatching to `#runLoop`; upstream's `prompt()` had inline streaming state machine. Many upstream fixes targeting prompt() internals will not apply directly.
+- Fork's `packages/ai/src/stream.ts` routes Vertex via a dedicated `streamGoogleVertex` provider function, not via OpenAI-compat fetch wrapper. Upstream's openai-compat + rawPredict path is incompatible.
+- Fork's `packages/coding-agent/src/eval/py/` splits into `index.ts` (high-level adapter + `namespaceSessionId`) and `executor.ts` (low-level `executePython`). Upstream consolidated. Agent-session imports `executePython` from `executor.ts` not `index.ts`; need separate re-export for the namespace helper.
+- `git cherry-pick -X theirs` insufficient for any upstream commit that imports a module the fork hasn't introduced.
+- Baseline test capture uses `bun run check:ts` parallel which truncates per-package output; full visibility requires per-package `cd packages/X && bun test`.

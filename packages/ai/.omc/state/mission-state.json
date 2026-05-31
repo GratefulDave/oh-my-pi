@@ -1,0 +1,79 @@
+{
+  "updatedAt": "2026-05-28T12:17:35.302Z",
+  "missions": [
+    {
+      "id": "session:f06f7781-04ca-4062-9abf-afbf08fd7277:none",
+      "source": "session",
+      "name": "none",
+      "objective": "Session mission",
+      "createdAt": "2026-05-28T12:16:06.313Z",
+      "updatedAt": "2026-05-28T12:17:35.302Z",
+      "status": "done",
+      "workerCount": 2,
+      "taskCounts": {
+        "total": 2,
+        "pending": 0,
+        "blocked": 0,
+        "inProgress": 0,
+        "completed": 2,
+        "failed": 0
+      },
+      "agents": [
+        {
+          "name": "code-reviewer:acf520c",
+          "role": "code-reviewer",
+          "ownership": "acf520c49c9b5f606",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-05-28T12:17:35.302Z"
+        },
+        {
+          "name": "security-reviewer:a4ac01b",
+          "role": "security-reviewer",
+          "ownership": "a4ac01b2eef14c2d9",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-05-28T12:17:04.122Z"
+        }
+      ],
+      "timeline": [
+        {
+          "id": "session-start:acf520c49c9b5f606:2026-05-28T12:16:06.313Z",
+          "at": "2026-05-28T12:16:06.313Z",
+          "kind": "update",
+          "agent": "code-reviewer:acf520c",
+          "detail": "started code-reviewer:acf520c",
+          "sourceKey": "session-start:acf520c49c9b5f606"
+        },
+        {
+          "id": "session-start:a4ac01b2eef14c2d9:2026-05-28T12:16:14.944Z",
+          "at": "2026-05-28T12:16:14.944Z",
+          "kind": "update",
+          "agent": "security-reviewer:a4ac01b",
+          "detail": "started security-reviewer:a4ac01b",
+          "sourceKey": "session-start:a4ac01b2eef14c2d9"
+        },
+        {
+          "id": "session-stop:a4ac01b2eef14c2d9:2026-05-28T12:17:04.122Z",
+          "at": "2026-05-28T12:17:04.122Z",
+          "kind": "completion",
+          "agent": "security-reviewer:a4ac01b",
+          "detail": "completed",
+          "sourceKey": "session-stop:a4ac01b2eef14c2d9"
+        },
+        {
+          "id": "session-stop:acf520c49c9b5f606:2026-05-28T12:17:35.302Z",
+          "at": "2026-05-28T12:17:35.302Z",
+          "kind": "completion",
+          "agent": "code-reviewer:acf520c",
+          "detail": "completed",
+          "sourceKey": "session-stop:acf520c49c9b5f606"
+        }
+      ]
+    }
+  ]
+}

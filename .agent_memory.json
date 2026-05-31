@@ -1,0 +1,49 @@
+{
+  "global_objective": "Upstream parity for lex fork (GratefulDave/oh-my-pi, fork of can1357/oh-my-pi) against upstream v15.5.7..v15.5.10, preserving all fork divergence (4132 commits ahead). Selective tier port — NO blind git merge. Fork version mirrors upstream-latest so update-notifications stay suppressed only when content is actually absorbed (user's review-signal workflow).",
+  "completed_tasks": [
+    "Tier A/B/C (PRs #5-#12, prior session): natives tarball, Wafer providers, auth-gateway, Vertex Claude, EventLoopKeepalive, incomplete-recovery, 429 rotation, hashline v15.5.9 SnapshotStore rewrite behind computeFileHash shim",
+    "Hashline shim removal (this session): migrated 6 consumers off computeFileHash (PRs #13 ast-edit, #14 ast-grep, #15 read threaded session, #16 search, #17 file-mentions ephemeral, #18 benchmark); #19 docs cleanup; #20 shim deleted + hashline.test/edit-diff.test re-authored; grep computeFileHash src+test = 0",
+    "Version bump 15.5.10 (PR #21): 10 public packages + root @oh-my-pi/* catalog + Cargo.toml [workspace.package]; benchmark left private 0.0.1; cumulative Tier A+B+C CHANGELOG section",
+    "Upstream v15.5.10 port (PRs #22-#25): #22 release.ts fetch.pruneTags=false+atomic push (1191fdedc), #23 pi-natives shell pipe coalesce 64KiB batch (3327d51b4 PERF), #24 compaction 401/403 fallback createSummarizationError + /drop-images (c4f93eca2+5bed80785), #25 CHANGELOG v15.5.10 content",
+    "check:ts gate fixed GREEN (PRs #26-#32): #26 read/ast-grep fileHash, #27 OpenAIResponsesOptions.promptCacheKey, #28 fetch.ts storage arg + 2 tests, #29 hashline.test types, #30 Cursor provider removed (18 files, superseded PR #3), #31 cursor-removal fallout pi-native-client/stream.ts, #32 AssistantMessageEventStream value export + AnthropicCompat.supportsReasoningEffort + hashline.test residue + repo-wide biome normalization",
+    "Deleted stray v15.5.10 git tag (agent overstep, local-only, never pushed, CI never fired)"
+  ],
+  "modified_files": [
+    "packages/ai/src/types.ts (AssistantMessageEventStream value re-export, AnthropicCompat.supportsReasoningEffort)",
+    "packages/ai/src/providers/anthropic.ts (Required<AnthropicCompat> builder)",
+    "packages/ai/src/providers/openai-responses.ts (promptCacheKey field)",
+    "packages/ai/src/providers/cursor.ts + cursor/ + utils/discovery/cursor.ts (DELETED), stream.ts, api-registry.ts, register-builtins.ts, provider-models/special.ts+descriptors.ts, models.json, pi-native-client.ts (cursor removal)",
+    "packages/ai/src/stream.ts (shell pipe + cursor)",
+    "crates/pi-natives/src/shell.rs (coalesce)",
+    "packages/agent/src/compaction/compaction.ts, packages/coding-agent/src/session/agent-session.ts (compaction 401/403 + dropImages), session/messages.ts (stripImagesFromMessage), slash-commands/builtin-registry.ts (/drop-images + dead var)",
+    "packages/coding-agent/src/tools/{read,search,ast-edit,ast-grep,fetch}.ts, utils/file-mentions.ts (hashline migration + fetch arg)",
+    "packages/coding-agent/test/core/hashline.test.ts, edit-diff.test.ts, agent-session-message-pipeline.test.ts, tools/fetch-jina-stall.test.ts",
+    "scripts/release.ts, CHANGELOG.md, 10x packages/*/package.json, package.json catalog, Cargo.toml",
+    ".omc/autopilot/tier-c/hashline/run-plan.md (orchestration log)"
+  ],
+  "current_issues": [
+    "75 runtime failures in hashline.test.ts are PRE-EXISTING baseline from upstream v15.5.8 parser-grammar migration (legacy 2-2:/bare-N:/EOF-down fixtures rejected by new section parser: 'payload line has no preceding hunk header'). NOT regressions (0-regression confirmed via git stash round-trip). Test FIXTURES need rewriting to new @@ A..B @@ wrapped-hunk-header grammar — separate task, does NOT block check:ts (tsgo typecheck passes).",
+    "file-mentions hashline tags display-only/not patch-resolvable: generateFileMentionMessages (sole caller agent-session.ts:4103) has no reachable ToolSession; used ephemeral InMemorySnapshotStore. Threading session is a tracked follow-up.",
+    "Fresh-worktree baselines (not code): Cannot find module @oh-my-pi/hashline (parent symlink to sibling worktree), pi_natives native addon stale/missing applyShellMinimizer, docs-index.generated.ts missing (gitignored, run bun run generate-docs-index). bun install blocked by npm registry minimum-release-age on 15.5.x.",
+    "bunx tsc (vanilla) disagrees with tsgo (real gate): vanilla flags 2 extra test errors tsgo/the gate do not. ALWAYS verify against tsgo via `bun run check:ts`, not bunx tsc.",
+    "bun.lock NOT relocked after catalog bump (registry min-release-age blocks install; workspace catalog resolves locally). Intra-package @oh-my-pi/* dep literals left at 15.5.7 (matches canonical release.ts behavior; rewritten at publish)."
+  ],
+  "constraints": [
+    "NO git merge upstream/main — selective port only, preserve fork divergence",
+    "Each upstream cherry-pick carries (cherry picked from commit <SHA>) provenance trailer",
+    "NO git tag / NO npm publish — release is user's deliberate manual step (v* tag push triggers release CI per .github/workflows/ci.yml)",
+    "Fork version = upstream-latest ONLY when content absorbed (user bumps to suppress update-notification AFTER reviewing/porting; premature bump suppresses their review signal)",
+    "CI never runs on this fork (gh run list empty historically); local per-PR verification is the merge gate; merge squash + delete-branch via gh --repo GratefulDave/oh-my-pi",
+    "Commit messages end Co-Authored-By: Claude Opus 4.8 (1M context); PR bodies end Generated with Claude Code",
+    "REAL typecheck = tsgo (bun run check:ts), NOT bunx tsc; check:ts runs check:tools (biome) FIRST then tsgo per-package; biome failures block before tsc",
+    "SnapshotMetadata has ONLY fullText (no fileHash); recordContiguous/recordSparse RETURN the ring-permutation tag (NOT content-addressed); applyEdits(text,edits) 2-arg no options (autoDropPureInsertDuplicates removed upstream v15.5.9)",
+    "Caveman mode full active; code/commits/PRs written normal"
+  ],
+  "current_state": "ALL parity work COMPLETE through upstream v15.5.10. main @ 7cf10558a. `bun run check:ts` GREEN (tsgo 0 errors all packages + biome PASS). `bun run build` passes. computeFileHash = 0 in src+test. Cursor provider removed. Version 15.5.10 legitimately matches upstream-latest with its content present (verified: /drop-images, isCompactionAuthFailure 401/403, shell coalesce, pruneTags all PRESENT). PRs #13-#32 merged; PR #3 closed. v15.5.8 (diff-tail) and v15.5.9 (natives security) gaps were FALSE ALARMS — already present. Only non-applicable upstream commits skipped (codex web-search, biome-style, docs, merges). Autopilot cancelled (state preserved). 7 agent worktrees still harness-locked under .pi/extensions/oh-my-pi/.claude/worktrees/ (auto-cleaned).",
+  "next_steps": [
+    "If user wants full green test suite: rewrite ~75 legacy hashline.test.ts fixtures (2-2:/bare-N:/EOF-down) to the new @@ A..B @@ wrapped-hunk-header grammar from upstream v15.5.8 parser migration",
+    "Optional: thread session-shared SnapshotStore through generateFileMentionMessages + agent-session.ts:4103 caller so file-mention hashline tags become patch-resolvable",
+    "When user chooses to release: bun scripts/release.ts (relocks bun.lock, tags v15.5.10, triggers publish CI) — deliberate manual step, not automated",
+    "On next upstream release (v15.5.11+): update-notification fires (version now correctly matches v15.5.10 with content) → review + selective port + bump"
+  ]
+}

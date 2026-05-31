@@ -1,0 +1,10 @@
+{
+  "repo": "/Users/davidandrews/PycharmProjects/lex",
+  "hub": "/Users/davidandrews/PycharmProjects/the-library",
+  "links": {
+    "claude/skill/factory-orchestrator": "/Users/davidandrews/PycharmProjects/lex/.claude/skills/factory-orchestrator",
+    "claude/skill/factory-discovery": "/Users/davidandrews/PycharmProjects/lex/.claude/skills/factory-discovery",
+    "claude/skill/factory-librarian": "/Users/davidandrews/PycharmProjects/lex/.claude/skills/factory-librarian",
+    "claude/skill/mcp-server-factory": "/Users/davidandrews/PycharmProjects/lex/.claude/skills/mcp-server-factory"
+  }
+}

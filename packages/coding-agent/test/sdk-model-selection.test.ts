@@ -123,7 +123,6 @@ describe("createAgentSession deferred model pattern resolution", () => {
 		}
 	});
 
-
 	test("selects the settings default model without synchronously validating auth", async () => {
 		const defaultModel = getBundledModel("anthropic", "claude-sonnet-4-5");
 		if (!defaultModel) {

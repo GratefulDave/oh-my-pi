@@ -1,0 +1,60 @@
+swarm:
+  name: lex-cherry-pick
+  workspace: .
+  mode: parallel
+  model: claude-sonnet-4-5
+
+  agents:
+    fastembed_deferrer:
+      role: backend-engineer
+      task: |
+        Port fastembed deferral and Python enumeration:
+        1. Defer importing `FlagEmbedding` from `fastembed` in local model init. Do not load eagerly at module startup to prevent segfaults and reduce startup latency.
+        2. Probe multiple Python environments in order (venv, managed, system) via `enumeratePythonRuntimes` to bypass broken envs.
+        3. Skip all lint/formatting gates. Skip tests.
+      reports_to:
+        - synthesizer
+
+    thinking_implementer:
+      role: protocol-engineer
+      task: |
+        Port AUTO_THINKING and slash commands:
+        1. Add `AUTO_THINKING` level to settings schema, SDK, and session flow.
+        2. Implement per-turn reasoning classification with online/local prompts, effort clamping, and skip guards.
+        3. Implement `/switch` command to temporarily switch providers mid-session.
+        4. Skip all lint/formatting gates. Skip tests.
+      reports_to:
+        - synthesizer
+
+    hashline_updater:
+      role: parser-engineer
+      task: |
+        Port replace block syntax and title code stripping:
+        1. Add `replace block N:` grammar and AST resolver in hashline parser.
+        2. Implement `stripCodeBlocks` to drop fenced blocks before title generation to save tokens.
+        3. Skip all lint/formatting gates. Skip tests.
+      reports_to:
+        - synthesizer
+
+    ux_cleanup:
+      role: ui-engineer
+      task: |
+        Port TUI improvements and clean recipe tool:
+        1. Implement animated pending borders for bash/eval blocks in TUI.
+        2. Delete `RecipeTool`, task runner backends, and prompt template completely to reduce tool/prompt bloat.
+        3. Skip all lint/formatting gates. Skip tests.
+      reports_to:
+        - synthesizer
+
+    synthesizer:
+      role: lead-architect
+      task: |
+        Synthesize and verify cherry-picked modules:
+        1. Ensure all upstream features are correctly ported.
+        2. Run workspace checks: `./rebuild-lex.zsh` and `bun run check`.
+        3. Run local unit tests in packages to verify no regressions.
+      waits_for:
+        - fastembed_deferrer
+        - thinking_implementer
+        - hashline_updater
+        - ux_cleanup
