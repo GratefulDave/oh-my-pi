@@ -266,10 +266,21 @@ const prSegment: StatusLineSegment = {
 const subagentsSegment: StatusLineSegment = {
 	id: "subagents",
 	render(ctx) {
-		if (ctx.subagentCount === 0) {
+		const running = ctx.subagentCount;
+		const queued = ctx.subagentQueued;
+		const total = running + queued;
+		if (total === 0) {
 			return { content: "", visible: false };
 		}
-		const content = withIcon(theme.icon.agents, `${ctx.subagentCount}`);
+		let label: string;
+		if (running > 0 && queued > 0) {
+			label = `${running} running, ${queued} queued`;
+		} else if (running > 0) {
+			label = `${running} running`;
+		} else {
+			label = `${queued} queued`;
+		}
+		const content = withIcon(theme.icon.agents, label);
 		return { content: theme.fg("statusLineSubagents", content), visible: true };
 	},
 };

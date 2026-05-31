@@ -16,6 +16,8 @@ function makeContext(): MinimizerGainContext {
 			outputBytes: 900,
 			savedBytes: 2600,
 			estimatedTokensSaved: 650,
+			estimatedInputTokens: 875,
+			tokensSavedRatio: 650 / 875,
 			usesEstimatedTokensSaved: true,
 			estimatedInputTokens: 875,
 			tokensSavedRatio: 650 / 875,
@@ -27,6 +29,8 @@ function makeContext(): MinimizerGainContext {
 					outputBytes: 900,
 					savedBytes: 2600,
 					estimatedTokensSaved: 650,
+					estimatedInputTokens: 875,
+					tokensSavedRatio: 650 / 875,
 					usesEstimatedTokensSaved: true,
 					estimatedInputTokens: 875,
 					tokensSavedRatio: 650 / 875,
@@ -40,6 +44,8 @@ function makeContext(): MinimizerGainContext {
 					outputBytes: 900,
 					savedBytes: 2600,
 					estimatedTokensSaved: 650,
+					estimatedInputTokens: 875,
+					tokensSavedRatio: 650 / 875,
 					usesEstimatedTokensSaved: true,
 					estimatedInputTokens: 875,
 					tokensSavedRatio: 650 / 875,
@@ -56,6 +62,21 @@ function makeContext(): MinimizerGainContext {
 					inputBytes: 12000,
 					outputBytes: 12000,
 					avgInputBytes: 4000,
+					estimatedPotentialTokensSaved: 3000,
+					avgEstimatedPotentialTokensSaved: 1000,
+					exitCodes: [0, 1],
+				},
+			],
+			potentialTokenSavings: [
+				{
+					command: "cargo test --workspace --no-fail-fast --\tverbose",
+					filter: "missed",
+					commands: 3,
+					inputBytes: 12000,
+					outputBytes: 12000,
+					avgInputBytes: 4000,
+					estimatedPotentialTokensSaved: 3000,
+					avgEstimatedPotentialTokensSaved: 1000,
 					exitCodes: [0, 1],
 					estimatedPotentialTokensSaved: 3000,
 					avgEstimatedPotentialTokensSaved: 1000,
@@ -93,6 +114,8 @@ function makeDualContext(): DualContext {
 					outputBytes: 900,
 					savedBytes: 2600,
 					estimatedTokensSaved: 650,
+					estimatedInputTokens: 875,
+					tokensSavedRatio: 650 / 875,
 					usesEstimatedTokensSaved: true,
 					estimatedInputTokens: 875,
 					tokensSavedRatio: 650 / 875,
@@ -189,6 +212,8 @@ describe("MinimizerGainOverlayComponent", () => {
 						outputBytes: 900,
 						savedBytes: 3100,
 						estimatedTokensSaved: 775,
+						estimatedInputTokens: 875,
+						tokensSavedRatio: 775 / 875,
 						usesEstimatedTokensSaved: true,
 						estimatedInputTokens: 875,
 						tokensSavedRatio: 775 / 875,
@@ -265,7 +290,59 @@ describe("MinimizerGainOverlayComponent", () => {
 		expect(output).toContain("Saved: 30");
 		expect(output).toContain("Missed: 12");
 		expect(output).toContain("Avg saved ratio: 0.850");
+		expect(output).toContain("Recent hit ratio (last 50): 0.750");
+		expect(output).toContain("Recent missed ratio (last 50): 0.250");
 		expect(output).toContain("Native binding loaded: true");
+	});
+
+	it("renders Missed tab dual-view with byte and token savings sections", () => {
+		const component = new MinimizerGainOverlayComponent(
+			makeDualContext(),
+			() => {},
+			() => {},
+		);
+		// Tab once: Gain → Missed.
+		component.handleInput("\t");
+		const output = render(component);
+
+		// Both section headings must be present.
+		expect(output).toContain("Largest unminimized shell outputs");
+		expect(output).toContain("Highest potential token savings");
+
+		// Byte-view row: fixture has 3 commands, 12000B total, 4000 avg.
+		expect(output).toContain("12K");
+		expect(output).toContain("4K");
+
+		// Token-view row: estimatedPotentialTokensSaved=3000 → "3K tok total", avg=1000 → "1K avg".
+		expect(output).toContain("3K tok total");
+		expect(output).toContain("1K avg");
+
+		// Exit codes from fixture: [0, 1].
+		expect(output).toContain("exit=0,1");
+
+		// Tab characters in command must be sanitized.
+		expect(output).not.toContain("\t");
+		expect(output).toContain("cargo test --workspace");
+	});
+
+	it("renders Gain tab with % tokens saved in summary row and filter/command rows", () => {
+		const component = new MinimizerGainOverlayComponent(
+			makeDualContext(),
+			() => {},
+			() => {},
+		);
+		// Default tab is Gain — no navigation needed.
+		const output = render(component);
+
+		// Summary row: estimatedTokensSaved=650, tokensSavedRatio=650/875≈0.742857 → 74.3%
+		// Renderer produces: "Estimated Tokens Saved: 650 (74.3% tokens saved)"
+		expect(output).toContain("74.3%");
+		expect(output).toContain("tokens saved");
+
+		// formatGainRow for byFilter row produces: "... (74.3% saved)"
+		// Both the summary row suffix ("tokens saved") and gain-row suffix ("saved") include 74.3%.
+		expect(output).toContain("74.3% tokens saved");
+		expect(output).toContain("74.3% saved");
 	});
 
 	it("renders Status tab buildError sentinel", () => {
