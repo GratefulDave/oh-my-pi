@@ -330,7 +330,6 @@ function classifyLine(line: string, lineNum: number): Token {
 	if (markerLineEquals(line, BEGIN_PATCH_MARKER)) return { kind: "envelope-begin", lineNum };
 	if (markerLineEquals(line, END_PATCH_MARKER)) return { kind: "envelope-end", lineNum };
 	if (markerLineEquals(line, ABORT_MARKER)) return { kind: "abort", lineNum };
-	const firstCode = line.charCodeAt(0);
 	if (line.startsWith(HL_FILE_PREFIX)) {
 		const header = tryParseHeader(line);
 		if (header !== null) {
@@ -348,7 +347,8 @@ function classifyLine(line: string, lineNum: number): Token {
 		const hunk = tryParseHunkHeader(line);
 		if (hunk !== null) return { kind: "op-block", lineNum, target: hunk.target };
 	}
-	if (firstCode === CHAR_PAYLOAD_REPLACE) return { kind: "payload-literal", lineNum, text: line.slice(1) };
+	if (line.charCodeAt(lead) === CHAR_PAYLOAD_REPLACE)
+		return { kind: "payload-literal", lineNum, text: line.slice(lead + 1) };
 	return { kind: "raw", lineNum, text: line };
 }
 

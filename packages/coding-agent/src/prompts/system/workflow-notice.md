@@ -17,7 +17,7 @@ Everything runs inline and synchronously inside eval. No background mode, no res
 <dag-structure>
 Build graph before fan-out:
 1. Discover nodes and dependency edges.
-2. For each wave, call `phase("Wave N: ...")`, then `parallel([...])` for all ready nodes.
+2. For each wave, call `phase("Wave N: …")`, then `parallel([…])` for all ready nodes.
 3. Inspect wave outputs and run verification gate before computing next ready set.
 4. Use `pipeline()` only when every item must complete stage N before any item starts stage N+1. Do not add barriers for simple flatten/map/filter.
 </dag-structure>

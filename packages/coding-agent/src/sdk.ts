@@ -930,8 +930,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const allowedModels = await logger.time("resolveAllowedModels", () =>
 		resolveAllowedModels(modelRegistry, settings, modelMatchPreferences),
 	);
+	// Resolve the profile's default model role against ALL available models, not the
+	// enabledModels-filtered list. The enabledModels filter constrains which models the
+	// session may switch to during a conversation; it must not prevent the profile from
+	// loading its own default model. When enabledModels patterns all miss (e.g. because
+	// extension-provided providers haven't registered yet), resolveAllowedModels returns
+	// [] and the default role would never resolve — leaving the session with a random
+	// fallback (codex-auto-review) instead of the configured default.
+	const defaultRoleAvailableModels = allowedModels.length > 0 ? allowedModels : modelRegistry.getAvailable();
 	const defaultRoleSpec = logger.time("resolveDefaultModelRole", () =>
-		resolveModelRoleValue(settings.getModelRole("default"), allowedModels, {
+		resolveModelRoleValue(settings.getModelRole("default"), defaultRoleAvailableModels, {
 			settings,
 			matchPreferences: modelMatchPreferences,
 			modelRegistry,
@@ -959,12 +967,15 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	// If still no model, try settings default.
 	// Skip settings fallback when an explicit model was requested.
+	// NOTE: modelFromPreExtensionDefault tracks whether this assignment came from
+	// the pre-extension defaultRoleSpec so the post-extension block can replace it
+	// if extensions register the provider the profile actually wants.
+	let modelFromPreExtensionDefault = false;
 	if (!hasExplicitModel && !model && defaultRoleSpec.model) {
 		const settingsDefaultModel = defaultRoleSpec.model;
 		logger.time("resolveSettingsDefaultModel", () => {
-			// defaultRoleSpec.model already comes from modelRegistry.getAvailable(),
-			// so re-validating auth here just repeats the expensive lookup path.
 			model = settingsDefaultModel;
+			modelFromPreExtensionDefault = true;
 		});
 	}
 
@@ -1428,22 +1439,26 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		// registration so profiles that default to extension models (for example
 		// opencode-antigravity) start on their configured default instead of the
 		// first built-in fallback model.
-		if (!hasExplicitModel && !model) {
-			const refreshedAllowedModels = await resolveAllowedModels(modelRegistry, settings, {
-				usageOrder: settings.getStorage()?.getModelUsageOrder(),
+		// Extension-provided providers are not visible during the early default-role
+		// resolution above (see comment at line 933). Re-resolve here if:
+		//   (a) no model was selected at all, OR
+		//   (b) the model was set from the pre-extension defaultRoleSpec — meaning the
+		//       profile's configured default could not be matched against extension models
+		//       yet, so a built-in fallback (e.g. codex-auto-review) was chosen instead.
+		if (!hasExplicitModel && (!model || modelFromPreExtensionDefault)) {
+			// Use getAvailable() directly — same as the pre-extension defaultRoleSpec path above.
+			// resolveAllowedModels applies the enabledModels filter which can return [] when
+			// extension-provided patterns still don't match, preventing the default from loading.
+			const refreshedAvailable = modelRegistry.getAvailable();
+			const refreshedDefaultRoleSpec = resolveModelRoleValue(settings.getModelRole("default"), refreshedAvailable, {
+				settings,
+				matchPreferences: { usageOrder: settings.getStorage()?.getModelUsageOrder() },
+				modelRegistry,
 			});
-			const refreshedDefaultRoleSpec = resolveModelRoleValue(
-				settings.getModelRole("default"),
-				refreshedAllowedModels,
-				{
-					settings,
-					matchPreferences: { usageOrder: settings.getStorage()?.getModelUsageOrder() },
-					modelRegistry,
-				},
-			);
 			if (refreshedDefaultRoleSpec.model) {
 				model = refreshedDefaultRoleSpec.model;
-				if (thinkingLevel === undefined && !hasThinkingEntry && refreshedDefaultRoleSpec.explicitThinkingLevel) {
+				modelFromPreExtensionDefault = false;
+				if (!hasThinkingEntry && refreshedDefaultRoleSpec.explicitThinkingLevel) {
 					thinkingLevel = refreshedDefaultRoleSpec.thinkingLevel;
 				}
 			}

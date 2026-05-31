@@ -324,10 +324,11 @@ fn filter_rebuild_lex(input: &str, exit_code: i32) -> MinimizerOutput {
 		out.push('\n');
 	}
 	let compacted = primitives::dedup_consecutive_lines(&out);
+	let (head, tail) = if exit_code == 0 { (10, 10) } else { (120, 80) };
 	let text = if compacted.trim().is_empty() {
-		primitives::head_tail_lines(&cleaned, 120, 80)
+		primitives::head_tail_lines(&cleaned, head, tail)
 	} else {
-		primitives::head_tail_lines(&compacted, 120, 80)
+		primitives::head_tail_lines(&compacted, head, tail)
 	};
 	if text == input {
 		MinimizerOutput::passthrough(input)

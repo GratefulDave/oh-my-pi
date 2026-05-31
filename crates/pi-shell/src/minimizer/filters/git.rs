@@ -36,7 +36,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 
 	let cleaned = primitives::strip_ansi(input);
 	let text = match ctx.subcommand {
-		Some("status") if is_status_machine_format(ctx.command) => cleaned,
+		Some("status") if is_status_machine_format(ctx.command) => condense_status(&cleaned),
 		Some("status") => condense_status(&cleaned),
 		Some("diff") if is_stat_format(ctx.command) => condense_diff_stat(&cleaned),
 		Some("diff") => {
@@ -1241,16 +1241,17 @@ mod tests {
 	}
 
 	#[test]
-	fn short_status_is_passthrough() {
+	fn short_status_is_compacted() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("status"), "git status --short", &cfg);
 		let input = " M src/main.rs\nM  Cargo.toml\n?? scratch.txt\nUU conflicted.rs\n";
 		let out = filter(&ctx, input, 0);
-
-		assert!(!out.changed);
-		assert_eq!(out.text, input);
+		assert!(out.changed);
+		assert_eq!(
+			out.text,
+			"staged 1, unstaged 1, untracked 1, conflicts 1\nM src/main.rs\nM Cargo.toml\n?? scratch.txt\nUU conflicted.rs\n"
+		);
 	}
-
 	#[test]
 	fn long_status_clean_is_compacted() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };

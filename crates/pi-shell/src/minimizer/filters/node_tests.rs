@@ -112,6 +112,7 @@ fn is_summary_line(trimmed: &str) -> bool {
 		|| trimmed.starts_with("% ")
 		|| trimmed.starts_with("Failed Tests")
 		|| trimmed.starts_with("Playwright Test Report")
+		|| (trimmed.starts_with("Ran ") && trimmed.contains("tests across"))
 		|| starts_count_summary(trimmed)
 }
 
@@ -134,6 +135,13 @@ fn is_pass_noise(trimmed: &str) -> bool {
 		|| trimmed.starts_with("○")
 		|| trimmed.starts_with(" RUN ")
 		|| trimmed.starts_with("DEV ")
+		|| trimmed.starts_with("bun test ")
+		|| trimmed.ends_with(".test.ts:")
+		|| trimmed.ends_with(".test.js:")
+		|| trimmed.ends_with(".test.tsx:")
+		|| trimmed.ends_with(".test.jsx:")
+		|| trimmed.ends_with(".spec.ts:")
+		|| trimmed.ends_with(".spec.js:")
 }
 
 fn starts_failure_block(trimmed: &str) -> bool {
