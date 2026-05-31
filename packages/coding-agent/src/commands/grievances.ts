@@ -1,19 +1,19 @@
 /**
- * View, clean, and push reported tool issues from automated QA.
+ * View, clean, and explicitly publish local tool issue reports.
  */
 import { COMMAND_NAME } from "@oh-my-pi/pi-utils";
 import { Args, Command, Flags } from "@oh-my-pi/pi-utils/cli";
 import { cleanGrievances, listGrievances, pushGrievances } from "../cli/grievances-cli";
 
 export default class Grievances extends Command {
-	static description = "View, clean, or push reported tool issues (auto-QA grievances)";
+	static description = "View, clean, or explicitly publish local tool issue reports";
 
 	static args = {
 		// Positional action: "list" (default), "clean", or "push". A positional
 		// arg keeps the historical `omp grievances` invocation working unchanged
 		// while reusing the same command surface for the clean/push verbs.
 		action: Args.string({
-			description: "list (default), clean, or push",
+			description: "list local reports (default), clean local reports, or push with configured endpoint",
 			required: false,
 			options: ["list", "clean", "push"],
 			default: "list",

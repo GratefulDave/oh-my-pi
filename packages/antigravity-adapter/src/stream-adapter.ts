@@ -23,8 +23,6 @@ import {
 } from "./auth-adapter";
 import { GOOGLE_GENERATIVE_LANGUAGE_BASE, OPENCODE_ANTIGRAVITY_MODELS, PROVIDER_ID } from "./models";
 
-type FetchInput = string | URL | Request;
-
 type UpstreamAuthHook = PluginResult["auth"];
 
 type GoogleStreamModel = Model<"google-generative-ai">;
@@ -158,8 +156,32 @@ export async function createUpstreamLoader(
 	return loaded;
 }
 
+async function requestToInit(
+	input: Request,
+	init: RequestInit | undefined,
+): Promise<[string, RequestInit | undefined]> {
+	const headers = new Headers(init?.headers ?? input.headers);
+	headers.delete("x-goog-api-key");
+	const nextInit: RequestInit = {
+		...init,
+		method: init?.method ?? input.method,
+		headers,
+		signal: init?.signal ?? input.signal,
+	};
+	if (!init?.body && input.body && input.method !== "GET" && input.method !== "HEAD") {
+		nextInit.body = await input.text();
+	}
+	return [input.url, nextInit];
+}
+
 export function createBridgeFetch(upstreamFetch: FetchImpl): FetchImpl {
-	return (input, init) => upstreamFetch(stripApiKeyFromRequest(input), stripApiKeyFromInit(init));
+	return async (input, init) => {
+		if (input instanceof Request) {
+			const [url, nextInit] = await requestToInit(input, init);
+			return upstreamFetch(url, nextInit);
+		}
+		return upstreamFetch(input, stripApiKeyFromInit(init));
+	};
 }
 
 export function createOpencodeAntigravityStream(
@@ -215,13 +237,6 @@ function toGoogleStreamModel(model: Model<Api>, idOverride?: string): GoogleStre
 		provider: PROVIDER_ID,
 		baseUrl: model.baseUrl || GOOGLE_GENERATIVE_LANGUAGE_BASE,
 	} as GoogleStreamModel;
-}
-
-function stripApiKeyFromRequest(input: FetchInput): FetchInput {
-	if (!(input instanceof Request)) return input;
-	const headers = new Headers(input.headers);
-	headers.delete("x-goog-api-key");
-	return new Request(input, { headers });
 }
 
 function stripApiKeyFromInit(init: RequestInit | undefined): RequestInit | undefined {

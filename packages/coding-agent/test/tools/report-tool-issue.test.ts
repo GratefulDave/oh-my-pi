@@ -1,7 +1,18 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { __resetAutoQaFlushStateForTests, flushGrievances } from "@oh-my-pi/pi-coding-agent/tools/report-tool-issue";
+import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
+import {
+	__resetAutoQaDbForTests,
+	__resetAutoQaFlushStateForTests,
+	createReportToolIssueTool,
+	flushGrievances,
+	getAutoQaDbPath,
+	openAutoQaDb,
+} from "@oh-my-pi/pi-coding-agent/tools/report-tool-issue";
 import * as piUtils from "@oh-my-pi/pi-utils";
 import { hookFetch } from "@oh-my-pi/pi-utils";
 
@@ -49,12 +60,24 @@ function selectPushedIds(db: Database): number[] {
 function pushSettings(overrides: Record<string, unknown> = {}): Settings {
 	return Settings.isolated({
 		"dev.autoqa": true,
-		// Consent is the push opt-in; `granted` is what `resolvePushConfig`
-		// gates on (or `PI_AUTO_QA_PUSH=1` for headless overrides).
-		"dev.autoqa.consent": "granted",
 		"dev.autoqaPush.endpoint": "https://qa.example.com/grievances",
 		...overrides,
 	});
+}
+
+function manualPush(): { bypassConsent: true } {
+	return { bypassConsent: true };
+}
+
+function makeSession(settings: Settings): ToolSession {
+	return {
+		cwd: process.cwd(),
+		hasUI: false,
+		settings,
+		getSessionFile: () => null,
+		getSessionSpawns: () => null,
+		getActiveModelString: () => "test-model",
+	} as ToolSession;
 }
 
 describe("flushGrievances", () => {
@@ -72,13 +95,12 @@ describe("flushGrievances", () => {
 		db.close();
 	});
 
-	it("skips network when consent is missing and leaves rows intact", async () => {
+	it("skips network without explicit manual push and leaves rows intact", async () => {
 		insertGrievance(db, "find", "weird ordering");
 		const fetchSpy = vi.fn(() => new Response("unexpected", { status: 200 }));
 		using _hook = hookFetch(fetchSpy);
 
-		// `denied` is the user-facing kill switch for push.
-		const result = await flushGrievances(db, pushSettings({ "dev.autoqa.consent": "denied" }));
+		const result = await flushGrievances(db, pushSettings());
 
 		expect(result).toEqual({ pushed: 0, ok: false, skipped: true });
 		expect(fetchSpy).not.toHaveBeenCalled();
@@ -90,7 +112,7 @@ describe("flushGrievances", () => {
 		const fetchSpy = vi.fn(() => new Response("unexpected", { status: 200 }));
 		using _hook = hookFetch(fetchSpy);
 
-		const result = await flushGrievances(db, pushSettings({ "dev.autoqaPush.endpoint": "" }));
+		const result = await flushGrievances(db, pushSettings({ "dev.autoqaPush.endpoint": "" }), manualPush());
 
 		expect(result).toEqual({ pushed: 0, ok: false, skipped: true });
 		expect(fetchSpy).not.toHaveBeenCalled();
@@ -101,7 +123,7 @@ describe("flushGrievances", () => {
 		const fetchSpy = vi.fn(() => new Response("unexpected", { status: 200 }));
 		using _hook = hookFetch(fetchSpy);
 
-		const result = await flushGrievances(db, pushSettings());
+		const result = await flushGrievances(db, pushSettings(), manualPush());
 
 		expect(result).toEqual({ pushed: 0, ok: true });
 		expect(fetchSpy).not.toHaveBeenCalled();
@@ -120,7 +142,7 @@ describe("flushGrievances", () => {
 		});
 		using _hook = hookFetch(fetchSpy);
 
-		const result = await flushGrievances(db, pushSettings({ "dev.autoqaPush.token": "secret-token" }));
+		const result = await flushGrievances(db, pushSettings({ "dev.autoqaPush.token": "secret-token" }), manualPush());
 
 		expect(result).toEqual({ pushed: 2, ok: true });
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -159,7 +181,7 @@ describe("flushGrievances", () => {
 		});
 		using _hook = hookFetch(fetchSpy);
 
-		const result = await flushGrievances(db, pushSettings());
+		const result = await flushGrievances(db, pushSettings(), manualPush());
 
 		expect(result).toEqual({ pushed: 1, ok: true });
 		const headers = capturedInit?.headers as Record<string, string> | undefined;
@@ -173,7 +195,7 @@ describe("flushGrievances", () => {
 		const fetchSpy = vi.fn(() => new Response("nope", { status: 500 }));
 		using _hook = hookFetch(fetchSpy);
 
-		const result = await flushGrievances(db, pushSettings());
+		const result = await flushGrievances(db, pushSettings(), manualPush());
 
 		expect(result).toEqual({ pushed: 0, ok: false });
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -199,7 +221,7 @@ describe("flushGrievances", () => {
 		});
 		using _hook = hookFetch(fetchSpy);
 
-		const flushPromise = flushGrievances(db, pushSettings());
+		const flushPromise = flushGrievances(db, pushSettings(), manualPush());
 		await fetchEntered.promise;
 
 		// New grievance written by a concurrent tool call while the push is in flight.
@@ -224,8 +246,8 @@ describe("flushGrievances", () => {
 		using _hook = hookFetch(fetchSpy);
 
 		const settings = pushSettings();
-		const first = flushGrievances(db, settings);
-		const second = flushGrievances(db, settings);
+		const first = flushGrievances(db, settings, manualPush());
+		const second = flushGrievances(db, settings, manualPush());
 
 		releaseFetch.resolve(new Response("", { status: 200 }));
 		const [a, b] = await Promise.all([first, second]);
@@ -237,18 +259,18 @@ describe("flushGrievances", () => {
 		expect(selectPushedIds(db)).toEqual([1]);
 	});
 
-	it("skips the next push within the failure cooldown window", async () => {
+	it("does not cooldown explicit manual retry after a failure", async () => {
 		insertGrievance(db, "find", "first");
 		const fetchSpy = vi.fn(() => new Response("nope", { status: 500 }));
 		using _hook = hookFetch(fetchSpy);
 
 		const settings = pushSettings();
-		const firstResult = await flushGrievances(db, settings);
-		const secondResult = await flushGrievances(db, settings);
+		const firstResult = await flushGrievances(db, settings, manualPush());
+		const secondResult = await flushGrievances(db, settings, manualPush());
 
 		expect(firstResult).toEqual({ pushed: 0, ok: false });
-		expect(secondResult).toEqual({ pushed: 0, ok: false, skipped: true });
-		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		expect(secondResult).toEqual({ pushed: 0, ok: false });
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
 		expect(selectUnpushedIds(db)).toEqual([1]);
 	});
 
@@ -268,7 +290,7 @@ describe("flushGrievances", () => {
 		});
 		using _hook = hookFetch(fetchSpy);
 
-		const result = await flushGrievances(db, pushSettings());
+		const result = await flushGrievances(db, pushSettings(), manualPush());
 
 		expect(result).toEqual({ pushed: total, ok: true });
 		// Three batches: 50 + 50 + 27.
@@ -293,11 +315,91 @@ describe("flushGrievances", () => {
 		});
 		using _hook = hookFetch(fetchSpy);
 
-		const result = await flushGrievances(db, pushSettings());
+		const result = await flushGrievances(db, pushSettings(), manualPush());
 
 		expect(result).toEqual({ pushed: firstBatch, ok: false });
 		expect(fetchSpy).toHaveBeenCalledTimes(2);
 		expect(selectPushedIds(db).length).toBe(firstBatch);
 		expect(selectUnpushedIds(db).length).toBe(secondBatch);
+	});
+});
+
+describe("report_tool_issue local storage", () => {
+	let homeDir = "";
+
+	beforeEach(async () => {
+		__resetAutoQaDbForTests();
+		homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-autoqa-home-"));
+		vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+	});
+
+	afterEach(async () => {
+		__resetAutoQaDbForTests();
+		vi.restoreAllMocks();
+		await fs.rm(homeDir, { recursive: true, force: true });
+	});
+
+	it("targets the OMP namespace, not the Lex namespace", () => {
+		expect(getAutoQaDbPath()).toBe(path.join(homeDir, ".omp", "agent", "autoqa.db"));
+	});
+
+	it("imports rows once from the accidental legacy Lex database without deleting it", async () => {
+		const legacyDir = path.join(homeDir, ".lex", "agent");
+		await fs.mkdir(legacyDir, { recursive: true });
+		const legacyPath = path.join(legacyDir, "autoqa.db");
+		const legacy = new Database(legacyPath);
+		legacy.run(`
+			CREATE TABLE grievances (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				model TEXT NOT NULL,
+				version TEXT NOT NULL,
+				tool TEXT NOT NULL,
+				report TEXT NOT NULL,
+				pushed INTEGER NOT NULL DEFAULT 0
+			);
+		`);
+		legacy
+			.prepare("INSERT INTO grievances (model, version, tool, report, pushed) VALUES (?, ?, ?, ?, ?)")
+			.run("model-a", "version-a", "read", "legacy report", 1);
+		legacy.close();
+
+		const db = openAutoQaDb();
+		expect(db).not.toBeNull();
+		const rows = db
+			?.prepare("SELECT model, version, tool, report, pushed FROM grievances ORDER BY id ASC")
+			.all() as Array<{ model: string; version: string; tool: string; report: string; pushed: number }>;
+
+		expect(rows).toEqual([
+			{ model: "model-a", version: "version-a", tool: "read", report: "legacy report", pushed: 1 },
+		]);
+		expect(await Bun.file(legacyPath).exists()).toBe(true);
+
+		__resetAutoQaDbForTests();
+		const reopened = openAutoQaDb();
+		const count = reopened?.prepare("SELECT COUNT(*) AS n FROM grievances").get() as { n: number };
+		expect(count.n).toBe(1);
+	});
+
+	it("records a local row and never fetches even with old auto-QA consent settings enabled", async () => {
+		const fetchSpy = vi.fn(() => new Response("unexpected", { status: 200 }));
+		using _hook = hookFetch(fetchSpy);
+		const settings = Settings.isolated({
+			"dev.autoqa": true,
+			"dev.autoqa.consent": "granted",
+			"dev.autoqaPush.endpoint": "https://qa.example.com/grievances",
+		} as Parameters<typeof Settings.isolated>[0]);
+		const tool = createReportToolIssueTool(makeSession(settings), ["read"]);
+
+		await tool.execute("call-1", { tool: "read", report: "local report" });
+
+		expect(fetchSpy).not.toHaveBeenCalled();
+		const db = openAutoQaDb();
+		const row = db?.prepare("SELECT model, tool, report, pushed FROM grievances").get() as {
+			model: string;
+			tool: string;
+			report: string;
+			pushed: number;
+		};
+		expect(row).toEqual({ model: "test-model", tool: "read", report: "local report", pushed: 0 });
 	});
 });

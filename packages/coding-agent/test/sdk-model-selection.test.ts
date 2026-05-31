@@ -104,6 +104,26 @@ describe("createAgentSession deferred model pattern resolution", () => {
 		expect(session.thinkingLevel).toBe("off");
 	});
 
+	test("selects extension-provided settings default after provider registration", async () => {
+		const settings = Settings.isolated();
+		settings.setModelRole("default", "runtime-provider/runtime-reasoning-model:high");
+
+		const { session } = await createAgentSession({
+			...buildSessionOptions("runtime-provider/runtime-model"),
+			modelPattern: undefined,
+			settings,
+		});
+
+		try {
+			expect(session.model?.provider).toBe("runtime-provider");
+			expect(session.model?.id).toBe("runtime-reasoning-model");
+			expect(session.thinkingLevel).toBe(Effort.High);
+		} finally {
+			await session.dispose();
+		}
+	});
+
+
 	test("selects the settings default model without synchronously validating auth", async () => {
 		const defaultModel = getBundledModel("anthropic", "claude-sonnet-4-5");
 		if (!defaultModel) {

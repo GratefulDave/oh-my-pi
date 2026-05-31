@@ -1,6 +1,6 @@
 # Install ID
 
-A persistent per-install UUID that identifies a single oh-my-pi installation across sessions. Used as a stable correlation key for server-side dedup of telemetry-style pushes (currently the auto-QA grievance flush from `report_tool_issue`).
+A persistent per-install UUID that identifies a single oh-my-pi installation across sessions. Used as a stable correlation key for explicit telemetry-style pushes when a user manually publishes local auto-QA grievances with `lex grievances push`.
 
 ## API
 
@@ -31,7 +31,7 @@ The returned value is a canonical lowercase RFC 4122 UUID matching `^[0-9a-f]{8}
 
 ## Consumers
 
-- `packages/coding-agent/src/tools/report-tool-issue.ts` — included as `installId` in the auto-QA grievance push body so the backend can deduplicate repeated reports from the same install. See `dev.autoqaPush.*` settings and `PI_AUTO_QA_PUSH_*` env vars.
+- `packages/coding-agent/src/tools/report-tool-issue.ts` — included as `installId` in the manual auto-QA grievance push body so a configured backend can deduplicate repeated reports from the same install. Local `report_tool_issue` recording does not call `getInstallId()` and does not publish.
 
 New consumers MUST treat the value as opaque and MUST NOT derive PII from it; the helper does not mix in hostname, username, or any other host-identifying entropy.
 

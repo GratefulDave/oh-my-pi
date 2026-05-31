@@ -1,5 +1,5 @@
 /**
- * CLI handler for `omp grievances` — view, clean, and manually push reported tool issues.
+ * CLI handler for `lex grievances` — view, clean, and explicitly publish local tool issue reports.
  */
 import chalk from "chalk";
 import { Settings } from "../config/settings";
@@ -191,11 +191,11 @@ function makeProgressBar(total: number, width = 30): ProgressBar {
 }
 
 /**
- * Manually drain every unpushed grievance to the configured backend,
- * ignoring the user-facing consent gate (manual push is the user's
- * explicit "yes ship these now" intent).
+ * Manually drain every unpushed grievance to the configured backend.
  *
- * Requires endpoint configuration (default `qa.omp.sh/v1/grievances`).
+ * This is the only publishing path. It requires endpoint configuration through
+ * `PI_AUTO_QA_PUSH_URL` or `dev.autoqaPush.endpoint`; local recording never
+ * publishes by itself.
  */
 export async function pushGrievances(options: PushGrievancesOptions): Promise<void> {
 	const db = openAutoQaDb();
@@ -236,7 +236,7 @@ export async function pushGrievances(options: PushGrievancesOptions): Promise<vo
 			return;
 		}
 		if (total === 0) {
-			console.log(chalk.dim("Nothing to push — all grievances are already shipped."));
+			console.log(chalk.dim("Nothing to push — all grievances are already marked pushed."));
 			return;
 		}
 		if (result.ok) {

@@ -420,6 +420,7 @@ export class SelectorController {
 								selector,
 								thinkingLevel,
 							});
+							await this.ctx.settings.flush();
 							if (thinkingLevel && thinkingLevel !== ThinkingLevel.Inherit) {
 								this.ctx.session.setThinkingLevel(thinkingLevel);
 							}
@@ -428,11 +429,12 @@ export class SelectorController {
 							this.ctx.showStatus(`Default model: ${selector ?? model.id}`);
 							// Don't call done() - selector stays open for role assignment
 						} else {
-							// Other roles (smol, slow): just update settings, not current model
+							// Other roles (smol, slow): persist immediately so profiles follow across repos
 							this.ctx.settings.setModelRole(
 								role,
 								formatModelSelectorValue(selector ?? `${model.provider}/${model.id}`, thinkingLevel),
 							);
+							await this.ctx.settings.flush();
 							const roleInfo = getRoleInfo(role, settings);
 							const roleLabel = roleInfo?.name ?? role;
 							this.ctx.showStatus(`${roleLabel} model: ${selector ?? model.id}`);
