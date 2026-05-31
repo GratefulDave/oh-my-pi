@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { disableProvider, enableProvider } from "../../src/capability";
+import { disableProvider, enableProvider, reset as resetCapabilities } from "../../src/capability";
 import { clearCache as clearFsCache } from "../../src/capability/fs";
+import { Settings } from "../../src/config/settings";
+import { initializeWithSettings } from "../../src/discovery";
 import { clearClaudePluginRootsCache } from "../../src/discovery/helpers";
 import { discoverAgents } from "../../src/task/discovery";
 
@@ -52,6 +54,7 @@ describe("discoverAgents — claude-plugins disabled provider", () => {
 			}),
 		);
 
+		initializeWithSettings(Settings.isolated({ "compatibility.loadForeignConfig": true }));
 		// Start each test with a clean provider + cache state.
 		enableProvider("claude-plugins");
 		clearFsCache();
@@ -61,6 +64,7 @@ describe("discoverAgents — claude-plugins disabled provider", () => {
 	afterEach(() => {
 		fs.rmSync(tempHome, { recursive: true, force: true });
 		// Restore global state so other tests in the suite are not affected.
+		resetCapabilities();
 		enableProvider("claude-plugins");
 		clearFsCache();
 		clearClaudePluginRootsCache();

@@ -401,8 +401,8 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 							cellDisplayOutputs.push(output);
 						}
 						if (output.type === "status") {
-							statusEvents.push(output.event);
-							cellStatusEvents.push(output.event);
+							upsertStatusEvent(statusEvents, output.event);
+							upsertStatusEvent(cellStatusEvents, output.event);
 						}
 						if (output.type === "markdown") {
 							cellHasMarkdown = true;
@@ -604,6 +604,18 @@ function getRenderCells(args: EvalRenderArgs | undefined): EvalRenderCell[] {
 	return out;
 }
 
+function upsertStatusEvent(events: EvalStatusEvent[], event: EvalStatusEvent): void {
+	if (event.op === "agent" && typeof event.id === "string") {
+		const id = event.id;
+		const idx = events.findIndex(existing => existing.op === "agent" && existing.id === id);
+		if (idx >= 0) {
+			events[idx] = event;
+			return;
+		}
+	}
+	events.push(event);
+}
+
 /** Format a status event as a single line for display. */
 function formatStatusEvent(event: EvalStatusEvent, theme: Theme): string {
 	const { op, ...data } = event;
@@ -621,6 +633,8 @@ function formatStatusEvent(event: EvalStatusEvent, theme: Theme): string {
 		mkdir: "icon.folder",
 		tree: "icon.folder",
 		git_status: "icon.git",
+		log: "icon.package",
+		phase: "icon.package",
 		git_diff: "icon.git",
 		git_log: "icon.git",
 		git_show: "icon.git",
@@ -702,6 +716,12 @@ function formatStatusEvent(event: EvalStatusEvent, theme: Theme): string {
 			if (data.model) parts.push(String(data.model));
 			if (data.tier && data.tier !== data.model) parts.push(`(${data.tier})`);
 			parts.push(`${data.chars ?? 0} chars`);
+			break;
+		case "log":
+			parts.push(String(data.message ?? ""));
+			break;
+		case "phase":
+			parts.push(String(data.title ?? ""));
 			break;
 		case "wc":
 			parts.push(`${data.lines}L ${data.words}W ${data.chars}C`);

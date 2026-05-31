@@ -6,7 +6,6 @@ import {
 	type CredentialDisabledEvent,
 	type StoredAuthCredential,
 } from "../src/auth-storage";
-import * as oauthUtils from "../src/utils/oauth";
 
 // Env vars short-circuit AuthStorage.getApiKey before the OAuth refresh path runs; suppress
 // them for every test in this file so the credential-disable code path can be exercised.
@@ -21,11 +20,13 @@ const expiredOAuth = () =>
 		expires: Date.now() - 60_000,
 	}) as const;
 
-const failOAuthRefresh = (message = 'HTTP 400 invalid_grant {"error":"invalid_grant"}'): void => {
-	vi.spyOn(oauthUtils, "getOAuthApiKey").mockImplementation(async () => {
+const failingOAuthRefresh =
+	(
+		message = 'HTTP 400 invalid_grant {"error":"invalid_grant"}',
+	): NonNullable<ConstructorParameters<typeof AuthStorage>[1]>["refreshOAuthCredential"] =>
+	async () => {
 		throw new Error(message);
-	});
-};
+	};
 
 class MemoryAuthCredentialStore implements AuthCredentialStore {
 	#rows: StoredAuthCredential[] = [];
@@ -143,9 +144,9 @@ describe("AuthStorage credential_disabled subscriptions", () => {
 				onCredentialDisabled: event => {
 					events.push(event);
 				},
+				refreshOAuthCredential: failingOAuthRefresh(),
 			});
 			await authStorage.set("anthropic", [expiredOAuth()]);
-			failOAuthRefresh();
 
 			const apiKey = await authStorage.getApiKey("anthropic", "session-disabled-event");
 
@@ -161,9 +162,9 @@ describe("AuthStorage credential_disabled subscriptions", () => {
 				onCredentialDisabled: event => {
 					events.push(event);
 				},
+				refreshOAuthCredential: failingOAuthRefresh("fetch failed: ECONNRESET"),
 			});
 			await authStorage.set("anthropic", [expiredOAuth()]);
-			failOAuthRefresh("fetch failed: ECONNRESET");
 
 			await authStorage.getApiKey("anthropic", "session-transient-failure");
 			expect(events).toHaveLength(0);

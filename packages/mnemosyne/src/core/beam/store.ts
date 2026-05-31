@@ -162,7 +162,7 @@ function trimWorkingMemory(beam: BeamMemoryState): void {
 			WHERE session_id = ?
 			  AND consolidated_at IS NULL
 			  AND (
-				timestamp < ? OR
+				unixepoch(COALESCE(created_at, timestamp)) < unixepoch(?) OR
 				id NOT IN (
 					SELECT id FROM working_memory
 					WHERE session_id = ? AND consolidated_at IS NULL

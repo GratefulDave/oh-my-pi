@@ -248,6 +248,21 @@ function buildKernelEnv(options: {
 	return Object.keys(env).length > 0 ? env : undefined;
 }
 
+function buildKernelEnvPatch(options: {
+	sessionFile?: string;
+	artifactsDir?: string;
+	bridgeSessionId?: string;
+	bridge?: { url: string; token: string };
+}): string {
+	const env = buildKernelEnv(options);
+	if (!env) return "";
+	return [
+		"import os",
+		`__omp_env = ${JSON.stringify(env)}`,
+		"for __omp_key, __omp_val in __omp_env.items():\n    os.environ[__omp_key] = __omp_val",
+	].join("\n");
+}
+
 async function startKernel(cwd: string, options: PythonExecutorOptions): Promise<PythonKernel> {
 	requireRemainingTimeoutMs(options.deadlineMs);
 	return await PythonKernel.start({
@@ -409,6 +424,7 @@ async function executeWithKernel(
 	const displayOutputs: KernelDisplayOutput[] = [];
 	const deadlineMs = getExecutionDeadlineMs(options);
 	let executionTimeoutMs: number | undefined;
+	const runId = `py-${crypto.randomUUID()}`;
 
 	const emitStatus =
 		options?.emitStatus ??
@@ -417,7 +433,7 @@ async function executeWithKernel(
 		});
 	const unregisterBridge =
 		options?.toolSession && options?.bridgeSessionId
-			? registerPyToolBridge(options.bridgeSessionId, {
+			? registerPyToolBridge(options.bridgeSessionId, runId, {
 					toolSession: options.toolSession,
 					signal: options.signal,
 					emitStatus,
@@ -426,7 +442,9 @@ async function executeWithKernel(
 
 	try {
 		executionTimeoutMs = requireRemainingTimeoutMs(deadlineMs);
-		const result = await kernel.execute(code, {
+		const envPatch = buildKernelEnvPatch(options ?? {});
+		const result = await kernel.execute(envPatch ? `${envPatch}\n${code}` : code, {
+			id: runId,
 			signal: options?.signal,
 			timeoutMs: executionTimeoutMs,
 			onChunk: text => sink.push(text),

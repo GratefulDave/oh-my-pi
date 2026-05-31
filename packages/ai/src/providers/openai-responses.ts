@@ -235,8 +235,6 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 			const { params } = buildParams(model, context, options, providerSessionState, baseUrl);
 			const idleTimeoutMs = options?.streamIdleTimeoutMs ?? getOpenAIStreamIdleTimeoutMs();
 			const firstEventTimeoutMs = options?.streamFirstEventTimeoutMs ?? getStreamFirstEventTimeoutMs(idleTimeoutMs);
-			const requestTimeoutMs =
-				firstEventTimeoutMs !== undefined && firstEventTimeoutMs > 0 ? firstEventTimeoutMs : undefined;
 			options?.onPayload?.(params);
 			rawRequestDump = {
 				provider: model.provider,
@@ -248,17 +246,9 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 			};
 			const openaiStream = await callWithCopilotModelRetry(
 				async () => {
-					const requestOptions = createSdkStreamRequestOptions(requestSignal, requestTimeoutMs);
-					let requestTimeout: NodeJS.Timeout | undefined;
-					if (requestTimeoutMs !== undefined) {
-						requestTimeout = setTimeout(
-							() => abortTracker.abortLocally(firstEventTimeoutAbortError),
-							requestTimeoutMs,
-						);
-					}
 					try {
 						const { data, response, request_id } = await client.responses
-							.create(params, requestOptions)
+							.create(params, createSdkStreamRequestOptions(requestSignal, undefined))
 							.withResponse();
 						await notifyProviderResponse(options, response, model, request_id);
 						return data;
@@ -267,8 +257,6 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 							throw firstEventTimeoutAbortError;
 						}
 						throw error;
-					} finally {
-						if (requestTimeout !== undefined) clearTimeout(requestTimeout);
 					}
 				},
 				{ provider: model.provider, signal: requestSignal },

@@ -10,13 +10,16 @@ import type { Skill } from "../extensibility/skills";
 import type { GoalModeState, GoalRuntime } from "../goals";
 import { GoalTool } from "../goals/tools/goal-tool";
 import type { HindsightSessionState } from "../hindsight/state";
+import type { LocalProtocolOptions } from "../internal-urls";
 import { LspTool } from "../lsp";
+import type { MCPManager } from "../mcp/manager";
 import type { MnemosyneSessionState } from "../mnemosyne/state";
 import type { PlanModeState } from "../plan-mode/state";
 import { type AgentRegistry, MAIN_AGENT_ID } from "../registry/agent-registry";
 import type { ArtifactManager } from "../session/artifacts";
 import type { ClientBridge } from "../session/client-bridge";
 import type { CustomMessage } from "../session/messages";
+import type { UsageStatistics } from "../session/session-manager";
 import type { ToolChoiceQueue } from "../session/tool-choice-queue";
 import { TaskTool } from "../task";
 import type { AgentOutputManager } from "../task/output-manager";
@@ -25,6 +28,7 @@ import type { EventBus } from "../utils/event-bus";
 import { WebSearchTool } from "../web/search";
 import type { WorkspaceTree } from "../workspace-tree";
 import { AskTool } from "./ask";
+import { AstDumpTool } from "./ast-dump";
 import { AstEditTool } from "./ast-edit";
 import { AstGrepTool } from "./ast-grep";
 import { BashTool } from "./bash";
@@ -67,6 +71,7 @@ export * from "../session/streaming-output";
 export * from "../task";
 export * from "../web/search";
 export * from "./ask";
+export * from "./ast-dump";
 export * from "./ast-edit";
 export * from "./ast-grep";
 export * from "./bash";
@@ -190,6 +195,16 @@ export interface ToolSession {
 	getGoalModeState?: () => GoalModeState | undefined;
 	/** Goal runtime for the active agent session. */
 	getGoalRuntime?: () => GoalRuntime | undefined;
+	/** Current cumulative session usage statistics. */
+	getUsageStatistics?: () => UsageStatistics;
+	/** Current per-turn eval workflow budget, if any. */
+	getTurnBudget?: () => { total: number | null; spent: number; hard: boolean };
+	/** Record output tokens consumed by eval-spawned subagents. */
+	recordEvalSubagentUsage?: (output: number) => void;
+	/** Override local:// resolution roots for shared parent/child sessions. */
+	localProtocolOptions?: LocalProtocolOptions;
+	/** Reused MCP manager for subagent/eval fan-out. */
+	mcpManager?: MCPManager;
 	/** Bridge to the connected client (e.g. ACP editor host). Tools should route fs/terminal/permission requests through this when available. */
 	getClientBridge?: () => ClientBridge | undefined;
 	/** Get compact conversation context for subagents (excludes tool results, system prompts) */
@@ -286,6 +301,7 @@ export const BUILTIN_TOOLS: Record<string, ToolFactory> = {
 	edit: s => new EditTool(s),
 	ast_grep: s => new AstGrepTool(s),
 	ast_edit: s => new AstEditTool(s),
+	ast_dump: s => new AstDumpTool(s),
 	render_mermaid: s => new RenderMermaidTool(s),
 	ask: AskTool.createIf,
 	debug: DebugTool.createIf,

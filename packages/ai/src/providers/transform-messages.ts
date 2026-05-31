@@ -250,7 +250,13 @@ export function transformMessages<TApi extends Api>(
 			}
 
 			if (toolCalls.length > 0) {
-				pendingToolCalls = toolCalls;
+				if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
+					pendingAbortedToolCalls = new Map(toolCalls.map(tc => [tc.id, tc]));
+					pendingAbortedTimestamp = assistantMsg.timestamp;
+					pendingToolCalls = [];
+				} else {
+					pendingToolCalls = toolCalls;
+				}
 			}
 
 			result.push(msg);

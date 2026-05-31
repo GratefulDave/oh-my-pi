@@ -497,10 +497,10 @@ describe("hashline parser — range-anchor syntax", () => {
 		expect(warnings).toEqual([]);
 	});
 
-	it("auto-pipes read-output `N:TEXT` lines inside a pending hunk as literal text", () => {
+	it("auto-pipes read-output `N:TEXT` lines inside a pending hunk after stripping read line numbers", () => {
 		const diff = `replace ${tag(2, "bbb")}..${tag(4, "ddd")}:\n${repl("line one")}\n${tag(3, "ccc")}:line two`;
 		const { edits, warnings } = parseHashline(diff);
-		expect(applyHashlineEdits("aaa\nbbb\nccc\nddd\neee", edits).lines).toBe("aaa\nline one\n3:line two\neee");
+		expect(applyHashlineEdits("aaa\nbbb\nccc\nddd\neee", edits).lines).toBe("aaa\nline one\nline two\neee");
 		expect(warnings.some(w => /Auto-prefixed bare body row/.test(w))).toBe(true);
 	});
 

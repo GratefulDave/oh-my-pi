@@ -1429,12 +1429,18 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		// opencode-antigravity) start on their configured default instead of the
 		// first built-in fallback model.
 		if (!hasExplicitModel && !model) {
-			const availableModels = modelRegistry.getAll();
-			const refreshedDefaultRoleSpec = resolveModelRoleValue(settings.getModelRole("default"), availableModels, {
-				settings,
-				matchPreferences: { usageOrder: settings.getStorage()?.getModelUsageOrder() },
-				modelRegistry,
+			const refreshedAllowedModels = await resolveAllowedModels(modelRegistry, settings, {
+				usageOrder: settings.getStorage()?.getModelUsageOrder(),
 			});
+			const refreshedDefaultRoleSpec = resolveModelRoleValue(
+				settings.getModelRole("default"),
+				refreshedAllowedModels,
+				{
+					settings,
+					matchPreferences: { usageOrder: settings.getStorage()?.getModelUsageOrder() },
+					modelRegistry,
+				},
+			);
 			if (refreshedDefaultRoleSpec.model) {
 				model = refreshedDefaultRoleSpec.model;
 				if (thinkingLevel === undefined && !hasThinkingEntry && refreshedDefaultRoleSpec.explicitThinkingLevel) {

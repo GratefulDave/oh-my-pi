@@ -57,7 +57,6 @@ import { getKimiCommonHeaders } from "../utils/oauth/kimi";
 import { notifyProviderResponse } from "../utils/provider-response";
 import { callWithCopilotModelRetry } from "../utils/retry";
 import { adaptSchemaForStrict, NO_STRICT, toolWireSchema } from "../utils/schema";
-import { resolveSdkTimeoutMs } from "../utils/sdk-stream-timeout";
 import { wrapFetchForSseDebug } from "../utils/sse-debug";
 import {
 	getStreamMarkupHealingPattern,
@@ -407,7 +406,6 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 				options?.initiatorOverride,
 				options?.onSseEvent,
 				options?.fetch,
-				options?.streamFirstEventTimeoutMs,
 			);
 			const premiumRequestsTotal = copilotPremiumRequests;
 			getCapturedErrorResponse = captureErrorResponse;
@@ -746,13 +744,19 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 							}
 
 							if (currentBlock.type === "toolCall") {
-								if (toolCall.id) currentBlock.id = toolCall.id;
-								if (toolCall.function?.name) currentBlock.name = toolCall.function.name;
+								const block = currentBlock as ToolCall & { partialArgs: string; lastParseTime?: number };
+								if (toolCall.id) block.id = toolCall.id;
+								if (toolCall.function?.name) block.name = toolCall.function.name;
 								let delta = "";
 								if (toolCall.function?.arguments) {
 									delta = toolCall.function.arguments;
-									currentBlock.partialArgs += toolCall.function.arguments;
-									currentBlock.arguments = parseStreamingJson(currentBlock.partialArgs);
+									block.partialArgs += toolCall.function.arguments;
+									const now = Date.now();
+									const isDone = !!((chunk as any).response?.output_item?.done || choice.finish_reason);
+									if (isDone || !block.lastParseTime || now - block.lastParseTime > 150) {
+										block.arguments = parseStreamingJson(block.partialArgs);
+										block.lastParseTime = now;
+									}
 								}
 								stream.push({
 									type: "toolcall_delta",
@@ -850,7 +854,6 @@ async function createClient(
 	initiatorOverride?: MessageAttribution,
 	onSseEvent?: OpenAICompletionsOptions["onSseEvent"],
 	fetchOverride?: FetchImpl,
-	streamFirstEventTimeoutOverride?: number,
 ): Promise<{
 	client: OpenAI;
 	copilotPremiumRequests: number | undefined;
@@ -949,18 +952,10 @@ async function createClient(
 		baseFetch.preconnect ? { preconnect: baseFetch.preconnect } : {},
 	);
 	const debugFetch = onSseEvent ? wrapFetchForSseDebug(wrappedFetch, event => onSseEvent(event, model)) : wrappedFetch;
-	// Bound HTTP request timeout to roughly the first-event watchdog window.
-	// The OpenAI SDK's default is 10 minutes per attempt × `maxRetries`, which
-	// turns a stalled-before-headers fetch into a multi-minute hang invisible
-	// to the agent loop (the iterator watchdog only arms AFTER `create()` returns).
-	// Using the first-event timeout keeps both layers aligned: the SDK gives up
-	// before the agent watchdog would have, surfacing a real error to the catch
-	// in the IIFE.
-	// A caller may raise `StreamOptions.streamFirstEventTimeoutMs` for a slow-
-	// before-headers provider; respect it so the SDK doesn't give up before the
-	// wrapping watchdog arms. An explicit `0` disables the first-event watchdog,
-	// and the SDK treats `timeout: 0` as an immediate timeout, so do not pass a
-	const sdkTimeoutMs = resolveSdkTimeoutMs(streamFirstEventTimeoutOverride);
+	// Do not map the first-event stream watchdog onto the SDK request timeout:
+	// that watchdog is meant to start after the streaming response is established.
+	// Applying it to request setup aborts slow-but-valid response creation before
+	// the iterator can observe the first stream event.
 	return {
 		client: new OpenAI({
 			apiKey,
@@ -970,7 +965,6 @@ async function createClient(
 			defaultHeaders: headers,
 			defaultQuery: azureDefaultQuery,
 			fetch: debugFetch,
-			...(sdkTimeoutMs !== undefined ? { timeout: sdkTimeoutMs } : {}),
 		}),
 		copilotPremiumRequests,
 		baseUrl,

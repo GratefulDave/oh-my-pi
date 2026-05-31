@@ -141,6 +141,7 @@ function createIrcContext() {
 		ui: { requestRender },
 		chatContainer,
 		session: {},
+		recordIrcMessage: vi.fn(),
 	} as unknown as InteractiveModeContext;
 	const helpers = new UiHelpers(ctx);
 	const addMessageToChat: InteractiveModeContext["addMessageToChat"] = vi.fn((message, options) =>

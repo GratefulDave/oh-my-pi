@@ -229,6 +229,29 @@ export async function recordMinimizerGain(
 	}
 }
 
+const LEX_REBUILD_SCRIPT = "rebuild-lex.zsh";
+const LEX_REBUILD_SCRIPT_MATCH = /(^|[\s;&|()])((?:\.\.?\/|\/)?rebuild-lex\.zsh)(?=$|[\s;&|()])/i;
+
+function normalizeMissedCommand(command: string): string {
+	const cleanCommand = command.trim();
+	const scriptMatch = LEX_REBUILD_SCRIPT_MATCH.exec(cleanCommand);
+	if (scriptMatch?.[2]) {
+		const token = scriptMatch[2].trim();
+		if (token.startsWith("./") || token.startsWith("../") || token.startsWith("/")) return token;
+		return `./${LEX_REBUILD_SCRIPT}`;
+	}
+	if (!cleanCommand.includes("\n")) return cleanCommand;
+	const lines = cleanCommand.split("\n");
+	const firstLine = lines[0]?.trim() ?? "";
+	if (firstLine.includes("python3") || firstLine.includes("python")) {
+		return "python3 <stdin>";
+	}
+	if (firstLine.includes("bash") || firstLine.includes("sh") || firstLine.includes("zsh")) {
+		return "bash <stdin>";
+	}
+	return `${firstLine} ...`;
+}
+
 export function buildMinimizerMissedRecord(input: {
 	timestamp: string;
 	cwd?: string;
@@ -237,19 +260,8 @@ export function buildMinimizerMissedRecord(input: {
 	exitCode: number | null;
 	filter?: string;
 }): MinimizerGainRecord | null {
-	if (input.totalBytes <= 40) return null;
-	let cleanCommand = input.command.trim();
-	if (cleanCommand.includes("\n")) {
-		const lines = cleanCommand.split("\n");
-		const firstLine = lines[0].trim();
-		if (firstLine.includes("python3") || firstLine.includes("python")) {
-			cleanCommand = "python3 <stdin>";
-		} else if (firstLine.includes("bash") || firstLine.includes("sh")) {
-			cleanCommand = "bash <stdin>";
-		} else {
-			cleanCommand = `${firstLine} ...`;
-		}
-	}
+	if (input.totalBytes <= 0) return null;
+	const cleanCommand = normalizeMissedCommand(input.command);
 	return {
 		timestamp: input.timestamp,
 		...(input.cwd === undefined ? {} : { cwd: input.cwd }),
@@ -581,11 +593,8 @@ function addRecord(totals: MinimizerGainTotals, record: MinimizerGainRecord): vo
 }
 
 function finalizeTotals<T extends MinimizerGainTotals>(totals: T): T {
-	// `estimatedTokensSaved` may use exact tokenizer deltas when a record has
-	// `savedTokens`, while `estimatedInputTokens` is byte-derived legacy data.
-	// Mixing those units can report impossible >100% savings. Use byte reduction
-	// for the ratio; it is available for every record and is bounded by input.
-	totals.tokensSavedRatio = totals.inputBytes > 0 ? totals.savedBytes / totals.inputBytes : null;
+	totals.tokensSavedRatio =
+		totals.estimatedInputTokens > 0 ? totals.estimatedTokensSaved / totals.estimatedInputTokens : null;
 	return totals;
 }
 

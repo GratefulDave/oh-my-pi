@@ -1150,9 +1150,13 @@ function b() {
 		});
 
 		it("should handle command errors", async () => {
-			await expect(bashTool.execute("test-call-9", { command: "exit 1" })).rejects.toThrow(
-				/(Command failed|code 1)/,
-			);
+			// Non-zero exit resolves with an error result (isError: true) rather
+			// than throwing, so the LLM receives execution details (exitCode, timing).
+			const result = await bashTool.execute("test-call-9", { command: "exit 1" });
+			expect(result.isError).toBe(true);
+			expect(result.details?.exitCode).toBe(1);
+			const text = result.content.find(c => c.type === "text")?.text ?? "";
+			expect(text).toMatch(/code 1/);
 		});
 
 		it("should keep short commands inline when auto-background is enabled", async () => {
@@ -1785,10 +1789,9 @@ function b() {
 			const outputLines = getTextOutput(result)
 				.split("\n")
 				.map(line => line.trim())
-				.filter(Boolean)
-				.sort();
+				.filter(Boolean);
 
-			expect(outputLines).toEqual(["apps/client/src/client.ts", "apps/daemon/src/daemon.ts"]);
+			expect(outputLines).toEqual(["# apps/client/src/", "client.ts", "# apps/daemon/src/", "daemon.ts"]);
 		});
 
 		it("should not disable gitignore after an ignored broad hidden-file search finds no matches", async () => {

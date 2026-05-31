@@ -265,7 +265,7 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 				return { model: modelOut, display: displayOut };
 			};
 
-			if (isDirectory) {
+			if (isDirectory || multiTargets) {
 				const grouped = formatGroupedFiles(fileList, relativePath => {
 					const rendered = renderMatchesForFile(relativePath);
 					const hashContext = hashContexts.get(relativePath);

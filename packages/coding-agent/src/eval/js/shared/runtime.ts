@@ -1,5 +1,7 @@
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
+import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as util from "node:util";
@@ -216,14 +218,55 @@ export class JsRuntime {
 				if (!hooks) throw new ToolError("Tool calls are only valid inside an active run");
 				return await hooks.callTool(name, args);
 			},
-			__omp_import__: async (source: string, options?: ImportCallOptions) => {
+			__omp_import__: async (source: string, options?: any) => {
 				const target = resolveImportSpecifier(this.#cwd, source);
-				// Always invalidate cached module records for user-owned source files so edits
-				// between cells are picked up. Bun ignores query-string busting on `file:` URLs
-				// but honors `delete require.cache[absPath]`; bare specifiers and URL schemes are
-				// left alone to keep package identity stable across cells.
 				if (isLocalPathSpecifier(source) && path.isAbsolute(target)) {
-					delete require.cache[target];
+					const relativeExternalPlugin = {
+						name: "external-non-relative",
+						setup(build: any) {
+							build.onResolve({ filter: /^[^./]/ }, (args: any) => {
+								if (!args.importer) return;
+								return { path: args.path, external: true };
+							});
+						},
+					};
+
+					try {
+						const buildResult = await Bun.build({
+							entrypoints: [target],
+							target: "node",
+							format: "esm",
+							plugins: [relativeExternalPlugin],
+						});
+
+						if (!buildResult.success) {
+							throw new Error(
+								`Failed to bundle local module: ${buildResult.logs.map(l => l.message).join("\n")}`,
+							);
+						}
+
+						const bundledCode = await buildResult.outputs[0].text();
+						const tempDir = os.tmpdir();
+						const tempFile = path.join(tempDir, `omp-bundle-${crypto.randomUUID()}.mjs`);
+						await fs.promises.writeFile(tempFile, bundledCode, "utf8");
+
+						try {
+							const imported = options !== undefined ? await import(tempFile, options) : await import(tempFile);
+							return imported;
+						} finally {
+							fs.promises.unlink(tempFile).catch(() => {});
+						}
+					} catch (err) {
+						logger.warn(
+							"Local module cyclic loader: single-pass build/evaluate failed, falling back to native import",
+							{
+								target,
+								error: err instanceof Error ? err.message : String(err),
+							},
+						);
+						delete require.cache[target];
+						return options !== undefined ? await import(target, options) : await import(target);
+					}
 				}
 				return options !== undefined ? await import(target, options) : await import(target);
 			},

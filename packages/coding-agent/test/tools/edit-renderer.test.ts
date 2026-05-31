@@ -76,15 +76,14 @@ describe("editToolRenderer", () => {
 		const uiTheme = await getUiTheme();
 		const compactComponent = editToolRenderer.renderCall(
 			{
-				input: "¶foo bar.ts\nBOF↓\n// preview",
+				input: "¶foo bar.ts\ninsert head:\n+// preview",
 			},
 			{ expanded: true, isPartial: true, spinnerFrame: 0, renderContext: { editMode: "hashline" } },
 			uiTheme,
 		);
-
 		const quotedComponent = editToolRenderer.renderCall(
 			{
-				input: "¶'baz qux.ts'\nBOF↓\n// preview",
+				input: "¶'baz qux.ts'\ninsert head:\n+// preview",
 			},
 			{ expanded: false, isPartial: true, spinnerFrame: 0, renderContext: { editMode: "hashline" } },
 			uiTheme,
@@ -103,15 +102,14 @@ describe("editToolRenderer", () => {
 		// renderer keeps the title clean.
 		const canonical = editToolRenderer.renderCall(
 			{
-				input: "¶packages/coding-agent/src/slash-commands/builtin-registry.ts\nBOF↓\n// preview",
+				input: "¶packages/coding-agent/src/slash-commands/builtin-registry.ts\ninsert head:\n+// preview",
 			},
 			{ expanded: true, isPartial: true, spinnerFrame: 0, renderContext: { editMode: "hashline" } },
 			uiTheme,
 		);
-
 		// Even longer runs should still produce the clean path.
 		const triple = editToolRenderer.renderCall(
-			{ input: "¶¶¶a/b/c.ts\nBOF↓\n// preview" },
+			{ input: "¶¶¶a/b/c.ts\ninsert head:\n+// preview" },
 			{ expanded: true, isPartial: true, spinnerFrame: 0, renderContext: { editMode: "hashline" } },
 			uiTheme,
 		);

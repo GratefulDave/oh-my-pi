@@ -236,7 +236,7 @@ export class SessionObserverOverlayComponent extends Container {
 			this.#overviewContentLines.push(renderedRow);
 		}
 
-		const ircRows = this.#registry.getIrcConversationRows();
+		const ircRows = this.#registry.getIrcConversationRows?.() ?? [];
 		if (ircRows.length > 0) {
 			const directionW = Math.min(OVERVIEW_IRC_DIRECTION_WIDTH, Math.max(12, Math.floor(width * 0.3)));
 			const bodyW = Math.max(1, width - directionW - OVERVIEW_IRC_ROW_CHROME_WIDTH);

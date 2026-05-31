@@ -144,7 +144,7 @@ export async function generateSessionTitle(
 	currentModel?: Model<Api>,
 	metadataResolver?: (provider: string) => Record<string, unknown> | undefined,
 ): Promise<string | null> {
-	const tinyModel = settings.get("providers.tinyModel");
+	const tinyModel = settings.get?.("providers.tinyModel") ?? ONLINE_TINY_TITLE_MODEL_KEY;
 	if (tinyModel === ONLINE_TINY_TITLE_MODEL_KEY) {
 		return generateTitleOnline(firstMessage, registry, settings, sessionId, currentModel, metadataResolver);
 	}

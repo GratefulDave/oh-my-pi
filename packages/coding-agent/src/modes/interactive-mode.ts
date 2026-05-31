@@ -1995,14 +1995,64 @@ export class InteractiveMode implements InteractiveModeContext {
 			typeof contextUsage?.percent === "number" && contextUsage.percent > 0
 				? `Approve and keep context (${contextUsage.percent.toFixed(1)}%)`
 				: "Approve and keep context";
-		const choice = await this.showHookSelector(
-			"Plan mode - next step",
-			["Approve and execute", "Approve and compact context", keepContextLabel, "Refine plan"],
-			{
-				helpText: this.#getPlanReviewHelpText(),
-				onExternalEditor: () => void this.#openPlanInExternalEditor(planFilePath),
-			},
-		);
+
+		const cycleOrder = this.session.settings.get("cycleOrder") ?? [];
+		const roleModels = this.session.resolveRoleModels(cycleOrder);
+		let modelIndex = 0;
+		if (roleModels.length >= 2 && this.session.model) {
+			const activeIndex = roleModels.findIndex(rm => modelsAreEqual(rm.model, this.session.model));
+			if (activeIndex !== -1) {
+				modelIndex = activeIndex;
+			}
+		}
+
+		let choice: string | undefined;
+		for (;;) {
+			let arrowPressed = false;
+			let title = "Plan mode - next step";
+			if (roleModels.length >= 2) {
+				const modelNames = roleModels.map((rm, idx) => {
+					const name = rm.model.name || rm.model.id;
+					return idx === modelIndex ? theme.bold(theme.fg("accent", `[${name}]`)) : theme.fg("dim", name);
+				});
+				title += `\nModel: < ${modelNames.join(" | ")} >`;
+			}
+
+			choice = await this.showHookSelector(
+				title,
+				["Approve and execute", "Approve and compact context", keepContextLabel, "Refine plan"],
+				{
+					helpText:
+						roleModels.length >= 2
+							? `left/right change executor model  ${this.#getPlanReviewHelpText()}`
+							: this.#getPlanReviewHelpText(),
+					onExternalEditor: () => void this.#openPlanInExternalEditor(planFilePath),
+					onLeft:
+						roleModels.length >= 2
+							? () => {
+									arrowPressed = true;
+									modelIndex = (modelIndex - 1 + roleModels.length) % roleModels.length;
+								}
+							: undefined,
+					onRight:
+						roleModels.length >= 2
+							? () => {
+									arrowPressed = true;
+									modelIndex = (modelIndex + 1) % roleModels.length;
+								}
+							: undefined,
+				},
+			);
+
+			if (arrowPressed) {
+				continue;
+			}
+			break;
+		}
+
+		if (choice === undefined) {
+			return;
+		}
 
 		if (
 			choice === "Approve and execute" ||
@@ -2017,6 +2067,13 @@ export class InteractiveMode implements InteractiveModeContext {
 					this.showError(`Plan file not found at ${planFilePath}`);
 					return;
 				}
+
+				const selectedRoleModel = roleModels[modelIndex];
+				if (selectedRoleModel) {
+					await this.session.setModelTemporary(selectedRoleModel.model, selectedRoleModel.thinkingLevel);
+					this.#planModePreviousModelState = undefined;
+				}
+
 				await this.#approvePlan(latestPlanContent, {
 					planFilePath,
 					finalPlanFilePath,

@@ -142,8 +142,11 @@ import type { Goal, GoalModeState } from "../goals/state";
 import type { HindsightSessionState } from "../hindsight/state";
 import { type LocalProtocolOptions, resolveLocalUrlToPath } from "../internal-urls";
 import { resolveMemoryBackend } from "../memory-backend";
+import { containsOrchestrate, ORCHESTRATE_NOTICE } from "../modes/orchestrate";
 import { getCurrentThemeName, theme } from "../modes/theme/theme";
+import { parseTurnBudget } from "../modes/turn-budget";
 import { containsUltrathink, ULTRATHINK_NOTICE } from "../modes/ultrathink";
+import { containsWorkflow, WORKFLOW_NOTICE } from "../modes/workflow";
 import type { PlanModeState } from "../plan-mode/state";
 import autoContinuePrompt from "../prompts/system/auto-continue.md" with { type: "text" };
 import eagerTodoPrompt from "../prompts/system/eager-todo.md" with { type: "text" };
@@ -180,6 +183,7 @@ import { parseCommandArgs } from "../utils/command-args";
 import { type EditMode, resolveEditMode } from "../utils/edit-mode";
 import { resolveFileDisplayMode } from "../utils/file-display-mode";
 import { extractFileMentions, generateFileMentionMessages } from "../utils/file-mentions";
+import { classifyUserTurn } from "../utils/thinking-classifier";
 import { buildNamedToolChoice } from "../utils/tool-choice";
 import type { AuthStorage } from "./auth-storage";
 import type { ClientBridge, ClientBridgePermissionOption, ClientBridgePermissionOutcome } from "./client-bridge";
@@ -201,6 +205,7 @@ import type {
 	NewSessionOptions,
 	SessionContext,
 	SessionManager,
+	UsageStatistics,
 } from "./session-manager";
 import { getLatestCompactionEntry } from "./session-manager";
 import { ToolChoiceQueue } from "./tool-choice-queue";
@@ -765,6 +770,8 @@ export class AgentSession {
 
 	#scopedModels: Array<{ model: Model; thinkingLevel?: ThinkingLevel }>;
 	#thinkingLevel: ThinkingLevel | undefined;
+	#autoThinkingResolving = false;
+	#resolvedAutoThinkingLevel: Effort | undefined = undefined;
 	#promptTemplates: PromptTemplate[];
 	#slashCommands: FileSlashCommand[];
 
@@ -2871,6 +2878,26 @@ export class AgentSession {
 		return this.#thinkingLevel;
 	}
 
+	configuredThinkingLevel(): ThinkingLevel | undefined {
+		return this.#thinkingLevel;
+	}
+
+	get isAutoThinking(): boolean {
+		return this.#thinkingLevel === ThinkingLevel.Auto;
+	}
+
+	autoResolvedThinkingLevel(): Effort | undefined {
+		return this.#resolvedAutoThinkingLevel;
+	}
+
+	get autoThinkingResolving(): boolean {
+		return this.#autoThinkingResolving;
+	}
+
+	get resolvedAutoThinkingLevel(): Effort | undefined {
+		return this.#resolvedAutoThinkingLevel;
+	}
+
 	get serviceTier(): ServiceTier | undefined {
 		return this.agent.serviceTier;
 	}
@@ -3004,6 +3031,18 @@ export class AgentSession {
 	/**
 	 * Get a tool by name from the registry.
 	 */
+
+	getUsageStatistics(): UsageStatistics {
+		return this.sessionManager.getUsageStatistics();
+	}
+
+	getTurnBudget(): { total: number | null; spent: number; hard: boolean } {
+		return this.sessionManager.getTurnBudget();
+	}
+
+	recordEvalSubagentUsage(output: number): void {
+		this.sessionManager.recordEvalSubagentOutput(output);
+	}
 	getToolByName(name: string): AgentTool | undefined {
 		return this.#toolRegistry.get(name);
 	}
@@ -3978,20 +4017,44 @@ export class AgentSession {
 		// Expand file-based prompt templates if requested
 		const expandedText = expandPromptTemplates ? expandPromptTemplate(text, [...this.#promptTemplates]) : text;
 
-		// "ultrathink" keyword: nudge the model toward careful multi-step reasoning by
-		// appending a hidden notice after the user's message. User-authored prompts only —
-		// synthetic/agent-initiated turns never trigger it.
-		const ultrathinkNotice: CustomMessage | undefined =
-			!options?.synthetic && containsUltrathink(expandedText)
-				? {
-						role: "custom",
-						customType: "ultrathink-notice",
-						content: ULTRATHINK_NOTICE,
-						display: false,
-						attribution: "user",
-						timestamp: Date.now(),
-					}
-				: undefined;
+		// Magic keywords append hidden system notices after the user's message.
+		// User-authored prompts only — synthetic/agent-initiated turns never trigger them.
+		const keywordNotices: CustomMessage[] = [];
+		if (!options?.synthetic) {
+			const timestamp = Date.now();
+			const turnBudget = parseTurnBudget(expandedText);
+			this.sessionManager.beginTurnBudget(turnBudget?.total ?? null, turnBudget?.hard ?? false);
+			if (containsUltrathink(expandedText)) {
+				keywordNotices.push({
+					role: "custom",
+					customType: "ultrathink-notice",
+					content: ULTRATHINK_NOTICE,
+					display: false,
+					attribution: "user",
+					timestamp,
+				});
+			}
+			if (containsOrchestrate(expandedText)) {
+				keywordNotices.push({
+					role: "custom",
+					customType: "orchestrate-notice",
+					content: ORCHESTRATE_NOTICE,
+					display: false,
+					attribution: "user",
+					timestamp,
+				});
+			}
+			if (containsWorkflow(expandedText)) {
+				keywordNotices.push({
+					role: "custom",
+					customType: "workflow-notice",
+					content: WORKFLOW_NOTICE,
+					display: false,
+					attribution: "user",
+					timestamp,
+				});
+			}
+		}
 
 		// If streaming, queue via steer() or followUp() based on option
 		if (this.isStreaming) {
@@ -4003,9 +4066,9 @@ export class AgentSession {
 			} else {
 				await this.#queueSteer(expandedText, options?.images);
 			}
-			// Steer/follow-up the ultrathink notice alongside the queued user message.
-			if (ultrathinkNotice) {
-				await this.sendCustomMessage(ultrathinkNotice, { deliverAs: options.streamingBehavior });
+			// Steer/follow-up keyword notices alongside the queued user message.
+			for (const notice of keywordNotices) {
+				await this.sendCustomMessage(notice, { deliverAs: options.streamingBehavior });
 			}
 			return;
 		}
@@ -4035,7 +4098,7 @@ export class AgentSession {
 			await this.#promptWithMessage(message, expandedText, {
 				...options,
 				prependMessages: eagerTodoPrelude ? [eagerTodoPrelude.message] : undefined,
-				appendMessages: ultrathinkNotice ? [ultrathinkNotice] : undefined,
+				appendMessages: keywordNotices.length > 0 ? keywordNotices : undefined,
 			});
 		} finally {
 			// Clean up residual eager-todo directive if the prompt never consumed it
@@ -4212,6 +4275,37 @@ export class AgentSession {
 			// Bail out if a newer abort/prompt cycle has started since we began setup
 			if (this.#promptGeneration !== generation) {
 				return;
+			}
+
+			if (this.thinkingLevel === ThinkingLevel.Auto && this.model?.reasoning) {
+				this.#autoThinkingResolving = true;
+				this.#resolvedAutoThinkingLevel = undefined;
+				this.#emit({ type: "thinking_level_changed", thinkingLevel: ThinkingLevel.Auto });
+
+				const classifierModelKey = this.settings.get("providers.autoThinkingModel");
+				const fallbackEffort = (this.model.thinking?.defaultLevel ?? "high") as Effort;
+
+				try {
+					const resolvedEffort = await classifyUserTurn(
+						expandedText,
+						classifierModelKey,
+						this.#modelRegistry,
+						this.sessionId,
+						fallbackEffort,
+					);
+					this.#resolvedAutoThinkingLevel = resolvedEffort;
+					this.agent.setThinkingLevel(resolvedEffort);
+				} catch (error) {
+					logger.warn("Auto-thinking classification failed, using fallback", { error });
+					this.#resolvedAutoThinkingLevel = fallbackEffort;
+					this.agent.setThinkingLevel(fallbackEffort);
+				} finally {
+					this.#autoThinkingResolving = false;
+					this.#emit({ type: "thinking_level_changed", thinkingLevel: ThinkingLevel.Auto });
+				}
+			} else {
+				this.#autoThinkingResolving = false;
+				this.#resolvedAutoThinkingLevel = undefined;
 			}
 
 			const agentPromptOptions = options?.toolChoice ? { toolChoice: options.toolChoice } : undefined;
@@ -5076,6 +5170,45 @@ export class AgentSession {
 	 * @param roleOrder - Order of roles to cycle through (e.g., ["slow", "default", "smol"])
 	 * @param options - Optional settings: `temporary` to not persist to settings
 	 */
+	resolveRoleModels(roleOrder: readonly string[]): Array<{
+		role: string;
+		model: Model;
+		thinkingLevel?: ThinkingLevel;
+	}> {
+		const availableModels = this.#modelRegistry.getAvailable();
+		const currentModel = this.model;
+		if (!currentModel) return [];
+		const matchPreferences = { usageOrder: this.settings.getStorage()?.getModelUsageOrder() };
+		const result: Array<{ role: string; model: Model; thinkingLevel?: ThinkingLevel }> = [];
+		const seen = new Set<string>();
+
+		for (const role of roleOrder) {
+			const roleModelStr =
+				role === "default"
+					? (this.settings.getModelRole("default") ?? `${currentModel.provider}/${currentModel.id}`)
+					: this.settings.getModelRole(role);
+			if (!roleModelStr) continue;
+
+			const resolved = resolveModelRoleValue(roleModelStr, availableModels, {
+				settings: this.settings,
+				matchPreferences,
+				modelRegistry: this.#modelRegistry,
+			});
+			if (!resolved.model) continue;
+
+			const key = `${resolved.model.provider}/${resolved.model.id}:${resolved.thinkingLevel ?? ""}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+
+			result.push({
+				role,
+				model: resolved.model,
+				thinkingLevel: resolved.thinkingLevel,
+			});
+		}
+		return result;
+	}
+
 	async cycleRoleModels(
 		roleOrder: readonly string[],
 		options?: { temporary?: boolean },
@@ -5242,7 +5375,12 @@ export class AgentSession {
 
 		if (isChanging) {
 			this.sessionManager.appendThinkingLevelChange(effectiveLevel);
-			if (persist && effectiveLevel !== undefined && effectiveLevel !== ThinkingLevel.Off) {
+			if (
+				persist &&
+				effectiveLevel !== undefined &&
+				effectiveLevel !== ThinkingLevel.Off &&
+				effectiveLevel !== ThinkingLevel.Inherit
+			) {
 				this.settings.set("defaultThinkingLevel", effectiveLevel);
 			}
 			this.#emit({ type: "thinking_level_changed", thinkingLevel: effectiveLevel });
@@ -5258,7 +5396,7 @@ export class AgentSession {
 
 		const levels = [ThinkingLevel.Off, ...this.getAvailableThinkingLevels()];
 		const currentLevel = this.thinkingLevel === ThinkingLevel.Inherit ? ThinkingLevel.Off : this.thinkingLevel;
-		const currentIndex = currentLevel ? levels.indexOf(currentLevel) : -1;
+		const currentIndex = currentLevel ? (levels as any[]).indexOf(currentLevel) : -1;
 		const nextIndex = (currentIndex + 1) % levels.length;
 		const nextLevel = levels[nextIndex];
 		if (!nextLevel) return undefined;

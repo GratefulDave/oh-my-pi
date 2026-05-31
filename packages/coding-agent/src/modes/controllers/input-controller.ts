@@ -646,6 +646,7 @@ export class InputController {
 			commands,
 			basePath,
 			keybindings: this.ctx.keybindings,
+			session: this.ctx.session,
 			copyCurrentLine: () => this.handleCopyCurrentLine(),
 			copyPrompt: () => this.handleCopyPrompt(),
 			undo: prefix => this.ctx.editor.undoPastTransientText(prefix),

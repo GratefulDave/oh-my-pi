@@ -50,6 +50,7 @@ const STARTUP_TIMEOUT_MS = 10_000;
 const INTERRUPT_ESCALATION_MS = 2_000;
 
 export interface KernelExecuteOptions {
+	id?: string;
 	signal?: AbortSignal;
 	onChunk?: (text: string) => Promise<void> | void;
 	onDisplay?: (output: KernelDisplayOutput) => Promise<void> | void;
@@ -251,7 +252,7 @@ export class PythonKernel {
 			throw new Error("Python kernel is not running");
 		}
 
-		const msgId = Snowflake.next();
+		const msgId = options?.id ?? Snowflake.next();
 		const { promise, resolve } = Promise.withResolvers<KernelExecuteResult>();
 		const pending: PendingExecution = {
 			resolve,

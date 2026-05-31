@@ -8,6 +8,7 @@ import { Effort } from "@oh-my-pi/pi-ai";
 export const ThinkingLevel = {
 	Inherit: "inherit",
 	Off: "off",
+	Auto: "auto",
 	Minimal: Effort.Minimal,
 	Low: Effort.Low,
 	Medium: Effort.Medium,
@@ -16,4 +17,4 @@ export const ThinkingLevel = {
 } as const;
 
 export type ThinkingLevel = (typeof ThinkingLevel)[keyof typeof ThinkingLevel];
-export type ResolvedThinkingLevel = Exclude<ThinkingLevel, "inherit">;
+export type ResolvedThinkingLevel = Exclude<ThinkingLevel, "inherit" | "auto">;

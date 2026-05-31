@@ -222,6 +222,42 @@ const canonicalRegistry = {
 
 const allModels = [...mockModels, ...mockOpenRouterModels, ...mockProviderOverlapModels, ...mockCodexOverlapModels];
 
+const googleAntigravityClaude: Model<"anthropic-messages"> = {
+	...mockModels[0]!,
+	id: "claude-opus-4-6-thinking",
+	name: "Claude Opus 4.6 Thinking",
+	provider: "google-antigravity",
+};
+
+const opencodeAntigravityClaude: Model<"anthropic-messages"> = {
+	...mockModels[0]!,
+	id: "antigravity-claude-opus-4-6-thinking",
+	name: "Antigravity Claude Opus 4.6 Thinking",
+	provider: "opencode-antigravity",
+};
+
+const opencodeAntigravitySonnet: Model<"anthropic-messages"> = {
+	...mockModels[0]!,
+	id: "antigravity-claude-sonnet-4-6",
+	name: "Antigravity Claude Sonnet 4.6",
+	provider: "opencode-antigravity",
+};
+
+const opencodeAntigravityGemini: Model<"anthropic-messages"> = {
+	...mockModels[0]!,
+	id: "gemini-3-pro",
+	name: "Gemini 3 Pro",
+	provider: "opencode-antigravity",
+};
+
+const antigravityModels = [
+	...allModels,
+	googleAntigravityClaude,
+	opencodeAntigravityClaude,
+	opencodeAntigravitySonnet,
+	opencodeAntigravityGemini,
+];
+
 describe("parseModelPattern", () => {
 	describe("simple patterns without colons", () => {
 		test("exact match returns model with undefined thinking level", () => {
@@ -560,6 +596,34 @@ describe("resolveModelFromString", () => {
 		const resolved = resolveModelFromString("openrouter/qwen/qwen3-coder:exacto", allModels);
 		expect(resolved?.provider).toBe("openrouter");
 		expect(resolved?.id).toBe("qwen/qwen3-coder:exacto");
+	});
+
+	test("prefers opencode-antigravity bridge for explicit google-antigravity Claude selectors", () => {
+		const resolved = resolveModelFromString("google-antigravity/claude-opus-4-6-thinking", antigravityModels);
+
+		expect(resolved?.provider).toBe("opencode-antigravity");
+		expect(resolved?.id).toBe("antigravity-claude-opus-4-6-thinking");
+	});
+
+	test("resolves prefixed Antigravity Claude selectors to opencode-antigravity", () => {
+		const resolved = resolveModelFromString("antigravity-claude-sonnet-4-6", antigravityModels);
+
+		expect(resolved?.provider).toBe("opencode-antigravity");
+		expect(resolved?.id).toBe("antigravity-claude-sonnet-4-6");
+	});
+
+	test("resolves clean Antigravity bridge Gemini ids directly under opencode-antigravity", () => {
+		const resolved = resolveModelFromString("opencode-antigravity/gemini-3-pro", antigravityModels);
+
+		expect(resolved?.provider).toBe("opencode-antigravity");
+		expect(resolved?.id).toBe("gemini-3-pro");
+	});
+
+	test("keeps explicit non-Antigravity providers on their provider", () => {
+		const resolved = resolveModelFromString("anthropic/claude-sonnet-4-5", antigravityModels);
+
+		expect(resolved?.provider).toBe("anthropic");
+		expect(resolved?.id).toBe("claude-sonnet-4-5");
 	});
 });
 

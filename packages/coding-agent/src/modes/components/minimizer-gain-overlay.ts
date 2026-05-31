@@ -49,8 +49,8 @@ function formatTokensSavedLabel(usesEstimatedTokensSaved: boolean): string {
 }
 
 function formatExitCodes(exitCodes: Array<number | null>): string {
-	if (exitCodes.length === 0) return "-";
-	return exitCodes.map(code => (code === null ? "?" : String(code))).join(",");
+	if (exitCodes.length === 0) return "exit=-";
+	return `exit=${exitCodes.map(code => (code === null ? "?" : String(code))).join(",")}`;
 }
 
 function formatTab(label: string, active: boolean): string {
@@ -82,7 +82,7 @@ function formatGainRow<
 const COL_COUNT = 6;
 const COL_TOTAL = 7;
 const COL_AVG = 7;
-const COL_EXIT = 6;
+const COL_EXIT = 8;
 const COL_AVG_EST = 8;
 const COL_EST_SAVINGS = 12;
 // 2-char left margin + separator after cmd + 4 numeric cols with 3 separators between them
@@ -94,7 +94,7 @@ const POTENTIAL_TABLE_FIXED = 2 + 1 + COL_COUNT + 1 + COL_AVG_EST + 1 + COL_EST_
 const GAIN_COL_NUM = 4; // "  1." prefix
 const GAIN_COL_COUNT = 7;
 const GAIN_COL_SAVED = 9;
-const GAIN_COL_AVG_PCT = 6;
+const GAIN_COL_AVG_PCT = 12;
 const GAIN_COL_IMPACT = 10;
 // total fixed: num(4) + 1 + count(7) + 1 + saved(9) + 1 + avg%(6) + 1 + impact(10) = 40; cmd gets the rest
 const GAIN_TABLE_FIXED =
@@ -148,7 +148,7 @@ function renderByCommandTable(
 		const saved = formatNumber(row.estimatedTokensSaved).padStart(GAIN_COL_SAVED);
 		const avgPct =
 			row.tokensSavedRatio !== null
-				? `${(row.tokensSavedRatio * 100).toFixed(1)}%`.padStart(GAIN_COL_AVG_PCT)
+				? `${(row.tokensSavedRatio * 100).toFixed(1)}% saved`.padStart(GAIN_COL_AVG_PCT)
 				: "-".padStart(GAIN_COL_AVG_PCT);
 		const barFill = maxSaved > 0 ? Math.round((row.estimatedTokensSaved / maxSaved) * GAIN_COL_IMPACT) : 0;
 		const impact = EFFICIENCY_FILL_CHAR.repeat(barFill) + EFFICIENCY_EMPTY_CHAR.repeat(GAIN_COL_IMPACT - barFill);
@@ -266,9 +266,9 @@ function renderPotentialTable(
 					cmd,
 					cmdWidth,
 					formatFullNumber(row.commands),
-					formatNumber(row.avgEstimatedPotentialTokensSaved),
+					`${formatNumber(row.avgEstimatedPotentialTokensSaved)} avg`,
 					COL_AVG_EST,
-					formatNumber(row.estimatedPotentialTokensSaved),
+					`${formatNumber(row.estimatedPotentialTokensSaved)} tok total`,
 					COL_EST_SAVINGS,
 					formatExitCodes(row.exitCodes),
 					COL_EXIT,
@@ -477,7 +477,7 @@ export class MinimizerGainOverlayComponent implements Component {
 			lines.push(formatRow("Output tokens", formatNumber(outputTok), width));
 			const ratioStr =
 				context.summary.tokensSavedRatio !== null
-					? ` (${(context.summary.tokensSavedRatio * 100).toFixed(1)}%)`
+					? ` (${(context.summary.tokensSavedRatio * 100).toFixed(1)}% tokens saved)`
 					: "";
 			lines.push(formatRow("Tokens saved", `${formatNumber(savedTok)}${ratioStr}`, width));
 			lines.push(formatRow("Efficiency meter", formatEfficiencyBar(context.summary.tokensSavedRatio), width));

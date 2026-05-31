@@ -139,6 +139,17 @@ describe("callSessionTool", () => {
 		]);
 	});
 
+	it("dispatches synthetic budget helper without looking up a tool", async () => {
+		const session = {
+			...createSession([]),
+			getTurnBudget: () => ({ total: 1000, spent: 125, hard: true }),
+		} as ToolSession;
+
+		const result = await callSessionTool("__budget__", {}, { session });
+
+		expect(result).toEqual({ total: 1000, spent: 125, hard: true });
+	});
+
 	it("throws when the requested tool is not available in the session registry", async () => {
 		const session = createSession([]);
 

@@ -423,10 +423,13 @@ export function getAllProvidersInfo(): ProviderInfo[] {
 // =============================================================================
 
 /**
- * Reset all caches. Call after chdir or filesystem changes.
+ * Reset capability caches and transient provider state. Call after chdir,
+ * filesystem changes, or isolated test cleanup.
  */
 export function reset(): void {
 	clearFsCache();
+	disabledProviders.clear();
+	settings = null;
 }
 
 /**

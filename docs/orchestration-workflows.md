@@ -1,8 +1,14 @@
 # Orchestration workflows
 
-This document describes how to use `/delegate` to run external Claude, Codex, or Gemini agent sessions from this fork. `/orchestrate` is reserved for in-process subagent orchestration.
+This document describes orchestration entrypoints in this fork.
 
-Use these commands when you need another real agent runtime, not just a different in-process model. External agents run as separate CLI processes with their own auth, session state, tools, terminal behavior, and output format.
+Native coding orchestration is upstream-style and in-process:
+
+- typing prose `orchestrate` injects hidden orchestration guidance for dependency-aware subagent waves
+- typing prose `workflow` injects hidden eval-workflow guidance for deterministic `agent()` / `parallel()` / `pipeline()` DAG execution
+- these triggers apply only in prose, not inside code spans, fenced code, or markup
+
+`/delegate` remains separate: it runs external Claude, Codex, or Gemini agent sessions as real CLI processes.
 
 ## External agents vs in-process model selection
 
@@ -18,6 +24,29 @@ Use spawned external agents when:
 - you want to compare Claude, Codex, or Gemini behavior on the same prompt
 - you want the external CLI's own session state, auth, or tool surface
 - you want a visible terminal session for inspection or manual follow-up
+
+## Native in-process orchestration
+
+Use prose `orchestrate` when you want coding work decomposed into explicit dependency graph waves:
+
+- independent nodes fan out in parallel through native subagents
+- dependent waves wait for prerequisite outputs
+- verification gates run between waves
+- `/swarm` stays available as explicit opt-in YAML orchestration; it is not default path
+
+Use prose `workflow` when you want deterministic eval orchestration helpers:
+
+```python
+phase("Wave 1")
+results = parallel([
+    lambda: agent("inspect parser"),
+    lambda: agent("inspect tests"),
+])
+phase("Wave 2")
+verified = pipeline(results, lambda text: llm(f"summarize {text}"))
+```
+
+Helpers available in eval now include `agent`, `parallel`, `pipeline`, `log`, `phase`, and `budget`.
 
 The current entrypoint:
 

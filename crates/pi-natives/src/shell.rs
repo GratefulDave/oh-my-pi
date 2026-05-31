@@ -397,15 +397,15 @@ mod tests {
 	use super::CoreShell;
 
 	#[test]
-	fn apply_shell_minimizer_exposes_reason_without_rewrite() {
+	fn apply_shell_minimizer_keeps_chain_first_reason_when_chain_dispatch_does_not_rewrite() {
 		let result = super::apply_shell_minimizer(super::ShellMinimizerApplyOptions {
 			command:   "git diff ; printf done".to_string(),
 			captured:  "diff --git a/file.rs b/file.rs\n".to_string(),
 			exit_code: Some(0),
 			minimizer: Some(super::MinimizerOptions { enabled: Some(true), ..Default::default() }),
 		})
-		.expect("expected reason-only minimizer result");
-		assert_eq!(result.filter, "compound");
+		.expect("expected minimizer result");
+		assert_eq!(result.filter, "chain-first");
 		assert_eq!(result.text, result.original_text);
 	}
 
