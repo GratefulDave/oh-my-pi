@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -299,5 +299,42 @@ describe("auth-broker import (broker-routed)", () => {
 		}
 
 		expect(brokerStore!.listAuthCredentials()).toHaveLength(0);
+	});
+});
+
+describe("auth-broker login", () => {
+	let agentDir = "";
+	let originalAgentDir: string | undefined;
+
+	beforeEach(async () => {
+		originalAgentDir = process.env.OMP_AGENT_DIR;
+		agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-login-agent-"));
+		setAgentDir(agentDir);
+	});
+
+	afterEach(async () => {
+		process.stdout.write = ORIGINAL_STDOUT_WRITE;
+		vi.restoreAllMocks();
+		if (originalAgentDir === undefined) delete process.env.OMP_AGENT_DIR;
+		else process.env.OMP_AGENT_DIR = originalAgentDir;
+		await fs.rm(agentDir, { recursive: true, force: true });
+	});
+
+	test("local login stays in-process instead of spawning pi-ai CLI", async () => {
+		const spawnSpy = vi.spyOn(Bun, "spawn");
+		const loginSpy = vi.spyOn(AuthStorage.prototype, "login").mockResolvedValue(undefined);
+		const restore = silenceStdout();
+		try {
+			await runAuthBrokerCommand({
+				action: "login",
+				flags: { provider: "openrouter" },
+			});
+		} finally {
+			restore();
+		}
+
+		expect(spawnSpy).not.toHaveBeenCalled();
+		expect(loginSpy).toHaveBeenCalledTimes(1);
+		expect(loginSpy.mock.calls[0]?.[0]).toBe("openrouter");
 	});
 });
