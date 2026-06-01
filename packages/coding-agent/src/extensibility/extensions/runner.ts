@@ -206,6 +206,12 @@ export class ExtensionRunner {
 	) {
 		this.#uiContext = noOpUIContext;
 	}
+	getExtensions(): Extension[] {
+		return this.extensions;
+	}
+	getRuntime(): ExtensionRuntime {
+		return this.runtime;
+	}
 
 	initialize(
 		actions: ExtensionActions,

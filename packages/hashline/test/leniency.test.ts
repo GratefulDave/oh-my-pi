@@ -77,6 +77,9 @@ describe("hashline body contracts", () => {
 	it("allows literal text that begins with `-` or `+` when prefixed with `+`", () => {
 		expect(applyPatch(FILE, "replace 2..2:\n+-literal\n++plus")).toBe("a\n-literal\n+plus\nc\nd\ne");
 	});
+	it("allows indented hashline payload markers with leading whitespace", () => {
+		expect(applyPatch(FILE, "replace 2..2:\n  +hello\n   +world")).toBe("a\nhello\nworld\nc\nd\ne");
+	});
 
 	it("rejects empty replace and insert hunks", () => {
 		expect(() => parsePatch("replace 2..2:")).toThrow(/To delete lines, use `delete/);

@@ -115,7 +115,10 @@ function bucketAnchorEditsByLine(edits: IndexedEdit[]): Map<number, IndexedEdit[
 // strictly alone.
 
 /** A line that is nothing but closing delimiters: `}`, `)`, `];`, `})`, `},`. */
-const STRUCTURAL_CLOSER_RE = /^\s*[)\]}]+[;,]?\s*$/;
+const STRUCTURAL_CLOSER_RE = /^\s*(?:[)\]}]+[;,]?|<\/[a-zA-Z0-9.:_-]*>)\s*$/;
+function isStructuralCloserOrWhitespace(line: string): boolean {
+	return line.trim() === "" || STRUCTURAL_CLOSER_RE.test(line);
+}
 
 interface DelimiterBalance {
 	paren: number;
@@ -275,13 +278,17 @@ function findDuplicateSuffix(group: ReplacementGroup, fileLines: readonly string
 	for (let k = maxK; k >= 1; k--) {
 		let matches = true;
 		for (let t = 0; t < k; t++) {
-			if (payload[payload.length - k + t] !== fileLines[endLine + t]) {
+			const line = payload[payload.length - k + t];
+			if (line !== fileLines[endLine + t]) {
+				matches = false;
+				break;
+			}
+			if (!isStructuralCloserOrWhitespace(line)) {
 				matches = false;
 				break;
 			}
 		}
 		if (!matches) continue;
-		if (k === 1 && !STRUCTURAL_CLOSER_RE.test(payload[payload.length - 1])) continue;
 		const candidateStart = payload.length - k;
 		if (containsBlockCommentDelimiter(payload, candidateStart, payload.length)) continue;
 		if (balanceEqual(computeDelimiterBalance(payload.slice(candidateStart)), delta)) return k;
@@ -299,13 +306,17 @@ function findDuplicatePrefix(group: ReplacementGroup, fileLines: readonly string
 	for (let j = maxJ; j >= 1; j--) {
 		let matches = true;
 		for (let t = 0; t < j; t++) {
-			if (payload[t] !== fileLines[startLine - 1 - j + t]) {
+			const line = payload[t];
+			if (line !== fileLines[startLine - 1 - j + t]) {
+				matches = false;
+				break;
+			}
+			if (!isStructuralCloserOrWhitespace(line)) {
 				matches = false;
 				break;
 			}
 		}
 		if (!matches) continue;
-		if (j === 1 && !STRUCTURAL_CLOSER_RE.test(payload[0])) continue;
 		if (containsBlockCommentDelimiter(payload, 0, j)) continue;
 		if (balanceEqual(computeDelimiterBalance(payload.slice(0, j)), delta)) return j;
 	}

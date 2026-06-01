@@ -1010,8 +1010,9 @@ describe("minimizer gain analytics", () => {
 				// beta — 2 occurrences
 				{ ...base, command: "beta-cmd", filter: "beta", inputBytes: 800 },
 				{ ...base, command: "beta-cmd", filter: "beta", inputBytes: 800 },
-				// alpha — 1 occurrence
-				{ ...base, command: "alpha-cmd", filter: "alpha", inputBytes: 4000 },
+				// alpha — 2 occurrences
+				{ ...base, command: "alpha-cmd", filter: "alpha", inputBytes: 2000 },
+				{ ...base, command: "alpha-cmd", filter: "alpha", inputBytes: 2000 },
 			];
 			const missed = summarizeMissedMinimizerGain(records);
 			// commands — sorted by total inputBytes descending
@@ -1020,10 +1021,10 @@ describe("minimizer gain analytics", () => {
 			const alphaCmd = missed.commands[0];
 			expect(alphaCmd.command).toBe("alpha-cmd");
 			expect(alphaCmd.filter).toBe("alpha");
-			expect(alphaCmd.commands).toBe(1);
+			expect(alphaCmd.commands).toBe(2);
 			expect(alphaCmd.inputBytes).toBe(4000);
 			expect(alphaCmd.estimatedPotentialTokensSaved).toBe(1000); // floor(4000 / 4)
-			expect(alphaCmd.avgEstimatedPotentialTokensSaved).toBe(1000); // floor(1000 / 1)
+			expect(alphaCmd.avgEstimatedPotentialTokensSaved).toBe(500); // floor(1000 / 2)
 			// beta group
 			const betaCmd = missed.commands[1];
 			expect(betaCmd.command).toBe("beta-cmd");
@@ -1046,7 +1047,7 @@ describe("minimizer gain analytics", () => {
 			expect(pts[1].estimatedPotentialTokensSaved).toBe(400);
 			expect(pts[2].estimatedPotentialTokensSaved).toBe(375);
 			// avgEstimatedPotentialTokensSaved in potentialTokenSavings array
-			expect(pts[0].avgEstimatedPotentialTokensSaved).toBe(1000);
+			expect(pts[0].avgEstimatedPotentialTokensSaved).toBe(500);
 			expect(pts[1].avgEstimatedPotentialTokensSaved).toBe(200);
 			expect(pts[2].avgEstimatedPotentialTokensSaved).toBe(125);
 		});

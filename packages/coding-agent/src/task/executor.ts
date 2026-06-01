@@ -15,6 +15,7 @@ import type { PromptTemplate } from "../config/prompt-templates";
 import { Settings } from "../config/settings";
 import { SETTINGS_SCHEMA, type SettingPath } from "../config/settings-schema";
 import type { CustomTool } from "../extensibility/custom-tools/types";
+import type { LoadExtensionsResult } from "../extensibility/extensions";
 import { runExtensionCompact, runExtensionSetModel } from "../extensibility/extensions/compact-handler";
 import { getSessionSlashCommands } from "../extensibility/extensions/get-commands-handler";
 import type { Skill } from "../extensibility/skills";
@@ -177,6 +178,7 @@ export interface ExecutorOptions {
 	authStorage?: AuthStorage;
 	modelRegistry?: ModelRegistry;
 	settings?: Settings;
+	preloadedExtensions?: LoadExtensionsResult;
 	/** Override local:// protocol options so subagent shares parent's local:// root */
 	localProtocolOptions?: LocalProtocolOptions;
 	/**
@@ -498,6 +500,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		enableLsp,
 		signal,
 		onProgress,
+		preloadedExtensions,
 	} = options;
 	const startTime = Date.now();
 
@@ -1025,6 +1028,8 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		let error: string | undefined;
 		let aborted = false;
 		let abortReasonText: string | undefined;
+		let currentModelPatterns = modelPatterns;
+		let attempt = 1;
 		const checkAbort = () => {
 			if (abortSignal.aborted) {
 				aborted = abortReason === "signal" || runtimeLimitExceeded || abortReason === undefined;
@@ -1054,315 +1059,352 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		};
 
 		try {
-			checkAbort();
-			// Pin authStorage to modelRegistry.authStorage — mirrors the createAgentSession invariant.
-			const registryFromParent = options.modelRegistry !== undefined;
-			const modelRegistry =
-				options.modelRegistry ??
-				new ModelRegistry(options.authStorage ?? (await awaitAbortable(discoverAuthStorage())));
-			const authStorage = modelRegistry.authStorage;
-			if (options.authStorage && options.authStorage !== authStorage) {
-				throw new Error(
-					"options.authStorage and options.modelRegistry.authStorage must be the same instance when both are provided",
-				);
-			}
-			checkAbort();
-			if (!registryFromParent) {
-				await awaitAbortable(modelRegistry.refresh());
-			} else {
-				logger.debug("runSubagent: reusing parent modelRegistry; skipping refresh");
-			}
-			checkAbort();
-
-			const {
-				model,
-				thinkingLevel: resolvedThinkingLevel,
-				explicitThinkingLevel,
-				authFallbackUsed,
-			} = await awaitAbortable(
-				resolveModelOverrideWithAuthFallback(
-					modelPatterns,
-					options.parentActiveModelPattern,
-					modelRegistry,
-					settings,
-				),
-			);
-			if (authFallbackUsed && model) {
-				logger.warn("Subagent model has no working credentials; falling back to parent session model", {
-					requested: modelPatterns,
-					parentModel: options.parentActiveModelPattern,
-					resolvedProvider: model.provider,
-					resolvedModel: model.id,
-				});
-			}
-			if (model?.contextWindow && model.contextWindow > 0) {
-				progress.contextWindow = model.contextWindow;
-			}
-			const effectiveThinkingLevel = explicitThinkingLevel
-				? resolvedThinkingLevel
-				: (thinkingLevel ?? resolvedThinkingLevel);
-
-			const sessionManager = sessionFile
-				? await awaitAbortable(SessionManager.open(sessionFile))
-				: SessionManager.inMemory(worktree ?? cwd);
-			if (options.parentArtifactManager) {
-				sessionManager.adoptArtifactManager(options.parentArtifactManager);
-			}
-
-			const mcpProxyTools = options.mcpManager ? createMCPProxyTools(options.mcpManager) : [];
-			const enableMCP = !options.mcpManager;
-
-			// Derive subagent-scoped telemetry from the parent's config so the
-			// child loop's spans nest under the parent's active execute_tool span
-			// (OTEL context propagation handles parent linkage automatically),
-			// carry the subagent's own agent identity, and use the subagent's
-			// own session id for `gen_ai.conversation.id`.
-			const subagentAgentIdentity: AgentIdentity | undefined = options.parentTelemetry
-				? { id, name: agent.name, description: agent.description }
-				: undefined;
-			const subagentTelemetry: AgentTelemetryConfig | undefined =
-				options.parentTelemetry && subagentAgentIdentity
-					? {
-							...options.parentTelemetry,
-							agent: subagentAgentIdentity,
-							// Clear parent's conversationId; the child loop falls back to
-							// its own AgentLoopConfig.sessionId.
-							conversationId: undefined,
-						}
-					: undefined;
-
-			if (options.parentTelemetry && subagentAgentIdentity) {
-				const parentTelemetryHandle = resolveTelemetry(
-					options.parentTelemetry,
-					options.parentTelemetry.conversationId,
-				);
-				recordHandoff(parentTelemetryHandle, {
-					fromAgent: options.parentTelemetry.agent,
-					toAgent: subagentAgentIdentity,
-				});
-			}
-
-			const { normalized: normalizedOutputSchema } = normalizeSchema(outputSchema);
-
-			const { session } = await awaitAbortable(
-				createAgentSession({
-					cwd: worktree ?? cwd,
-					authStorage,
-					modelRegistry,
-					settings: subagentSettings,
-					model,
-					thinkingLevel: effectiveThinkingLevel,
-					toolNames,
-					outputSchema,
-					requireYieldTool: true,
-					contextFiles: options.contextFiles,
-					skills: options.skills,
-					promptTemplates: options.promptTemplates,
-					workspaceTree: options.workspaceTree,
-					systemPrompt: defaultPrompt => {
-						const subagentPrompt = prompt.render(subagentSystemPromptTemplate, {
-							agent: agent.systemPrompt,
-							context: options.context?.trim() ?? "",
-							worktree: worktree ?? "",
-							outputSchema: normalizedOutputSchema,
-							contextFile: contextFileForPrompt,
-							ircPeers: ircEnabled ? renderIrcPeerRoster(id) : "",
-							ircSelfId: ircEnabled ? id : "",
-						});
-						return defaultPrompt.length === 0
-							? [subagentPrompt]
-							: [...defaultPrompt.slice(0, -1), subagentPrompt, defaultPrompt[defaultPrompt.length - 1]];
-					},
-					sessionManager,
-					hasUI: false,
-					spawns: spawnsEnv,
-					taskDepth: childDepth,
-					parentHindsightSessionState: options.parentHindsightSessionState,
-					parentMnemosyneSessionState: options.parentMnemosyneSessionState,
-					parentTaskPrefix: id,
-					agentId: id,
-					agentDisplayName: agent.name,
-					enableLsp: lspEnabled,
-					parentEvalSessionId: options.parentEvalSessionId,
-					skipPythonPreflight,
-					enableMCP,
-					mcpManager: options.mcpManager,
-					customTools: mcpProxyTools.length > 0 ? mcpProxyTools : undefined,
-					localProtocolOptions: options.localProtocolOptions,
-					telemetry: subagentTelemetry,
-				}),
-			);
-
-			activeSession = session;
-
-			// Emit lifecycle start event
-			if (options.eventBus) {
-				options.eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
-					id,
-					agent: agent.name,
-					agentSource: agent.source,
-					description: options.description,
-					status: "started",
-					sessionFile: subtaskSessionFile,
-					runMetadata: syncRunMetadataStatus(),
-					index,
-				});
-			}
-
-			const subagentToolNames = session.getActiveToolNames();
-			const parentOwnedToolNames = new Set(["todo_write"]);
-			const filteredSubagentTools = subagentToolNames.filter(name => !parentOwnedToolNames.has(name));
-			if (filteredSubagentTools.length !== subagentToolNames.length) {
-				await awaitAbortable(session.setActiveToolsByName(filteredSubagentTools));
-			}
-
-			session.sessionManager.appendSessionInit({
-				systemPrompt: session.agent.state.systemPrompt.join("\n\n"),
-				task,
-				tools: session.getActiveToolNames(),
-				outputSchema,
-			});
-
-			abortSignal.addEventListener(
-				"abort",
-				() => {
-					void session.abort();
-				},
-				{ once: true, signal: sessionAbortController.signal },
-			);
-			// Defensive: if the wall-clock timer (or external signal) fired during
-			// the awaited setup above, the listener registration races the dispatch
-			// and may not observe the already-fired abort event. Mirror it manually.
-			if (abortSignal.aborted) {
-				void session.abort();
-			}
-
-			const extensionRunner = session.extensionRunner;
-			if (extensionRunner) {
-				let sessionStartActive = true;
-				const sessionStartDeliveries: Promise<void>[] = [];
-				extensionRunner.initialize(
-					{
-						sendMessage: (message, options) => {
-							const delivery = session.sendCustomMessage(message, options).catch(e => {
-								logger.error("Extension sendMessage failed", {
-									error: e instanceof Error ? e.message : String(e),
-								});
-							});
-							if (sessionStartActive) {
-								sessionStartDeliveries.push(delivery);
-							}
-						},
-						sendUserMessage: (content, options) => {
-							const delivery = session.sendUserMessage(content, options).catch(e => {
-								logger.error("Extension sendUserMessage failed", {
-									error: e instanceof Error ? e.message : String(e),
-								});
-							});
-							if (sessionStartActive) {
-								sessionStartDeliveries.push(delivery);
-							}
-						},
-						appendEntry: (customType, data) => {
-							session.sessionManager.appendCustomEntry(customType, data);
-						},
-						setLabel: (targetId, label) => {
-							session.sessionManager.appendLabelChange(targetId, label);
-						},
-						getActiveTools: () => session.getActiveToolNames(),
-						getAllTools: () => session.getAllToolNames(),
-						setActiveTools: (toolNames: string[]) =>
-							session.setActiveToolsByName(toolNames.filter(name => !parentOwnedToolNames.has(name))),
-						getCommands: () => getSessionSlashCommands(session),
-						setModel: model => runExtensionSetModel(session, model),
-						getThinkingLevel: () => session.thinkingLevel,
-						setThinkingLevel: level => session.setThinkingLevel(level),
-						getSessionName: () => session.sessionManager.getSessionName(),
-						setSessionName: async name => {
-							await session.sessionManager.setSessionName(name, "user");
-						},
-					},
-					{
-						getModel: () => session.model,
-						isIdle: () => !session.isStreaming,
-						abort: () => session.abort(),
-						hasPendingMessages: () => session.queuedMessageCount > 0,
-						shutdown: () => {},
-						getContextUsage: () => session.getContextUsage(),
-						getSystemPrompt: () => session.systemPrompt,
-						compact: instructionsOrOptions => runExtensionCompact(session, instructionsOrOptions),
-					},
-				);
-				extensionRunner.onError(err => {
-					logger.error("Extension error", { path: err.extensionPath, error: err.error });
-				});
-				await awaitAbortable(extensionRunner.emit({ type: "session_start" }));
-				sessionStartActive = false;
-				if (sessionStartDeliveries.length > 0) {
-					await awaitAbortable(Promise.allSettled(sessionStartDeliveries).then(() => undefined));
-				}
-			}
-
-			const MAX_YIELD_RETRIES = 3;
-			unsubscribe = session.subscribe(event => {
-				if (isAgentEvent(event)) {
-					try {
-						processEvent(event);
-					} catch (err) {
-						logger.error("Subagent event processing failed", {
-							error: err instanceof Error ? err.message : String(err),
-						});
-						requestAbort("terminate");
-					}
-				}
-			});
-
-			checkAbort();
-			await awaitAbortable(session.prompt(task, { attribution: "agent" }));
-			await awaitAbortable(session.waitForIdle());
-
-			const reminderToolChoice = buildNamedToolChoice("yield", session.model);
-
-			let retryCount = 0;
-			while (!yieldCalled && retryCount < MAX_YIELD_RETRIES && !abortSignal.aborted) {
+			while (attempt <= 2) {
 				try {
-					retryCount++;
-					const reminder = prompt.render(submitReminderTemplate, {
-						retryCount,
-						maxRetries: MAX_YIELD_RETRIES,
-					});
+					checkAbort();
+					const registryFromParent = options.modelRegistry !== undefined;
+					const modelRegistry =
+						options.modelRegistry ??
+						new ModelRegistry(options.authStorage ?? (await awaitAbortable(discoverAuthStorage())));
+					const authStorage = modelRegistry.authStorage;
+					if (options.authStorage && options.authStorage !== authStorage) {
+						throw new Error(
+							"options.authStorage and options.modelRegistry.authStorage must be the same instance when both are provided",
+						);
+					}
+					checkAbort();
+					if (!registryFromParent) {
+						await awaitAbortable(modelRegistry.refresh());
+					} else {
+						logger.debug("runSubagent: reusing parent modelRegistry; skipping refresh");
+					}
+					checkAbort();
 
-					const isFinalRetry = retryCount >= MAX_YIELD_RETRIES;
-					await awaitAbortable(
-						session.prompt(reminder, {
-							attribution: "agent",
-							...(isFinalRetry && reminderToolChoice ? { toolChoice: reminderToolChoice } : {}),
+					const {
+						model,
+						thinkingLevel: resolvedThinkingLevel,
+						explicitThinkingLevel,
+						authFallbackUsed,
+					} = await awaitAbortable(
+						resolveModelOverrideWithAuthFallback(
+							currentModelPatterns,
+							options.parentActiveModelPattern,
+							modelRegistry,
+							settings,
+						),
+					);
+					if (authFallbackUsed && model) {
+						logger.warn("Subagent model has no working credentials; falling back to parent session model", {
+							requested: modelPatterns,
+							parentModel: options.parentActiveModelPattern,
+							resolvedProvider: model.provider,
+							resolvedModel: model.id,
+						});
+					}
+					if (model?.contextWindow && model.contextWindow > 0) {
+						progress.contextWindow = model.contextWindow;
+					}
+					const effectiveThinkingLevel = explicitThinkingLevel
+						? resolvedThinkingLevel
+						: (thinkingLevel ?? resolvedThinkingLevel);
+
+					const sessionManager = sessionFile
+						? await awaitAbortable(SessionManager.open(sessionFile))
+						: SessionManager.inMemory(worktree ?? cwd);
+					if (options.parentArtifactManager) {
+						sessionManager.adoptArtifactManager(options.parentArtifactManager);
+					}
+
+					const mcpProxyTools = options.mcpManager ? createMCPProxyTools(options.mcpManager) : [];
+					const enableMCP = !options.mcpManager;
+
+					// Derive subagent-scoped telemetry from the parent's config so the
+					// child loop's spans nest under the parent's active execute_tool span
+					// (OTEL context propagation handles parent linkage automatically),
+					// carry the subagent's own agent identity, and use the subagent's
+					// own session id for `gen_ai.conversation.id`.
+					const subagentAgentIdentity: AgentIdentity | undefined = options.parentTelemetry
+						? { id, name: agent.name, description: agent.description }
+						: undefined;
+					const subagentTelemetry: AgentTelemetryConfig | undefined =
+						options.parentTelemetry && subagentAgentIdentity
+							? {
+									...options.parentTelemetry,
+									agent: subagentAgentIdentity,
+									// Clear parent's conversationId; the child loop falls back to
+									// its own AgentLoopConfig.sessionId.
+									conversationId: undefined,
+								}
+							: undefined;
+
+					if (options.parentTelemetry && subagentAgentIdentity) {
+						const parentTelemetryHandle = resolveTelemetry(
+							options.parentTelemetry,
+							options.parentTelemetry.conversationId,
+						);
+						recordHandoff(parentTelemetryHandle, {
+							fromAgent: options.parentTelemetry.agent,
+							toAgent: subagentAgentIdentity,
+						});
+					}
+
+					const { normalized: normalizedOutputSchema } = normalizeSchema(outputSchema);
+
+					const { session } = await awaitAbortable(
+						createAgentSession({
+							cwd: worktree ?? cwd,
+							authStorage,
+							modelRegistry,
+							preloadedExtensions,
+							settings: subagentSettings,
+							model,
+							thinkingLevel: effectiveThinkingLevel,
+							toolNames,
+							outputSchema,
+							requireYieldTool: true,
+							contextFiles: options.contextFiles,
+							skills: options.skills,
+							promptTemplates: options.promptTemplates,
+							workspaceTree: options.workspaceTree,
+							systemPrompt: defaultPrompt => {
+								const subagentPrompt = prompt.render(subagentSystemPromptTemplate, {
+									agent: agent.systemPrompt,
+									context: options.context?.trim() ?? "",
+									worktree: worktree ?? "",
+									outputSchema: normalizedOutputSchema,
+									contextFile: contextFileForPrompt,
+									ircPeers: ircEnabled ? renderIrcPeerRoster(id) : "",
+									ircSelfId: ircEnabled ? id : "",
+								});
+								return defaultPrompt.length === 0
+									? [subagentPrompt]
+									: [...defaultPrompt.slice(0, -1), subagentPrompt, defaultPrompt[defaultPrompt.length - 1]];
+							},
+							sessionManager,
+							hasUI: false,
+							spawns: spawnsEnv,
+							taskDepth: childDepth,
+							parentHindsightSessionState: options.parentHindsightSessionState,
+							parentMnemosyneSessionState: options.parentMnemosyneSessionState,
+							parentTaskPrefix: id,
+							agentId: id,
+							agentDisplayName: agent.name,
+							enableLsp: lspEnabled,
+							parentEvalSessionId: options.parentEvalSessionId,
+							skipPythonPreflight,
+							enableMCP,
+							mcpManager: options.mcpManager,
+							customTools: mcpProxyTools.length > 0 ? mcpProxyTools : undefined,
+							localProtocolOptions: options.localProtocolOptions,
+							telemetry: subagentTelemetry,
 						}),
 					);
-					await awaitAbortable(session.waitForIdle());
-				} catch (err) {
-					logger.error("Subagent prompt failed", {
-						error: err instanceof Error ? err.message : String(err),
-					});
-				}
-			}
 
-			await awaitAbortable(session.waitForIdle());
-			if (!yieldCalled && !abortSignal.aborted) {
-				exitCode = 0;
-			}
+					activeSession = session;
 
-			const lastAssistant = session.getLastAssistantMessage();
-			if (lastAssistant) {
-				if (lastAssistant.stopReason === "aborted") {
-					aborted = abortReason === "signal" || runtimeLimitExceeded || abortReason === undefined;
-					if (aborted) {
-						abortReasonText ??= resolveAbortReasonText();
+					// Emit lifecycle start event
+					if (options.eventBus) {
+						options.eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+							id,
+							agent: agent.name,
+							agentSource: agent.source,
+							description: options.description,
+							status: "started",
+							sessionFile: subtaskSessionFile,
+							runMetadata: syncRunMetadataStatus(),
+							index,
+						});
 					}
-					exitCode = 1;
-				} else if (lastAssistant.stopReason === "error") {
-					exitCode = 1;
-					error ??= lastAssistant.errorMessage || "Subagent failed";
+
+					const subagentToolNames = session.getActiveToolNames();
+					const parentOwnedToolNames = new Set(["todo_write"]);
+					const filteredSubagentTools = subagentToolNames.filter(name => !parentOwnedToolNames.has(name));
+					if (filteredSubagentTools.length !== subagentToolNames.length) {
+						await awaitAbortable(session.setActiveToolsByName(filteredSubagentTools));
+					}
+
+					session.sessionManager.appendSessionInit({
+						systemPrompt: session.agent.state.systemPrompt.join("\n\n"),
+						task,
+						tools: session.getActiveToolNames(),
+						outputSchema,
+					});
+
+					abortSignal.addEventListener(
+						"abort",
+						() => {
+							void session.abort();
+						},
+						{ once: true, signal: sessionAbortController.signal },
+					);
+					// Defensive: if the wall-clock timer (or external signal) fired during
+					// the awaited setup above, the listener registration races the dispatch
+					// and may not observe the already-fired abort event. Mirror it manually.
+					if (abortSignal.aborted) {
+						void session.abort();
+					}
+
+					const extensionRunner = session.extensionRunner;
+					if (extensionRunner) {
+						let sessionStartActive = true;
+						const sessionStartDeliveries: Promise<void>[] = [];
+						extensionRunner.initialize(
+							{
+								sendMessage: (message, options) => {
+									const delivery = session.sendCustomMessage(message, options).catch(e => {
+										logger.error("Extension sendMessage failed", {
+											error: e instanceof Error ? e.message : String(e),
+										});
+									});
+									if (sessionStartActive) {
+										sessionStartDeliveries.push(delivery);
+									}
+								},
+								sendUserMessage: (content, options) => {
+									const delivery = session.sendUserMessage(content, options).catch(e => {
+										logger.error("Extension sendUserMessage failed", {
+											error: e instanceof Error ? e.message : String(e),
+										});
+									});
+									if (sessionStartActive) {
+										sessionStartDeliveries.push(delivery);
+									}
+								},
+								appendEntry: (customType, data) => {
+									session.sessionManager.appendCustomEntry(customType, data);
+								},
+								setLabel: (targetId, label) => {
+									session.sessionManager.appendLabelChange(targetId, label);
+								},
+								getActiveTools: () => session.getActiveToolNames(),
+								getAllTools: () => session.getAllToolNames(),
+								setActiveTools: (toolNames: string[]) =>
+									session.setActiveToolsByName(toolNames.filter(name => !parentOwnedToolNames.has(name))),
+								getCommands: () => getSessionSlashCommands(session),
+								setModel: model => runExtensionSetModel(session, model),
+								getThinkingLevel: () => session.thinkingLevel,
+								setThinkingLevel: level => session.setThinkingLevel(level),
+								getSessionName: () => session.sessionManager.getSessionName(),
+								setSessionName: async name => {
+									await session.sessionManager.setSessionName(name, "user");
+								},
+							},
+							{
+								getModel: () => session.model,
+								isIdle: () => !session.isStreaming,
+								abort: () => session.abort(),
+								hasPendingMessages: () => session.queuedMessageCount > 0,
+								shutdown: () => {},
+								getContextUsage: () => session.getContextUsage(),
+								getSystemPrompt: () => session.systemPrompt,
+								compact: instructionsOrOptions => runExtensionCompact(session, instructionsOrOptions),
+							},
+						);
+						extensionRunner.onError(err => {
+							logger.error("Extension error", { path: err.extensionPath, error: err.error });
+						});
+						await awaitAbortable(extensionRunner.emit({ type: "session_start" }));
+						sessionStartActive = false;
+						if (sessionStartDeliveries.length > 0) {
+							await awaitAbortable(Promise.allSettled(sessionStartDeliveries).then(() => undefined));
+						}
+					}
+
+					const MAX_YIELD_RETRIES = 3;
+					unsubscribe = session.subscribe(event => {
+						if (isAgentEvent(event)) {
+							try {
+								processEvent(event);
+							} catch (err) {
+								logger.error("Subagent event processing failed", {
+									error: err instanceof Error ? err.message : String(err),
+								});
+								requestAbort("terminate");
+							}
+						}
+					});
+
+					checkAbort();
+					await awaitAbortable(session.prompt(task, { attribution: "agent" }));
+					await awaitAbortable(session.waitForIdle());
+
+					const reminderToolChoice = buildNamedToolChoice("yield", session.model);
+
+					let retryCount = 0;
+					while (!yieldCalled && retryCount < MAX_YIELD_RETRIES && !abortSignal.aborted) {
+						try {
+							retryCount++;
+							const reminder = prompt.render(submitReminderTemplate, {
+								retryCount,
+								maxRetries: MAX_YIELD_RETRIES,
+							});
+
+							const isFinalRetry = retryCount >= MAX_YIELD_RETRIES;
+							await awaitAbortable(
+								session.prompt(reminder, {
+									attribution: "agent",
+									...(isFinalRetry && reminderToolChoice ? { toolChoice: reminderToolChoice } : {}),
+								}),
+							);
+							await awaitAbortable(session.waitForIdle());
+						} catch (err) {
+							logger.error("Subagent prompt failed", {
+								error: err instanceof Error ? err.message : String(err),
+							});
+						}
+					}
+
+					await awaitAbortable(session.waitForIdle());
+					if (!yieldCalled && !abortSignal.aborted) {
+						exitCode = 0;
+					}
+
+					const lastAssistant = session.getLastAssistantMessage();
+					if (lastAssistant) {
+						if (lastAssistant.stopReason === "aborted") {
+							aborted = abortReason === "signal" || runtimeLimitExceeded || abortReason === undefined;
+							if (aborted) {
+								abortReasonText ??= resolveAbortReasonText();
+							}
+							exitCode = 1;
+						} else if (lastAssistant.stopReason === "error") {
+							exitCode = 1;
+							error ??= lastAssistant.errorMessage || "Subagent failed";
+							throw new Error(error);
+						}
+					}
+					break; // Success! Exit retry loop
+				} catch (err) {
+					if (err instanceof ToolAbortError || abortSignal.aborted) {
+						throw err;
+					}
+					const errMsg = String(err instanceof Error ? err.message : err).toLowerCase();
+					const isModelError =
+						errMsg.includes("404") ||
+						errMsg.includes("not supported") ||
+						errMsg.includes("unsupported") ||
+						errMsg.includes("not found");
+					if (isModelError && attempt === 1 && options.parentActiveModelPattern) {
+						const parentActiveModel = options.parentActiveModelPattern;
+						logger.warn(
+							`Subagent model execution failed: ${err}. Falling back to parent session model: ${parentActiveModel}`,
+							{
+								failedPatterns: currentModelPatterns,
+								fallbackPattern: parentActiveModel,
+							},
+						);
+						currentModelPatterns = [parentActiveModel];
+						attempt++;
+						if (activeSession) {
+							const s = activeSession;
+							activeSession = null;
+							try {
+								await s.dispose();
+							} catch {}
+						}
+						continue;
+					}
+					throw err;
 				}
 			}
 		} catch (err) {

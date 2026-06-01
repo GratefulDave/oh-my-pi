@@ -346,6 +346,7 @@ export function summarizeMissedMinimizerGain(records: MinimizerGainRecord[], lim
 		.slice(0, limit);
 	const potentialTokenSavings = finalized
 		.slice()
+		.filter(a => a.commands > 1)
 		.sort((a, b) => b.estimatedPotentialTokensSaved - a.estimatedPotentialTokensSaved)
 		.slice(0, limit);
 	return { commands, potentialTokenSavings };

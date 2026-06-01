@@ -17,6 +17,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import * as readline from "node:readline";
 
 import {
 	AuthBrokerClient,
@@ -188,19 +189,82 @@ async function runLogin(flags: AuthBrokerCommandArgs["flags"]): Promise<void> {
 	await runLocalLogin(providerArg as OAuthProvider);
 }
 
-async function runLocalLogin(provider: OAuthProvider): Promise<void> {
-	// Spawn the pi-ai CLI in-process — it handles the per-provider OAuth dance
-	// and persists into the same SQLite store the broker uses.
-	const piAiCli = Bun.fileURLToPath(import.meta.resolve("@oh-my-pi/pi-ai/cli"));
-	const proc = Bun.spawn({
-		cmd: [process.execPath, piAiCli, "login", provider],
-		stdin: "inherit",
-		stdout: "inherit",
-		stderr: "inherit",
+function prompt(rl: readline.Interface, question: string): Promise<string> {
+	const { promise, resolve, reject } = Promise.withResolvers<string>();
+	const input = process.stdin as NodeJS.ReadStream;
+	const supportsRawMode = input.isTTY && typeof input.setRawMode === "function";
+	const wasRaw = supportsRawMode ? input.isRaw : false;
+	let settled = false;
+
+	const cleanup = () => {
+		rl.off("SIGINT", onSigint);
+		if (supportsRawMode) {
+			input.off("keypress", onKeypress);
+			input.setRawMode?.(wasRaw);
+		}
+	};
+
+	const finish = (result: () => void) => {
+		if (settled) return;
+		settled = true;
+		cleanup();
+		result();
+	};
+
+	const cancel = () => {
+		finish(() => reject(new Error("Login cancelled")));
+	};
+
+	const onSigint = () => {
+		cancel();
+	};
+
+	const onKeypress = (_str: string, key: readline.Key) => {
+		if (key.name === "escape" || (key.ctrl && key.name === "c")) {
+			cancel();
+			rl.close();
+		}
+	};
+
+	if (supportsRawMode) {
+		readline.emitKeypressEvents(input, rl);
+		input.setRawMode(true);
+		input.on("keypress", onKeypress);
+	}
+
+	rl.once("SIGINT", onSigint);
+	rl.question(question, answer => {
+		finish(() => resolve(answer));
 	});
-	const exitCode = await proc.exited;
-	if (exitCode !== 0) {
-		throw new Error(`pi-ai login exited with code ${exitCode}`);
+	return promise;
+}
+
+async function runLocalLogin(provider: OAuthProvider): Promise<void> {
+	const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+	const promptFn = (msg: string) => prompt(rl, `${msg} `);
+	const store = await SqliteAuthCredentialStore.open(getAgentDbPath());
+	const storage = new AuthStorage(store);
+	await storage.reload();
+
+	try {
+		await storage.login(provider, {
+			onAuth(info) {
+				const { url, instructions } = info;
+				process.stdout.write(`\nOpen this URL in your browser:\n${url}\n`);
+				if (instructions) process.stdout.write(`${instructions}\n`);
+				process.stdout.write("\n");
+			},
+			onProgress(message) {
+				process.stdout.write(`${message}\n`);
+			},
+			onPrompt(promptInfo) {
+				return promptFn(`${promptInfo.message}${promptInfo.placeholder ? ` (${promptInfo.placeholder})` : ""}:`);
+			},
+		});
+		process.stdout.write(`\nCredentials saved to ${getAgentDbPath()}\n`);
+	} finally {
+		storage.close();
+		rl.close();
 	}
 }
 

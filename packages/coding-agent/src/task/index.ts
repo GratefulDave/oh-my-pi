@@ -1120,9 +1120,18 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 
 			const runTask = async (task: (typeof tasksWithUniqueIds)[number], index: number) => {
 				actorOrchestrator.setStatus(task.id, "running");
+				const runner = (this.session as any).extensionRunner;
+				const preloadedExtensions = runner
+					? {
+							extensions: runner.getExtensions(),
+							runtime: runner.getRuntime(),
+							errors: [],
+						}
+					: undefined;
 				if (!isIsolated) {
 					const result = await runSubprocess({
 						cwd: this.session.cwd,
+						preloadedExtensions,
 						agent: effectiveAgent,
 						task: renderSubagentUserPrompt(task.assignment, simpleMode),
 						assignment: task.assignment.trim(),
@@ -1182,6 +1191,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 
 					const result = await runSubprocess({
 						cwd: this.session.cwd,
+						preloadedExtensions,
 						worktree: isolationDir,
 						agent: effectiveAgent,
 						task: renderSubagentUserPrompt(task.assignment, simpleMode),

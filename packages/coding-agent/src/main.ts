@@ -631,7 +631,19 @@ async function buildSessionOptions(
 				}
 			}
 		}
-		if (!options.model) options.model = scopedModels[0].model;
+		if (!options.model) {
+			// The default role model could not be matched against the pre-extension scopedModels.
+			// This happens when enabledModels includes extension-provided providers (e.g.
+			// opencode-antigravity/*) that are not yet registered at this point — extensions load
+			// inside createAgentSession. Defer to post-extension model resolution by passing the
+			// remembered role as a modelPattern; sdk.ts resolves it after registerProvider runs.
+			// Fall back to scopedModels[0] only when there is no configured default role to defer.
+			if (remembered) {
+				options.modelPattern = remembered;
+			} else {
+				options.model = scopedModels[0].model;
+			}
+		}
 	}
 
 	// Thinking level
