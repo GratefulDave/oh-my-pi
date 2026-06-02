@@ -302,6 +302,7 @@ interface CustomModelsResult {
 	keylessProviders?: Set<string>;
 	discoverableProviders?: DiscoveryProviderConfig[];
 	configuredProviders?: Set<string>;
+	implicitDiscoveryBaseUrlOverrides?: Map<string, string>;
 	equivalence?: ModelEquivalenceConfig;
 	error?: ConfigError;
 	found: boolean;
@@ -926,6 +927,7 @@ export class ModelRegistry {
 			keylessProviders = new Set(),
 			discoverableProviders = [],
 			configuredProviders = new Set(),
+			implicitDiscoveryBaseUrlOverrides = new Map(),
 			equivalence,
 			error: configError,
 		} = this.#loadCustomModels();
@@ -936,8 +938,7 @@ export class ModelRegistry {
 		this.#providerOverrides = overrides;
 		this.#modelOverrides = modelOverrides;
 		this.#equivalenceConfig = equivalence;
-
-		this.#addImplicitDiscoverableProviders(configuredProviders);
+		this.#addImplicitDiscoverableProviders(configuredProviders, implicitDiscoveryBaseUrlOverrides);
 		const builtInModels = this.#applyHardcodedModelPolicies(this.#loadBuiltInModels(overrides));
 		const cachedStandardModels = this.#applyHardcodedModelPolicies(this.#loadCachedStandardProviderModels());
 		const cachedDiscoveries = this.#applyHardcodedModelPolicies(this.#loadCachedDiscoverableModels());
@@ -1116,23 +1117,35 @@ export class ModelRegistry {
 		return models.map(model => (model.api === "openai-completions" ? { ...model, api: "openai-responses" } : model));
 	}
 
-	#addImplicitDiscoverableProviders(configuredProviders: Set<string>): void {
+	#addImplicitDiscoverableProviders(
+		configuredProviders: Set<string>,
+		implicitDiscoveryBaseUrlOverrides: Map<string, string>,
+	): void {
 		const disabledProviders = getDisabledProviderIdsFromSettings();
-		if (!configuredProviders.has("ollama") && !disabledProviders.has("ollama")) {
+		const shouldAdd = (provider: string): boolean => {
+			if (disabledProviders.has(provider)) return false;
+			if (!configuredProviders.has(provider)) return true;
+			return implicitDiscoveryBaseUrlOverrides.has(provider);
+		};
+		if (shouldAdd("ollama")) {
 			this.#discoverableProviders.push({
 				provider: "ollama",
 				api: "openai-responses",
-				baseUrl: Bun.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434",
+				baseUrl:
+					implicitDiscoveryBaseUrlOverrides.get("ollama") || Bun.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434",
 				discovery: { type: "ollama" },
 				optional: true,
 			});
 			this.#keylessProviders.add("ollama");
 		}
-		if (!configuredProviders.has("llama.cpp") && !disabledProviders.has("llama.cpp")) {
+		if (shouldAdd("llama.cpp")) {
 			this.#discoverableProviders.push({
 				provider: "llama.cpp",
 				api: "openai-responses",
-				baseUrl: Bun.env.LLAMA_CPP_BASE_URL || "http://127.0.0.1:8080",
+				baseUrl:
+					implicitDiscoveryBaseUrlOverrides.get("llama.cpp") ||
+					Bun.env.LLAMA_CPP_BASE_URL ||
+					"http://127.0.0.1:8080",
 				discovery: { type: "llama.cpp" },
 				optional: true,
 			});
@@ -1141,21 +1154,25 @@ export class ModelRegistry {
 				this.#keylessProviders.add("llama.cpp");
 			}
 		}
-		if (!configuredProviders.has("lm-studio") && !disabledProviders.has("lm-studio")) {
+		if (shouldAdd("lm-studio")) {
 			this.#discoverableProviders.push({
 				provider: "lm-studio",
 				api: "openai-completions",
-				baseUrl: Bun.env.LM_STUDIO_BASE_URL || "http://127.0.0.1:1234/v1",
+				baseUrl:
+					implicitDiscoveryBaseUrlOverrides.get("lm-studio") ||
+					Bun.env.LM_STUDIO_BASE_URL ||
+					"http://127.0.0.1:1234/v1",
 				discovery: { type: "lm-studio" },
 				optional: true,
 			});
 			this.#keylessProviders.add("lm-studio");
 		}
-		if (!configuredProviders.has("omlx") && !disabledProviders.has("omlx")) {
+		if (shouldAdd("omlx")) {
 			this.#discoverableProviders.push({
 				provider: "omlx",
 				api: "openai-completions",
-				baseUrl: Bun.env.OMLX_BASE_URL || "http://127.0.0.1:18790/v1",
+				baseUrl:
+					implicitDiscoveryBaseUrlOverrides.get("omlx") || Bun.env.OMLX_BASE_URL || "http://127.0.0.1:18790/v1",
 				discovery: { type: "omlx" },
 				optional: true,
 				reasoning: true,
@@ -1163,7 +1180,6 @@ export class ModelRegistry {
 			this.#keylessProviders.add("omlx");
 		}
 	}
-
 	#loadCustomModels(): CustomModelsResult {
 		const { value, error, status } = this.#modelsConfigFile.tryLoad();
 
@@ -1194,6 +1210,7 @@ export class ModelRegistry {
 		const allModelOverrides = new Map<string, Map<string, ModelOverride>>();
 		const keylessProviders = new Set<string>();
 		const discoverableProviders: DiscoveryProviderConfig[] = [];
+		const implicitDiscoveryBaseUrlOverrides = new Map<string, string>();
 		const providerEntries = Object.entries(value.providers ?? {});
 		const configuredProviders = new Set(Object.keys(value.providers ?? {}));
 
@@ -1238,6 +1255,12 @@ export class ModelRegistry {
 					discovery: providerConfig.discovery,
 					optional: false,
 				});
+			} else if (
+				providerConfig.baseUrl &&
+				!providerConfig.discovery &&
+				["ollama", "llama.cpp", "lm-studio", "omlx"].includes(providerName)
+			) {
+				implicitDiscoveryBaseUrlOverrides.set(providerName, providerConfig.baseUrl);
 			}
 
 			// Store API key for fallback resolver AND register as config override
@@ -1267,6 +1290,7 @@ export class ModelRegistry {
 			keylessProviders,
 			discoverableProviders,
 			configuredProviders,
+			implicitDiscoveryBaseUrlOverrides,
 			equivalence: value.equivalence,
 			found: true,
 		};

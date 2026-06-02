@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { replaceBinaryForUpdate, resolveUpdateMethodForTest } from "../src/cli/update-cli";
+import {
+	replaceBinaryForUpdate,
+	resolveInstalledCommandPathForTest,
+	resolveUpdateMethodForTest,
+	resolveUpdateSupportStatusForTest,
+} from "../src/cli/update-cli";
 
 const tempDirs: string[] = [];
 
@@ -33,6 +38,23 @@ describe("update-cli install target detection", () => {
 
 		expect(method).toBe("binary");
 	});
+
+	it("targets lex path and never falls back to omp path", () => {
+		expect(resolveInstalledCommandPathForTest("/Users/test/.local/bin/lex", "/Users/test/.local/bin/omp")).toBe(
+			"/Users/test/.local/bin/lex",
+		);
+		expect(resolveInstalledCommandPathForTest(undefined, "/Users/test/.local/bin/omp")).toBeUndefined();
+	});
+});
+
+describe("update-cli support detection", () => {
+	it("enables upstream self-update for lex fork branding", () => {
+		expect(resolveUpdateSupportStatusForTest("lex", "omp")).toEqual({ supported: true });
+	});
+
+	it("keeps self-update enabled for upstream branding", () => {
+		expect(resolveUpdateSupportStatusForTest("omp", "omp")).toEqual({ supported: true });
+	});
 });
 
 describe("update-cli binary replacement", () => {
@@ -52,7 +74,7 @@ describe("update-cli binary replacement", () => {
 				expectedVersion: "15.1.8",
 				verifyInstalledVersion: async () => ({ ok: false, path: targetPath }),
 			}),
-		).rejects.toThrow("restored previous omp binary");
+		).rejects.toThrow("restored previous lex binary");
 
 		expect(await Bun.file(targetPath).text()).toBe("old binary");
 		expect(await Bun.file(tempPath).exists()).toBe(false);

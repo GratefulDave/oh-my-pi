@@ -1,7 +1,0 @@
-{
-  "name": "software-factory",
-  "private": true,
-  "omp": {
-    "extensions": ["./index.ts"]
-  }
-}

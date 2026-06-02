@@ -20,6 +20,16 @@ interface ReleaseInfo {
 	version: string;
 }
 
+type UpdateSupportStatus = { supported: true } | { supported: false; reason: string };
+
+function resolveUpdateSupportStatus(_commandName: string, _appName: string): UpdateSupportStatus {
+	return { supported: true };
+}
+
+export function resolveUpdateSupportStatusForTest(commandName: string, appName: string): UpdateSupportStatus {
+	return resolveUpdateSupportStatus(commandName, appName);
+}
+
 /** Result from running the installed binary and parsing its reported version. */
 export interface InstalledVersionVerification {
 	ok: boolean;
@@ -102,22 +112,40 @@ function isPathInDirectory(filePath: string, directoryPath: string): boolean {
 
 type UpdateTarget = { method: "bun" } | { method: "binary"; path: string };
 
-function resolveUpdateMethod(ompPath: string, bunBinDir: string | undefined): "bun" | "binary" {
+function resolveUpdateMethod(installedPath: string, bunBinDir: string | undefined): "bun" | "binary" {
 	if (!bunBinDir) return "binary";
-	return isPathInDirectory(ompPath, bunBinDir) ? "bun" : "binary";
+	return isPathInDirectory(installedPath, bunBinDir) ? "bun" : "binary";
 }
 
-export function resolveUpdateMethodForTest(ompPath: string, bunBinDir: string | undefined): "bun" | "binary" {
-	return resolveUpdateMethod(ompPath, bunBinDir);
+export function resolveUpdateMethodForTest(installedPath: string, bunBinDir: string | undefined): "bun" | "binary" {
+	return resolveUpdateMethod(installedPath, bunBinDir);
 }
+
+function selectInstalledCommandPath(commandPath: string | undefined, appPath: string | undefined): string | undefined {
+	if (commandPath) return commandPath;
+	if (appPath && path.basename(appPath) === COMMAND_NAME) return appPath;
+	return undefined;
+}
+
+function resolveInstalledCommandPath(): string | undefined {
+	return selectInstalledCommandPath($which(COMMAND_NAME) ?? undefined, $which(APP_NAME) ?? undefined);
+}
+
+export function resolveInstalledCommandPathForTest(
+	commandPath: string | undefined,
+	appPath: string | undefined,
+): string | undefined {
+	return selectInstalledCommandPath(commandPath, appPath);
+}
+
 async function resolveUpdateTarget(): Promise<UpdateTarget> {
 	const bunBinDir = await getBunGlobalBinDir();
-	const ompPath = resolveOmpPath();
+	const commandPath = resolveInstalledCommandPath();
 
-	if (ompPath) {
-		const method = resolveUpdateMethod(ompPath, bunBinDir);
+	if (commandPath) {
+		const method = resolveUpdateMethod(commandPath, bunBinDir);
 		if (method === "bun") return { method };
-		return { method, path: ompPath };
+		return { method, path: commandPath };
 	}
 
 	if (bunBinDir) return { method: "bun" };
@@ -151,9 +179,16 @@ async function getLatestRelease(): Promise<ReleaseInfo> {
  * - 0 if a == b
  * - positive if a > b
  */
+function parseVersionParts(version: string): number[] {
+	return version.split(".").map(part => {
+		const cleaned = part.replace(/-.*$/, "");
+		return Number(cleaned) || 0;
+	});
+}
+
 function compareVersions(a: string, b: string): number {
-	const pa = a.split(".").map(Number);
-	const pb = b.split(".").map(Number);
+	const pa = parseVersionParts(a);
+	const pb = parseVersionParts(b);
 
 	for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
 		const na = pa[i] || 0;
@@ -202,30 +237,29 @@ function getBinaryName(): string {
 	}
 	return `${APP_NAME}-${os}-${archName}`;
 }
-
 /**
- * Resolve the path that `lex` maps to in the user's PATH.
+ * Resolve path that `lex` maps to in PATH.
  */
-function resolveOmpPath(): string | undefined {
-	return $which(APP_NAME) ?? undefined;
+function resolveCommandPath(): string | undefined {
+	return resolveInstalledCommandPath();
 }
 
 /**
- * Run the resolved lex binary and check if it reports the expected version.
+ * Run resolved `lex` binary and check if it reports expected version.
  */
 async function verifyInstalledVersion(expectedVersion: string): Promise<InstalledVersionVerification> {
-	const ompPath = resolveOmpPath();
-	if (!ompPath) return { ok: false };
+	const commandPath = resolveCommandPath();
+	if (!commandPath) return { ok: false };
 	try {
-		const result = await $`${ompPath} --version`.quiet().nothrow();
-		if (result.exitCode !== 0) return { ok: false, path: ompPath };
+		const result = await $`${commandPath} --version`.quiet().nothrow();
+		if (result.exitCode !== 0) return { ok: false, path: commandPath };
 		const output = result.text().trim();
 		// Output format: "omp/X.Y.Z"
 		const match = output.match(/\/(\d+\.\d+\.\d+)/);
 		const actual = match?.[1];
-		return { ok: actual === expectedVersion, actual, path: ompPath };
+		return { ok: actual === expectedVersion, actual, path: commandPath };
 	} catch {
-		return { ok: false, path: ompPath };
+		return { ok: false, path: commandPath };
 	}
 }
 
@@ -275,7 +309,7 @@ export async function replaceBinaryForUpdate(options: BinaryReplacementOptions):
 		const verification = await options.verifyInstalledVersion(options.expectedVersion);
 		if (!verification.ok) {
 			throw new Error(
-				`${formatVerificationFailure(verification, options.expectedVersion)}; restored previous ${APP_NAME} binary`,
+				`${formatVerificationFailure(verification, options.expectedVersion)}; restored previous ${COMMAND_NAME} binary`,
 			);
 		}
 
@@ -341,6 +375,12 @@ async function updateViaBinaryAt(targetPath: string, expectedVersion: string): P
  */
 export async function runUpdateCommand(opts: { force: boolean; check: boolean }): Promise<void> {
 	console.log(chalk.dim(`Current version: ${VERSION}`));
+
+	const updateSupport = resolveUpdateSupportStatus(COMMAND_NAME, APP_NAME);
+	if (!updateSupport.supported) {
+		console.log(chalk.yellow(updateSupport.reason));
+		return;
+	}
 
 	// Check for updates
 	let release: ReleaseInfo;

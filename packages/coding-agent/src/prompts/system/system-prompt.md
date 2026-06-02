@@ -165,18 +165,6 @@ Patterns match **AST structure, not text** — whitespace is irrelevant.
 Metavariable names are UPPERCASE (`$A`, not `$var`).
 If you reuse a name, their contents must match: `$A == $A` matches `x == x` but not `x == y`.
 {{/ifAny}}
-
-{{#if eagerTasks}}
-{{#has tools "task"}}
-## Eager Tasks
-You SHOULD delegate work to subagents by default. You MAY work alone only when:
-- The change is a single-file edit under ~30 lines
-- The request is a direct answer or explanation with no code changes
-- The user asked you to run a command yourself
-For multi-file changes, refactors, new features, tests, or investigations, you SHOULD break the work into tasks and delegate after the design is settled.
-{{/has}}
-{{/if}}
-
 {{#has tools "inspect_image"}}
 ## Images
 - For image understanding tasks you SHOULD use `{{toolRefs.inspect_image}}` over `{{toolRefs.read}}` to avoid overloading session context.
