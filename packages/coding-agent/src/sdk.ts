@@ -1288,6 +1288,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			settings,
 			authStorage,
 			modelRegistry,
+			// Expose the parent's loaded extensions so eval-spawned subagents inherit
+			// provider registrations (including async ones drained into pendingProviderRegistrations
+			// during load) instead of re-discovering extensions — matching the task-tool spawn path.
+			// Returns the canonical resolved result; `extensionsResult` is assigned later in this
+			// function and this closure is only invoked when spawning a subagent, well after setup.
+			getPreloadedExtensions: () => extensionsResult,
 			getTelemetry: () => agent?.telemetry,
 		};
 
@@ -1434,7 +1440,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		// extensions are available for model selection on session resume / fallback.
 		const activeExtensionSources = extensionsResult.extensions.map(extension => extension.path);
 		modelRegistry.syncExtensionSources(activeExtensionSources);
+		// Sources resolved by a parent session and handed down via `preloadedExtensions`
+		// were already cleared and replayed onto the shared modelRegistry by that parent,
+		// which also drained `pendingProviderRegistrations`. Clearing them again here would
+		// wipe their provider registrations (including async-registered ones) with nothing
+		// left to re-register them. Skip those sources; only clear freshly discovered ones.
+		const preloadedExtensionSources = options.preloadedExtensions
+			? new Set(options.preloadedExtensions.extensions.map(extension => extension.path))
+			: null;
 		for (const sourceId of new Set(activeExtensionSources)) {
+			if (preloadedExtensionSources?.has(sourceId)) continue;
 			modelRegistry.clearSourceRegistrations(sourceId);
 		}
 		if (extensionsResult.runtime.pendingProviderRegistrations.length > 0) {
