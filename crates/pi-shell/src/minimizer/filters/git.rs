@@ -198,6 +198,7 @@ struct StatusSummary {
 fn condense_status(input: &str) -> String {
 	let mut summary = StatusSummary::default();
 	let mut in_untracked = false;
+	let mut in_staged = false;
 	let mut state: Option<&str> = None;
 
 	for line in input.lines() {
@@ -223,11 +224,22 @@ fn condense_status(input: &str) -> String {
 			}
 			continue;
 		}
+		if trimmed.starts_with("Changes to be committed") {
+			in_staged = true;
+			in_untracked = false;
+			continue;
+		}
+		if trimmed.starts_with("Changes not staged for commit") || trimmed.starts_with("Unmerged paths") {
+			in_staged = false;
+			in_untracked = false;
+			continue;
+		}
 		if trimmed.starts_with("Untracked files:") {
+			in_staged = false;
 			in_untracked = true;
 			continue;
 		}
-		if parse_long_status_line(trimmed, in_untracked, &mut summary) {
+		if parse_long_status_line(trimmed, in_staged, in_untracked, &mut summary) {
 			continue;
 		}
 		if !trimmed.starts_with('(')
@@ -313,10 +325,12 @@ fn is_short_status(status: &str) -> bool {
 		.all(|byte| matches!(byte, b' ' | b'M' | b'A' | b'D' | b'R' | b'C' | b'U' | b'?' | b'!'))
 }
 
-fn parse_long_status_line(line: &str, in_untracked: bool, summary: &mut StatusSummary) -> bool {
+fn parse_long_status_line(line: &str, in_staged: bool, in_untracked: bool, summary: &mut StatusSummary) -> bool {
+	// "modified:" and "deleted:" appear in both the staged and unstaged sections;
+	// use the caller-supplied `in_staged` flag to count them correctly.
 	for (prefix, label, staged) in [
-		("modified:", "M", false),
-		("deleted:", "D", false),
+		("modified:", "M", in_staged),
+		("deleted:", "D", in_staged),
 		("new file:", "A", true),
 		("renamed:", "R", true),
 		("both modified:", "UU", false),

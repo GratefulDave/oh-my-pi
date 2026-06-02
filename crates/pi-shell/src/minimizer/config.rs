@@ -41,7 +41,8 @@ pub struct MinimizerOptions {
 }
 
 /// Controls how aggressively `cat`-output source files are summarised.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum OutlineLevel {
 	/// Keep small files intact; summarise only large ones with import/decl
 	/// extraction (default).
@@ -178,13 +179,15 @@ impl MinimizerConfig {
 #[derive(Debug, Default, Deserialize)]
 struct SettingsFile {
 	#[serde(default)]
-	schema_version:    Option<u32>,
-	enabled:           Option<bool>,
-	only:              Option<Vec<String>>,
-	except:            Option<Vec<String>>,
-	max_capture_bytes: Option<u32>,
+	schema_version:        Option<u32>,
+	enabled:               Option<bool>,
+	only:                  Option<Vec<String>>,
+	except:                Option<Vec<String>>,
+	max_capture_bytes:     Option<u32>,
+	legacy_filters_active: Option<bool>,
+	source_outline_level:  Option<OutlineLevel>,
 	#[serde(flatten)]
-	tables:            HashMap<String, toml::Value>,
+	tables:                HashMap<String, toml::Value>,
 }
 
 impl SettingsFile {
@@ -209,6 +212,12 @@ impl SettingsFile {
 		}
 		if let Some(n) = self.max_capture_bytes {
 			cfg.max_capture_bytes = n.max(1024);
+		}
+		if let Some(v) = self.legacy_filters_active {
+			cfg.legacy_filters_active = v;
+		}
+		if let Some(v) = self.source_outline_level {
+			cfg.source_outline_level = v;
 		}
 		for (k, v) in self.tables {
 			if v.is_table() && k != "filters" && k != "tests" {
