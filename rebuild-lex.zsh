@@ -24,7 +24,6 @@ fi
 
 print_step "Linking fork binary into $link_dir"
 mkdir -p "$link_dir"
-ln -sf "$binary" "$link_dir/omp"
 ln -sf "$binary" "$link_dir/lex"
 
 print_step "Ensuring zsh PATH prefers $link_dir"
@@ -40,8 +39,6 @@ export PATH="$link_dir:$PATH"
 hash -r 2>/dev/null || true
 
 print_step "Verification"
-printf 'omp path: '
-command -v omp
 printf 'lex path: '
 command -v lex
 lex --version
