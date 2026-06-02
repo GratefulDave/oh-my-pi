@@ -2,7 +2,7 @@ import type { Api, Model, OAuthCredentials } from "@oh-my-pi/pi-ai";
 import type { OAuthLoginCallbacks } from "@oh-my-pi/pi-ai/utils/oauth/types";
 import { getAntigravityHeaders } from "opencode-antigravity-auth/dist/src/constants";
 import { checkAccountsQuota, type QuotaGroup } from "opencode-antigravity-auth/dist/src/plugin/quota";
-import type { AccountMetadataV3 } from "opencode-antigravity-auth/dist/src/plugin/storage";
+import { type AccountMetadataV3, loadAccounts } from "opencode-antigravity-auth/dist/src/plugin/storage";
 import { refreshAccessToken } from "opencode-antigravity-auth/dist/src/plugin/token";
 import type { AuthMethod, OAuthAuthDetails, PluginClient } from "opencode-antigravity-auth/dist/src/plugin/types";
 import { BRIDGE_API, GOOGLE_GENERATIVE_LANGUAGE_BASE, PROVIDER_ID } from "./models";
@@ -90,6 +90,52 @@ export async function loginWithUpstreamOAuth(
 	}
 
 	return toOAuthCredentials(result);
+}
+
+/**
+ * Probes the native plugin account store for a valid access token.
+ *
+ * Loads persisted accounts from the plugin's on-disk storage, finds an
+ * active enabled account, and refreshes its access token. If successful,
+ * the resulting {@link OAuthCredentials} can be stored directly in OMP's
+ * auth DB — no OAuth login prompt needed.
+ *
+ * Returns `null` when: no accounts exist, the active account is disabled
+ * or has no refresh token, or the refresh request fails (network error,
+ * revoked token, etc.). Callers fall through to full OAuth login.
+ */
+export async function probeExistingToken(client: PluginClient): Promise<OAuthCredentials | null> {
+	const storage = await loadAccounts();
+	if (!storage?.accounts.length) return null;
+
+	// Prefer the active account; fall back to any enabled account with a refresh token.
+	const activeAccount = storage.accounts[storage.activeIndex];
+	const candidate =
+		activeAccount?.enabled !== false && activeAccount?.refreshToken
+			? activeAccount
+			: storage.accounts.find(a => a.enabled !== false && a.refreshToken);
+
+	if (!candidate) return null;
+
+	try {
+		// Build the packed refresh string matching the plugin's pipe-delimited format.
+		const refresh = [candidate.refreshToken, candidate.projectId ?? "", candidate.managedProjectId ?? ""].join("|");
+		const auth: OAuthAuthDetails = { type: "oauth", refresh };
+		const refreshed = await refreshAccessToken(auth, client, PROVIDER_ID);
+
+		if (!refreshed?.access) return null;
+
+		return {
+			refresh: refreshed.refresh,
+			access: refreshed.access,
+			expires: refreshed.expires ?? 0,
+			...(candidate.email ? { email: candidate.email } : {}),
+			...(candidate.projectId ? { projectId: candidate.projectId } : {}),
+		};
+	} catch {
+		// Refresh failed (network, revoked token, etc.) — fall through to OAuth login.
+		return null;
+	}
 }
 
 export function toOAuthCredentials(result: UpstreamOAuthSuccess): OAuthCredentials {

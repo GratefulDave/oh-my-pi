@@ -4,6 +4,7 @@ import {
 	fetchBridgeModels,
 	findUpstreamOAuthMethod,
 	loginWithUpstreamOAuth,
+	probeExistingToken,
 	refreshBridgeCredentials,
 	serializeBridgeCredentials,
 } from "./auth-adapter";
@@ -29,7 +30,11 @@ export default async function opencodeAntigravityBridge(pi: ExtensionAPI): Promi
 		models: OPENCODE_ANTIGRAVITY_MODELS,
 		oauth: {
 			name: "OpenCode Antigravity",
-			login: callbacks => loginWithUpstreamOAuth(oauthMethod, callbacks),
+			login: async callbacks => {
+				const probed = await probeExistingToken(client);
+				if (probed) return probed;
+				return loginWithUpstreamOAuth(oauthMethod, callbacks);
+			},
 			// Use plugin-compatible refresh so token semantics match the upstream plugin.
 			refreshToken: credentials => refreshBridgeCredentials(credentials, client),
 			getApiKey: serializeBridgeCredentials,

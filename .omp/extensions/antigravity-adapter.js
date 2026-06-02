@@ -1,1 +1,1 @@
-../../packages/antigravity-adapter/dist/extension.bundle.js
+../../packages/antigravity-adapter/dist/antigravity.bundle.js
