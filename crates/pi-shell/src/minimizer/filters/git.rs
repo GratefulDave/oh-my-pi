@@ -292,7 +292,7 @@ fn parse_short_status_line(line: &str, summary: &mut StatusSummary) -> bool {
 	}
 	if status == "??" {
 		summary.untracked += 1;
-	} else if status.contains('U') {
+	} else if is_unmerged_short_status(status) {
 		summary.conflicts += 1;
 	} else {
 		let bytes = status.as_bytes();
@@ -305,6 +305,14 @@ fn parse_short_status_line(line: &str, summary: &mut StatusSummary) -> bool {
 	}
 	push_status_path(summary, status.trim(), path.trim());
 	true
+}
+
+/// Whether a `git status --short` XY code denotes an unmerged (conflicted)
+/// path. Per `git-status(1)`, conflicts are: `DD`, `AU`, `UD`, `UA`, `DU`,
+/// `AA`, `UU`. A plain `status.contains('U')` test misses `AA` (both added)
+/// and `DD` (both deleted), so they are matched explicitly here.
+fn is_unmerged_short_status(status: &str) -> bool {
+	matches!(status, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU")
 }
 
 fn is_short_status(status: &str) -> bool {

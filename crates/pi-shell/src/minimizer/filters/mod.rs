@@ -38,7 +38,7 @@ pub fn supports(program: &str, subcommand: Option<&str>) -> bool {
 	match program {
 		"git" | "yadm" => git::supports(subcommand),
 		"gt" => gt::supports(program, subcommand),
-		"bun" | "bunx" | "rebuild-lex.zsh" => bun::supports(program, subcommand),
+		"bun" | "bunx" => bun::supports(program, subcommand),
 		"cargo" => cargo::supports(subcommand),
 		"go" | "golangci-lint" => go::supports(program, subcommand),
 		"cmake" | "ctest" | "ninja" | "gtest" | "gtest-parallel" => {
@@ -135,7 +135,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 	match ctx.program {
 		"git" | "yadm" => git::filter(ctx, input, exit_code),
 		"gt" => gt::filter(ctx, input, exit_code),
-		"bun" | "bunx" | "rebuild-lex.zsh" => bun::filter(ctx, input, exit_code),
+		"bun" | "bunx" => bun::filter(ctx, input, exit_code),
 		"cargo" => cargo::filter(ctx, input, exit_code),
 		"go" | "golangci-lint" => go::filter(ctx, input, exit_code),
 		"dotnet" => dotnet::filter(ctx, input, exit_code),

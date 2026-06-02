@@ -373,7 +373,6 @@ fn program_label(program: &str) -> &'static str {
 		"gt" => "gt",
 		"bun" => "bun",
 		"bunx" => "bunx",
-		"rebuild-lex.zsh" => "rebuild-lex",
 		"cargo" => "cargo",
 		"go" => "go",
 		"cmake" => "cmake",

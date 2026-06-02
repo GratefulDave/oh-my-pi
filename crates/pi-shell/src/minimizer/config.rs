@@ -77,19 +77,6 @@ pub struct MinimizerOptions {
 	pub legacy_filters:       Option<bool>,
 }
 
-/// Controls how aggressively `cat`-output source files are summarised.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum OutlineLevel {
-	/// Keep small files intact; summarise only large ones with import/decl
-	/// extraction (default).
-	#[default]
-	Standard,
-	/// Strip function bodies where possible in addition to the standard
-	/// outline pass. Activated via `source_outline_level = "aggressive"` in
-	/// the settings file.
-	Aggressive,
-}
-
 /// Resolved minimizer configuration used by the engine.
 #[derive(Debug, Clone)]
 pub struct MinimizerConfig {
@@ -240,11 +227,6 @@ impl MinimizerConfig {
 	/// Fetch a per-command TOML table, if any.
 	pub fn per_command(&self, program: &str) -> Option<&toml::Value> {
 		self.per_command.get(&program.to_lowercase())
-	}
-
-	/// Whether opted-in filters should fall back to pre-PR legacy behavior.
-	pub const fn legacy_filters_active(&self) -> bool {
-		self.legacy_filters_active
 	}
 }
 
