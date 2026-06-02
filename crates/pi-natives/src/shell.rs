@@ -288,7 +288,7 @@ pub fn apply_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<Mini
 	let output = minimizer::apply(
 		&options.command,
 		&options.captured,
-		options.exit_code.unwrap_or(1),
+		options.exit_code.unwrap_or(0),
 		&config,
 	);
 	// Mirror the persistent-shell path (`pi_shell::shell`): surface telemetry
