@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/pi-ai",
-	"version": "15.5.15",
+	"version": "15.7.3-lex",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"homepage": "https://omp.sh",
 	"author": "Can Boluk",
@@ -43,7 +43,7 @@
 	"dependencies": {
 		"@anthropic-ai/sdk": "catalog:",
 		"@bufbuild/protobuf": "catalog:",
-		"@oh-my-pi/pi-utils": "workspace:*",
+		"@oh-my-pi/pi-utils": "^15.7.3-lex",
 		"openai": "catalog:",
 		"partial-json": "catalog:",
 		"zod": "catalog:"
