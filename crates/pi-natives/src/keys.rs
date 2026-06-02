@@ -609,17 +609,27 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 
 	// Named keys (case-insensitive)
 	// Mixed-mode Alt handling: terminals can still send ESC-prefixed legacy CSI/SS3
-	// sequences (for example `\x1b\x1b[A` for Alt+Up) even while Kitty protocol
-	// reporting is active. `parse_key_inner` recognizes these as `alt+...`; mirror
-	// that behavior here so `matches_key("alt+up")` agrees with `parse_key()`.
-	if modifier == MOD_ALT
+	// sequences (for example `\x1b\x1b[A` for Alt+Up, `\x1b\x1b[1;2A` for
+	// Alt+Shift+Up) even while Kitty protocol reporting is active.
+	// `parse_key_inner` recognizes these as `alt+...`; mirror that behavior here
+	// so `matches_key("alt+up")` / `matches_key("alt+shift+up")` agree with
+	// `parse_key()` for any modifier combination that includes ALT.
+	if modifier & MOD_ALT != 0
 		&& bytes.len() > 2
 		&& bytes[0] == 0x1b
 		&& bytes[1] == 0x1b
 		&& (bytes[2] == b'[' || bytes[2] == b'O')
-		&& let Some(inner_key) = parse_key_inner(&bytes[1..], true)
+		&& let Some(inner_key_id) = parse_key_inner(&bytes[1..], true)
 	{
-		return inner_key.eq_ignore_ascii_case(key);
+		// inner_key_id is e.g. "up" for alt+up or "shift+up" for alt+shift+up.
+		// Verify the key name and the non-ALT portion of the modifier both match.
+		if let Some(ParsedKeyId { key: inner_k, modifier: inner_m }) =
+			parse_key_id(&inner_key_id)
+		{
+			if inner_k.eq_ignore_ascii_case(key) && inner_m == modifier & !MOD_ALT {
+				return true;
+			}
+		}
 	}
 	if key.eq_ignore_ascii_case("escape") || key.eq_ignore_ascii_case("esc") {
 		if modifier != 0 {
@@ -859,7 +869,15 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 		// disambiguate.
 		if modifier == (MOD_CTRL | MOD_ALT) && is_letter {
 			let ctrl_char = raw_ctrl_char(ch);
-			if bytes.len() == 2 && bytes[0] == 0x1b && bytes[1] == ctrl_char {
+			// Skip if ctrl_char is also a named-key byte (Backspace=0x08,
+			// Tab=0x09, LF=0x0a, CR=0x0d) so that e.g. \x1b\r is not
+			// accepted as ctrl+alt+m – it is Alt+Enter; only enhanced
+			// encodings (Kitty/modifyOtherKeys) can disambiguate.
+			if !matches!(ctrl_char, 0x08 | 0x09 | 0x0a | 0x0d)
+				&& bytes.len() == 2
+				&& bytes[0] == 0x1b
+				&& bytes[1] == ctrl_char
+			{
 				return true;
 			}
 		}
@@ -886,7 +904,15 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 		if modifier == MOD_CTRL {
 			if is_letter {
 				let raw = raw_ctrl_char(ch);
-				if bytes.len() == 1 && bytes[0] == raw {
+				// Bytes 0x08/0x09/0x0a/0x0d are shared with named keys
+				// (Backspace/Tab/Enter) – only enhanced encodings can
+				// distinguish ctrl+h from Backspace, ctrl+m from Enter, etc.
+				// Skip the raw fast-path for those bytes so that a bare \r
+				// cannot match ctrl+m in legacy mode.
+				if !matches!(raw, 0x08 | 0x09 | 0x0a | 0x0d)
+					&& bytes.len() == 1
+					&& bytes[0] == raw
+				{
 					return true;
 				}
 				return mok_matches(codepoint, MOD_CTRL) || kitty_matches(codepoint, MOD_CTRL);
