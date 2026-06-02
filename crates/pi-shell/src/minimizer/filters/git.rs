@@ -1249,7 +1249,8 @@ mod tests {
 		assert!(out.changed);
 		assert_eq!(
 			out.text,
-			"staged 1, unstaged 1, untracked 1, conflicts 1\nM src/main.rs\nM Cargo.toml\n?? scratch.txt\nUU conflicted.rs\n"
+			"staged 1, unstaged 1, untracked 1, conflicts 1\nM src/main.rs\nM Cargo.toml\n?? \
+			 scratch.txt\nUU conflicted.rs\n"
 		);
 	}
 	#[test]

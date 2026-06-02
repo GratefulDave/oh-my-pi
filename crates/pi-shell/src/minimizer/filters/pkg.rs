@@ -51,7 +51,11 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		} else if exit_code == 0 && (is_package_tree_command(ctx) || is_package_export_command(ctx)) {
 			compact_package_tree_output(&deduped)
 		} else {
-			let cap = if exit_code == 0 { primitives::CapClass::Inventory } else { primitives::CapClass::Errors };
+			let cap = if exit_code == 0 {
+				primitives::CapClass::Inventory
+			} else {
+				primitives::CapClass::Errors
+			};
 			primitives::head_tail_cap(&deduped, cap)
 		}
 	};

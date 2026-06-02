@@ -749,6 +749,18 @@ async fn run_shell_command_segmented_chain(
 		.await;
 	};
 
+	// When minimizer is disabled, don't segment — stream the original single path.
+	if !config.enabled {
+		return run_shell_command_single(
+			session,
+			options,
+			on_chunk,
+			cancel_token,
+			minimizer::engine::MinimizerMode::None,
+		)
+		.await;
+	}
+
 	let minimizer::plan::CommandPlan::Chain { segments } =
 		minimizer::plan::analyze(&options.command)
 	else {
