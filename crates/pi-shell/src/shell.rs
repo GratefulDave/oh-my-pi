@@ -1657,12 +1657,19 @@ mod tests {
 			);
 		}
 
-		/// First stage of a pipeline that leads a new pgroup stays in the group
-		/// (no detach): detaching the leader via `setsid()` would move it to a
-		/// fresh session and make later stages' `setpgid()` fail with EPERM.
+		/// First stage of a pipeline that leads a new pgroup: detach only matters
+		/// for job control. `new_pg` alone (embedded hosts force it on the leader
+		/// while job control stays off) is not a real, parent-managed group, so
+		/// the leader detaches to keep off the host's controlling tty; with job
+		/// control on it stays in the group so later stages' `setpgid()` succeeds.
+		/// `execute_external_command` skips the group-join for detaching stages,
+		/// so a detached leader never makes a later stage EPERM.
 		#[test]
-		fn pipeline_leader_with_new_pgroup_stays_in_group() {
-			assert_eq!(child_session_action(true, false, true, false), ChildSessionAction::None,);
+		fn pipeline_leader_detaches_unless_job_control_active() {
+			assert_eq!(
+				child_session_action(true, false, true, false),
+				ChildSessionAction::DetachSession,
+			);
 			assert_eq!(child_session_action(true, false, true, true), ChildSessionAction::None,);
 		}
 

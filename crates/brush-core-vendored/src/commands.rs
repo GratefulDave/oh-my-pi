@@ -642,8 +642,14 @@ pub(crate) fn execute_external_command(
 			}
 		}
 	} else if let Some(pgid) = process_group_id {
-		// We need to join an established process group.
-		cmd.process_group(pgid);
+		// We need to join an established process group — but only when we are
+		// staying in it. A detaching stage calls `setsid()`, so requesting
+		// `setpgid()` into a group whose leader has already moved to another
+		// session would fail with EPERM (and is pointless: `setsid()` gives the
+		// child its own session and group regardless).
+		if session_action != ChildSessionAction::DetachSession {
+			cmd.process_group(pgid);
+		}
 	}
 
 	// See `child_session_action` for the decision rationale and call-out about
@@ -975,15 +981,22 @@ pub enum ChildSessionAction {
 /// child into a fresh session via `setsid()`, pulling it out of the shared group
 /// and breaking job-control signal propagation.
 ///
-/// Such a real group exists when either the stage itself leads a new group
-/// (`new_pg`, e.g. the first stage, including embedded `timeout`-wrapped
-/// pipelines) or job control is active (later stages join the leader's group
-/// with `new_pg == false`). In both cases pipeline stages stay in the group
-/// (no detach). Embedded/no-job-control pipelines whose stages neither lead a
-/// group nor run under job control still detach: the host cancels via the
-/// descendant tree rather than the process group, and detaching prevents a
-/// non-terminal stage (e.g. `true | zsh -i | cat`) from grabbing the host's
-/// controlling tty and stopping it with SIGTTIN/SIGTTOU.
+/// Such a real group exists *only* when job control is active: the parent relies
+/// on the shared process group to deliver job-control signals, so every stage
+/// stays in it (no detach) regardless of whether it leads the group
+/// (`new_pg == true`, the first stage) or joins it (`new_pg == false`, later
+/// stages).
+///
+/// `new_pg` alone does NOT imply such a group. Embedded hosts (e.g. `pi-shell`
+/// /`pi-natives` inside OMP) force `ProcessGroupPolicy::NewProcessGroup` on the
+/// pipeline leader while job control stays disabled; that leader has no
+/// job-control consumer, so it must detach like every other no-job-control
+/// stage. Otherwise a leader such as `zsh -i -c ... | cat` keeps the host's
+/// controlling tty and can `tcsetpgrp`/SIGTTIN the host. With job control off
+/// the host cancels via the descendant tree rather than the process group, and
+/// `execute_external_command` skips the group-join (`process_group(pgid)`) for
+/// detaching stages, so a detached leader never makes a later stage's
+/// `setpgid()` fail with EPERM.
 ///
 /// Foregrounding remains gated on `new_pg && child_stdin_is_terminal`.
 pub fn child_session_action(
@@ -1000,7 +1013,7 @@ pub fn child_session_action(
 		return ChildSessionAction::None;
 	}
 
-	if in_pipeline_group && (new_pg || job_control_active) {
+	if in_pipeline_group && job_control_active {
 		return ChildSessionAction::None;
 	}
 

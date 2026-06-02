@@ -380,10 +380,18 @@ mod tests {
 		}
 
 		#[test]
-		fn pipeline_leader_with_new_pgroup_stays_in_group() {
-			// The first stage leads a real new pgroup; detaching it would setsid
-			// it out of that group and make later stages' setpgid fail (EPERM).
-			assert_eq!(child_session_action(true, false, true, false), ChildSessionAction::None);
+		fn pipeline_leader_detaches_unless_job_control_active() {
+			// Job control off (embedded host forces NewProcessGroup on the leader):
+			// the leader has no job-control consumer, so it must detach like every
+			// other no-job-control stage — otherwise `zsh -i -c ... | cat` keeps the
+			// host's controlling tty. The spawn path skips the group-join for
+			// detaching later stages, so this does not reintroduce the setpgid EPERM.
+			assert_eq!(
+				child_session_action(true, false, true, false),
+				ChildSessionAction::DetachSession
+			);
+			// Job control on: the leader anchors a real, parent-managed group; stay
+			// in it so later stages' setpgid succeeds and signals propagate.
 			assert_eq!(child_session_action(true, false, true, true), ChildSessionAction::None);
 		}
 
