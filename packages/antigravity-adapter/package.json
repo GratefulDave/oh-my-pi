@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "pi-antigravity-adapter",
-	"version": "0.1.0",
+	"version": "15.7.6-lex",
 	"description": "OMP provider adapter for the OpenCode Antigravity auth plugin",
 	"homepage": "https://github.com/GratefulDave/oh-my-pi",
 	"author": "David Andrews",
@@ -30,8 +30,8 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-ai": "workspace:*",
-		"@oh-my-pi/pi-utils": "workspace:*",
+		"@oh-my-pi/pi-ai": "^15.7.6-lex",
+		"@oh-my-pi/pi-utils": "^15.7.6-lex",
 		"opencode-antigravity-auth": "1.6.5-beta.0"
 	},
 	"peerDependencies": {
