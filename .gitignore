@@ -77,3 +77,11 @@ python/robomp/.cache/
 python/robomp/src/robomp/static/
 python/robomp/web/dist/
 python/robomp/.env
+
+# Machine-local skill symlinks (point to absolute the-library paths; break on clone)
+.claude/skills/
+.codex/skills/
+.omp/agent/skills/
+
+# Bun test cache piles
+packages/*/bun/@t@/
