@@ -25,51 +25,33 @@ use crate::task;
 #[derive(Debug, Clone, Default)]
 pub struct MinimizerOptions {
 	/// Master switch. Absent / false = disabled.
-	pub enabled:              Option<bool>,
+	pub enabled:           Option<bool>,
 	/// Optional path to a TOML settings file whose values override
 	/// field-level defaults. `~` is expanded.
-	pub settings_path:        Option<String>,
+	pub settings_path:     Option<String>,
 	/// Optional xxHash64 digest (hex) of the settings file contents. When
 	/// supplied, the engine refuses to honor a settings file whose hash does
 	/// not match — a lightweight trust gate for agent-controllable paths.
-	pub settings_hash:        Option<String>,
+	pub settings_hash:     Option<String>,
 	/// Opt-in allowlist of program names (e.g. `"git"`). When empty or
 	/// absent, all built-in filters are active.
-	pub only:                 Option<Vec<String>>,
+	pub only:              Option<Vec<String>>,
 	/// Program names explicitly excluded from minimization.
-	pub except:               Option<Vec<String>>,
+	pub except:            Option<Vec<String>>,
 	/// Maximum captured bytes per command before the engine falls back to
 	/// the raw, un-minimized output. Default 4 MiB.
-	pub max_capture_bytes:    Option<u32>,
-	/// Source-outline aggressiveness for `cat <source-file>` minimization.
-	/// Accepts `"default"` (current behavior) or `"aggressive"` (strip
-	/// function/method bodies for ts/tsx/js/jsx/py/rs/go).
-	pub source_outline_level: Option<String>,
-	/// Master switch for the AI-summary filter (W4 / rtk smart). Defaults
-	/// to off; only effective when the host crate is built with the
-	/// `ai-smart` Cargo feature.
-	pub ai_smart_enabled:     Option<bool>,
-	/// Provider key for the AI summarizer. Defaults to `"deepseek"`.
-	pub ai_smart_provider:    Option<String>,
-	/// Kill-switch to fall back to pre-PR legacy behavior for the
-	/// always-shrink filters (grep, find, pytest). When unset, defers to
-	/// the `OMP_MINIMIZER_LEGACY_FILTERS` env var; default `false`.
-	pub legacy_filters:       Option<bool>,
+	pub max_capture_bytes: Option<u32>,
 }
 
 impl From<MinimizerOptions> for minimizer::MinimizerOptions {
 	fn from(value: MinimizerOptions) -> Self {
 		Self {
-			enabled:              value.enabled,
-			settings_path:        value.settings_path,
-			settings_hash:        value.settings_hash,
-			only:                 value.only,
-			except:               value.except,
-			max_capture_bytes:    value.max_capture_bytes,
-			source_outline_level: value.source_outline_level,
-			ai_smart_enabled:     value.ai_smart_enabled,
-			ai_smart_provider:    value.ai_smart_provider,
-			legacy_filters:       value.legacy_filters,
+			enabled:           value.enabled,
+			settings_path:     value.settings_path,
+			settings_hash:     value.settings_hash,
+			only:              value.only,
+			except:            value.except,
+			max_capture_bytes: value.max_capture_bytes,
 		}
 	}
 }
@@ -141,10 +123,11 @@ pub struct ShellMinimizerApplyOptions {
 
 /// Telemetry for a single minimization.
 ///
-/// Surfaced when the minimizer rewrote output or emitted a reason-only
-/// miss label. The session layer should persist `original_text` only for
-/// actual rewrites; reason-only records keep `text` unchanged and must not
-/// trigger artifact persistence.
+/// Surfaced when the minimizer actually rewrote the command's output. The
+/// session layer is expected to persist `original_text` via its
+/// `ArtifactManager`, splice the resulting `artifact://<id>` reference
+/// into `text`, and replace any previously streamed raw output with the
+/// minimized text.
 #[napi(object)]
 pub struct MinimizerResult {
 	/// Dispatch label produced by the minimizer (e.g. `"git"`,
@@ -308,8 +291,13 @@ pub fn apply_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<Mini
 		options.exit_code.unwrap_or(1),
 		&config,
 	);
-	if output.filter != "passthrough" {
-		let original_text = output.original_text.unwrap_or_else(|| output.text.clone());
+	// Mirror the persistent-shell path (`pi_shell::shell`): surface telemetry
+	// only when the minimizer actually rewrote the output and kept the
+	// original buffer. The disabled / passthrough cases report `changed:
+	// false` with no `original_text`, and must yield `null`.
+	if output.changed
+		&& let Some(original_text) = output.original_text
+	{
 		let output_bytes = u32::try_from(output.text.len()).unwrap_or(u32::MAX);
 		return Some(MinimizerResult {
 			filter: output.filter.to_string(),
@@ -397,16 +385,45 @@ mod tests {
 	use super::CoreShell;
 
 	#[test]
-	fn apply_shell_minimizer_keeps_chain_first_reason_when_chain_dispatch_does_not_rewrite() {
+	fn apply_shell_minimizer_surfaces_rewrite_with_original() {
+		let captured = "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n";
 		let result = super::apply_shell_minimizer(super::ShellMinimizerApplyOptions {
-			command:   "git diff ; printf done".to_string(),
-			captured:  "diff --git a/file.rs b/file.rs\n".to_string(),
+			command:   "git diff".to_string(),
+			captured:  captured.to_string(),
 			exit_code: Some(0),
 			minimizer: Some(super::MinimizerOptions { enabled: Some(true), ..Default::default() }),
 		})
-		.expect("expected minimizer result");
-		assert_eq!(result.filter, "chain-first");
-		assert_eq!(result.text, result.original_text);
+		.expect("an enabled, supported command should surface a rewrite");
+		assert_eq!(result.filter, "git");
+		// A genuine rewrite carries the untouched capture in `original_text`
+		// and a strictly different minimized `text`.
+		assert_eq!(result.original_text, captured);
+		assert_ne!(result.text, result.original_text);
+		assert_eq!(result.input_bytes as usize, captured.len());
+	}
+
+	#[test]
+	fn apply_shell_minimizer_returns_none_when_disabled() {
+		// `enabled: false` keeps the engine in passthrough — no telemetry.
+		assert!(
+			super::apply_shell_minimizer(super::ShellMinimizerApplyOptions {
+				command:   "git diff".to_string(),
+				captured:  "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n".to_string(),
+				exit_code: Some(0),
+				minimizer: Some(super::MinimizerOptions { enabled: Some(false), ..Default::default() }),
+			})
+			.is_none()
+		);
+		// A missing minimizer handle is also a no-op.
+		assert!(
+			super::apply_shell_minimizer(super::ShellMinimizerApplyOptions {
+				command:   "git diff".to_string(),
+				captured:  "diff --git a/file.rs b/file.rs\n".to_string(),
+				exit_code: Some(0),
+				minimizer: None,
+			})
+			.is_none()
+		);
 	}
 
 	mod child_session_action_tests {
@@ -419,9 +436,11 @@ mod tests {
 		}
 
 		#[test]
-		fn non_terminal_stdin_leading_new_pgroup_detaches_unless_pipeline() {
+		fn non_terminal_stdin_detaches_regardless_of_pipeline() {
 			assert_eq!(child_session_action(true, false, false), ChildSessionAction::DetachSession);
-			assert_eq!(child_session_action(true, false, true), ChildSessionAction::None);
+			// A leading-new-pgroup stage of a pipeline still detaches: setsid keeps
+			// it off the host's controlling tty.
+			assert_eq!(child_session_action(true, false, true), ChildSessionAction::DetachSession);
 		}
 
 		#[test]
@@ -440,8 +459,11 @@ mod tests {
 		}
 
 		#[test]
-		fn pipeline_stage_does_not_detach() {
-			assert_eq!(child_session_action(false, false, true), ChildSessionAction::None);
+		fn pipeline_stage_with_non_terminal_stdin_detaches() {
+			// Regression: an interactive child inside a pipeline (`zsh -i | awk`)
+			// must not stay in the host session and seize its tty. Pre-fix this
+			// returned `None`, leaving the stage attached and able to SIGTTIN the host.
+			assert_eq!(child_session_action(false, false, true), ChildSessionAction::DetachSession);
 		}
 	}
 
