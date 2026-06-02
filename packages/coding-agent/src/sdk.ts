@@ -1239,6 +1239,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			settings,
 			authStorage,
 			modelRegistry,
+			// Expose the parent's loaded extensions so eval-spawned subagents inherit
+			// provider registrations (including async ones drained into pendingProviderRegistrations
+			// during load) instead of re-discovering extensions — matching the task-tool spawn path.
+			getPreloadedExtensions: () => {
+				const runner = session?.extensionRunner;
+				if (!runner) return undefined;
+				return { extensions: runner.getExtensions(), runtime: runner.getRuntime(), errors: [] };
+			},
 			getTelemetry: () => agent?.telemetry,
 		};
 
@@ -1345,6 +1353,15 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			inlineExtensions.push(createCustomToolsExtension(customTools));
 		}
 
+		// Track extension sources that were already processed by a parent session
+		// when preloadedExtensions is provided. These sources have already had their
+		// provider registrations cleared and replayed on the shared modelRegistry.
+		// We must not clear them again, or extension-provided models (e.g. antigravity)
+		// will be lost — the parent already drained pendingProviderRegistrations.
+		const preExistingSources = options.preloadedExtensions
+			? new Set(options.preloadedExtensions.extensions.map(e => e.path))
+			: null;
+
 		// Load extensions (discovers from standard locations + configured paths)
 		let extensionsResult: LoadExtensionsResult;
 		if (options.disableExtensionDiscovery) {
@@ -1393,6 +1410,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		const activeExtensionSources = extensionsResult.extensions.map(extension => extension.path);
 		modelRegistry.syncExtensionSources(activeExtensionSources);
 		for (const sourceId of new Set(activeExtensionSources)) {
+			// Skip clearing sources that were already processed by a parent session
+			// via preloadedExtensions. The parent already registered their providers
+			// on the shared modelRegistry and drained pendingProviderRegistrations.
+			// Clearing them here would lose extension-provided providers (e.g. antigravity).
+			if (preExistingSources?.has(sourceId)) continue;
 			modelRegistry.clearSourceRegistrations(sourceId);
 		}
 		if (extensionsResult.runtime.pendingProviderRegistrations.length > 0) {
