@@ -351,39 +351,73 @@ mod tests {
 
 		#[test]
 		fn interactive_with_terminal_stdin_takes_foreground() {
-			assert_eq!(child_session_action(true, true, false), ChildSessionAction::TakeForeground);
-			assert_eq!(child_session_action(true, true, true), ChildSessionAction::TakeForeground);
+			assert_eq!(
+				child_session_action(true, true, false, true),
+				ChildSessionAction::TakeForeground
+			);
+			assert_eq!(
+				child_session_action(true, true, true, true),
+				ChildSessionAction::TakeForeground
+			);
+			assert_eq!(
+				child_session_action(true, true, true, false),
+				ChildSessionAction::TakeForeground
+			);
 		}
 
 		#[test]
-		fn non_terminal_stdin_detaches_regardless_of_pipeline() {
-			assert_eq!(child_session_action(true, false, false), ChildSessionAction::DetachSession);
-			// A leading-new-pgroup stage of a pipeline still detaches: setsid keeps
-			// it off the host's controlling tty.
-			assert_eq!(child_session_action(true, false, true), ChildSessionAction::DetachSession);
+		fn new_pgroup_non_terminal_non_pipeline_detaches() {
+			// Leading a new pgroup but not in a pipeline: setsid keeps it off the
+			// host's controlling tty.
+			assert_eq!(
+				child_session_action(true, false, false, false),
+				ChildSessionAction::DetachSession
+			);
+			assert_eq!(
+				child_session_action(true, false, false, true),
+				ChildSessionAction::DetachSession
+			);
+		}
+
+		#[test]
+		fn pipeline_leader_with_new_pgroup_stays_in_group() {
+			// The first stage leads a real new pgroup; detaching it would setsid
+			// it out of that group and make later stages' setpgid fail (EPERM).
+			assert_eq!(child_session_action(true, false, true, false), ChildSessionAction::None);
+			assert_eq!(child_session_action(true, false, true, true), ChildSessionAction::None);
 		}
 
 		#[test]
 		fn non_interactive_with_terminal_stdin_does_nothing() {
-			assert_eq!(child_session_action(false, true, false), ChildSessionAction::None);
-		}
-
-		#[test]
-		fn non_interactive_terminal_stdin_in_pipeline_does_nothing() {
-			assert_eq!(child_session_action(false, true, true), ChildSessionAction::None);
+			assert_eq!(child_session_action(false, true, false, false), ChildSessionAction::None);
+			assert_eq!(child_session_action(false, true, true, false), ChildSessionAction::None);
 		}
 
 		#[test]
 		fn embedded_host_with_non_terminal_stdin_detaches() {
-			assert_eq!(child_session_action(false, false, false), ChildSessionAction::DetachSession);
+			assert_eq!(
+				child_session_action(false, false, false, false),
+				ChildSessionAction::DetachSession
+			);
 		}
 
 		#[test]
-		fn pipeline_stage_with_non_terminal_stdin_detaches() {
-			// Regression: an interactive child inside a pipeline (`zsh -i | awk`)
-			// must not stay in the host session and seize its tty. Pre-fix this
-			// returned `None`, leaving the stage attached and able to SIGTTIN the host.
-			assert_eq!(child_session_action(false, false, true), ChildSessionAction::DetachSession);
+		fn no_job_control_pipeline_stage_detaches() {
+			// Regression: an interactive child inside an embedded (no-job-control)
+			// pipeline (`zsh -i | awk`) must not stay in the host session and seize
+			// its tty. With job control off the stage detaches.
+			assert_eq!(
+				child_session_action(false, false, true, false),
+				ChildSessionAction::DetachSession
+			);
+		}
+
+		#[test]
+		fn job_controlled_later_pipeline_stage_stays_in_group() {
+			// A later stage of a job-controlled pipeline joins the leader's group
+			// (new_pg == false); detaching would setsid it out and break job-control
+			// signal propagation (e.g. `sleep 10 | cat`).
+			assert_eq!(child_session_action(false, false, true, true), ChildSessionAction::None);
 		}
 	}
 

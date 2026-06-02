@@ -1626,58 +1626,87 @@ mod tests {
 		use brush_core::commands::{ChildSessionAction, child_session_action};
 
 		/// Interactive brush, leading its own pgroup, terminal stdin: foreground.
+		/// Terminal foregrounding wins regardless of pipeline/job-control state.
 		#[test]
 		fn interactive_with_terminal_stdin_takes_foreground() {
-			assert_eq!(child_session_action(true, true, false), ChildSessionAction::TakeForeground,);
-			// Terminal foregrounding wins even when this is the first stage of a
-			// pipeline; no detach is attempted.
-			assert_eq!(child_session_action(true, true, true), ChildSessionAction::TakeForeground,);
+			assert_eq!(
+				child_session_action(true, true, false, true),
+				ChildSessionAction::TakeForeground,
+			);
+			assert_eq!(
+				child_session_action(true, true, true, true),
+				ChildSessionAction::TakeForeground,
+			);
+			assert_eq!(
+				child_session_action(true, true, true, false),
+				ChildSessionAction::TakeForeground,
+			);
 		}
 
-		/// Brush leading a new pgroup with non-terminal stdin always detaches —
-		/// including the first stage of a pipeline. `setsid()` keeps the child
-		/// off the host's controlling tty; the spawn path skips
-		/// `process_group(...)` for detached children, so later stages no
-		/// longer try to `setpgid`-join a leader that has moved sessions (the
-		/// historical EPERM hazard).
+		/// Brush leading a new pgroup with non-terminal stdin, NOT in a pipeline:
+		/// detach. `setsid()` keeps the child off the host's controlling tty.
 		#[test]
-		fn non_terminal_stdin_detaches_regardless_of_pipeline() {
-			assert_eq!(child_session_action(true, false, false), ChildSessionAction::DetachSession,);
-			assert_eq!(child_session_action(true, false, true), ChildSessionAction::DetachSession,);
+		fn new_pgroup_non_terminal_non_pipeline_detaches() {
+			assert_eq!(
+				child_session_action(true, false, false, false),
+				ChildSessionAction::DetachSession,
+			);
+			assert_eq!(
+				child_session_action(true, false, false, true),
+				ChildSessionAction::DetachSession,
+			);
 		}
 
-		/// Non-interactive brush, terminal stdin, no pipeline: nothing to do.
+		/// First stage of a pipeline that leads a new pgroup stays in the group
+		/// (no detach): detaching the leader via `setsid()` would move it to a
+		/// fresh session and make later stages' `setpgid()` fail with EPERM.
+		#[test]
+		fn pipeline_leader_with_new_pgroup_stays_in_group() {
+			assert_eq!(child_session_action(true, false, true, false), ChildSessionAction::None,);
+			assert_eq!(child_session_action(true, false, true, true), ChildSessionAction::None,);
+		}
+
+		/// Non-interactive brush, terminal stdin: nothing to do (parent already
+		/// wired pgroup membership).
 		#[test]
 		fn non_interactive_with_terminal_stdin_does_nothing() {
-			assert_eq!(child_session_action(false, true, false), ChildSessionAction::None,);
-		}
-
-		/// Non-interactive brush, terminal stdin, joining a pipeline pgroup:
-		/// nothing to do (parent already wired pgroup membership).
-		#[test]
-		fn non_interactive_terminal_stdin_in_pipeline_does_nothing() {
-			assert_eq!(child_session_action(false, true, true), ChildSessionAction::None,);
+			assert_eq!(child_session_action(false, true, false, false), ChildSessionAction::None,);
+			assert_eq!(child_session_action(false, true, true, false), ChildSessionAction::None,);
 		}
 
 		/// **Embedded host bug fix.** Non-interactive brush, non-terminal stdin,
-		/// no pipeline pgroup: detach so the child cannot SIGTTIN/SIGTTOU the
-		/// host. This is the case that regressed before this fix and is the
-		/// motivating bug for PR #895.
+		/// no pipeline: detach so the child cannot SIGTTIN/SIGTTOU the host. This
+		/// is the case that regressed before this fix (PR #895).
 		#[test]
 		fn embedded_host_with_non_terminal_stdin_detaches() {
-			assert_eq!(child_session_action(false, false, false), ChildSessionAction::DetachSession,);
+			assert_eq!(
+				child_session_action(false, false, false, false),
+				ChildSessionAction::DetachSession,
+			);
 		}
 
-		/// **Pipeline tty-safety.** Non-interactive brush, non-terminal stdin
-		/// (pipe), and a multi-command pipeline: detach. An interactive child in
-		/// a pipeline (`zsh -i ... | awk`) would otherwise open `/dev/tty`,
-		/// `tcsetpgrp` itself to the foreground, and leave the host stopped on
-		/// its next tty read (`suspended (tty input)`). Each stage gets its own
-		/// session instead; the embedded host cancels via the descendant tree,
-		/// not a shared pgroup, and pipes are session-independent.
+		/// **Pipeline tty-safety (no job control).** Non-interactive brush,
+		/// non-terminal stdin (pipe), multi-command pipeline, job control off
+		/// (embedded host): detach. An interactive child in such a pipeline
+		/// (`true | zsh -i | cat`) would otherwise open `/dev/tty`, `tcsetpgrp`
+		/// itself to the foreground, and leave the host stopped. The embedded
+		/// host cancels via the descendant tree, not a shared pgroup.
 		#[test]
-		fn pipeline_stage_with_non_terminal_stdin_detaches() {
-			assert_eq!(child_session_action(false, false, true), ChildSessionAction::DetachSession,);
+		fn no_job_control_pipeline_stage_detaches() {
+			assert_eq!(
+				child_session_action(false, false, true, false),
+				ChildSessionAction::DetachSession,
+			);
+		}
+
+		/// **Job-controlled later pipeline stage.** Non-terminal stdin, multi-
+		/// command pipeline, job control on, joining the leader's group
+		/// (`new_pg == false`): stay in the group. Detaching would `setsid()`
+		/// the stage out of the shared pipeline pgroup and break job-control
+		/// signal propagation (e.g. `sleep 10 | cat`).
+		#[test]
+		fn job_controlled_later_pipeline_stage_stays_in_group() {
+			assert_eq!(child_session_action(false, false, true, true), ChildSessionAction::None,);
 		}
 	}
 

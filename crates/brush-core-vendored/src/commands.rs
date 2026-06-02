@@ -599,7 +599,11 @@ pub(crate) fn execute_external_command(
 
 	// Figure out if we should be setting up a new process group.
 	let new_pg = matches!(context.params.process_group_policy, ProcessGroupPolicy::NewProcessGroup);
-	let session_action = child_session_action(new_pg, child_stdin_is_terminal, in_pipeline);
+	// Job control implies the pipeline runs in a real, parent-managed process
+	// group, so its stages must stay in that group rather than detach.
+	let job_control_active = context.shell.options().enable_job_control;
+	let session_action =
+		child_session_action(new_pg, child_stdin_is_terminal, in_pipeline, job_control_active);
 
 	// Compose the std::process::Command that encapsulates what we want to launch.
 	// argv[0] defaults to context.command_name (the user-facing name of the
@@ -964,18 +968,29 @@ pub enum ChildSessionAction {
 /// child inherited the host's controlling tty, and any `/dev/tty` open or
 /// `tcsetpgrp` call from the child could SIGTTIN/SIGTTOU and stop the host.
 ///
-/// `detach_session()` is unsafe for any member of a multi-command pipeline:
-/// for the first stage it puts the process-group leader in a different session,
-/// causing later stages' `setpgid()` to fail with EPERM; for later stages it
-/// either fails with EPERM or moves the child into a fresh session, breaking the
-/// pipeline's shared process group and job-control signal propagation. Pipeline
-/// stages therefore keep their pre-fix behavior (no detach).
+/// `detach_session()` is unsafe for any member of a multi-command pipeline that
+/// belongs to a real, parent-managed process group: for the first stage it puts
+/// the group leader in a different session, causing later stages' `setpgid()` to
+/// fail with EPERM; for later stages it either fails with EPERM or moves the
+/// child into a fresh session via `setsid()`, pulling it out of the shared group
+/// and breaking job-control signal propagation.
+///
+/// Such a real group exists when either the stage itself leads a new group
+/// (`new_pg`, e.g. the first stage, including embedded `timeout`-wrapped
+/// pipelines) or job control is active (later stages join the leader's group
+/// with `new_pg == false`). In both cases pipeline stages stay in the group
+/// (no detach). Embedded/no-job-control pipelines whose stages neither lead a
+/// group nor run under job control still detach: the host cancels via the
+/// descendant tree rather than the process group, and detaching prevents a
+/// non-terminal stage (e.g. `true | zsh -i | cat`) from grabbing the host's
+/// controlling tty and stopping it with SIGTTIN/SIGTTOU.
 ///
 /// Foregrounding remains gated on `new_pg && child_stdin_is_terminal`.
 pub fn child_session_action(
 	new_pg: bool,
 	child_stdin_is_terminal: bool,
 	in_pipeline_group: bool,
+	job_control_active: bool,
 ) -> ChildSessionAction {
 	if new_pg && child_stdin_is_terminal {
 		return ChildSessionAction::TakeForeground;
@@ -985,7 +1000,7 @@ pub fn child_session_action(
 		return ChildSessionAction::None;
 	}
 
-	if in_pipeline_group && new_pg {
+	if in_pipeline_group && (new_pg || job_control_active) {
 		return ChildSessionAction::None;
 	}
 
