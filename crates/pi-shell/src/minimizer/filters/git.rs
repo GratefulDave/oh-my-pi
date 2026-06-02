@@ -1081,14 +1081,21 @@ fn condense_fetch(input: &str, exit_code: i32) -> String {
 			// Branch fetch lines: " * branch       name -> FETCH_HEAD" or "   hash..hash
 			// name -> name"
 			if trimmed.starts_with('*') || trimmed.starts_with(" *") {
-				if trimmed.contains("..") {
+				// Count range updates (`..`) and newly created refs
+				// (`* [new branch]`, `* [new tag]`).  Plain FETCH_HEAD lines
+				// (`* branch  main -> FETCH_HEAD`) are kept for context but do
+				// not increment the counter — the ref was already known.
+				if trimmed.contains("..") || trimmed.contains("[new") {
 					updates += 1;
 				}
 				kept.push(trimmed.to_string());
 				continue;
 			}
 			if trimmed.contains(" -> ") && (trimmed.starts_with('-') || trimmed.contains("..")) {
-				if trimmed.contains("..") {
+				// Count range updates (`..`) and deleted refs
+				// (`- [deleted] old -> origin/old`) so pruned branches appear
+				// in the summary line.
+				if trimmed.contains("..") || trimmed.starts_with('-') {
 					updates += 1;
 				}
 				kept.push(trimmed.to_string());

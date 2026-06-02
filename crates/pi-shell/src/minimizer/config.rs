@@ -40,29 +40,61 @@ pub struct MinimizerOptions {
 	pub max_capture_bytes: Option<u32>,
 }
 
+/// Controls how aggressively `cat`-output source files are summarised.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutlineLevel {
+	/// Keep small files intact; summarise only large ones with import/decl
+	/// extraction (default).
+	#[default]
+	Standard,
+	/// Strip function bodies where possible in addition to the standard
+	/// outline pass. Activated via `source_outline_level = "aggressive"` in
+	/// the settings file.
+	Aggressive,
+}
+
 /// Resolved minimizer configuration used by the engine.
 #[derive(Debug, Clone)]
 pub struct MinimizerConfig {
-	pub enabled:           bool,
-	pub only:              HashSet<String>,
-	pub except:            HashSet<String>,
-	pub max_capture_bytes: u32,
-	pub per_command:       HashMap<String, toml::Value>,
+	pub enabled:               bool,
+	pub only:                  HashSet<String>,
+	pub except:                HashSet<String>,
+	pub max_capture_bytes:     u32,
+	pub per_command:           HashMap<String, toml::Value>,
 	/// Compiled user-defined pipelines parsed from `settings_path`. Searched
 	/// before the built-in pipelines so user filters win.
-	pub user_pipelines:    Option<Arc<PipelineRegistry>>,
+	pub user_pipelines:        Option<Arc<PipelineRegistry>>,
+	/// Kill-switch: when `true`, new filter passes fall back to legacy
+	/// behaviour so callers can rollback a regression without recompile.
+	pub legacy_filters_active: bool,
+	/// How aggressively to outline source files viewed via `cat`.
+	pub source_outline_level:  OutlineLevel,
 }
 
 impl Default for MinimizerConfig {
 	fn default() -> Self {
 		Self {
-			enabled:           false,
-			only:              HashSet::new(),
-			except:            HashSet::new(),
-			max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
-			per_command:       HashMap::new(),
-			user_pipelines:    None,
+			enabled:               false,
+			only:                  HashSet::new(),
+			except:                HashSet::new(),
+			max_capture_bytes:     DEFAULT_MAX_CAPTURE_BYTES,
+			per_command:           HashMap::new(),
+			user_pipelines:        None,
+			legacy_filters_active: false,
+			source_outline_level:  OutlineLevel::default(),
 		}
+	}
+}
+
+impl MinimizerConfig {
+	/// Returns `true` when the legacy-filter kill-switch is active.
+	///
+	/// Provided as a method so call-sites read naturally as
+	/// `ctx.config.legacy_filters_active()` while test setup can still do
+	/// direct field assignment.
+	#[inline]
+	pub const fn legacy_filters_active(&self) -> bool {
+		self.legacy_filters_active
 	}
 }
 

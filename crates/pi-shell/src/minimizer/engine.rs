@@ -332,13 +332,15 @@ mod tests {
 	}
 
 	#[test]
-	fn enabled_config_does_not_minimize_git_status() {
+	fn enabled_config_minimizes_git_status() {
+		// `git status` was added to the supported-subcommands list in this PR;
+		// verify it now routes through condense_status.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
-		assert!(!should_minimize("git status", &cfg));
+		assert!(should_minimize("git status", &cfg));
 		let input = "## main\n M file.rs\n";
 		let out = apply("git status", input, 0, &cfg);
-		assert!(!out.changed);
-		assert_eq!(out.text, input);
+		assert!(out.changed);
+		assert!(out.text.contains("unstaged 1"));
 	}
 
 	#[test]

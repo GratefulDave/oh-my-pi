@@ -236,13 +236,22 @@ fn compact_aws_s3_ls_text(input: &str) -> Option<String> {
 					"prefix".to_string(),
 				]);
 			}
+			// Format: DATE TIME SIZE KEY_NAME
+			// KEY_NAME may contain spaces, so consume the size token then join
+			// the remainder to reconstruct the full key.
 			let time = parts.next()?;
-			let third = parts.next()?;
-			if third == "0" && parts.clone().next().is_none() {
+			let size = parts.next()?;
+			let rest: Vec<&str> = parts.collect();
+			// Skip zero-byte objects with no name continuation.
+			if size == "0" && rest.is_empty() {
 				return None;
 			}
-			let name = parts.last().unwrap_or(third);
-			Some(vec![name.to_string(), format!("{first} {time}")])
+			let name = if rest.is_empty() {
+				size.to_string()
+			} else {
+				rest.join(" ")
+			};
+			Some(vec![name, format!("{first} {time}")])
 		})
 		.collect::<Vec<_>>();
 	if rows.is_empty() {
