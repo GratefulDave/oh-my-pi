@@ -919,7 +919,11 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 			}
 
 			// ctrl+symbol legacy mapping (layout dependent)
+			// 0x1b (ctrl+[) is also the ESC byte – the named Escape key – so only
+			// enhanced encodings can distinguish the two; skip the legacy fast-path
+			// to prevent a plain Escape press from firing a ctrl+[ binding.
 			if let Some(legacy_ctrl) = ctrl_symbol_to_byte(ch)
+				&& legacy_ctrl != 0x1b
 				&& bytes == [legacy_ctrl]
 			{
 				return true;
@@ -1611,5 +1615,18 @@ mod tests {
 		assert!(matches_key_inner(b"\x1b[27;7;97~", "ctrl+alt+a", false));
 		// Unrelated bytes still do not match.
 		assert!(!matches_key_inner(b"\x1b[97;7u", "ctrl+alt+b", false));
+	}
+
+	#[test]
+	fn escape_does_not_match_ctrl_bracket() {
+		// 0x1b is both the named Escape byte and what ctrl+[ produces.  In legacy
+		// mode the two are indistinguishable, so a bare ESC must NOT fire a ctrl+[
+		// binding – only enhanced encodings (Kitty / modifyOtherKeys) can tell them
+		// apart.
+		assert!(!matches_key_inner(b"\x1b", "ctrl+[", false));
+		assert!(!matches_key_inner(b"\x1b", "ctrl+[", true));
+		// The named Escape key must still match the same byte.
+		assert!(matches_key_inner(b"\x1b", "escape", false));
+		assert!(matches_key_inner(b"\x1b", "escape", true));
 	}
 }
