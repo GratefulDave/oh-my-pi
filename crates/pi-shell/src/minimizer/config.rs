@@ -77,6 +77,19 @@ pub struct MinimizerOptions {
 	pub legacy_filters:       Option<bool>,
 }
 
+/// Controls how aggressively `cat`-output source files are summarised.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutlineLevel {
+	/// Keep small files intact; summarise only large ones with import/decl
+	/// extraction (default).
+	#[default]
+	Standard,
+	/// Strip function bodies where possible in addition to the standard
+	/// outline pass. Activated via `source_outline_level = "aggressive"` in
+	/// the settings file.
+	Aggressive,
+}
+
 /// Resolved minimizer configuration used by the engine.
 #[derive(Debug, Clone)]
 pub struct MinimizerConfig {
@@ -117,6 +130,18 @@ impl Default for MinimizerConfig {
 			ai_smart_provider:     DEFAULT_AI_SMART_PROVIDER.to_string(),
 			legacy_filters_active: false,
 		}
+	}
+}
+
+impl MinimizerConfig {
+	/// Returns `true` when the legacy-filter kill-switch is active.
+	///
+	/// Provided as a method so call-sites read naturally as
+	/// `ctx.config.legacy_filters_active()` while test setup can still do
+	/// direct field assignment.
+	#[inline]
+	pub const fn legacy_filters_active(&self) -> bool {
+		self.legacy_filters_active
 	}
 }
 

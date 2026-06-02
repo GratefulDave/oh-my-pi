@@ -310,6 +310,68 @@ pub fn keep_lines_regex(input: &str, set: &regex::RegexSet) -> String {
 	out
 }
 
+/// Named head/tail cap configurations for common output classes.
+///
+/// Each variant encodes a threshold (above which capping triggers), a head
+/// line count, and a tail line count. Using named classes instead of
+/// per-callsite magic numbers keeps the policy in one place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapClass {
+	/// General command noise / error output (errors, warnings, stack traces).
+	/// Caps at 200 lines → keeps first 100 and last 60.
+	Errors,
+	/// Package manager install/update inventory listings.
+	/// Caps at 300 lines → keeps first 120 and last 80.
+	Inventory,
+	/// Short reference or stat lists (git diff --stat, branch listings).
+	/// Caps at 120 lines → keeps first 60 and last 30.
+	List,
+	/// Large binary-inspection output (xxd, strings, od).
+	/// Caps at 500 lines → keeps first 200 and last 100.
+	Large,
+}
+
+impl CapClass {
+	/// Threshold above which `head_tail_cap` applies the cap.
+	pub const fn lines(self) -> usize {
+		match self {
+			Self::Errors => 200,
+			Self::Inventory => 300,
+			Self::List => 120,
+			Self::Large => 500,
+		}
+	}
+
+	const fn head(self) -> usize {
+		match self {
+			Self::Errors => 100,
+			Self::Inventory => 120,
+			Self::List => 60,
+			Self::Large => 200,
+		}
+	}
+
+	const fn tail(self) -> usize {
+		match self {
+			Self::Errors => 60,
+			Self::Inventory => 80,
+			Self::List => 30,
+			Self::Large => 100,
+		}
+	}
+}
+
+/// Apply a named head/tail cap to `input`.
+///
+/// Delegates to [`head_tail_lines`] using the head/tail counts encoded in
+/// `cap`. Callers should guard with `input.lines().count() > cap.lines()`
+/// before calling when they want to avoid the string clone on short inputs,
+/// but calling unconditionally is also correct (the inner function short-
+/// circuits when the line count is within bounds).
+pub fn head_tail_cap(input: &str, cap: CapClass) -> String {
+	head_tail_lines(input, cap.head(), cap.tail())
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;

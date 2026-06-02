@@ -2,9 +2,11 @@
 
 use crate::minimizer::{MinimizerCtx, MinimizerOutput};
 
+pub mod ai_smart;
 pub mod cloud;
 pub mod cpp;
 
+pub mod binary_tools;
 pub mod bun;
 
 pub mod cargo;
@@ -29,13 +31,14 @@ pub mod pkg;
 
 pub mod python;
 pub mod ruby;
+pub mod rust_tools;
 pub mod system;
 
 pub fn supports(program: &str, subcommand: Option<&str>) -> bool {
 	match program {
 		"git" | "yadm" => git::supports(subcommand),
 		"gt" => gt::supports(program, subcommand),
-		"bun" | "bunx" => bun::supports(program, subcommand),
+		"bun" | "bunx" | "rebuild-lex.zsh" => bun::supports(program, subcommand),
 		"cargo" => cargo::supports(subcommand),
 		"go" | "golangci-lint" => go::supports(program, subcommand),
 		"cmake" | "ctest" | "ninja" | "gtest" | "gtest-parallel" => {
@@ -52,6 +55,8 @@ pub fn supports(program: &str, subcommand: Option<&str>) -> bool {
 			python::supports(program, subcommand)
 		},
 		"rspec" | "rake" | "rails" | "rubocop" => ruby::supports(program, subcommand),
+		"rustfmt" => rust_tools::supports(program, subcommand),
+		"xxd" | "strings" | "od" => binary_tools::supports(program, subcommand),
 		"tsc" | "eslint" | "biome" | "shellcheck" | "markdownlint" | "hadolint" | "yamllint"
 		| "oxlint" | "pyright" | "basedpyright" => {
 			lint::supports(subcommand) || lint::supports_program(program, subcommand)
@@ -63,12 +68,64 @@ pub fn supports(program: &str, subcommand: Option<&str>) -> bool {
 				|| js_tools::supports(program, subcommand)
 		},
 		"pnpm" if matches!(subcommand, Some("dlx")) => true,
-		"npm" | "pnpm" | "yarn" | "pip" | "pip3" | "bundle" | "brew" | "composer" | "uv"
-		| "poetry" => pkg::supports(subcommand),
+		"uv" if matches!(subcommand, Some("run")) => true,
+		"npm" | "pnpm" | "yarn" | "pip" | "pip3" | "bundle" | "brew" | "composer" | "poetry" => {
+			pkg::supports(subcommand)
+		},
+		"uv" => {
+			// uv dispatch coverage (B1 / m4): admit additional subcommand forms
+			// that wrap a known tool. `uv run` is already handled above; this
+			// arm covers `uv pytest`, `uv -m pytest`, `uv ruff`, `uv mypy`,
+			// and other wrapped-tool forms that pre-PR fell through to the
+			// package-manager filter.
+			matches!(subcommand, Some("pytest" | "ruff" | "mypy" | "-m")) || pkg::supports(subcommand)
+		},
 		"env" | "log" | "deps" | "summary" | "err" | "test" | "diff" | "format" | "pipe" | "ps"
 		| "ping" | "ssh" | "sops" => system::supports(program),
 		_ => false,
 	}
+}
+
+fn is_test_script_token(token: &str) -> bool {
+	let token = token.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'));
+	matches!(token, "test" | "t" | "e2e" | "spec") || token.starts_with("test:")
+}
+
+fn command_contains_test_script(command: &str) -> bool {
+	command
+		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
+		.any(is_test_script_token)
+}
+
+fn is_pkg_test_invocation(ctx: &MinimizerCtx<'_>) -> bool {
+	matches!(ctx.subcommand, Some("test" | "t"))
+		|| matches!(ctx.subcommand, Some("run")) && command_contains_test_script(ctx.command)
+}
+
+fn is_pkg_lint_invocation(ctx: &MinimizerCtx<'_>) -> bool {
+	matches!(ctx.subcommand, Some("run"))
+		&& (command_contains_lint_script(ctx.command)
+			|| command_contains_tool(ctx.command, &["tsc", "eslint", "biome"]))
+}
+
+fn command_contains_lint_script(command: &str) -> bool {
+	command
+		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
+		.any(is_lint_script_token)
+}
+
+fn is_lint_script_token(token: &str) -> bool {
+	let token = token.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'));
+	matches!(token, "lint" | "typecheck" | "type-check")
+		|| token.starts_with("lint:")
+		|| token.starts_with("typecheck:")
+		|| token.starts_with("type-check:")
+}
+
+fn command_contains_tool(command: &str, tools: &[&str]) -> bool {
+	command
+		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
+		.any(|token| tools.contains(&token))
 }
 
 /// Apply the matching built-in filter.
@@ -78,7 +135,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 	match ctx.program {
 		"git" | "yadm" => git::filter(ctx, input, exit_code),
 		"gt" => gt::filter(ctx, input, exit_code),
-		"bun" | "bunx" => bun::filter(ctx, input, exit_code),
+		"bun" | "bunx" | "rebuild-lex.zsh" => bun::filter(ctx, input, exit_code),
 		"cargo" => cargo::filter(ctx, input, exit_code),
 		"go" | "golangci-lint" => go::filter(ctx, input, exit_code),
 		"dotnet" => dotnet::filter(ctx, input, exit_code),
@@ -95,14 +152,29 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 			python::filter(ctx, input, exit_code)
 		},
 		"rspec" | "rake" | "rails" | "rubocop" => ruby::filter(ctx, input, exit_code),
+		"rustfmt" => rust_tools::filter(ctx, input, exit_code),
+		"xxd" | "strings" | "od" => binary_tools::filter(ctx, input, exit_code),
 		"tsc" | "eslint" | "biome" | "shellcheck" | "markdownlint" | "hadolint" | "yamllint"
 		| "oxlint" | "pyright" | "basedpyright" => lint::filter(ctx, input, exit_code),
 		"jest" | "vitest" | "playwright" => node_tests::filter(ctx, input, exit_code),
 		"next" | "prettier" | "prisma" => js_tools::filter(ctx, input, exit_code),
 		"npx" => filter_js_wrapper(ctx, input, exit_code),
 		"pnpm" if matches!(ctx.subcommand, Some("dlx")) => filter_js_wrapper(ctx, input, exit_code),
-		"npm" | "pnpm" | "yarn" | "pip" | "pip3" | "bundle" | "brew" | "composer" | "uv"
-		| "poetry" => pkg::filter(ctx, input, exit_code),
+		"uv" if matches!(ctx.subcommand, Some("run" | "pytest" | "ruff" | "mypy" | "-m")) => {
+			filter_uv_wrapper(ctx, input, exit_code)
+		},
+		"npm" | "pnpm" | "yarn" => {
+			if is_pkg_test_invocation(ctx) {
+				node_tests::filter(ctx, input, exit_code)
+			} else if is_pkg_lint_invocation(ctx) {
+				lint::filter(ctx, input, exit_code)
+			} else {
+				pkg::filter(ctx, input, exit_code)
+			}
+		},
+		"pip" | "pip3" | "bundle" | "brew" | "composer" | "uv" | "poetry" => {
+			pkg::filter(ctx, input, exit_code)
+		},
 		"env" | "log" | "deps" | "summary" | "err" | "test" | "diff" | "format" | "pipe" | "ps"
 		| "ping" | "ssh" | "sops" => system::filter(ctx, input, exit_code),
 		_ => generic::filter(ctx, input, exit_code),
@@ -121,13 +193,130 @@ fn filter_js_wrapper(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> Min
 	}
 }
 
+fn filter_uv_wrapper(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
+	// uv dispatch normalization (B1 / m4): admit `uv pytest`, `uv -m pytest`,
+	// `uv ruff`, `uv mypy` in addition to the pre-existing `uv run …` path.
+	if let Some(tool) = normalize_uv_form(ctx.subcommand, ctx.command) {
+		let routed = MinimizerCtx {
+			program:    tool,
+			subcommand: Some(tool),
+			command:    ctx.command,
+			config:     ctx.config,
+		};
+		return match tool {
+			"pytest" | "ruff" | "mypy" => python::filter(&routed, input, exit_code),
+			_ => MinimizerOutput::passthrough(input),
+		};
+	}
+	match uv_wrapper_tool(ctx) {
+		Some("pytest") => {
+			let routed = MinimizerCtx {
+				program:    "pytest",
+				subcommand: Some("pytest"),
+				command:    ctx.command,
+				config:     ctx.config,
+			};
+			python::filter(&routed, input, exit_code)
+		},
+		Some("ruff") => {
+			let subcommand = if ctx.command.split_whitespace().any(|part| part == "format") {
+				Some("format")
+			} else {
+				Some("ruff")
+			};
+			let routed =
+				MinimizerCtx { program: "ruff", subcommand, command: ctx.command, config: ctx.config };
+			python::filter(&routed, input, exit_code)
+		},
+		Some("mypy") => {
+			let routed = MinimizerCtx {
+				program:    "mypy",
+				subcommand: Some("mypy"),
+				command:    ctx.command,
+				config:     ctx.config,
+			};
+			python::filter(&routed, input, exit_code)
+		},
+		Some(tool @ ("tsc" | "eslint" | "biome" | "pyright" | "basedpyright" | "oxlint")) => {
+			let routed = MinimizerCtx {
+				program:    tool,
+				subcommand: Some(tool),
+				command:    ctx.command,
+				config:     ctx.config,
+			};
+			lint::filter(&routed, input, exit_code)
+		},
+		Some("jest" | "vitest" | "playwright") => node_tests::filter(ctx, input, exit_code),
+		_ => MinimizerOutput::passthrough(input),
+	}
+}
+
+/// Normalize uv invocation forms into a routable tool name (B1 / m4).
+///
+/// Resolution order:
+///   1. If `subcommand` is itself a known python tool name (pytest, ruff,
+///      mypy), return `Some(<tool>)`.
+///   2. If `subcommand` is `"-m"`, scan `command` tokens for the first non-flag
+///      word matching the python-tool allowlist; return `Some(<tool>)`.
+///   3. If `subcommand` is `"run"`, return `None` so the caller falls through
+///      to the existing `uv_wrapper_tool` path (regression guard).
+///   4. Otherwise return `None`.
+///
+/// The returned `&'static str` is one of `"pytest"`, `"ruff"`, `"mypy"`;
+/// the caller is expected to route via the python filter.
+fn normalize_uv_form(subcommand: Option<&str>, command: &str) -> Option<&'static str> {
+	const ALLOWLIST: &[&str] = &["pytest", "ruff", "mypy"];
+	let sub = subcommand?;
+	if let Some(&tool) = ALLOWLIST.iter().find(|&&tool| tool == sub) {
+		return Some(tool);
+	}
+	if sub == "-m" {
+		let tokens = command.split_whitespace();
+		let mut after_dash_m = false;
+		for token in tokens {
+			if after_dash_m
+				&& !token.starts_with('-')
+				&& let Some(&tool) = ALLOWLIST.iter().find(|&&tool| tool == token)
+			{
+				return Some(tool);
+			}
+			if token == "-m" {
+				after_dash_m = true;
+			}
+		}
+	}
+	None
+}
+
+fn uv_wrapper_tool<'a>(ctx: &'a MinimizerCtx<'_>) -> Option<&'a str> {
+	wrapper_invoked_tool(ctx, &[
+		"pytest",
+		"ruff",
+		"mypy",
+		"tsc",
+		"eslint",
+		"biome",
+		"pyright",
+		"basedpyright",
+		"oxlint",
+		"jest",
+		"vitest",
+		"playwright",
+	])
+}
+
 fn wrapper_invokes(ctx: &MinimizerCtx<'_>, tools: &[&str]) -> bool {
+	wrapper_invoked_tool(ctx, tools).is_some()
+}
+
+fn wrapper_invoked_tool<'a>(ctx: &'a MinimizerCtx<'_>, tools: &[&'a str]) -> Option<&'a str> {
 	ctx.subcommand
-		.is_some_and(|subcommand| tools.contains(&subcommand))
-		|| ctx
-			.command
-			.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
-			.any(|token| tools.contains(&token))
+		.and_then(|subcommand| tools.iter().copied().find(|tool| *tool == subcommand))
+		.or_else(|| {
+			ctx.command
+				.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
+				.find(|token| tools.contains(token))
+		})
 }
 
 #[cfg(test)]
@@ -167,8 +356,295 @@ mod tests {
 	}
 
 	#[test]
+	fn uv_run_pytest_routes_to_python_filter() {
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("run"), "uv run pytest", &config);
+		let input = "============================= test session starts \
+		             ==============================\ncollected 2 items\n\na.py .\nb.py \
+		             F\n\n=================================== FAILURES \
+		             ===================================\nFAILED b.py::test_fail - AssertionError: \
+		             expected 2 == 1\n=========================== short test summary info \
+		             ============================\nFAILED b.py::test_fail - AssertionError: \
+		             expected 2 == 1\n========================= 1 failed, 1 passed in 0.12s \
+		             =========================\n";
+		let out = filter(&context, input, 1).text;
+		assert!(out.contains("FAILED b.py::test_fail"));
+		assert!(!out.contains("collected 2 items"));
+		assert!(out.contains("pytest: 1 failed, 1 passed"));
+	}
+
+	#[test]
+	fn uv_run_ruff_routes_to_python_filter() {
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("run"), "uv run ruff check .", &config);
+		let input = "src/app.py:1:1: F401 imported but unused\nFound 1 error.\n";
+		let out = filter(&context, input, 1).text;
+		assert!(out.contains("F401"));
+	}
+
+	#[test]
+	fn uv_run_python_module_pytest_routes_to_python_filter() {
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("run"), "uv run python -m pytest", &config);
+		let input = "============================= test session starts \
+		             ==============================\ncollected 1 item\n\na.py \
+		             F\n\n=================================== FAILURES \
+		             ===================================\nFAILED a.py::test_fail - \
+		             AssertionError\n========================= 1 failed in 0.03s \
+		             =========================\n";
+		let out = filter(&context, input, 1).text;
+		assert!(out.contains("FAILED a.py::test_fail"));
+		assert!(!out.contains("collected 1 item"));
+	}
+
+	#[test]
+	fn uv_run_pyright_routes_to_lint_filter() {
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("run"), "uv run pyright", &config);
+		let input = "0 errors, 0 warnings, 0 informations\nsrc/app.ts:4:7 - error TS2322: Type \
+		             'string' is not assignable to type 'number'.\n";
+		let out = filter(&context, input, 1).text;
+		assert!(out.contains("TS2322"));
+	}
+
+	#[test]
+	fn uv_run_basedpyright_routes_to_lint_filter() {
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("run"), "uv run basedpyright", &config);
+		let input = "0 errors, 0 warnings, 0 notes\nsrc/app.ts:4:7 - error TS2322: Type 'string' is \
+		             not assignable to type 'number'.\n";
+		let out = filter(&context, input, 1).text;
+		assert!(out.contains("TS2322"));
+	}
+
+	#[test]
+	fn uv_run_unknown_tool_is_passthrough() {
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("run"), "uv run custom-tool", &config);
+		let input = "line 1\nline 2\n";
+		let out = filter(&context, input, 0);
+		assert_eq!(out.text, input);
+		assert!(!out.changed);
+	}
+
+	#[test]
+	fn npm_test_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("npm", Some("test"), "npm test", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn npm_run_test_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("npm", Some("run"), "npm run test", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn npm_run_quoted_test_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("npm", Some("run"), "npm run \"test\"", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn pnpm_test_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("pnpm", Some("test"), "pnpm test", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn pnpm_run_test_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("pnpm", Some("run"), "pnpm run test", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn yarn_test_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("yarn", Some("test"), "yarn test", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn yarn_run_test_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("yarn", Some("run"), "yarn run test", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
+	fn npm_run_build_still_uses_pkg_filter() {
+		let config = MinimizerConfig::default();
+		let context = ctx("npm", Some("run"), "npm run build", &config);
+		let out = filter(&context, "Resolving dependencies\nDownloaded foo\nerror: failed\n", 1).text;
+		assert!(!out.contains("Resolving dependencies"));
+		assert!(out.contains("error: failed"));
+	}
+
+	#[test]
+	fn package_manager_lint_scripts_route_to_lint_filter() {
+		let config = MinimizerConfig::default();
+		let input = concat!(
+			"src/app.ts:1:1: error TS2322: Type 'string' is not assignable to type 'number'.\n",
+			"src/app.ts:2:1: error TS7006: Parameter 'x' implicitly has an 'any' type.\n",
+		);
+
+		for (program, command) in [
+			("npm", "npm run lint"),
+			("npm", "npm run typecheck"),
+			("pnpm", "pnpm run lint:ci"),
+			("yarn", "yarn run typecheck:ci"),
+		] {
+			let context = ctx(program, Some("run"), command, &config);
+			let routed = filter(&context, input, 1).text;
+			let expected = lint::filter(&context, input, 1).text;
+			assert_eq!(routed, expected, "{command} should use lint filter");
+			assert!(
+				routed.contains("2 diagnostics in 1 files"),
+				"{command} should condense lint output"
+			);
+		}
+	}
+
+	#[test]
+	fn npm_t_routes_to_node_tests() {
+		let config = MinimizerConfig::default();
+		let context = ctx("npm", Some("t"), "npm t", &config);
+		let out = filter(&context, "✓ ok\nFAIL app.test.ts\nTests 1 failed\n", 1).text;
+		assert!(!out.contains("✓ ok"));
+		assert!(out.contains("FAIL app.test.ts"));
+	}
+
+	#[test]
 	fn pi_cli_names_are_not_supported() {
 		assert!(!supports("rtk", None));
 		assert!(!supports("pi", None));
+	}
+
+	// ---------------------------------------------------------------
+	// Tier 2a: uv dispatch coverage tests (m4)
+	// ---------------------------------------------------------------
+
+	const PYTEST_FAILURE_INPUT: &str = "============================= test session starts \
+	                                    ==============================\ncollected 2 \
+	                                    items\n\nFAILED tests/test_x.py::test_fail - \
+	                                    AssertionError\n========================= 1 failed, 1 \
+	                                    passed in 0.05s =========================\n";
+
+	#[test]
+	fn uv_pytest_routes_to_python_filter() {
+		// B1 fix: `uv pytest <args>` now routes to the python filter.
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("pytest"), "uv pytest tests/", &config);
+		assert!(supports("uv", Some("pytest")));
+		let out = filter(&context, PYTEST_FAILURE_INPUT, 1).text;
+		assert!(out.contains("FAILED tests/test_x.py::test_fail"));
+		assert!(out.contains("pytest: 1 failed, 1 passed"));
+	}
+
+	#[test]
+	fn uv_dash_m_pytest_routes_to_python_filter() {
+		// B1 fix: `uv -m pytest <args>` now routes via -m token scan.
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("-m"), "uv -m pytest tests/", &config);
+		assert!(supports("uv", Some("-m")));
+		let out = filter(&context, PYTEST_FAILURE_INPUT, 1).text;
+		assert!(out.contains("FAILED tests/test_x.py::test_fail"));
+		assert!(out.contains("pytest: 1 failed, 1 passed"));
+	}
+
+	#[test]
+	fn uv_ruff_routes_to_python_filter() {
+		// B1 fix: `uv ruff <args>` now routes to the python filter.
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("ruff"), "uv ruff check .", &config);
+		assert!(supports("uv", Some("ruff")));
+		let out =
+			filter(&context, "src/a.py:1:1: F401 imported but unused\nFound 1 error.\n", 1).text;
+		assert!(out.contains("F401"));
+	}
+
+	#[test]
+	fn uv_mypy_routes_to_python_filter() {
+		// B1 fix: `uv mypy <args>` now routes to the python filter.
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("mypy"), "uv mypy src/", &config);
+		assert!(supports("uv", Some("mypy")));
+		// mypy filter routes through lint::condense_lint_output; smoke-check
+		// it does not crash and produces a string output.
+		let _ = filter(&context, "src/a.py:1: error: foo\n", 1).text;
+	}
+
+	#[test]
+	fn uv_run_pytest_still_routes_regression_guard() {
+		// Regression guard for the pre-existing `uv run pytest` path.
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("run"), "uv run pytest tests/", &config);
+		let out = filter(&context, PYTEST_FAILURE_INPUT, 1).text;
+		assert!(out.contains("FAILED tests/test_x.py::test_fail"));
+		assert!(out.contains("pytest: 1 failed, 1 passed"));
+	}
+
+	#[test]
+	fn uv_run_python_dash_m_pytest_still_routes() {
+		// Regression guard: `uv run python -m pytest` was supported pre-PR.
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("run"), "uv run python -m pytest tests/", &config);
+		let out = filter(&context, PYTEST_FAILURE_INPUT, 1).text;
+		assert!(out.contains("FAILED tests/test_x.py::test_fail"));
+		assert!(out.contains("pytest: 1 failed, 1 passed"));
+	}
+
+	#[test]
+	fn normalize_uv_form_unit_pytest_subcommand() {
+		assert_eq!(super::normalize_uv_form(Some("pytest"), "uv pytest"), Some("pytest"));
+	}
+
+	#[test]
+	fn normalize_uv_form_unit_dash_m_pytest() {
+		assert_eq!(super::normalize_uv_form(Some("-m"), "uv -m pytest tests/"), Some("pytest"));
+	}
+
+	#[test]
+	fn normalize_uv_form_unit_run_returns_none() {
+		// `uv run` is handled by the pre-existing path; normalize returns None.
+		assert_eq!(super::normalize_uv_form(Some("run"), "uv run pytest"), None);
+	}
+
+	#[test]
+	fn normalize_uv_form_unit_unknown_returns_none() {
+		assert_eq!(super::normalize_uv_form(Some("unknown"), "uv unknown"), None);
+		assert_eq!(super::normalize_uv_form(None, "uv"), None);
+	}
+
+	#[test]
+	fn pytest_legacy_filters_active_passes_through() {
+		// Kill-switch parity (M2): legacy_filters_active=true skips the
+		// pytest state machine even when invoked via `uv pytest`.
+		let mut config = MinimizerConfig::default();
+		config.enabled = true;
+		config.legacy_filters_active = true;
+		let context = ctx("uv", Some("pytest"), "uv pytest tests/", &config);
+		let out = filter(&context, PYTEST_FAILURE_INPUT, 1);
+		assert_eq!(out.text, PYTEST_FAILURE_INPUT);
+		assert!(!out.changed);
 	}
 }
