@@ -334,9 +334,15 @@ fn parse_long_status_line(line: &str, in_staged: bool, in_untracked: bool, summa
 		("new file:", "A", true),
 		("renamed:", "R", true),
 		("both modified:", "UU", false),
+		("both added:", "AA", false),
+		("both deleted:", "DD", false),
+		("added by us:", "AU", false),
+		("added by them:", "UA", false),
+		("deleted by us:", "DU", false),
+		("deleted by them:", "UD", false),
 	] {
 		if let Some(path) = line.strip_prefix(prefix) {
-			if label == "UU" {
+			if matches!(label, "UU" | "AA" | "DD" | "AU" | "UA" | "DU" | "UD") {
 				summary.conflicts += 1;
 			} else if staged {
 				summary.staged += 1;

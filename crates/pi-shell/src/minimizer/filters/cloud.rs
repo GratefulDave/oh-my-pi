@@ -67,9 +67,10 @@ fn is_s3_ls(command: &str) -> bool {
 	false
 }
 
-fn filter_aws(ctx: &MinimizerCtx<'_>, input: &str, _exit_code: i32) -> String {
+fn filter_aws(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
 	let without_progress = strip_transfer_progress(input);
-	if ctx.subcommand == Some("s3")
+	if exit_code == 0
+		&& ctx.subcommand == Some("s3")
 		&& is_s3_ls(ctx.command)
 		&& let Some(compacted) = compact_aws_s3_ls_text(&without_progress)
 	{
