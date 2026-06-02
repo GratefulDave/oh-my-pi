@@ -149,36 +149,6 @@ export declare function applyBashFixups(command: string): BashFixupResult
 
 export declare function applyShellMinimizer(options: ShellMinimizerApplyOptions): MinimizerResult | null
 
-/** Dump the tree-sitter syntax tree for a single source input. */
-export declare function astDump(options: AstDumpOptions): Promise<AstDumpResult>
-
-/**
- * Options for `astDump`: source text or a single file plus language
- * resolution.
- */
-export interface AstDumpOptions {
-  /** Source code to parse. Mutually exclusive with `path`. */
-  code?: string
-  /** Single file to parse. Mutually exclusive with `code`. */
-  path?: string
-  /** Language override; required when `code` is used without `path`. */
-  lang?: string
-  /** Optional cancellation handle (library-specific). */
-  signal?: unknown
-  /** Wall-clock timeout for the worker task in milliseconds. */
-  timeoutMs?: number
-}
-
-/** Tree-sitter parse dump for a single source input. */
-export interface AstDumpResult {
-  /** Canonical parser language used for the dump. */
-  language: string
-  /** Tree-sitter S-expression for the parsed syntax tree. */
-  tree: string
-  /** True when the syntax tree contains error nodes. */
-  hasErrors: boolean
-}
-
 /**
  * Apply ast-grep rewrite rules to matching files; honors `dryRun` and returns
  * a promise.
@@ -211,8 +181,6 @@ export interface AstFindMatch {
 export interface AstFindOptions {
   /** ast-grep patterns to search for (OR across patterns). */
   patterns?: Array<string>
-  /** ast-grep YAML rule configuration to search with. */
-  rule?: string
   /** Language override; otherwise inferred from file extension per candidate. */
   lang?: string
   /** Single file or directory to scan (combined with `glob` when set). */
@@ -376,6 +344,33 @@ export interface BashFixupResult {
   command: string
   /** Substrings removed, in source order — suitable for a user-facing notice. */
   stripped: Array<string>
+}
+
+export interface BlockRange {
+  /** 1-indexed inclusive first line of the resolved block. */
+  startLine: number
+  /** 1-indexed inclusive last line of the resolved block. */
+  endLine: number
+}
+
+/**
+ * Find the outermost named tree-sitter node that begins on `options.line`.
+ *
+ * Returns its 1-indexed inclusive line span, or `null` when the language is
+ * unrecognized, the line is out of range / blank, no node begins on that line,
+ * or the resolved subtree contains a syntax error.
+ */
+export declare function blockRangeAt(options: BlockRangeOptions): BlockRange | null
+
+export interface BlockRangeOptions {
+  /** Source code to inspect. */
+  code: string
+  /** Language alias (e.g. "rust", "typescript") used before path inference. */
+  lang?: string
+  /** File path used to infer language by extension when `lang` is omitted. */
+  path?: string
+  /** 1-indexed source line the block must begin on. */
+  line: number
 }
 
 /** Clipboard image payload encoded as PNG bytes. */
