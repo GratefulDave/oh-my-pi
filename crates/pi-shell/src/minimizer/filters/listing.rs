@@ -479,6 +479,7 @@ fn compact_cat_output(ctx: &MinimizerCtx<'_>, input: &str) -> String {
 
 fn extract_single_path_arg(command: &str, program: &str) -> Option<String> {
 	let mut saw_program = false;
+	let mut path: Option<String> = None;
 	for raw in command.split_whitespace() {
 		let token = raw.trim_matches(|ch| ch == '\'' || ch == '"');
 		let normalized = token.rsplit('/').next().unwrap_or(token);
@@ -491,9 +492,16 @@ fn extract_single_path_arg(command: &str, program: &str) -> Option<String> {
 		if token.starts_with('-') {
 			continue;
 		}
-		return Some(token.to_string());
+		// More than one path argument (e.g. `cat a.rs b.rs`) would outline the
+		// concatenated stream as if it were a single file, merging or dropping
+		// declarations across file boundaries. Only compact when there is
+		// exactly one path; otherwise pass through unchanged.
+		if path.is_some() {
+			return None;
+		}
+		path = Some(token.to_string());
 	}
-	None
+	path
 }
 
 fn summarize_manifest(path: &str, input: &str) -> Option<String> {
@@ -1247,6 +1255,34 @@ mod tests {
 		assert!(out.text.contains("fn main() -> Result<()> { ... }"));
 		assert!(out.text.contains("lines summarized"));
 		assert!(!out.text.contains("field_179"));
+	}
+
+	#[test]
+	fn multi_file_cat_is_not_outlined() {
+		// `cat a.rs b.rs` concatenates two files; outlining the merged stream as
+		// if it were a single file would drop or merge declarations across the
+		// boundary. With more than one path argument we must pass through.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx_command("cat", "cat src/a.rs src/b.rs", &cfg);
+		let mut input = String::from("use anyhow::Result;\nstruct A {\n");
+		for idx in 0..180 {
+			input.push_str("    field_");
+			input.push_str(&idx.to_string());
+			input.push_str(": String,\n");
+		}
+		input.push_str("}\nfn b_main() -> Result<()> {\n    Ok(())\n}\n");
+		let out = filter(&ctx, &input, 0);
+		assert_eq!(out.text, input, "multi-file cat must pass through unchanged");
+		assert!(out.text.contains("field_179"));
+		assert!(!out.text.contains("lines summarized"));
+	}
+
+	#[test]
+	fn extract_single_path_arg_returns_none_for_multiple_paths() {
+		assert_eq!(extract_single_path_arg("cat src/main.rs", "cat").as_deref(), Some("src/main.rs"));
+		assert_eq!(extract_single_path_arg("cat -n src/main.rs", "cat").as_deref(), Some("src/main.rs"));
+		assert_eq!(extract_single_path_arg("cat a.rs b.rs", "cat"), None);
+		assert_eq!(extract_single_path_arg("cat a.rs b.rs c.rs", "cat"), None);
 	}
 
 	#[test]

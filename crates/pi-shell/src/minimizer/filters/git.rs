@@ -304,7 +304,7 @@ fn parse_short_status_line(line: &str, summary: &mut StatusSummary) -> bool {
 	}
 	if status == "??" {
 		summary.untracked += 1;
-	} else if status.contains('U') {
+	} else if is_unmerged_short_status(status) {
 		summary.conflicts += 1;
 	} else {
 		let bytes = status.as_bytes();
@@ -317,6 +317,16 @@ fn parse_short_status_line(line: &str, summary: &mut StatusSummary) -> bool {
 	}
 	push_status_path(summary, status.trim(), path.trim());
 	true
+}
+
+/// Returns true for git short-status codes that denote an unmerged (conflicted)
+/// path. This mirrors the long-status handling in `parse_long_status_line`,
+/// which treats `UU`, `AA`, `DD`, `AU`, `UA`, `DU`, and `UD` as conflicts.
+///
+/// A plain `status.contains('U')` check misses `AA` (both added) and `DD`
+/// (both deleted), so those would otherwise be miscounted as staged+unstaged.
+fn is_unmerged_short_status(status: &str) -> bool {
+	matches!(status, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU")
 }
 
 fn is_short_status(status: &str) -> bool {
@@ -1280,6 +1290,34 @@ mod tests {
 			 scratch.txt\nUU conflicted.rs\n"
 		);
 	}
+	#[test]
+	fn short_status_counts_aa_dd_as_conflicts() {
+		// `AA` (both added) and `DD` (both deleted) lack a literal 'U' but are
+		// unmerged states. They must be counted as conflicts, matching the
+		// long-status handling, not as staged+unstaged.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status --short", &cfg);
+		let input = "AA both-added.rs\nDD both-deleted.rs\nAU added-by-us.rs\nUD deleted-by-them.rs\n";
+		let out = filter(&ctx, input, 0);
+		assert!(out.changed);
+		assert!(
+			out.text.starts_with("staged 0, unstaged 0") || out.text.starts_with("conflicts 4"),
+			"AA/DD/AU/UD must not be counted as staged/unstaged: {:?}",
+			out.text
+		);
+		assert!(out.text.contains("conflicts 4"), "expected 4 conflicts: {:?}", out.text);
+	}
+
+	#[test]
+	fn is_unmerged_short_status_matches_all_porcelain_codes() {
+		for code in ["DD", "AU", "UD", "UA", "DU", "AA", "UU"] {
+			assert!(is_unmerged_short_status(code), "{code} should be unmerged");
+		}
+		for code in [" M", "M ", "MM", "A ", "??", "R "] {
+			assert!(!is_unmerged_short_status(code), "{code} should not be unmerged");
+		}
+	}
+
 	#[test]
 	fn long_status_clean_is_compacted() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
