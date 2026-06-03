@@ -1265,9 +1265,10 @@ async fn read_output_bytes(
 	}
 }
 
-fn terminate_background_jobs(shell: &BrushShell) {
+fn terminate_background_jobs(shell: &mut BrushShell) {
 	let mut targets = process::TerminationTargets::new();
-	for job in &shell.jobs().jobs {
+	for job in &mut shell.jobs_mut().jobs {
+		job.abort_internal_tasks();
 		if let Some(pgid) = job.process_group_id() {
 			targets.add_pgid(pgid);
 		}
@@ -1276,11 +1277,9 @@ fn terminate_background_jobs(shell: &BrushShell) {
 		}
 	}
 	if targets.is_empty() {
-		// Pure descendant cleanup is handled by `process_cancel_bridge` while
-		// the cancel was still in flight. Here we only signal brush's own
-		// job-tracked targets — pgids of background-group leaders that may have
-		// already exited (so the descendant walk would no longer find them as
-		// new descendants, but their group still holds live grandchildren).
+		// Shell-internal jobs were aborted above. Pure descendant cleanup is
+		// handled by `process_cancel_bridge` while the cancel was in flight;
+		// without job-tracked pgids or pids there is nothing else to signal here.
 		return;
 	}
 
