@@ -297,6 +297,11 @@ const napiArgs = [
 	profileLabel,
 ];
 
+// Enable the AI-summary minimizer filter so the runtime `aiSmartEnabled`/
+// `aiSmartProvider` knobs actually toggle behavior. Appended after the array
+// literal so the positional `-o` index (napiArgs[10]) stays stable below.
+napiArgs.push("--features", "ai-smart");
+
 if (crossTarget) {
 	napiArgs.push("--target", crossTarget);
 	// Route through `cargo-zigbuild` (non-MSVC targets) or `cargo-xwin`
