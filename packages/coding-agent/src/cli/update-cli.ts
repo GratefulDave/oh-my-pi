@@ -375,6 +375,18 @@ async function updateViaBinaryAt(targetPath: string, expectedVersion: string): P
 export async function runUpdateCommand(opts: { force: boolean; check: boolean }): Promise<void> {
 	console.log(chalk.dim(`Current version: ${VERSION}`));
 
+	// Fork builds carry a `-lex` suffix. `omp update` pulls the upstream npm
+	// package, which would replace this fork binary with stock omp and drop every
+	// fork change. Refuse unless explicitly forced (e.g. once the fork is retired).
+	if (VERSION.includes("-lex") && !opts.force) {
+		console.log(
+			chalk.yellow(
+				`This is a fork build (${VERSION}). Skipping update — installing upstream omp would overwrite the fork. Pass --force to override.`,
+			),
+		);
+		return;
+	}
+
 	// Check for updates
 	let release: ReleaseInfo;
 	try {
