@@ -606,21 +606,6 @@ impl ChainCapture {
 	}
 }
 
-fn reason_only_minimizer_result(
-	filter: &'static str,
-	original_text: String,
-	input_bytes: usize,
-) -> MinimizerResult {
-	let output_bytes = u32::try_from(original_text.len()).unwrap_or(u32::MAX);
-	MinimizerResult {
-		filter: filter.to_string(),
-		text: original_text.clone(),
-		original_text,
-		input_bytes: u32::try_from(input_bytes).unwrap_or(u32::MAX),
-		output_bytes,
-	}
-}
-
 async fn run_shell_command(
 	session: &mut ShellSessionCore,
 	options: &ShellRunConfig,
@@ -697,12 +682,13 @@ async fn run_shell_command_single(
 	if let Some(buffered) = command_run.buffered
 		&& let Some(config) = options.minimizer.as_ref()
 	{
-		if buffered.exceeded {
-			if matches!(minimizer_mode, minimizer::engine::MinimizerMode::WholeCommand) {
-				minimized_out =
-					Some(reason_only_minimizer_result("too-large", String::new(), buffered.input_bytes));
-			}
-		} else {
+		// When the capture cap is exceeded the output was streamed raw and never
+		// buffered, so nothing was minimized — leave `minimized` absent, matching
+		// every other passthrough path and `apply_shell_minimizer`. Previously a
+		// `too-large` result with empty `text`/`original_text` was emitted, which a
+		// consumer keying off `minimized` presence could mistake for a real rewrite
+		// that produced empty output.
+		if !buffered.exceeded {
 			let minimized = match minimizer_mode {
 				minimizer::engine::MinimizerMode::WholeCommand => minimizer::apply(
 					&options.command,
@@ -786,8 +772,6 @@ async fn run_shell_command_segmented_chain(
 
 	let params = session.shell.default_exec_params();
 	let mut aggregate = Some(ChainCapture::new());
-	let mut aggregate_dropped_too_large = false;
-	let mut overflow_input_bytes = 0usize;
 	let mut previous_succeeded = true;
 	let mut last_result = None;
 	let max_capture_bytes = config.max_capture_bytes as usize;
@@ -819,14 +803,13 @@ async fn run_shell_command_segmented_chain(
 
 		if let Some(buffered) = command_run.buffered {
 			if buffered.exceeded {
-				aggregate_dropped_too_large = aggregate.is_some();
-				overflow_input_bytes = overflow_input_bytes.saturating_add(buffered.input_bytes);
+				// Cap exceeded mid-chain: output streamed raw, drop the buffered
+				// aggregate so the remaining segments stream too. No minimization
+				// happened, so we emit no `minimized` telemetry (see below).
 				aggregate = None;
 			} else if let Some(capture) = aggregate.as_mut() {
 				let next_input_bytes = capture.input_bytes.saturating_add(buffered.input_bytes);
 				if next_input_bytes > max_capture_bytes {
-					aggregate_dropped_too_large = true;
-					overflow_input_bytes = next_input_bytes;
 					aggregate = None;
 				} else {
 					// Segments use the AI-overlay-free path: the AI summary budget is
@@ -876,11 +859,11 @@ async fn run_shell_command_segmented_chain(
 				input_bytes:   u32::try_from(minimized.input_bytes).unwrap_or(u32::MAX),
 				output_bytes:  u32::try_from(minimized.output_bytes).unwrap_or(u32::MAX),
 			}
-		})
-		.or_else(|| {
-			aggregate_dropped_too_large
-				.then(|| reason_only_minimizer_result("too-large", String::new(), overflow_input_bytes))
 		});
+	// A chain that overflowed the aggregate cap streamed its output raw and was
+	// not minimized — `minimized_out` stays `None`, matching the whole-command
+	// path and `apply_shell_minimizer`. (Previously a `too-large` result with
+	// empty `text` was emitted, a footgun for consumers keying off presence.)
 
 	Ok((result, minimized_out))
 }
@@ -2117,7 +2100,7 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 
 	#[cfg(unix)]
 	#[tokio::test(flavor = "multi_thread")]
-	async fn whole_command_exceeding_capture_cap_reports_too_large_and_streams_raw() {
+	async fn whole_command_exceeding_capture_cap_streams_raw_without_minimized() {
 		let root = unique_temp_dir("whole-cap");
 		let minimizer = printf_minimizer(&root.join("minimizer.toml"), Some(1024));
 		let (result, output) =
@@ -2127,12 +2110,10 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 		assert_eq!(result.exit_code, Some(0));
 		assert_eq!(output.len(), 1200);
 		assert!(output.ends_with('x'));
-		let minimized = result.minimized.expect("too-large result");
-		assert_eq!(minimized.filter, "too-large");
-		assert_eq!(minimized.text, "");
-		assert_eq!(minimized.original_text, "");
-		assert_eq!(minimized.input_bytes, 1200);
-		assert_eq!(minimized.output_bytes, 0);
+		// Output exceeded the capture cap: streamed raw and never buffered, so
+		// nothing was minimized. `minimized` must be absent (not a `too-large`
+		// result with empty `text`, which would mislead presence-keyed consumers).
+		assert!(result.minimized.is_none());
 	}
 
 	#[cfg(unix)]
@@ -2174,10 +2155,9 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 		assert_eq!(result.exit_code, Some(0));
 		assert_eq!(output.len(), 1200);
 		assert!(output.ends_with('y'));
-		let minimized = result.minimized.expect("too-large result");
-		assert_eq!(minimized.filter, "too-large");
-		assert_eq!(minimized.text, "");
-		assert_eq!(minimized.original_text, "");
+		// Aggregate cap exceeded: the chain streamed its output raw and was not
+		// minimized, so `minimized` is absent (not an empty-text `too-large`).
+		assert!(result.minimized.is_none());
 	}
 
 	#[cfg(unix)]
