@@ -672,9 +672,13 @@ fn condense_branch(input: &str) -> String {
 }
 
 fn has_local_tracking_branch(remote: &str, current: Option<&str>, local: &[String]) -> bool {
-	let branch = remote
-		.rsplit_once('/')
-		.map_or(remote, |(_remote, branch)| branch);
+	// Only the conventional `origin/<branch>` mirror is treated as redundant with
+	// a local branch of the same name. Same-named branches on other remotes
+	// (e.g. `upstream/main` alongside `origin/main`) are distinct refs and must
+	// be preserved in the summary.
+	let Some(branch) = remote.strip_prefix("origin/") else {
+		return false;
+	};
 	current == Some(branch) || local.iter().any(|local| local == branch)
 }
 
@@ -1322,6 +1326,22 @@ mod tests {
 ";
 		let out = filter(&ctx, input, 0);
 		assert_eq!(out.text, "* main\nlocal: feat/a fix/b\nremote-only (2): origin/x upstream/y\n");
+	}
+
+	#[test]
+	fn branch_listing_keeps_same_named_branch_on_other_remote() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("branch"), "git branch -a", &cfg);
+		// Local `main` makes `origin/main` redundant, but `upstream/main` is a
+		// distinct ref and must survive.
+		let input = "\
+* main
+  remotes/origin/main
+  remotes/upstream/main
+";
+		let out = filter(&ctx, input, 0);
+		assert!(out.text.contains("upstream/main"), "{:?}", out.text);
+		assert!(!out.text.contains("origin/main"), "{:?}", out.text);
 	}
 
 	#[test]
