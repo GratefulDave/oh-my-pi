@@ -75,15 +75,6 @@ async function checkForNewVersion(currentVersion: string): Promise<string | unde
 	if (!settings.get("startup.checkUpdate")) {
 		return;
 	}
-	// Fork builds carry a `-lex` prerelease suffix. Because semver ranks a
-	// prerelease below the matching stable release, the upstream npm version
-	// (e.g. `15.8.1`) always outranks `15.8.1-lex` and would nag to "update" to
-	// stock omp — which would overwrite the fork binary and drop every fork
-	// change. Suppress the upstream update check for fork builds until the
-	// fork's changes are merged upstream.
-	if (currentVersion.includes("-lex")) {
-		return;
-	}
 	try {
 		const response = await fetch("https://registry.npmjs.org/@oh-my-pi/pi-coding-agent/latest");
 		if (!response.ok) return undefined;
