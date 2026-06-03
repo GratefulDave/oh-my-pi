@@ -245,6 +245,32 @@ fn extract_aws_s3_buckets(root: &Value) -> Option<Vec<&Map<String, Value>>> {
 	extract_array(root, &["Buckets", "buckets"])
 }
 
+/// True for an `aws s3 ls` date column (`YYYY-MM-DD`).
+fn is_s3_date(token: &str) -> bool {
+	let mut parts = token.split('-');
+	matches!(
+		(parts.next(), parts.next(), parts.next(), parts.next()),
+		(Some(y), Some(m), Some(d), None)
+			if y.len() == 4 && m.len() == 2 && d.len() == 2
+				&& [y, m, d].iter().all(|p| p.bytes().all(|b| b.is_ascii_digit()))
+	)
+}
+
+/// True for an `aws s3 ls` time column (`HH:MM:SS`).
+fn is_s3_time(token: &str) -> bool {
+	let mut parts = token.split(':');
+	matches!(
+		(parts.next(), parts.next(), parts.next(), parts.next()),
+		(Some(h), Some(m), Some(s), None)
+			if [h, m, s].iter().all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit()))
+	)
+}
+
+/// True for an `aws s3 ls --human-readable` size unit suffix.
+fn is_s3_size_unit(token: &str) -> bool {
+	matches!(token, "Bytes" | "KiB" | "MiB" | "GiB" | "TiB" | "PiB" | "EiB")
+}
+
 fn compact_aws_s3_ls_text(input: &str) -> Option<String> {
 	let rows = input
 		.lines()
@@ -257,13 +283,23 @@ fn compact_aws_s3_ls_text(input: &str) -> Option<String> {
 					"prefix".to_string(),
 				]);
 			}
-			// Format: DATE TIME SIZE KEY_NAME
-			// KEY_NAME may contain spaces, so consume the size token then join
-			// the remainder to reconstruct the full key.
+			// Format: DATE TIME SIZE KEY_NAME. Require a real date/time prefix so
+			// `--summarize` footers (`Total Objects: 1`, `Total Size: ...`) and any
+			// diagnostic/error text are not reinterpreted as object rows.
 			let time = parts.next()?;
+			if !is_s3_date(first) || !is_s3_time(time) {
+				return None;
+			}
 			let size = parts.next()?;
-			let rest: Vec<&str> = parts.collect();
-			// Skip zero-byte objects with no name continuation.
+			let mut rest: Vec<&str> = parts.collect();
+			// `--human-readable` renders the size as two tokens (`10.0 MiB`); drop
+			// the trailing unit so it is not glued onto the object key. Keep it when
+			// removing it would leave no key (an object literally named after a unit).
+			if rest.len() >= 2 && is_s3_size_unit(rest[0]) {
+				rest.remove(0);
+			}
+			// KEY_NAME may contain spaces, so join the remainder to reconstruct the
+			// full key. Skip zero-byte objects with no name continuation.
 			if size == "0" && rest.is_empty() {
 				return None;
 			}
@@ -1438,6 +1474,33 @@ mod tests {
 		let out = filter(&ctx, "2026-05-27 01:02:03 builds\n2026-05-27 01:03:04 logs\n", 0);
 		assert!(out.text.contains("builds\t2026-05-27 01:02:03"));
 		assert_output_pure(&out.text);
+	}
+
+	#[test]
+	fn s3_ls_human_readable_keeps_full_key_and_drops_unit() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 ls --human-readable s3://b/", &cfg);
+		// `--human-readable` renders size as `<num> <unit>`; the unit must not be
+		// glued onto the key, and keys with spaces must survive intact.
+		let out = filter(&ctx, "2026-01-01 12:00:00 10.0 MiB my report.txt\n", 0);
+		assert!(out.text.contains("my report.txt"), "{:?}", out.text);
+		assert!(!out.text.contains("MiB my report.txt"), "{:?}", out.text);
+	}
+
+	#[test]
+	fn s3_ls_skips_summarize_footer_lines() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 ls --summarize s3://b/", &cfg);
+		// `--summarize` appends `Total Objects:` / `Total Size:` footers that lack
+		// a date/time prefix; they must not become bogus object rows.
+		let out = filter(
+			&ctx,
+			"2026-01-01 12:00:00 10 report.txt\n\nTotal Objects: 1\nTotal Size: 10\n",
+			0,
+		);
+		assert!(out.text.contains("report.txt"), "{:?}", out.text);
+		assert!(!out.text.contains("Total Objects"), "{:?}", out.text);
+		assert!(!out.text.contains("Total Size"), "{:?}", out.text);
 	}
 
 	#[test]

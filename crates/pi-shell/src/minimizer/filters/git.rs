@@ -896,7 +896,17 @@ fn condense_commit(input: &str, exit_code: i32) -> String {
 				return format!("ok {hash}\n");
 			}
 		}
-		return "ok\n".to_string();
+		// A successful `git commit` prints a `[branch hash] subject` line. When
+		// none is present at exit 0 the output is not a completed commit — most
+		// commonly `git commit --dry-run`, which exits 0 and prints the status
+		// of what *would* be committed without any hash. Collapsing that to
+		// "ok" would hide the staged files the user asked to inspect, so only
+		// a truly quiet success becomes "ok"; otherwise preserve the
+		// (noise-stripped) output.
+		if input.trim().is_empty() {
+			return "ok\n".to_string();
+		}
+		return condense_noisy_output(input);
 	}
 
 	if input.contains("nothing to commit") {
@@ -1629,6 +1639,20 @@ mod tests {
 		let out = filter(&ctx, input, 1);
 
 		assert_eq!(out.text, "ok (nothing to commit)\n");
+	}
+
+	#[test]
+	fn commit_dry_run_preserves_status_output() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("commit"), "git commit --dry-run", &cfg);
+		// `git commit --dry-run` exits 0 and prints the would-be-committed status
+		// without a `[branch hash]` line. It must NOT collapse to "ok", which
+		// would hide the staged files the user asked to inspect.
+		let input = "On branch main\nChanges to be committed:\n\tmodified:   src/main.rs\n";
+		let out = filter(&ctx, input, 0);
+
+		assert_ne!(out.text.trim(), "ok");
+		assert!(out.text.contains("src/main.rs"), "{:?}", out.text);
 	}
 
 	#[test]
