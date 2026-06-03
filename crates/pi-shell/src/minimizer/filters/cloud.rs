@@ -48,9 +48,33 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 	}
 }
 
-fn filter_aws(ctx: &MinimizerCtx<'_>, input: &str, _exit_code: i32) -> String {
+/// Returns `true` when the full command is `aws s3 ls [...]` (not `cp`, `sync`,
+/// `rm`, etc.). Skips flags between `s3` and the action token so
+/// `aws --no-cli-pager s3 ls` is still recognised while `aws s3 cp` is excluded.
+fn is_s3_ls(command: &str) -> bool {
+	let mut past_s3 = false;
+	for token in command.split_whitespace() {
+		if !past_s3 {
+			if token == "s3" {
+				past_s3 = true;
+			}
+		} else if token.starts_with('-') {
+			// skip flags between "s3" and the action word
+		} else {
+			return token == "ls";
+		}
+	}
+	false
+}
+
+fn filter_aws(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
 	let without_progress = strip_transfer_progress(input);
-	if ctx.subcommand == Some("s3")
+	// Only the `ls` listing form should be reshaped into a bucket/date table;
+	// `aws s3 cp`/`sync`/`rm` emit progress/result lines (`upload: ... to
+	// s3://...`) that must not be misparsed as listing rows.
+	if exit_code == 0
+		&& ctx.subcommand == Some("s3")
+		&& is_s3_ls(ctx.command)
 		&& let Some(compacted) = compact_aws_s3_ls_text(&without_progress)
 	{
 		return compacted;
@@ -1416,6 +1440,17 @@ mod tests {
 		let out = filter(&ctx, "2026-05-27 01:02:03 builds\n2026-05-27 01:03:04 logs\n", 0);
 		assert!(out.text.contains("builds\t2026-05-27 01:02:03"));
 		assert_output_pure(&out.text);
+	}
+
+	#[test]
+	fn s3_cp_output_is_not_parsed_as_listing() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 cp ./file.txt s3://bucket/file.txt", &cfg);
+		// `aws s3 cp` emits a transfer result line, not a listing; it must pass
+		// through untouched rather than be reshaped into a bucket/date table.
+		let input = "upload: ./file.txt to s3://bucket/file.txt\n";
+		let out = filter(&ctx, input, 0);
+		assert_eq!(out.text, input);
 	}
 
 	#[test]
