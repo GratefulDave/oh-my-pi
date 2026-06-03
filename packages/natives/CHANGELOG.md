@@ -19,6 +19,8 @@
 - Fixed `executeShell`'s `minimized` telemetry being attached to whole-command runs where a supported filter ran but left the output unchanged (e.g. a short `git diff --name-only`). The result is now gated on the filter actually rewriting the output and retaining the original buffer, restoring the documented contract that `minimized` is absent for filter no-ops.
 - Fixed `git stash list` minimization discarding the `<branch>` from each entry; the branch is the primary thing users scan a stash list for and is now preserved compactly as `stash@{N}: [branch] <hash> <message>`.
 - Fixed a byte/char offset mix in the listing-filter center-truncation that could shift the truncation window off its intended anchor for lines with multibyte leading whitespace (NBSP, ideographic space).
+- Fixed the `too-large` capture-cap path emitting a `minimized` result with empty `text`/`original_text` when output exceeded `maxCaptureBytes` and was streamed raw. Both the whole-command and segmented-chain paths now leave `minimized` absent (matching every other passthrough and `applyShellMinimizer`), so consumers keying off `minimized` presence can no longer mistake an oversized command for an empty rewrite.
+- Fixed `applyShellMinimizer` / whole-buffer chain minimization corrupting output for all-git chains with differing subcommands (e.g. `git status && git log`): the combined capture was routed through the first segment's subcommand filter, whose summary rebuild silently dropped the other segment's lines. Such chains now stay opaque (passthrough); same-subcommand all-git chains still route through the git filter.
 
 ## [15.7.0] - 2026-05-31
 

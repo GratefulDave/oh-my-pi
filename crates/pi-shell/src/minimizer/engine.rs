@@ -235,27 +235,46 @@ fn apply_chain(
 		return MinimizerOutput::passthrough(captured).labeled("compound");
 	}
 
-	// (d) git-only chain: route through the git filter using the first
-	// segment's subcommand as the routing key. The git filter requires
-	// a concrete subcommand (status/diff/log/...) so we cannot dispatch
-	// with `subcommand=None` here — fall back to chain-first when no
-	// dispatchable subcommand is detected.
-	if !segments.is_empty()
+	// (d) git-only chain: route the whole captured buffer through the git filter
+	// using the first segment's subcommand as the routing key — but ONLY when
+	// every segment shares that subcommand. A subcommand filter such as
+	// `condense_status` rebuilds its output from its own parse and silently drops
+	// lines it does not recognize, so feeding it a mixed `git status && git log`
+	// buffer would discard the `git log` segment's output entirely. With differing
+	// subcommands we stay opaque (and must NOT fall through to the chain-first
+	// heuristic below, which would route the whole buffer through the first
+	// segment's filter and corrupt it the same way).
+	let all_git = !segments.is_empty()
 		&& segments
 			.iter()
-			.all(|seg| matches!(seg.program.as_str(), "git" | "yadm"))
-		&& config.is_program_enabled("git")
-		&& let Some(identity) = detect::detect(&segments[0].command)
-		&& filters::supports(&identity.program, identity.subcommand.as_deref())
-	{
-		let subcommand = identity.subcommand.as_deref();
-		let ctx = MinimizerCtx { program: &identity.program, subcommand, command, config };
-		let out = match catch_unwind(AssertUnwindSafe(|| filters::filter(&ctx, captured, exit_code)))
+			.all(|seg| matches!(seg.program.as_str(), "git" | "yadm"));
+	if all_git && config.is_program_enabled("git") {
+		if let Some(identity) = detect::detect(&segments[0].command)
+			&& filters::supports(&identity.program, identity.subcommand.as_deref())
+			&& {
+				// Every segment must resolve to the same subcommand as the first.
+				let want = identity.subcommand.as_deref();
+				segments.iter().all(|seg| {
+					detect::detect(&seg.command)
+						.as_ref()
+						.and_then(|id| id.subcommand.as_deref())
+						== want
+				})
+			}
 		{
-			Ok(out) => out,
-			Err(_) => MinimizerOutput::passthrough(captured),
-		};
-		return ensure_success_visible(out.labeled("chain-git"), exit_code).with_original(captured);
+			let subcommand = identity.subcommand.as_deref();
+			let ctx = MinimizerCtx { program: &identity.program, subcommand, command, config };
+			let out =
+				match catch_unwind(AssertUnwindSafe(|| filters::filter(&ctx, captured, exit_code))) {
+					Ok(out) => out,
+					Err(_) => MinimizerOutput::passthrough(captured),
+				};
+			return ensure_success_visible(out.labeled("chain-git"), exit_code).with_original(captured);
+		}
+		// All-git but mixed (or unsupported) subcommands: stay opaque rather than
+		// routing the whole buffer through one subcommand filter and dropping the
+		// other segments' output.
+		return MinimizerOutput::passthrough(captured).labeled("compound");
 	}
 
 	// (b) Mixed chain: recurse into the first segment's filter when supported.
@@ -802,20 +821,28 @@ strip_lines_matching = [".*"]
 	}
 
 	#[test]
-	fn git_only_chain_routes_through_git_filter() {
-		// Phase 7 (Mode α resolution): `git A && git B` chains route through
-		// the git filter on the whole captured buffer.
+	fn git_only_chain_same_subcommand_routes_through_git_filter() {
+		// Mode α resolution: an all-git chain whose segments share one subcommand
+		// routes the whole captured buffer through that subcommand's git filter —
+		// the single filter correctly handles the concatenated output.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
-		let command = "git status && git log -1";
-		let input = "## main\n M file.rs\n";
-		let out = apply(command, input, 0, &cfg);
-		assert!(out.changed, "git-only chain should be rewritten by the git filter");
+		let out = apply("git status && git status", "## main\n M file.rs\n", 0, &cfg);
+		assert!(out.changed, "same-subcommand git chain should route through the git filter");
 		assert_eq!(out.filter, "chain-git");
-		assert!(
-			out.text.contains("unstaged 1") || out.text.contains("OK"),
-			"chain-git output should resemble git filter output: {:?}",
-			out.text
-		);
+	}
+
+	#[test]
+	fn git_only_chain_differing_subcommands_stays_opaque() {
+		// `git status && git log` must NOT route the whole buffer through one
+		// subcommand filter: `condense_status` rebuilds output from its own parse
+		// and would silently drop the `git log` segment's lines. Stay opaque and
+		// preserve the captured output verbatim.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let input = "## main\n M file.rs\n";
+		let out = apply("git status && git log -1", input, 0, &cfg);
+		assert!(!out.changed, "differing-subcommand git chain must stay passthrough");
+		assert_eq!(out.filter, "compound");
+		assert_eq!(out.text, input, "captured output must be preserved verbatim");
 	}
 
 	#[test]
