@@ -41,7 +41,16 @@ pub fn mode_for(command: &str, config: &MinimizerConfig) -> MinimizerMode {
 			}
 		},
 		plan::CommandPlan::Chain { segments } => {
-			if chain_has_eligible_segment(&segments, config) {
+			// Only route a chain through the segmented runner when the minimizer is
+			// enabled, the legacy kill-switch is off, at least one segment is
+			// eligible, and no segment can permanently rewire the shell's own file
+			// descriptors (`exec >out`). Any failed guard restores the pre-PR
+			// single-exec passthrough behaviour.
+			if config.enabled
+				&& !config.legacy_filters_active()
+				&& chain_has_eligible_segment(&segments, config)
+				&& !chain_mutates_shell_fds(&segments)
+			{
 				MinimizerMode::SegmentedChain
 			} else {
 				MinimizerMode::None
@@ -286,6 +295,48 @@ fn chain_has_eligible_segment(segments: &[plan::ChainSegment], config: &Minimize
 		detect::detect(&segment.command)
 			.is_some_and(|identity| identity_has_filter(&identity, config))
 			|| is_common_chain_utility(&segment.program)
+	})
+}
+
+/// True when any segment can permanently rewire the shell's own file
+/// descriptors. The segmented chain runner executes each segment in a fresh
+/// capture context with its own stdout/stderr pipe, so fd mutations made by one
+/// segment (e.g. `exec >out`, `exec 2>err`) are not honored by the segments
+/// that follow: output the user redirected to a file would instead be captured
+/// and returned to the caller. When such a segment is present we refuse to
+/// segment and leave the chain opaque (passthrough), preserving the original
+/// redirection semantics.
+fn chain_mutates_shell_fds(segments: &[plan::ChainSegment]) -> bool {
+	segments.iter().any(is_shell_fd_mutating_segment)
+}
+
+/// True when a segment's effective command is the `exec` builtin, which (with
+/// redirections and no command word) permanently rewires the shell's own file
+/// descriptors. Running it in an isolated capture context silently drops that
+/// effect, so any chain containing it must stay opaque.
+///
+/// Resolves through leading environment assignments and the `command` /
+/// `builtin` wrappers (and their option flags), since `command exec >out` and
+/// `builtin exec >out` invoke the same builtin as a bare `exec`.
+fn is_shell_fd_mutating_segment(segment: &plan::ChainSegment) -> bool {
+	for word in segment.command.split_whitespace() {
+		if word == "exec" {
+			return true;
+		}
+		if word == "command" || word == "builtin" || word.starts_with('-') || is_env_assignment(word) {
+			continue;
+		}
+		// First real command word is something other than `exec`.
+		return false;
+	}
+	false
+}
+
+/// True for a leading `KEY=value` environment assignment (a prefix that does
+/// not change which command word ultimately runs).
+fn is_env_assignment(word: &str) -> bool {
+	word.split_once('=').is_some_and(|(key, _)| {
+		!key.is_empty() && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 	})
 }
 
@@ -798,6 +849,53 @@ strip_lines_matching = [".*"]
 		let out = apply("git status && git log -1", input, 0, &cfg);
 		assert!(!out.changed);
 		assert_eq!(out.filter, "compound");
+	}
+
+	#[test]
+	fn legacy_filters_active_disables_segmented_chain() {
+		// Kill-switch parity: with the legacy filters flag set, an otherwise
+		// eligible safe chain must NOT route through the segmented runner so
+		// pre-segmentation single-exec behavior is restored.
+		let mut cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		cfg.legacy_filters_active = true;
+		assert_eq!(
+			mode_for("git diff --stat && git diff --name-only", &cfg),
+			MinimizerMode::None
+		);
+		assert_eq!(mode_for("git diff ; printf done", &cfg), MinimizerMode::None);
+	}
+
+	#[test]
+	fn disabled_config_does_not_segment_chain() {
+		// With the master switch off, no chain is segmented even when a segment
+		// would otherwise be eligible.
+		let cfg = MinimizerConfig::default();
+		assert!(!cfg.enabled);
+		assert_eq!(mode_for("git diff ; printf done", &cfg), MinimizerMode::None);
+	}
+
+	#[test]
+	fn chains_with_exec_fd_mutation_are_not_segmented() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		// `exec >out` rewires the shell's stdout; segmenting would run the
+		// following segment with a fresh capture pipe and lose the redirection,
+		// returning output to the caller that should have gone to the file.
+		assert_eq!(mode_for("exec >out ; echo hi", &cfg), MinimizerMode::None);
+		assert_eq!(mode_for("exec 2>err ; git status", &cfg), MinimizerMode::None);
+		// The fd-mutating segment poisons the chain even when it is not first.
+		assert_eq!(mode_for("git status ; exec >out", &cfg), MinimizerMode::None);
+		// `exec` wrapped by `command`/`builtin` (with flags or env assignments)
+		// mutates the same fds and must also block segmentation.
+		assert_eq!(mode_for("command exec >out ; echo hi", &cfg), MinimizerMode::None);
+		assert_eq!(mode_for("builtin exec >out ; echo hi", &cfg), MinimizerMode::None);
+		assert_eq!(mode_for("git diff ; command -p exec 2>err", &cfg), MinimizerMode::None);
+		// A real command merely named with `exec` as an argument is not the
+		// builtin and must NOT block segmentation.
+		assert_eq!(mode_for("echo exec ; printf done", &cfg), MinimizerMode::SegmentedChain);
+		// Such chains pass through untouched.
+		let out = apply("exec >out ; echo hi", "hi\n", 0, &cfg);
+		assert_eq!(out.text, "hi\n");
+		assert!(!out.changed);
 	}
 }
 
