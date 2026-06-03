@@ -606,20 +606,6 @@ impl ChainCapture {
 	}
 }
 
-fn reason_only_minimizer_result(
-	filter: &'static str,
-	original_text: String,
-	input_bytes: usize,
-) -> MinimizerResult {
-	let output_bytes = u32::try_from(original_text.len()).unwrap_or(u32::MAX);
-	MinimizerResult {
-		filter: filter.to_string(),
-		text: original_text.clone(),
-		original_text,
-		input_bytes: u32::try_from(input_bytes).unwrap_or(u32::MAX),
-		output_bytes,
-	}
-}
 
 async fn run_shell_command(
 	session: &mut ShellSessionCore,
@@ -698,10 +684,9 @@ async fn run_shell_command_single(
 		&& let Some(config) = options.minimizer.as_ref()
 	{
 		if buffered.exceeded {
-			if matches!(minimizer_mode, minimizer::engine::MinimizerMode::WholeCommand) {
-				minimized_out =
-					Some(reason_only_minimizer_result("too-large", String::new(), buffered.input_bytes));
-			}
+			// Capture exceeded the cap: nothing was rewritten and the raw output
+			// was already streamed to the caller. Surface `None` so the consumer
+			// keeps its streamed buffer instead of replacing it with empty text.
 		} else {
 			let minimized = match minimizer_mode {
 				minimizer::engine::MinimizerMode::WholeCommand => minimizer::apply(
@@ -780,8 +765,6 @@ async fn run_shell_command_segmented_chain(
 
 	let params = session.shell.default_exec_params();
 	let mut aggregate = Some(ChainCapture::new());
-	let mut aggregate_dropped_too_large = false;
-	let mut overflow_input_bytes = 0usize;
 	let mut previous_succeeded = true;
 	let mut last_result = None;
 	let max_capture_bytes = config.max_capture_bytes as usize;
@@ -813,14 +796,12 @@ async fn run_shell_command_segmented_chain(
 
 		if let Some(buffered) = command_run.buffered {
 			if buffered.exceeded {
-				aggregate_dropped_too_large = aggregate.is_some();
-				overflow_input_bytes = overflow_input_bytes.saturating_add(buffered.input_bytes);
+				// Overflow: the raw segment output was streamed; abandon the
+				// aggregate so the chain surfaces no (empty) telemetry.
 				aggregate = None;
 			} else if let Some(capture) = aggregate.as_mut() {
 				let next_input_bytes = capture.input_bytes.saturating_add(buffered.input_bytes);
 				if next_input_bytes > max_capture_bytes {
-					aggregate_dropped_too_large = true;
-					overflow_input_bytes = next_input_bytes;
 					aggregate = None;
 				} else {
 					let minimized = minimizer::apply(&segment.command, &buffered.text, exit, config);
@@ -868,11 +849,10 @@ async fn run_shell_command_segmented_chain(
 				input_bytes:   u32::try_from(minimized.input_bytes).unwrap_or(u32::MAX),
 				output_bytes:  u32::try_from(minimized.output_bytes).unwrap_or(u32::MAX),
 			}
-		})
-		.or_else(|| {
-			aggregate_dropped_too_large
-				.then(|| reason_only_minimizer_result("too-large", String::new(), overflow_input_bytes))
 		});
+	// A chain that overflowed the aggregate cap was streamed raw and rewrote
+	// nothing, so `minimized_out` stays `None` rather than carrying an empty
+	// replacement the consumer might splice over the streamed output.
 
 	Ok((result, minimized_out))
 }
@@ -2119,12 +2099,9 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 		assert_eq!(result.exit_code, Some(0));
 		assert_eq!(output.len(), 1200);
 		assert!(output.ends_with('x'));
-		let minimized = result.minimized.expect("too-large result");
-		assert_eq!(minimized.filter, "too-large");
-		assert_eq!(minimized.text, "");
-		assert_eq!(minimized.original_text, "");
-		assert_eq!(minimized.input_bytes, 1200);
-		assert_eq!(minimized.output_bytes, 0);
+		// Over-cap capture rewrites nothing and the raw output was streamed, so
+		// no (empty) minimizer telemetry is surfaced.
+		assert!(result.minimized.is_none(), "{:?}", result.minimized);
 	}
 
 	#[cfg(unix)]
@@ -2166,10 +2143,8 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 		assert_eq!(result.exit_code, Some(0));
 		assert_eq!(output.len(), 1200);
 		assert!(output.ends_with('y'));
-		let minimized = result.minimized.expect("too-large result");
-		assert_eq!(minimized.filter, "too-large");
-		assert_eq!(minimized.text, "");
-		assert_eq!(minimized.original_text, "");
+		// Aggregate over-cap: raw output streamed, nothing rewritten → no telemetry.
+		assert!(result.minimized.is_none(), "{:?}", result.minimized);
 	}
 
 	#[cfg(unix)]
