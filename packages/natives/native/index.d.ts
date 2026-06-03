@@ -149,10 +149,13 @@ export declare function applyBashFixups(command: string): BashFixupResult
 
 /**
  * Run the shell-output minimizer over an already-captured command result,
- * without spawning a shell. Returns a `MinimizerResult` only when the output
+ * without spawning a shell. Resolves to a `MinimizerResult` only when the output
  * was actually rewritten, and `null` for disabled/omitted/passthrough cases.
+ *
+ * Async (returns a Promise): the AI overlay can make a blocking 5s HTTP request,
+ * so the work runs on a blocking pool to avoid stalling the JS event loop.
  */
-export declare function applyShellMinimizer(options: ShellMinimizerApplyOptions): MinimizerResult | null
+export declare function applyShellMinimizer(options: ShellMinimizerApplyOptions): Promise<MinimizerResult | null>
 
 /**
  * Apply ast-grep rewrite rules to matching files; honors `dryRun` and returns

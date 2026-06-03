@@ -378,8 +378,31 @@ pub struct ShellMinimizerApplyOptions {
 /// `minimizer` is omitted, when the config is disabled, or when the filter
 /// passes the output through unchanged. A missing `exit_code` is treated as
 /// success (`0`).
-#[napi]
-pub fn apply_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<MinimizerResult> {
+#[napi(ts_return_type = "Promise<MinimizerResult | null>")]
+pub fn apply_shell_minimizer<'env>(
+	env: &'env Env,
+	options: ShellMinimizerApplyOptions,
+) -> Result<PromiseRaw<'env, Option<MinimizerResult>>> {
+	// Returns a Promise rather than a sync value: when `aiSmartEnabled` is set the
+	// minimizer can reach `ai_smart::call_deepseek`, a `reqwest::blocking` request
+	// with a 5s timeout (plus one retry). A sync `#[napi]` fn would run that to
+	// completion on the JS main thread and stall the event loop — N-API has no
+	// preempt. Run the whole pass on a blocking pool, mirroring `execute_shell`.
+	task::future(env, "shell.minimize", async move {
+		napi::tokio::task::spawn_blocking(move || run_shell_minimizer(options))
+			.await
+			.map_err(|err| Error::from_reason(err.to_string()))
+	})
+}
+
+/// Pure, blocking core of [`apply_shell_minimizer`], factored out so it can run
+/// inside `spawn_blocking` and be unit-tested without an N-API `Env`.
+///
+/// Mirrors the persistent-shell path (`pi_shell::shell`): surface telemetry only
+/// when the minimizer actually rewrote the output and kept the original buffer.
+/// The disabled / passthrough cases report `changed: false` with no
+/// `original_text`, and yield `None`.
+fn run_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<MinimizerResult> {
 	let minimizer = options.minimizer?;
 	let minimizer_options: minimizer::MinimizerOptions = minimizer.into();
 	let config = minimizer::MinimizerConfig::from_options(&minimizer_options);
@@ -389,10 +412,6 @@ pub fn apply_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<Mini
 		options.exit_code.unwrap_or(0),
 		&config,
 	);
-	// Mirror the persistent-shell path (`pi_shell::shell`): surface telemetry
-	// only when the minimizer actually rewrote the output and kept the
-	// original buffer. The disabled / passthrough cases report `changed:
-	// false` with no `original_text`, and must yield `null`.
 	if output.changed
 		&& let Some(original_text) = output.original_text
 	{
@@ -423,7 +442,7 @@ mod tests {
 	#[test]
 	fn apply_shell_minimizer_surfaces_rewrite_with_original() {
 		let captured = "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n";
-		let result = super::apply_shell_minimizer(super::ShellMinimizerApplyOptions {
+		let result = super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
 			command:   "git diff".to_string(),
 			captured:  captured.to_string(),
 			exit_code: Some(0),
@@ -442,7 +461,7 @@ mod tests {
 	fn apply_shell_minimizer_returns_none_when_disabled() {
 		// `enabled: false` keeps the engine in passthrough — no telemetry.
 		assert!(
-			super::apply_shell_minimizer(super::ShellMinimizerApplyOptions {
+			super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
 				command:   "git diff".to_string(),
 				captured:  "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n".to_string(),
 				exit_code: Some(0),
@@ -452,7 +471,7 @@ mod tests {
 		);
 		// A missing minimizer handle is also a no-op.
 		assert!(
-			super::apply_shell_minimizer(super::ShellMinimizerApplyOptions {
+			super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
 				command:   "git diff".to_string(),
 				captured:  "diff --git a/file.rs b/file.rs\n".to_string(),
 				exit_code: Some(0),

@@ -320,7 +320,11 @@ fn chain_mutates_shell_fds(segments: &[plan::ChainSegment]) -> bool {
 /// `builtin exec >out` invoke the same builtin as a bare `exec`.
 fn is_shell_fd_mutating_segment(segment: &plan::ChainSegment) -> bool {
 	for word in segment.command.split_whitespace() {
-		if word == "exec" {
+		// `exec` rewires fds directly. `eval`/`source`/`.` can introduce an `exec`
+		// opaquely (e.g. `eval "exec >out"`), which `split_whitespace` cannot see
+		// inside the quoted string — treat them as fd-mutating too so the chain
+		// stays opaque rather than silently swallowing the redirection.
+		if matches!(word, "exec" | "eval" | "source" | ".") {
 			return true;
 		}
 		if word == "command" || word == "builtin" || word.starts_with('-') || is_env_assignment(word) {
