@@ -1222,23 +1222,24 @@ fn condense_stash_list(input: &str) -> String {
 		} else {
 			("", trimmed)
 		};
-		// Strip "WIP on <branch>: " or "On <branch>: " noise, keep stash ref.
-		let compact = if let Some(rest) = after_stash.strip_prefix("WIP on ") {
-			rest
-				.split_once(": ")
-				.map_or(after_stash, |(_branch, msg)| msg.trim())
-		} else if let Some(rest) = after_stash.strip_prefix("On ") {
-			rest
-				.split_once(": ")
-				.map_or(after_stash, |(_branch, msg)| msg.trim())
-		} else {
-			after_stash
+		// Strip the "WIP on "/"On " prefix but KEEP <branch> — it's the primary
+		// thing users scan a stash list for ("which branch is this stash from?").
+		// Re-emit it compactly as `[branch] <message>` instead of dropping it.
+		let compact = match after_stash
+			.strip_prefix("WIP on ")
+			.or_else(|| after_stash.strip_prefix("On "))
+		{
+			Some(rest) => rest.split_once(": ").map_or_else(
+				|| after_stash.to_string(),
+				|(branch, msg)| format!("[{}] {}", branch.trim(), msg.trim()),
+			),
+			None => after_stash.to_string(),
 		};
 		if !stash_ref.is_empty() {
 			out.push_str(stash_ref);
 			out.push_str(": ");
 		}
-		out.push_str(compact);
+		out.push_str(&compact);
 		out.push('\n');
 	}
 	if count == 0 {
@@ -2003,9 +2004,11 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		             def5678 chore: clean up\nstash@{2}: WIP on dev: ghi9012 feat: add widget\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.changed);
-		assert!(out.text.contains("stash@{0}: abc1234 fix: something"));
-		assert!(out.text.contains("stash@{1}: def5678 chore: clean up"));
-		assert!(out.text.contains("stash@{2}: ghi9012 feat: add widget"));
+		// Branch is preserved (re-emitted as `[branch]`) — it's the primary thing
+		// users scan stash lists for — while the "WIP on "/"On " noise is stripped.
+		assert!(out.text.contains("stash@{0}: [feature-x] abc1234 fix: something"));
+		assert!(out.text.contains("stash@{1}: [main] def5678 chore: clean up"));
+		assert!(out.text.contains("stash@{2}: [dev] ghi9012 feat: add widget"));
 		assert!(!out.text.contains("WIP on "));
 		assert!(!out.text.contains("On main:"));
 	}

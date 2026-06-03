@@ -93,6 +93,17 @@ pub const fn reset_apply_budget() {}
 /// output untouched").
 #[cfg(feature = "ai-smart")]
 pub fn maybe_summarize(ctx: &MinimizerCtx<'_>, captured: &str) -> Option<String> {
+	let api_key = std::env::var(API_KEY_ENV).ok();
+	summarize_with_key(ctx, captured, api_key.as_deref())
+}
+
+/// Pure inner of [`maybe_summarize`]: takes the credential as an argument
+/// instead of reading process-global env, so tests can exercise the "missing
+/// key" gate by passing `None` without mutating `OMP_AI_SMART_API_KEY` (an
+/// `unsafe { set_var }` that races every other thread in a parallel
+/// `cargo test` run). Mirrors the pure-function shape of `resolve_legacy_filters`.
+#[cfg(feature = "ai-smart")]
+fn summarize_with_key(ctx: &MinimizerCtx<'_>, captured: &str, api_key: Option<&str>) -> Option<String> {
 	if !ctx.config.ai_smart_enabled {
 		return None;
 	}
@@ -108,13 +119,10 @@ pub fn maybe_summarize(ctx: &MinimizerCtx<'_>, captured: &str) -> Option<String>
 	if !consume_budget() {
 		return None;
 	}
-	let api_key = match std::env::var(API_KEY_ENV) {
-		Ok(value) if !value.is_empty() => value,
-		_ => return None,
-	};
+	let api_key = api_key.filter(|value| !value.is_empty())?;
 	let provider = ctx.config.ai_smart_provider.as_str();
 	match provider {
-		"deepseek" => call_deepseek(&api_key, captured),
+		"deepseek" => call_deepseek(api_key, captured),
 		_ => None,
 	}
 }
@@ -344,17 +352,16 @@ mod tests {
 
 	#[test]
 	fn missing_api_key_returns_none() {
-		// SAFETY: tests run single-threaded by default; we restore on exit.
-		let prev = std::env::var(API_KEY_ENV).ok();
-		// SAFETY: clearing an env var in a single-threaded test context.
-		unsafe { std::env::remove_var(API_KEY_ENV) };
+		// Pass the key explicitly via the pure helper instead of mutating the
+		// process-global env — `cargo test` runs this binary's tests in parallel,
+		// so an `unsafe { remove_var/set_var }` here would race any sibling test
+		// that spawns a shell or probes `OMP_AI_SMART_API_KEY`.
 		let config = cfg();
 		reset_apply_budget();
-		assert!(maybe_summarize(&ctx("echo hi", &config), "hi").is_none());
-		if let Some(value) = prev {
-			// SAFETY: restoring the prior value in a single-threaded test.
-			unsafe { std::env::set_var(API_KEY_ENV, value) };
-		}
+		assert!(summarize_with_key(&ctx("echo hi", &config), "hi", None).is_none());
+		// An empty key is treated the same as a missing one.
+		reset_apply_budget();
+		assert!(summarize_with_key(&ctx("echo hi", &config), "hi", Some("")).is_none());
 	}
 
 	#[test]

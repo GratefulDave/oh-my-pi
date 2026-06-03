@@ -297,10 +297,18 @@ const napiArgs = [
 	profileLabel,
 ];
 
-// Enable the AI-summary minimizer filter so the runtime `aiSmartEnabled`/
-// `aiSmartProvider` knobs actually toggle behavior. Appended after the array
-// literal so the positional `-o` index (napiArgs[10]) stays stable below.
-napiArgs.push("--features", "ai-smart");
+// Optionally enable the AI-summary minimizer filter. This links the full
+// reqwest + rustls + ring + hyper TLS/HTTP stack into the addon, so it is OFF by
+// default: the public `pi_natives.*.node` stays lean, and the runtime
+// `aiSmartEnabled`/`aiSmartProvider` knobs are inert unless the addon was built
+// with this opt-in (they also require `OMP_AI_SMART_API_KEY` at runtime, so a
+// default-on feature would be pure binary-size cost for users who never set it).
+// Set OMP_ENABLE_AI_SMART=1 for dev builds that exercise the AI overlay.
+// Appended after the array literal so the positional `-o` index (napiArgs[10])
+// stays stable below.
+if (Bun.env.OMP_ENABLE_AI_SMART) {
+	napiArgs.push("--features", "ai-smart");
+}
 
 if (crossTarget) {
 	napiArgs.push("--target", crossTarget);

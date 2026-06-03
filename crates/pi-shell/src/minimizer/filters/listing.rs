@@ -186,7 +186,11 @@ fn center_truncate_match(text: &str, max_chars: usize) -> String {
 	// - If the line is effectively one long token, bias earlier so identifiers that
 	//   appear before a long suffix still remain visible.
 	// - Otherwise center in the middle of the full line.
-	let first_non_ws = text.find(|c: char| !c.is_whitespace()).unwrap_or(0);
+	// Count leading whitespace in CHARS, not bytes: this value is compared and
+	// combined with char-based quantities (`char_count`, `max_chars`) and used as
+	// a char-stepping floor below. `str::find` returns a byte offset, which would
+	// overstate the index for any multibyte leading whitespace (NBSP, U+3000).
+	let first_non_ws = text.chars().take_while(|c| c.is_whitespace()).count();
 	let has_whitespace = text.chars().any(char::is_whitespace);
 	let anchor = if first_non_ws > 0 && first_non_ws < char_count / 3 {
 		first_non_ws + max_chars / 4
