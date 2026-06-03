@@ -9,6 +9,10 @@
 - Bounded sorted `glob()` scans to `maxResults` during uncached traversal and emitted `onMatch` callbacks only for entries admitted to the bounded top-`maxResults` heap so broad OMP `find` progress and timeout partials stay consistent with the returned mtime-ranked set while keeping parent-process memory bounded ([#1761](https://github.com/can1357/oh-my-pi/issues/1761)).
 - Fixed `wrapTextWithAnsi` hanging (infinite loop) on text containing a BEL-terminated string escape — DCS/SOS/PM/APC (`ESC P`/`ESC X`/`ESC ^`/`ESC _`) closed by `BEL` instead of `ST`. `ansi_seq_len_u16` only accepted the `ST` (`ESC \`) terminator for these (OSC already accepted both), so a BEL-terminated APC such as the TUI cursor marker (`ESC _ pi:c BEL`) was left unclassified: it was miscounted as visible width and `break_long_word`'s non-ESC scan could not advance past the `ESC`, spinning forever. The terminator set now matches OSC (ST **or** BEL), and `break_long_word` defensively emits and steps over any escape it cannot classify so a malformed/unknown sequence can never wedge the wrap loop.
 
+### Added
+
+- Added minimizer options `sourceOutlineLevel`, `aiSmartEnabled`, `aiSmartProvider`, and `legacyFilters` to the `MinimizerOptions` native surface. The opt-in AI-summary overlay (`aiSmartEnabled`) is now compiled into the distributed addon via `napi build --features ai-smart` and gated at runtime by the new knobs; it is disabled by default and fail-closed.
+
 ## [15.7.0] - 2026-05-31
 
 ### Added

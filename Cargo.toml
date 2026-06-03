@@ -297,6 +297,15 @@ tiktoken-rs = "0.11"
 brush-parser = "0.3"
 
 # ──────────────────────────────────────────────────────────────────────────────
+# HTTP Client (opt-in: ai-smart minimizer filter)
+# ──────────────────────────────────────────────────────────────────────────────
+reqwest = { version = "0.12", default-features = false, features = [
+   "blocking",
+   "json",
+   "rustls-tls",
+] }
+
+# ──────────────────────────────────────────────────────────────────────────────
 # AST & Tree-Sitter
 # ──────────────────────────────────────────────────────────────────────────────
 ast-grep-core = { version = "0.39", default-features = false, features = [
