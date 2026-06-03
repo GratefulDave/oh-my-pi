@@ -44,11 +44,6 @@ pub struct MinimizerOptions {
 	/// Source-outline level for `cat <source-file>` minimization. Accepts
 	/// `"default"` (current behavior) or `"aggressive"` (strip function bodies).
 	pub source_outline_level: Option<String>,
-	/// Master switch for the AI-summary filter (W4 / rtk smart). Default off.
-	pub ai_smart_enabled:     Option<bool>,
-	/// Provider key for the AI summarizer (e.g. `"deepseek"`). Default
-	/// `"deepseek"` when `ai_smart_enabled` is true.
-	pub ai_smart_provider:    Option<String>,
 	/// Kill-switch to fall back to the pre-PR (legacy) filter behavior for
 	/// grep / find / pytest. When `Some(true)`, filters that opted into the
 	/// always-shrink Tier 1 / Tier 2 behavior skip the new code path. When
@@ -66,8 +61,6 @@ impl From<MinimizerOptions> for minimizer::MinimizerOptions {
 			except:               value.except,
 			max_capture_bytes:    value.max_capture_bytes,
 			source_outline_level: value.source_outline_level,
-			ai_smart_enabled:     value.ai_smart_enabled,
-			ai_smart_provider:    value.ai_smart_provider,
 			legacy_filters:       value.legacy_filters,
 		}
 	}
@@ -383,11 +376,10 @@ pub fn apply_shell_minimizer<'env>(
 	env: &'env Env,
 	options: ShellMinimizerApplyOptions,
 ) -> Result<PromiseRaw<'env, Option<MinimizerResult>>> {
-	// Returns a Promise rather than a sync value: when `aiSmartEnabled` is set the
-	// minimizer can reach `ai_smart::call_deepseek`, a `reqwest::blocking` request
-	// with a 5s timeout (plus one retry). A sync `#[napi]` fn would run that to
-	// completion on the JS main thread and stall the event loop — N-API has no
-	// preempt. Run the whole pass on a blocking pool, mirroring `execute_shell`.
+	// Returns a Promise rather than a sync value: minimization can run over a
+	// multi-megabyte capture buffer, and a sync `#[napi]` fn would do that CPU
+	// work on the JS main thread and stall the event loop. Run the whole pass on
+	// a blocking pool, mirroring `execute_shell`.
 	task::future(env, "shell.minimize", async move {
 		napi::tokio::task::spawn_blocking(move || run_shell_minimizer(options))
 			.await
