@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"cd /Users/davidandrews/PycharmProjects/lex\\necho \\\"=== upstream(v15.8.1) vs base(1fcb49601): non-version changes per package.json ===\\\"\\nfor f in agent ai coding-agent hashline mnemopi nat...",
+  "error": "Exit code 1\n=== upstream(v15.8.1) vs base(1fcb49601): non-version changes per package.json ===\n--- agent: non-version upstream changes = 0\n--- ai: non-version upstream changes = 1\n< \t\t\"@anthropic-ai/sdk\": \"catalog:\",\n--- coding-agent: non-version upstream changes = 0\n--- hashline: non-version upstream changes = 0\n--- mnemopi: non-version upstream changes = 0\n--- natives: non-version upstream changes = 0\n--- stats: non-version upstream changes = 0\n--- swarm-extension: non-version upstream changes...",
+  "timestamp": "2026-06-03T03:57:41.773Z",
+  "retry_count": 1
+}
