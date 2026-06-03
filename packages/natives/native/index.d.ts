@@ -148,6 +148,13 @@ export declare function __piNativesV15_9_67(): void
 export declare function applyBashFixups(command: string): BashFixupResult
 
 /**
+ * Run the shell-output minimizer over an already-captured command result,
+ * without spawning a shell. Returns a `MinimizerResult` only when the output
+ * was actually rewritten, and `null` for disabled/omitted/passthrough cases.
+ */
+export declare function applyShellMinimizer(options: ShellMinimizerApplyOptions): MinimizerResult | null
+
+/**
  * Apply ast-grep rewrite rules to matching files; honors `dryRun` and returns
  * a promise.
  */
@@ -1268,6 +1275,14 @@ export interface ShellExecuteOptions {
   minimizer?: MinimizerOptions
   /** Abort signal for cancelling the operation. */
   signal?: unknown
+}
+
+/** Inputs for `applyShellMinimizer`: captured text plus minimizer config. */
+export interface ShellMinimizerApplyOptions {
+  command: string
+  captured: string
+  exitCode?: number
+  minimizer?: MinimizerOptions
 }
 
 /** Options for configuring a persistent shell session. */
