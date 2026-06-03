@@ -188,6 +188,10 @@
 
 - Added env-driven OpenTelemetry trace export. When `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) is set, `omp` registers a global OTLP/proto trace exporter and switches on the agent loop's telemetry, so the `invoke_agent` / `chat` / `execute_tool` spans actually reach a collector instead of a no-op tracer. Honors the standard `OTEL_*` env contract (endpoint, headers, `OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED` and `OTEL_TRACES_EXPORTER=none` parsed case-insensitively) and the `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` capture toggle; it is a no-op when no endpoint is configured. Only the `http/protobuf` transport is supported — a `grpc` or `http/json` `OTEL_EXPORTER_OTLP*_PROTOCOL` declines rather than misrouting spans. This makes the existing telemetry usable from headless hosts that run `omp` as a spawned child process, where an in-process `TracerProvider` registered by the parent can't reach the child. Uses the `@opentelemetry/exporter-trace-otlp-proto` 2.x line, which exports cleanly under Bun.
 
+### Added
+
+- Added support for `disable-model-invocation: true` frontmatter field from the [Agent Skills standard](https://agentskills.io/specification). Skills using this field are now hidden from the system prompt listing, matching the behavior of `hide: true`.
+
 ## [15.8.3] - 2026-06-03
 
 ### Fixed
