@@ -290,6 +290,24 @@ fn detect_status_state(line: &str) -> Option<&str> {
 }
 
 fn parse_short_status_line(line: &str, summary: &mut StatusSummary) -> bool {
+	// `git status -sb` / `--porcelain=v1 -b` prefixes a branch header line:
+	// `## main...origin/main [ahead 1]`, `## HEAD (no branch)`, or
+	// `## No commits yet on main`. Capture the branch instead of misreading it
+	// as a status entry.
+	if let Some(rest) = line.strip_prefix("## ") {
+		let header = rest.trim();
+		let branch = header
+			.strip_prefix("No commits yet on ")
+			.map_or_else(
+				|| header.split(['.', ' ']).next().unwrap_or(header),
+				|b| b.split(' ').next().unwrap_or(b),
+			)
+			.trim();
+		if !branch.is_empty() {
+			summary.branch = Some(branch.to_string());
+		}
+		return true;
+	}
 	let Some(status) = line.get(..2) else {
 		return false;
 	};
@@ -1300,6 +1318,18 @@ mod tests {
 			 scratch.txt\nUU conflicted.rs\n"
 		);
 	}
+	#[test]
+	fn short_status_branch_header_is_preserved() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status -sb", &cfg);
+		// `-sb` emits a `## branch...upstream [ahead N]` header that must be
+		// captured as the branch, not dropped or miscounted as a status entry.
+		let input = "## main...origin/main [ahead 1]\n M src/main.rs\n";
+		let out = filter(&ctx, input, 0);
+		assert!(out.text.contains("branch main"), "{:?}", out.text);
+		assert!(out.text.contains("unstaged 1"), "{:?}", out.text);
+	}
+
 	#[test]
 	fn short_status_counts_aa_dd_as_conflicts() {
 		// `AA` (both added) and `DD` (both deleted) lack a literal 'U' but are

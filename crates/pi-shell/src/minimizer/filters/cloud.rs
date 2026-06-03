@@ -293,9 +293,12 @@ fn compact_aws_s3_ls_text(input: &str) -> Option<String> {
 			let size = parts.next()?;
 			let mut rest: Vec<&str> = parts.collect();
 			// `--human-readable` renders the size as two tokens (`10.0 MiB`); drop
-			// the trailing unit so it is not glued onto the object key. Keep it when
-			// removing it would leave no key (an object literally named after a unit).
-			if rest.len() >= 2 && is_s3_size_unit(rest[0]) {
+			// the trailing unit so it is not glued onto the object key. Only do so
+			// when the size token is a decimal — AWS prints human-readable KiB/MiB/…
+			// with a fractional part, whereas a plain `aws s3 ls` size is an integer
+			// byte count followed directly by the key. This avoids stripping a real
+			// key whose first word merely looks like a unit (e.g. `1024 MiB notes`).
+			if rest.len() >= 2 && size.contains('.') && is_s3_size_unit(rest[0]) {
 				rest.remove(0);
 			}
 			// KEY_NAME may contain spaces, so join the remainder to reconstruct the
@@ -1485,6 +1488,17 @@ mod tests {
 		let out = filter(&ctx, "2026-01-01 12:00:00 10.0 MiB my report.txt\n", 0);
 		assert!(out.text.contains("my report.txt"), "{:?}", out.text);
 		assert!(!out.text.contains("MiB my report.txt"), "{:?}", out.text);
+	}
+
+	#[test]
+	fn s3_ls_plain_keeps_key_starting_with_unit_word() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 ls s3://b/", &cfg);
+		// Plain `aws s3 ls` (no --human-readable): the size is an integer byte
+		// count and the rest is the key. A key whose first word is `MiB` must be
+		// preserved, not mistaken for a human-readable unit suffix.
+		let out = filter(&ctx, "2026-01-01 12:00:00 1024 MiB notes.txt\n", 0);
+		assert!(out.text.contains("MiB notes.txt"), "{:?}", out.text);
 	}
 
 	#[test]
