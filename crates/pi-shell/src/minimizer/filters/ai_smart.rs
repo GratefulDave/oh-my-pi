@@ -63,15 +63,15 @@ const SYSTEM_PROMPT: &str = include_str!("ai_smart_system_prompt.md");
 //
 // Lives in a thread-local because the existing shell entrypoints invoke
 // `engine::apply` synchronously and threading a counter cell through the
-// existing call sites would require touching `shell.rs` (out of W2's
-// approved touch set). Each top-level `apply` call resets the budget to 1.
+// existing call sites would require touching `shell.rs`. Each top-level
+// `apply` call resets the budget to 1.
 //
-// Limitation vs. AC4.9: when shell.rs runs a chain by invoking
-// `minimizer::apply` per segment, the budget resets per segment — a
-// 5-segment chain that all carry AI-eligible output would fire up to 5
-// times rather than once. Cross-segment enforcement needs a budget cell
-// threaded from the chain runner in shell.rs; that wiring is documented as
-// follow-up in the worker-2 completion report.
+// Chains are bounded structurally rather than by this counter: the segmented
+// chain runner minimizes each segment through `engine::apply_segment`, which
+// runs deterministic filters only and never invokes the AI overlay. The AI
+// summarizer therefore fires at most once — on a whole single command — and
+// makes zero provider calls for a segmented chain, keeping the cost/privacy
+// contract intact.
 #[cfg(feature = "ai-smart")]
 thread_local! {
 	static AI_BUDGET: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
