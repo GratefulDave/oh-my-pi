@@ -6,6 +6,11 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+[features]
+## Enables the AI-summary post-step (W4 / rtk smart) in the minimizer engine.
+## Off by default; the `ai_smart` filter module is not yet implemented.
+ai-smart = []
+
 [lints]
 workspace = true
 

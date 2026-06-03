@@ -46,12 +46,13 @@ pub struct MinimizerOptions {
 impl From<MinimizerOptions> for minimizer::MinimizerOptions {
 	fn from(value: MinimizerOptions) -> Self {
 		Self {
-			enabled:           value.enabled,
-			settings_path:     value.settings_path,
-			settings_hash:     value.settings_hash,
-			only:              value.only,
-			except:            value.except,
+			enabled: value.enabled,
+			settings_path: value.settings_path,
+			settings_hash: value.settings_hash,
+			only: value.only,
+			except: value.except,
 			max_capture_bytes: value.max_capture_bytes,
+			..Default::default()
 		}
 	}
 }

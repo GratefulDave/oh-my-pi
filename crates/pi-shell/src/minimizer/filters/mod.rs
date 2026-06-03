@@ -2,6 +2,11 @@
 
 use crate::minimizer::{MinimizerCtx, MinimizerOutput};
 
+/// AI-summary post-step. Gated behind the `ai-smart` Cargo feature; the
+/// engine's overlay is a no-op until the full summarizer lands.
+#[cfg(feature = "ai-smart")]
+pub mod ai_smart;
+
 pub mod cloud;
 pub mod cpp;
 
