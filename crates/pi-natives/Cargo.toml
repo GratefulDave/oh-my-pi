@@ -9,6 +9,12 @@ repository.workspace = true
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+## Forward pi-shell's AI-summary filter feature so the runtime
+## `aiSmartEnabled`/`aiSmartProvider` knobs actually toggle behavior. Off by
+## default; enabled by the native build via `napi build --features ai-smart`.
+ai-smart = ["pi-shell/ai-smart"]
+
 [lints]
 workspace = true
 
