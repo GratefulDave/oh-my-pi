@@ -296,15 +296,23 @@ fn parse_short_status_line(line: &str, summary: &mut StatusSummary) -> bool {
 	// as a status entry.
 	if let Some(rest) = line.strip_prefix("## ") {
 		let header = rest.trim();
-		let branch = header
-			.strip_prefix("No commits yet on ")
-			.map_or_else(
-				|| header.split(['.', ' ']).next().unwrap_or(header),
-				|b| b.split(' ').next().unwrap_or(b),
-			)
-			.trim();
+		let branch = if let Some(b) = header.strip_prefix("No commits yet on ") {
+			b.split(' ').next().unwrap_or(b).trim().to_string()
+		} else {
+			// `branch...upstream [ahead N, behind M]`: keep the branch name and the
+			// ahead/behind divergence the user explicitly asked for with `-sb`,
+			// dropping only the verbose `...upstream` tracking ref.
+			let name = header.split(['.', ' ']).next().unwrap_or(header).trim();
+			match header
+				.find('[')
+				.and_then(|start| header[start..].find(']').map(|end| &header[start..=start + end]))
+			{
+				Some(divergence) => format!("{name} {divergence}"),
+				None => name.to_string(),
+			}
+		};
 		if !branch.is_empty() {
-			summary.branch = Some(branch.to_string());
+			summary.branch = Some(branch);
 		}
 		return true;
 	}
@@ -1327,6 +1335,8 @@ mod tests {
 		let input = "## main...origin/main [ahead 1]\n M src/main.rs\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.text.contains("branch main"), "{:?}", out.text);
+		// The ahead/behind divergence the user asked for with `-sb` must survive.
+		assert!(out.text.contains("[ahead 1]"), "{:?}", out.text);
 		assert!(out.text.contains("unstaged 1"), "{:?}", out.text);
 	}
 

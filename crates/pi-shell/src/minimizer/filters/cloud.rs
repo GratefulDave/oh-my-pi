@@ -288,8 +288,14 @@ fn compact_aws_s3_ls_text(input: &str) -> Option<String> {
 			let mut parts = line.split_whitespace();
 			let first = parts.next()?;
 			if first == "PRE" {
+				// A common-prefix name may contain spaces (`PRE my folder/`), so join
+				// the remaining tokens instead of keeping only the first one.
+				let prefix: Vec<&str> = parts.collect();
+				if prefix.is_empty() {
+					return None;
+				}
 				return Some(vec![
-					parts.next()?.trim_end_matches('/').to_string(),
+					prefix.join(" ").trim_end_matches('/').to_string(),
 					"prefix".to_string(),
 				]);
 			}
@@ -1483,6 +1489,17 @@ mod tests {
 		let out = filter(&ctx, "2026-05-27 01:02:03 builds\n2026-05-27 01:03:04 logs\n", 0);
 		assert!(out.text.contains("builds\t2026-05-27 01:02:03"));
 		assert_output_pure(&out.text);
+	}
+
+	#[test]
+	fn s3_ls_common_prefix_with_spaces_is_preserved() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 ls s3://b/", &cfg);
+		// `PRE` common-prefix names can contain spaces; the full name must survive
+		// rather than being truncated to the first token.
+		let out = filter(&ctx, "                           PRE my folder/\n", 0);
+		assert!(out.text.contains("my folder"), "{:?}", out.text);
+		assert!(!out.text.contains("my\tprefix"), "{:?}", out.text);
 	}
 
 	#[test]
