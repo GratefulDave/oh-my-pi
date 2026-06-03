@@ -1629,4 +1629,46 @@ mod tests {
 		assert!(matches_key_inner(b"\x1b", "escape", false));
 		assert!(matches_key_inner(b"\x1b", "escape", true));
 	}
+
+	#[test]
+	fn named_keys_do_not_match_ctrl_letters_in_legacy_mode() {
+		// Issue #1354 collision matrix: Enter/LF/Tab/Backspace each send the same
+		// single byte as ctrl+m/j/i/h. In legacy mode the two are physically
+		// indistinguishable, so the byte MUST resolve to the named key and MUST
+		// NOT fire a ctrl+<letter> binding; only enhanced encodings disambiguate.
+		assert!(matches_key_inner(b"\r", "enter", false));
+		assert!(!matches_key_inner(b"\r", "ctrl+m", false));
+
+		assert!(matches_key_inner(b"\n", "enter", false));
+		assert!(!matches_key_inner(b"\n", "ctrl+j", false));
+
+		assert!(matches_key_inner(b"\t", "tab", false));
+		assert!(!matches_key_inner(b"\t", "ctrl+i", false));
+
+		assert!(matches_key_inner(b"\x08", "backspace", false));
+		assert!(!matches_key_inner(b"\x08", "ctrl+h", false));
+
+		// Non-colliding ctrl+letter still works through the legacy fast-path.
+		assert!(matches_key_inner(b"\x03", "ctrl+c", false));
+		assert!(matches_key_inner(b"\x18", "ctrl+x", false));
+
+		// Enhanced encodings still let ctrl+<colliding-letter> match.
+		assert!(matches_key_inner(b"\x1b[109;5u", "ctrl+m", true));
+		assert!(matches_key_inner(b"\x1b[27;5;109~", "ctrl+m", false));
+		assert!(matches_key_inner(b"\x1b[105;5u", "ctrl+i", true));
+	}
+
+	#[test]
+	fn ctrl_alt_letter_does_not_steal_alt_named_keys() {
+		// `\x1b\r` / `\x1b\t` / `\x1b\x08` are Alt+Enter/Tab/Backspace in legacy
+		// mode; they must not also satisfy ctrl+alt+m/i/h. Enhanced encodings
+		// (Kitty / modifyOtherKeys) still resolve the ctrl+alt forms.
+		assert!(matches_key_inner(b"\x1b\r", "alt+enter", false));
+		assert!(!matches_key_inner(b"\x1b\r", "ctrl+alt+m", false));
+		assert!(!matches_key_inner(b"\x1b\t", "ctrl+alt+i", false));
+		assert!(!matches_key_inner(b"\x1b\x08", "ctrl+alt+h", false));
+
+		assert!(matches_key_inner(b"\x1b[109;7u", "ctrl+alt+m", true));
+		assert!(matches_key_inner(b"\x1b[27;7;109~", "ctrl+alt+m", false));
+	}
 }
