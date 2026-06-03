@@ -3,7 +3,7 @@
 
 [filters.gcc]
 description = "Compact gcc/g++ compiler output — strip notes, keep errors and warnings"
-match_command = "^(gcc|g\\+\\+)$"
+match_command = "^(gcc|g\\+\\+|clang|clang\\+\\+)$"
 strip_ansi = true
 strip_lines_matching = [
   "^\\s*$",
@@ -50,3 +50,23 @@ expected = "/usr/bin/ld: /tmp/main.o: undefined reference to 'missing_func'\ncol
 name = "empty input returns on_empty message"
 input = ""
 expected = "gcc: ok"
+
+[[tests.gcc]]
+name = "clang variant errors"
+input = """
+foo.c:3:10: fatal error: 'missing.h' file not found
+#include "missing.h"
+         ^~~~~~~~~~~
+1 error generated.
+"""
+expected = "foo.c:3:10: fatal error: 'missing.h' file not found\n#include \"missing.h\"\n         ^~~~~~~~~~~\n"
+
+[[tests.gcc]]
+name = "clang++ variant errors"
+input = """
+foo.cpp:8:5: error: unknown type name 'Widget'
+    Widget w;
+    ^
+1 error generated.
+"""
+expected = "foo.cpp:8:5: error: unknown type name 'Widget'\n    Widget w;\n    ^\n"
