@@ -282,6 +282,13 @@ fn filter_logs(input: &str) -> String {
 fn filter_docker_logs(input: &str) -> String {
 	let without_empty_runs = drop_repeated_blank_lines(input);
 	let deduped = dedup_consecutive_log_lines(&without_empty_runs);
+	// When the deduped log already fits the head/tail window, return it in full.
+	// Collapsing to priority-only lines here would strip surrounding context
+	// (startup banners, the lines around a warning) from output that was never
+	// long enough to need trimming.
+	if deduped.lines().count() <= 200 {
+		return primitives::head_tail_lines(&deduped, 120, 80);
+	}
 	let priority = collect_priority_log_lines(&deduped);
 	if priority.is_empty() {
 		primitives::head_tail_lines(&deduped, 120, 80)
@@ -548,6 +555,18 @@ mod tests {
 		assert!(out.contains("api-1  | WARN cache miss"));
 		assert!(out.contains("worker | failed to process job"));
 		assert!(!out.contains("api-1  | request 0 complete"));
+	}
+
+	#[test]
+	fn short_logs_with_warning_keep_full_context() {
+		// A short log that happens to contain a warning must not be collapsed to
+		// priority-only lines — the surrounding startup context is preserved.
+		let input = "starting service\nloaded config\nWARN deprecated flag\nlistening on :8080\n";
+		let out = filter_docker_logs(input);
+		assert!(out.contains("starting service"), "{out:?}");
+		assert!(out.contains("loaded config"), "{out:?}");
+		assert!(out.contains("WARN deprecated flag"), "{out:?}");
+		assert!(out.contains("listening on :8080"), "{out:?}");
 	}
 
 	#[test]

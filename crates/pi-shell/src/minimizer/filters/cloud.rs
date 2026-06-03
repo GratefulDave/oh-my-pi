@@ -271,6 +271,16 @@ fn is_s3_size_unit(token: &str) -> bool {
 	matches!(token, "Bytes" | "KiB" | "MiB" | "GiB" | "TiB" | "PiB" | "EiB")
 }
 
+/// True when `unit` is a unit suffix that `--human-readable` would emit for a
+/// size token shaped like `size`. AWS renders KiB and larger with a decimal
+/// (`2.9 MiB`) and bytes as an integer with the literal `Bytes` (`128 Bytes`).
+/// A plain `aws s3 ls` row is an integer byte count followed directly by the
+/// key, so a key whose first word merely looks like a non-`Bytes` unit
+/// (`1024 MiB notes`) is left intact.
+fn is_s3_human_readable_size(size: &str, unit: &str) -> bool {
+	is_s3_size_unit(unit) && (size.contains('.') || unit == "Bytes")
+}
+
 fn compact_aws_s3_ls_text(input: &str) -> Option<String> {
 	let rows = input
 		.lines()
@@ -292,13 +302,9 @@ fn compact_aws_s3_ls_text(input: &str) -> Option<String> {
 			}
 			let size = parts.next()?;
 			let mut rest: Vec<&str> = parts.collect();
-			// `--human-readable` renders the size as two tokens (`10.0 MiB`); drop
-			// the trailing unit so it is not glued onto the object key. Only do so
-			// when the size token is a decimal — AWS prints human-readable KiB/MiB/…
-			// with a fractional part, whereas a plain `aws s3 ls` size is an integer
-			// byte count followed directly by the key. This avoids stripping a real
-			// key whose first word merely looks like a unit (e.g. `1024 MiB notes`).
-			if rest.len() >= 2 && size.contains('.') && is_s3_size_unit(rest[0]) {
+			// Drop a `--human-readable` unit token (`10.0 MiB`, `128 Bytes`) so it
+			// is not glued onto the object key.
+			if rest.len() >= 2 && is_s3_human_readable_size(size, rest[0]) {
 				rest.remove(0);
 			}
 			// KEY_NAME may contain spaces, so join the remainder to reconstruct the
@@ -1499,6 +1505,17 @@ mod tests {
 		// preserved, not mistaken for a human-readable unit suffix.
 		let out = filter(&ctx, "2026-01-01 12:00:00 1024 MiB notes.txt\n", 0);
 		assert!(out.text.contains("MiB notes.txt"), "{:?}", out.text);
+	}
+
+	#[test]
+	fn s3_ls_human_readable_byte_sized_row_drops_unit() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 ls --human-readable s3://b/", &cfg);
+		// AWS renders small objects as integer bytes with the literal `Bytes`
+		// unit; the unit must be dropped, not glued onto the key.
+		let out = filter(&ctx, "2026-01-01 12:00:00 128 Bytes small.txt\n", 0);
+		assert!(out.text.contains("small.txt"), "{:?}", out.text);
+		assert!(!out.text.contains("Bytes small.txt"), "{:?}", out.text);
 	}
 
 	#[test]
