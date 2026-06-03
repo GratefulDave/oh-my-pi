@@ -717,10 +717,16 @@ async fn run_shell_command_single(
 					minimizer::MinimizerOutput::passthrough(&buffered.text)
 				},
 			};
-			if minimized.filter != "passthrough" {
-				let original_text = minimized
-					.original_text
-					.unwrap_or_else(|| minimized.text.clone());
+			// Surface telemetry only when the filter actually rewrote the output
+			// and kept the original buffer — same contract as `apply_shell_minimizer`
+			// in `pi-natives`. A supported filter that runs but leaves the output
+			// unchanged (e.g. a short `git diff --name-only`) reports `changed:
+			// false` with no `original_text` and must NOT set `minimized`, or API
+			// consumers keying off `result.minimized` are misled. The separate
+			// `too-large` reason path above is unaffected.
+			if minimized.changed
+				&& let Some(original_text) = minimized.original_text
+			{
 				let output_bytes = u32::try_from(minimized.text.len()).unwrap_or(u32::MAX);
 				minimized_out = Some(MinimizerResult {
 					filter: minimized.filter.to_string(),
