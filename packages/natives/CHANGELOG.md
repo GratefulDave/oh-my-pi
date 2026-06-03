@@ -22,6 +22,10 @@
 - Fixed the `too-large` capture-cap path emitting a `minimized` result with empty `text`/`original_text` when output exceeded `maxCaptureBytes` and was streamed raw. Both the whole-command and segmented-chain paths now leave `minimized` absent (matching every other passthrough and `applyShellMinimizer`), so consumers keying off `minimized` presence can no longer mistake an oversized command for an empty rewrite.
 - Fixed `applyShellMinimizer` / whole-buffer chain minimization corrupting output for all-git chains with differing subcommands (e.g. `git status && git log`): the combined capture was routed through the first segment's subcommand filter, whose summary rebuild silently dropped the other segment's lines. Such chains now stay opaque (passthrough); same-subcommand all-git chains still route through the git filter.
 
+### Fixed
+
+- Bounded sorted `glob()` scans to `maxResults` during uncached traversal and capped `onMatch` callbacks to returned matches so broad OMP `find` scans cannot grow parent-process memory independently of the requested limit ([#1761](https://github.com/can1357/oh-my-pi/issues/1761)).
+
 ## [15.7.0] - 2026-05-31
 
 ### Added
