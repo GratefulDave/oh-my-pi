@@ -92,15 +92,11 @@ async function checkForNewVersion(currentVersion: string): Promise<string | unde
 	}
 }
 
-const RPC_DEFAULTED_SETTING_PATHS: SettingPath[] = [
+const HOST_DEFAULTED_SETTING_PATHS: SettingPath[] = [
 	"todo.enabled",
 	"todo.reminders",
 	"todo.reminders.max",
 	"todo.eager",
-	"async.enabled",
-	"async.maxJobs",
-	"bash.autoBackground.enabled",
-	"bash.autoBackground.thresholdMs",
 	"task.isolation.mode",
 	"task.isolation.merge",
 	"task.isolation.commits",
@@ -110,16 +106,32 @@ const RPC_DEFAULTED_SETTING_PATHS: SettingPath[] = [
 	"task.maxRecursionDepth",
 	"task.disabledAgents",
 	"task.agentModelOverrides",
-	// Memory subsystems are off-by-default for RPC hosts; embedders that want
+	// Memory subsystems are off-by-default for RPC/ACP hosts; embedders that want
 	// memory should opt in explicitly through their own settings layer.
 	"memory.backend",
 	"memories.enabled",
 ];
 
-function applyRpcDefaultSettingOverrides(targetSettings: Settings = settings): void {
-	for (const settingPath of RPC_DEFAULTED_SETTING_PATHS) {
+const RPC_BACKGROUND_DEFAULTED_SETTING_PATHS: SettingPath[] = [
+	"async.enabled",
+	"async.maxJobs",
+	"bash.autoBackground.enabled",
+	"bash.autoBackground.thresholdMs",
+];
+
+function applyDefaultSettingOverrides(settingPaths: SettingPath[], targetSettings: Settings): void {
+	for (const settingPath of settingPaths) {
 		targetSettings.override(settingPath, getDefault(settingPath));
 	}
+}
+
+function applyRpcDefaultSettingOverrides(targetSettings: Settings = settings): void {
+	applyDefaultSettingOverrides(HOST_DEFAULTED_SETTING_PATHS, targetSettings);
+	applyDefaultSettingOverrides(RPC_BACKGROUND_DEFAULTED_SETTING_PATHS, targetSettings);
+}
+
+function applyAcpDefaultSettingOverrides(targetSettings: Settings = settings): void {
+	applyDefaultSettingOverrides(HOST_DEFAULTED_SETTING_PATHS, targetSettings);
 }
 
 async function readPipedInput(): Promise<string | undefined> {
@@ -313,15 +325,19 @@ async function runInteractiveMode(
 	}
 }
 
-async function promptForkSession(session: SessionInfo): Promise<boolean> {
+type ForkSessionPromptResult = "accepted" | "declined" | "unavailable";
+
+type ForkSessionPrompt = (session: SessionInfo) => Promise<ForkSessionPromptResult>;
+
+async function promptForkSession(session: SessionInfo): Promise<ForkSessionPromptResult> {
 	if (!process.stdin.isTTY) {
-		return false;
+		return "unavailable";
 	}
 	const message = `Session found in different project: ${session.cwd}. Fork into current directory? [y/N] `;
 	const rl = createInterface({ input: process.stdin, output: process.stdout });
 	try {
 		const answer = (await rl.question(message)).trim().toLowerCase();
-		return answer === "y" || answer === "yes";
+		return answer === "y" || answer === "yes" ? "accepted" : "declined";
 	} finally {
 		rl.close();
 	}
@@ -367,10 +383,12 @@ async function flushChangelogVersion(): Promise<void> {
 	}
 }
 
-async function createSessionManager(
+/** Resolves CLI session flags into an existing, forked, in-memory, or cancelled session manager. */
+export async function createSessionManager(
 	parsed: Args,
 	cwd: string,
 	activeSettings: Settings = settings,
+	askToForkSession: ForkSessionPrompt = promptForkSession,
 ): Promise<SessionManager | undefined> {
 	if (parsed.fork) {
 		if (parsed.noSession) {
@@ -403,9 +421,17 @@ async function createSessionManager(
 			const normalizedCwd = normalizePathForComparison(cwd);
 			const normalizedMatchCwd = normalizePathForComparison(match.session.cwd || cwd);
 			if (normalizedCwd !== normalizedMatchCwd) {
-				const shouldFork = await promptForkSession(match.session);
-				if (!shouldFork) {
-					throw new Error(`Session "${sessionArg}" is in another project (${match.session.cwd}).`);
+				const forkPromptResult = await askToForkSession(match.session);
+				if (forkPromptResult === "unavailable") {
+					throw new Error(
+						`Session "${sessionArg}" is in another project (${match.session.cwd}); run interactively to fork it into the current project.`,
+					);
+				}
+				if (forkPromptResult === "declined") {
+					// User declined the cross-project fork prompt. Caller distinguishes
+					// this cancellation from the "default new session" undefined return
+					// by checking `typeof parsed.resume === "string"`.
+					return undefined;
 				}
 				return await SessionManager.forkFrom(match.session.path, cwd, parsed.sessionDir);
 			}
@@ -784,8 +810,10 @@ export async function runRootCommand(
 		// sees this value. The wrapper still honours --auto-approve / --yolo on top of it.
 		settingsInstance.override("tools.approvalMode", parsedArgs.approvalMode);
 	}
-	if (parsedArgs.mode === "rpc" || parsedArgs.mode === "rpc-ui" || parsedArgs.mode === "acp") {
+	if (parsedArgs.mode === "rpc" || parsedArgs.mode === "rpc-ui") {
 		applyRpcDefaultSettingOverrides(settingsInstance);
+	} else if (parsedArgs.mode === "acp") {
+		applyAcpDefaultSettingOverrides(settingsInstance);
 	}
 	if (parsedArgs.noPty || parsedArgs.mode === "rpc-ui") {
 		Bun.env.PI_NO_PTY = "1";
@@ -811,6 +839,11 @@ export async function runRootCommand(
 			slow: slowModel,
 			plan: planModel,
 		});
+	}
+
+	// Apply --hide-thinking CLI flag (ephemeral, not persisted)
+	if (parsedArgs.hideThinking) {
+		settingsInstance.override("hideThinkingBlock", true);
 	}
 
 	await logger.time(
@@ -846,6 +879,14 @@ export async function runRootCommand(
 		cwd,
 		settingsInstance,
 	);
+
+	// User declined the cross-project fork prompt — exit cleanly with a friendly
+	// message rather than letting the decline bubble up as an uncaught exception
+	// (see issue #1668).
+	if (typeof parsedArgs.resume === "string" && !sessionManager) {
+		process.stdout.write(`${chalk.dim("Resume cancelled: session is in another project.")}\n`);
+		return;
+	}
 
 	// Handle --resume (no value): show session picker
 	if (parsedArgs.resume === true && !parsedArgs.fork) {
