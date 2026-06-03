@@ -40,7 +40,17 @@ pub struct MinimizerOptions {
 	pub except:            Option<Vec<String>>,
 	/// Maximum captured bytes per command before the engine falls back to
 	/// the raw, un-minimized output. Default 4 MiB.
-	pub max_capture_bytes: Option<u32>,
+	pub max_capture_bytes:    Option<u32>,
+	/// Source-outline level for `cat <source-file>` minimization. Accepts
+	/// `"default"` (current behavior) or `"aggressive"` (strip function bodies).
+	pub source_outline_level: Option<String>,
+	/// Master switch for the AI-summary filter. Default off.
+	pub ai_smart_enabled:     Option<bool>,
+	/// Provider key for the AI summarizer (e.g. `"deepseek"`).
+	pub ai_smart_provider:    Option<String>,
+	/// Kill-switch to fall back to the pre-PR (legacy) filter behavior. When
+	/// `None`, defers to the `OMP_MINIMIZER_LEGACY_FILTERS` env var.
+	pub legacy_filters:       Option<bool>,
 }
 
 impl From<MinimizerOptions> for minimizer::MinimizerOptions {
@@ -52,7 +62,10 @@ impl From<MinimizerOptions> for minimizer::MinimizerOptions {
 			only: value.only,
 			except: value.except,
 			max_capture_bytes: value.max_capture_bytes,
-			..Default::default()
+			source_outline_level: value.source_outline_level,
+			ai_smart_enabled: value.ai_smart_enabled,
+			ai_smart_provider: value.ai_smart_provider,
+			legacy_filters: value.legacy_filters,
 		}
 	}
 }

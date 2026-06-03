@@ -1048,6 +1048,20 @@ export interface MinimizerOptions {
    * the raw, un-minimized output. Default 4 MiB.
    */
   maxCaptureBytes?: number
+  /**
+   * Source-outline level for `cat <source-file>` minimization. Accepts
+   * `"default"` (current behavior) or `"aggressive"` (strip function bodies).
+   */
+  sourceOutlineLevel?: string
+  /** Master switch for the AI-summary filter. Default off. */
+  aiSmartEnabled?: boolean
+  /** Provider key for the AI summarizer (e.g. `"deepseek"`). */
+  aiSmartProvider?: string
+  /**
+   * Kill-switch to fall back to the pre-PR (legacy) filter behavior. When
+   * absent, defers to the `OMP_MINIMIZER_LEGACY_FILTERS` env var.
+   */
+  legacyFilters?: boolean
 }
 
 /**
