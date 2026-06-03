@@ -1064,13 +1064,6 @@ export interface MinimizerOptions {
    * `"default"` (current behavior) or `"aggressive"` (strip function bodies).
    */
   sourceOutlineLevel?: string
-  /** Master switch for the AI-summary filter (W4 / rtk smart). Default off. */
-  aiSmartEnabled?: boolean
-  /**
-   * Provider key for the AI summarizer (e.g. `"deepseek"`). Default
-   * `"deepseek"` when `aiSmartEnabled` is true.
-   */
-  aiSmartProvider?: string
   /**
    * Kill-switch to fall back to the pre-PR (legacy) filter behavior for
    * grep / find / pytest. When `true`, filters that opted into the

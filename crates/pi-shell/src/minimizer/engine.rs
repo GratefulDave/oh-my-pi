@@ -8,8 +8,6 @@ use std::{
 	},
 };
 
-#[cfg(feature = "ai-smart")]
-use crate::minimizer::filters::ai_smart;
 use crate::minimizer::{
 	MinimizerConfig, MinimizerCtx, MinimizerOutput, detect, filters,
 	pipeline::{self, CompiledPipeline, PipelineRegistry},
@@ -85,32 +83,6 @@ pub fn apply(
 	exit_code: i32,
 	config: &MinimizerConfig,
 ) -> MinimizerOutput {
-	apply_inner(command, captured, exit_code, config, true)
-}
-
-/// Like [`apply`], but never runs the AI-summary overlay.
-///
-/// Used by the segmented-chain runner, which calls the minimizer once per
-/// segment. The AI overlay's cost/privacy budget is scoped to a single
-/// `apply()` invocation, so letting each segment run it would make an N-segment
-/// chain fire up to N external provider calls. Segments are minimized with
-/// deterministic filters only; the AI overlay applies solely to whole commands.
-pub fn apply_segment(
-	command: &str,
-	captured: &str,
-	exit_code: i32,
-	config: &MinimizerConfig,
-) -> MinimizerOutput {
-	apply_inner(command, captured, exit_code, config, false)
-}
-
-fn apply_inner(
-	command: &str,
-	captured: &str,
-	exit_code: i32,
-	config: &MinimizerConfig,
-	allow_ai: bool,
-) -> MinimizerOutput {
 	let input_bytes = captured.len();
 
 	if input_bytes > config.max_capture_bytes as usize {
@@ -142,70 +114,7 @@ fn apply_inner(
 		record_unknown_command(command);
 		return MinimizerOutput::passthrough(captured).labeled("unknown");
 	};
-	let output = apply_identity(&identity, command, captured, exit_code, config);
-	if allow_ai {
-		apply_ai_smart_overlay(&identity, command, captured, config, output)
-	} else {
-		output
-	}
-}
-
-/// Optional AI-summary post-step (W4 / rtk smart). Gated by both the Cargo
-/// feature `ai-smart` and the runtime `ai_smart_enabled` config flag, and
-/// further gated inside [`ai_smart::maybe_summarize`] on input size, parent
-/// context (pipe/compound bypass), credential availability, and the per-
-/// `apply()` budget. On any gate failure or network error we return the
-/// upstream `output` untouched — this filter is fail-closed.
-#[cfg_attr(
-	not(feature = "ai-smart"),
-	allow(
-		unused_variables,
-		clippy::needless_pass_by_value,
-		reason = "off-feature build keeps call-site signature stable"
-	)
-)]
-#[allow(
-	clippy::missing_const_for_fn,
-	reason = "feature-enabled implementation performs non-const AI budget and summarization work"
-)]
-fn apply_ai_smart_overlay(
-	identity: &detect::CommandIdentity,
-	command: &str,
-	captured: &str,
-	config: &MinimizerConfig,
-	output: MinimizerOutput,
-) -> MinimizerOutput {
-	#[cfg(feature = "ai-smart")]
-	{
-		if !config.ai_smart_enabled {
-			return output;
-		}
-		ai_smart::reset_apply_budget();
-		let subcommand = identity.subcommand.as_deref();
-		let ctx = MinimizerCtx { program: &identity.program, subcommand, command, config };
-		let candidate = if output.changed {
-			output.text.as_str()
-		} else {
-			captured
-		};
-		match ai_smart::maybe_summarize(&ctx, candidate) {
-			Some(summary) => {
-				let original_text = output
-					.original_text
-					.clone()
-					.unwrap_or_else(|| captured.to_string());
-				let input_bytes = output.input_bytes.max(captured.len());
-				let summarized = MinimizerOutput::transformed(summary, input_bytes).labeled("ai-smart");
-				summarized.with_original(original_text)
-			},
-			None => output,
-		}
-	}
-	#[cfg(not(feature = "ai-smart"))]
-	{
-		let _ = (identity, command, captured, config);
-		output
-	}
+	apply_identity(&identity, command, captured, exit_code, config)
 }
 
 /// Apply the per-segment dispatch path for a `Chain { segments }` plan.
