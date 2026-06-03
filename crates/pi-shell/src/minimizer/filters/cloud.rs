@@ -248,6 +248,29 @@ fn extract_aws_s3_buckets(root: &Value) -> Option<Vec<&Map<String, Value>>> {
 	extract_array(root, &["Buckets", "buckets"])
 }
 
+/// True for an `aws s3 ls` date column (`YYYY-MM-DD`).
+fn is_s3_date(token: &str) -> bool {
+	let mut parts = token.split('-');
+	matches!(
+		(parts.next(), parts.next(), parts.next(), parts.next()),
+		(Some(y), Some(m), Some(d), None)
+			if y.len() == 4
+				&& m.len() == 2
+				&& d.len() == 2
+				&& [y, m, d].iter().all(|p| p.bytes().all(|b| b.is_ascii_digit()))
+	)
+}
+
+/// True for an `aws s3 ls` time column (`HH:MM:SS`).
+fn is_s3_time(token: &str) -> bool {
+	let mut parts = token.split(':');
+	matches!(
+		(parts.next(), parts.next(), parts.next(), parts.next()),
+		(Some(h), Some(m), Some(s), None)
+			if [h, m, s].iter().all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit()))
+	)
+}
+
 fn compact_aws_s3_ls_text(input: &str) -> Option<String> {
 	let rows = input
 		.lines()
@@ -255,12 +278,24 @@ fn compact_aws_s3_ls_text(input: &str) -> Option<String> {
 			let mut parts = line.split_whitespace();
 			let first = parts.next()?;
 			if first == "PRE" {
+				// A common-prefix name may contain spaces (`PRE my folder/`), so
+				// join the remaining tokens instead of keeping only the first one.
+				let prefix: Vec<&str> = parts.collect();
+				if prefix.is_empty() {
+					return None;
+				}
 				return Some(vec![
-					parts.next()?.trim_end_matches('/').to_string(),
+					prefix.join(" ").trim_end_matches('/').to_string(),
 					"prefix".to_string(),
 				]);
 			}
 			let time = parts.next()?;
+			// Require a real date/time prefix so `--summarize` footers
+			// (`Total Objects: 1`, `Total Size: ...`) and any diagnostic/error
+			// text are not reinterpreted as object rows.
+			if !is_s3_date(first) || !is_s3_time(time) {
+				return None;
+			}
 			let third = parts.next()?;
 			if third == "0" && parts.clone().next().is_none() {
 				return None;
@@ -1440,6 +1475,28 @@ mod tests {
 		let out = filter(&ctx, "2026-05-27 01:02:03 builds\n2026-05-27 01:03:04 logs\n", 0);
 		assert!(out.text.contains("builds\t2026-05-27 01:02:03"));
 		assert_output_pure(&out.text);
+	}
+
+	#[test]
+	fn s3_ls_summarize_footer_is_not_parsed_as_row() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 ls --summarize s3://b/", &cfg);
+		// `--summarize` appends `Total Objects:`/`Total Size:` footers that lack a
+		// real date/time prefix; they must not be reshaped into bogus object rows.
+		let input = "2026-05-27 01:02:03 100 builds\n\nTotal Objects: 1\nTotal Size: 100\n";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.text.contains("Total Objects:"), "{:?}", out.text);
+		assert!(!out.text.contains("Total Size:"), "{:?}", out.text);
+	}
+
+	#[test]
+	fn s3_ls_common_prefix_with_spaces_is_preserved() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 ls s3://b/", &cfg);
+		// `PRE` common-prefix names can contain spaces; the full name must survive
+		// rather than being truncated to the first token.
+		let out = filter(&ctx, "                           PRE my folder/\n", 0);
+		assert!(out.text.contains("my folder"), "{:?}", out.text);
 	}
 
 	#[test]
