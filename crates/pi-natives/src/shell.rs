@@ -113,11 +113,17 @@ pub struct ShellExecuteOptions<'env> {
 	pub signal:        Option<Unknown<'env>>,
 }
 
+/// Inputs for [`apply_shell_minimizer`]: a captured command's text plus the
+/// minimizer configuration to run against it.
 #[napi(object)]
 pub struct ShellMinimizerApplyOptions {
+	/// The command line that produced `captured` (used to select a filter).
 	pub command:   String,
+	/// The full captured stdout/stderr to minimize.
 	pub captured:  String,
+	/// The command's exit status; omitted is treated as success (`0`).
 	pub exit_code: Option<i32>,
+	/// Minimizer configuration; when omitted the call is a no-op (`null`).
 	pub minimizer: Option<MinimizerOptions>,
 }
 
@@ -280,6 +286,19 @@ pub fn execute_shell<'env>(
 	})
 }
 
+/// Run the shell-output minimizer over an already-captured command result,
+/// without spawning a shell.
+///
+/// This is the one-shot counterpart to the minimization that
+/// [`execute_shell`] performs inline: callers that captured a command's output
+/// elsewhere can pass it here to obtain the same telemetry.
+///
+/// Returns [`MinimizerResult`] **only** when the minimizer actually rewrote the
+/// output (`changed == true`) and retained the original buffer, mirroring the
+/// persistent-shell path. Returns `null` for every no-op case: when
+/// `minimizer` is omitted, when the config is disabled, or when the filter
+/// passes the output through unchanged. A missing `exit_code` is treated as
+/// success (`0`).
 #[napi]
 pub fn apply_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<MinimizerResult> {
 	let minimizer = options.minimizer?;

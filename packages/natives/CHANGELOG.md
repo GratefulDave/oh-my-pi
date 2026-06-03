@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `applyShellMinimizer` native API (plus the `ShellMinimizerApplyOptions` type) to run the shell-output minimizer over an already-captured command result without spawning a shell. Returns a `MinimizerResult` only when the output was actually rewritten, and `null` for disabled/omitted/passthrough cases, matching the inline `executeShell` minimizer contract.
+
 ## [15.7.0] - 2026-05-31
 ### Added
 
