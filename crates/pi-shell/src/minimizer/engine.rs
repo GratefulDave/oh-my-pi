@@ -186,25 +186,14 @@ fn apply_chain(
 		return MinimizerOutput::passthrough(captured).labeled("compound");
 	}
 
-	// (b) Mixed chain: recurse into the first segment's filter when supported.
-	if let Some(first) = segments.first()
-		&& let Some(identity) = detect::detect(&first.command)
-	{
-		let subcommand = identity.subcommand.as_deref();
-		if config.is_program_enabled(&identity.program)
-			&& filters::supports(&identity.program, subcommand)
-		{
-			let ctx = MinimizerCtx { program: &identity.program, subcommand, command, config };
-			let out =
-				match catch_unwind(AssertUnwindSafe(|| filters::filter(&ctx, captured, exit_code))) {
-					Ok(out) => out,
-					Err(_) => MinimizerOutput::passthrough(captured),
-				};
-			return ensure_success_visible(out.labeled("chain-first"), exit_code)
-				.with_original(captured);
-		}
-	}
-
+	// (b) Mixed chain (different programs/subcommands): stay opaque. This is the
+	// whole-buffer entry point, so `captured` is the chain's combined, interleaved
+	// stdout. Routing it through the first segment's filter would run that filter
+	// over the *other* segments' output too — and filters that rebuild from their
+	// own parse (e.g. `git status`) silently drop unrecognized lines, so
+	// `git status ; echo IMPORTANT` would lose the `echo` output. Per-segment
+	// minimization is handled separately by the segmented chain runner, which
+	// captures each segment in isolation.
 	MinimizerOutput::passthrough(captured).labeled("compound")
 }
 
@@ -691,10 +680,12 @@ strip_lines_matching = [".*"]
 		assert_eq!(mode_for("git diff ; printf done", &cfg), MinimizerMode::SegmentedChain);
 		let out = apply("git diff ; printf done", input, 0, &cfg);
 
-		// First segment is `git diff`, second is `printf`. Not all-git, so
-		// route via chain-first (git filter on the captured diff).
-		assert!(out.changed, "git-led chain should be rewritten by chain-first dispatch");
-		assert_eq!(out.filter, "chain-first");
+		// Whole-buffer entry: a mixed chain (`git diff` + `printf`) stays opaque
+		// rather than running the git filter over the interleaved capture. The
+		// chain entry point is still structurally known, so no unknown-command is
+		// recorded (per-segment minimization is the segmented runner's job).
+		assert!(!out.changed, "mixed chain must stay passthrough in whole-buffer minimization");
+		assert_eq!(out.filter, "compound");
 		assert_eq!(unknown_command_count(), before);
 	}
 
@@ -755,17 +746,18 @@ strip_lines_matching = [".*"]
 	}
 
 	#[test]
-	fn mixed_chain_routes_through_first_program() {
-		// Phase 7: a chain whose first segment is git routes through the git
-		// filter even when later segments are unrelated. The captured buffer
-		// is interleaved, but routing via the dominant first segment still
-		// recovers bytes most of the time.
+	fn mixed_chain_stays_opaque_in_whole_buffer_minimization() {
+		// A mixed chain (`git status` + unrelated `echo`) must NOT route the whole
+		// interleaved capture through the first segment's filter: `condense_status`
+		// rebuilds from its own parse and would drop the `echo` segment's output.
+		// Stay opaque and preserve the captured bytes verbatim.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
-		let command = "git status && ls -la";
-		let input = "## main\n M file.rs\n";
-		let out = apply(command, input, 0, &cfg);
-		assert!(out.changed);
-		assert_eq!(out.filter, "chain-first");
+		let input = "## main\n M file.rs\nIMPORTANT side-effect line\n";
+		let out = apply("git status && echo IMPORTANT side-effect line", input, 0, &cfg);
+		assert!(!out.changed, "mixed chain must stay passthrough");
+		assert_eq!(out.filter, "compound");
+		assert_eq!(out.text, input, "captured output must be preserved verbatim");
+		assert!(out.text.contains("IMPORTANT side-effect line"));
 	}
 
 	#[test]
