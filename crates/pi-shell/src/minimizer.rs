@@ -149,15 +149,3 @@ pub fn apply(
 ) -> MinimizerOutput {
 	engine::apply(command, captured, exit_code, config)
 }
-
-/// Like [`apply`], but never runs the AI-summary overlay. Used by the
-/// segmented-chain runner so an N-segment chain cannot fire N AI calls — the
-/// AI overlay's cost/privacy budget is scoped to a single whole-command apply.
-pub fn apply_segment(
-	command: &str,
-	captured: &str,
-	exit_code: i32,
-	config: &MinimizerConfig,
-) -> MinimizerOutput {
-	engine::apply_segment(command, captured, exit_code, config)
-}
