@@ -275,15 +275,36 @@ fn chain_has_eligible_segment(segments: &[plan::ChainSegment], config: &Minimize
 /// segment and leave the chain opaque (passthrough), preserving the original
 /// redirection semantics.
 fn chain_mutates_shell_fds(segments: &[plan::ChainSegment]) -> bool {
-	segments.iter().any(|segment| is_shell_fd_mutating_builtin(&segment.program))
+	segments.iter().any(is_shell_fd_mutating_segment)
 }
 
-/// Shell builtins that mutate the calling shell's file descriptors and thus
-/// cannot be safely split across the segmented runner. `exec` with redirections
-/// (and no command word) permanently changes the shell's fds; running it in an
-/// isolated segment silently drops that effect.
-fn is_shell_fd_mutating_builtin(program: &str) -> bool {
-	matches!(program, "exec")
+/// True when a segment's effective command is the `exec` builtin, which (with
+/// redirections and no command word) permanently rewires the shell's own file
+/// descriptors. Running it in an isolated capture context silently drops that
+/// effect, so any chain containing it must stay opaque.
+///
+/// Resolves through leading environment assignments and the `command` /
+/// `builtin` wrappers (and their option flags), since `command exec >out` and
+/// `builtin exec >out` invoke the same builtin as a bare `exec`.
+fn is_shell_fd_mutating_segment(segment: &plan::ChainSegment) -> bool {
+	for word in segment.command.split_whitespace() {
+		if word == "exec" {
+			return true;
+		}
+		if word == "command" || word == "builtin" || word.starts_with('-') || is_env_assignment(word) {
+			continue;
+		}
+		// First real command word is something other than `exec`.
+		return false;
+	}
+	false
+}
+
+/// True for a leading `KEY=VALUE` environment assignment token.
+fn is_env_assignment(word: &str) -> bool {
+	word.split_once('=').is_some_and(|(key, _)| {
+		!key.is_empty() && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+	})
 }
 
 /// Common shell utilities that on their own would not warrant whole-command
@@ -717,6 +738,14 @@ strip_lines_matching = [".*"]
 		assert_eq!(mode_for("exec 2>err ; git status", &cfg), MinimizerMode::None);
 		// The fd-mutating segment poisons the chain even when it is not first.
 		assert_eq!(mode_for("git status ; exec >out", &cfg), MinimizerMode::None);
+		// `exec` wrapped by `command`/`builtin` (with flags or env assignments)
+		// mutates the same fds and must also block segmentation.
+		assert_eq!(mode_for("command exec >out ; echo hi", &cfg), MinimizerMode::None);
+		assert_eq!(mode_for("builtin exec >out ; echo hi", &cfg), MinimizerMode::None);
+		assert_eq!(mode_for("git diff ; command -p exec 2>err", &cfg), MinimizerMode::None);
+		// A real command merely named with `exec` as an argument is not the
+		// builtin and must NOT block segmentation.
+		assert_eq!(mode_for("echo exec ; printf done", &cfg), MinimizerMode::SegmentedChain);
 		// Such chains pass through untouched.
 		let out = apply("exec >out ; echo hi", "hi\n", 0, &cfg);
 		assert_eq!(out.text, "hi\n");
