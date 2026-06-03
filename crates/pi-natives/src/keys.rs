@@ -619,16 +619,26 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 		&& bytes[0] == 0x1b
 		&& bytes[1] == 0x1b
 		&& (bytes[2] == b'[' || bytes[2] == b'O')
-		&& let Some(inner_key_id) = parse_key_inner(&bytes[1..], true)
+		&& parse_key_inner(&bytes[1..], true).is_some()
 	{
-		// inner_key_id is e.g. "up" for alt+up or "shift+up" for alt+shift+up.
-		// Verify the key name and the non-ALT portion of the modifier both match.
-		if let Some(ParsedKeyId { key: inner_k, modifier: inner_m }) =
-			parse_key_id(&inner_key_id)
-		{
-			if inner_k.eq_ignore_ascii_case(key) && inner_m == modifier & !MOD_ALT {
-				return true;
-			}
+		// The ESC-stripped buffer is a recognized key sequence. Re-dispatch it
+		// against the same key with ALT cleared by recursing through
+		// `matches_key_inner`, which reuses the alias-aware name branches
+		// (`enter|return`, `escape|esc`, …). Comparing `parse_key_inner`'s
+		// canonical name (`enter`/`escape`) against the caller's raw token
+		// dropped aliases — `ctrl+alt+return` and `alt+esc` no longer matched.
+		let inner_modifier = modifier & !MOD_ALT;
+		let mut inner_key_id = String::with_capacity(24);
+		if inner_modifier & MOD_CTRL != 0 {
+			inner_key_id.push_str("ctrl+");
+		}
+		if inner_modifier & MOD_SHIFT != 0 {
+			inner_key_id.push_str("shift+");
+		}
+		inner_key_id.push_str(key);
+		// ALT is cleared above, so the recursive call cannot re-enter this branch.
+		if matches_key_inner(&bytes[1..], &inner_key_id, true) {
+			return true;
 		}
 	}
 	if key.eq_ignore_ascii_case("escape") || key.eq_ignore_ascii_case("esc") {
@@ -1516,6 +1526,18 @@ mod tests {
 		assert_eq!(parse_key_inner(b"\x1b\x1b[B", true).as_deref(), Some("alt+down"));
 		// Bare double ESC should NOT be parsed as alt
 		assert_eq!(parse_key_inner(b"\x1b\x1b", true).as_deref(), None);
+	}
+
+	#[test]
+	fn esc_prefix_alt_preserves_key_aliases() {
+		// Regression: the ESC-prefixed Alt mirror path must honor key-name aliases
+		// (`return` == `enter`, `esc` == `escape`) the same way the non-Alt paths
+		// do. Comparing `parse_key_inner`'s canonical name against the caller's raw
+		// token dropped these. CSI-u: 13 = Enter, 27 = Escape; modifier 5 = ctrl.
+		assert!(matches_key_inner(b"\x1b\x1b[13;5u", "ctrl+alt+return", true));
+		assert!(matches_key_inner(b"\x1b\x1b[13;5u", "ctrl+alt+enter", true));
+		assert!(matches_key_inner(b"\x1b\x1b[27u", "alt+esc", true));
+		assert!(matches_key_inner(b"\x1b\x1b[27u", "alt+escape", true));
 	}
 
 	#[test]
