@@ -6,6 +6,11 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+[features]
+## Enable the AI-summary filter (W4 / rtk smart). Off by default.
+## Pulls in the blocking HTTP client used by `minimizer::filters::ai_smart`.
+ai-smart = ["dep:reqwest"]
+
 [lints]
 workspace = true
 
@@ -18,6 +23,7 @@ brush-parser.workspace = true
 clap.workspace = true
 os_pipe.workspace = true
 regex.workspace = true
+reqwest = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
