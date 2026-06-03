@@ -150,6 +150,25 @@ fn diff_listing_mode(command: &str) -> Option<DiffListingMode> {
 	}
 }
 
+/// Stable discriminant for the render path a `git diff` command selects from
+/// its flags. Lets a caller routing a *combined* multi-segment buffer through a
+/// single filter refuse when segments disagree — e.g. `git diff --name-only &&
+/// git diff --stat` share the `diff` subcommand but pick incompatible
+/// renderers, so feeding both outputs to either one corrupts the other. Mirrors
+/// the dispatch order in [`filter`]: `--stat` wins over the listing modes.
+pub(crate) fn diff_format_key(command: &str) -> u8 {
+	if is_stat_format(command) {
+		1
+	} else {
+		match diff_listing_mode(command) {
+			Some(DiffListingMode::NameOnly) => 2,
+			Some(DiffListingMode::NameStatus) => 3,
+			Some(DiffListingMode::Numstat) => 4,
+			None => 0,
+		}
+	}
+}
+
 fn compact_diff_listing(input: &str, mode: DiffListingMode) -> String {
 	let mut entries = Vec::new();
 	for line in input.lines() {
