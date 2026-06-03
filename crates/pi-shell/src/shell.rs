@@ -812,11 +812,8 @@ async fn run_shell_command_segmented_chain(
 				if next_input_bytes > max_capture_bytes {
 					aggregate = None;
 				} else {
-					// Segments use the AI-overlay-free path: the AI summary budget is
-					// scoped to one whole-command apply, so an N-segment chain must not
-					// be able to fire N provider calls.
 					let minimized =
-						minimizer::apply_segment(&segment.command, &buffered.text, exit, config);
+						minimizer::apply(&segment.command, &buffered.text, exit, config);
 					capture.push(
 						&buffered.text,
 						buffered.input_bytes,

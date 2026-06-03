@@ -17,7 +17,6 @@ use serde::Deserialize;
 use crate::minimizer::pipeline::{self, PipelineRegistry, SUPPORTED_SCHEMA_VERSION};
 
 const DEFAULT_MAX_CAPTURE_BYTES: u32 = 4 * 1024 * 1024;
-const DEFAULT_AI_SMART_PROVIDER: &str = "deepseek";
 
 /// Source-outline aggressiveness for `cat <source-file>` minimization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -63,11 +62,6 @@ pub struct MinimizerOptions {
 	/// Source-outline level for `cat <source-file>` minimization. Accepts
 	/// `"default"` (current behavior) or `"aggressive"` (strip function bodies).
 	pub source_outline_level: Option<String>,
-	/// Master switch for the AI-summary filter (W4 / rtk smart). Default off.
-	pub ai_smart_enabled:     Option<bool>,
-	/// Provider key for the AI summarizer (e.g. `"deepseek"`). Default
-	/// `"deepseek"` when [`Self::ai_smart_enabled`] is true.
-	pub ai_smart_provider:    Option<String>,
 	/// Kill-switch to fall back to the pre-PR (legacy) filter behavior for
 	/// grep / find / pytest. When `Some(true)`, filters that opted into the
 	/// always-shrink Tier 1 / Tier 2 behavior skip the new code path and
@@ -90,11 +84,6 @@ pub struct MinimizerConfig {
 	pub user_pipelines:        Option<Arc<PipelineRegistry>>,
 	/// Aggressiveness for source-outline body stripping in `compact_cat_output`.
 	pub source_outline_level:  OutlineLevel,
-	/// Master switch for the AI summary filter (W4). When false, the filter
-	/// is a no-op passthrough.
-	pub ai_smart_enabled:      bool,
-	/// Provider key for the AI summarizer (defaults to `"deepseek"`).
-	pub ai_smart_provider:     String,
 	/// Resolved kill-switch: when true, opted-in filters (Tier 1 grep/find,
 	/// Tier 2 pytest) return the pre-PR legacy behavior. Resolved at
 	/// `from_options()` time from caller-supplied
@@ -113,8 +102,6 @@ impl Default for MinimizerConfig {
 			per_command:           HashMap::new(),
 			user_pipelines:        None,
 			source_outline_level:  OutlineLevel::Default,
-			ai_smart_enabled:      false,
-			ai_smart_provider:     DEFAULT_AI_SMART_PROVIDER.to_string(),
 			legacy_filters_active: false,
 		}
 	}
@@ -142,18 +129,10 @@ impl MinimizerConfig {
 		{
 			cfg.source_outline_level = level;
 		}
-		if let Some(v) = opts.ai_smart_enabled {
-			cfg.ai_smart_enabled = v;
-		}
 		cfg.legacy_filters_active = resolve_legacy_filters(
 			opts.legacy_filters,
 			std::env::var("OMP_MINIMIZER_LEGACY_FILTERS").ok().as_deref(),
 		);
-		if let Some(provider) = opts.ai_smart_provider.as_deref()
-			&& !provider.is_empty()
-		{
-			cfg.ai_smart_provider = provider.to_string();
-		}
 		if let Some(path) = opts.settings_path.as_deref()
 			&& !path.is_empty()
 		{
@@ -228,8 +207,6 @@ struct SettingsFile {
 	except:               Option<Vec<String>>,
 	max_capture_bytes:    Option<u32>,
 	source_outline_level: Option<String>,
-	ai_smart_enabled:     Option<bool>,
-	ai_smart_provider:    Option<String>,
 	#[serde(flatten)]
 	tables:               HashMap<String, toml::Value>,
 }
@@ -261,14 +238,6 @@ impl SettingsFile {
 			&& let Some(level) = OutlineLevel::parse(raw)
 		{
 			cfg.source_outline_level = level;
-		}
-		if let Some(v) = self.ai_smart_enabled {
-			cfg.ai_smart_enabled = v;
-		}
-		if let Some(provider) = self.ai_smart_provider
-			&& !provider.is_empty()
-		{
-			cfg.ai_smart_provider = provider;
 		}
 		for (k, v) in self.tables {
 			if v.is_table() && k != "filters" && k != "tests" {

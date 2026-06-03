@@ -4,8 +4,8 @@
 
 ### Added
 
-- Added minimizer options `sourceOutlineLevel`, `aiSmartEnabled`, `aiSmartProvider`, and `legacyFilters` to the `MinimizerOptions` native surface. The AI-summary overlay (`aiSmartEnabled`) is gated at runtime by the new knobs (disabled by default, fail-closed) and is compiled in only when the addon is built with `OMP_ENABLE_AI_SMART=1` (which appends `napi build --features ai-smart`). The distributed addon ships **without** the feature so it does not link the `reqwest`+`rustls`+`ring`+`hyper` TLS/HTTP stack for users who never set `aiSmartEnabled`; dev builds that exercise the overlay opt in via the env var.
-- Added the `applyShellMinimizer` native API (plus the `ShellMinimizerApplyOptions` type) to run the shell-output minimizer over an already-captured command result without spawning a shell. It is **async** (returns `Promise<MinimizerResult | null>`): because the AI overlay can make a blocking 5s HTTP request, the pass runs on a blocking pool so it never stalls the JS event loop. Resolves to a `MinimizerResult` only when the output was actually rewritten, and `null` for disabled/omitted/passthrough cases, matching the inline `executeShell` minimizer contract.
+- Added minimizer options `sourceOutlineLevel` and `legacyFilters` to the `MinimizerOptions` native surface. The minimizer is fully deterministic — no network calls and no extra dependencies are linked into the addon.
+- Added the `applyShellMinimizer` native API (plus the `ShellMinimizerApplyOptions` type) to run the shell-output minimizer over an already-captured command result without spawning a shell. It is **async** (returns `Promise<MinimizerResult | null>`): minimization can run over a multi-megabyte capture, so the pass runs on a blocking pool to keep it off the JS event loop. Resolves to a `MinimizerResult` only when the output was actually rewritten, and `null` for disabled/omitted/passthrough cases, matching the inline `executeShell` minimizer contract.
 
 ### Fixed
 
