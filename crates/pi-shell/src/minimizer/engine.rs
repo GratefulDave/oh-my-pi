@@ -170,6 +170,19 @@ fn apply_chain(
 						== want
 				})
 			}
+			&& {
+				// A shared subcommand is not enough: within `diff`, flags select
+				// incompatible renderers (`--name-only` listing vs `--stat`), so a
+				// combined `git diff --name-only && git diff --stat` buffer routed
+				// through one would corrupt the other segment's output. Require an
+				// identical diff format signature across segments. `diff` is the only
+				// flag-format-sensitive renderer among the rebuild-from-parse git
+				// filters, so other subcommands need no extra gate.
+				identity.subcommand.as_deref() != Some("diff") || {
+					let want = filters::git::diff_format_key(&segments[0].command);
+					segments.iter().all(|seg| filters::git::diff_format_key(&seg.command) == want)
+				}
+			}
 		{
 			let subcommand = identity.subcommand.as_deref();
 			let ctx = MinimizerCtx { program: &identity.program, subcommand, command, config };
@@ -743,6 +756,32 @@ strip_lines_matching = [".*"]
 		assert!(!out.changed, "differing-subcommand git chain must stay passthrough");
 		assert_eq!(out.filter, "compound");
 		assert_eq!(out.text, input, "captured output must be preserved verbatim");
+	}
+
+	#[test]
+	fn git_diff_chain_differing_formats_stays_opaque() {
+		// `git diff --name-only && git diff --stat` share the `diff` subcommand but
+		// select incompatible renderers. Routing the combined buffer through one
+		// (the whole-chain command carries BOTH `--name-only` and `--stat`, so the
+		// diff filter would treat it as a stat buffer) corrupts the listing
+		// segment's output. Diverging diff formats must stay opaque.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let input = "src/a.rs\nsrc/b.rs\n src/a.rs | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n";
+		let out = apply("git diff --name-only && git diff --stat", input, 0, &cfg);
+		assert!(!out.changed, "differing diff formats must stay passthrough");
+		assert_eq!(out.filter, "compound");
+		assert_eq!(out.text, input, "captured output must be preserved verbatim");
+	}
+
+	#[test]
+	fn git_diff_chain_same_format_routes_through_git_filter() {
+		// Same subcommand AND same diff format signature: safe to route the whole
+		// buffer through the one matching renderer.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let listing: String = (0..30).map(|i| format!("src/file{i}.rs\n")).collect();
+		let out = apply("git diff --name-only && git diff --name-only HEAD~1", &listing, 0, &cfg);
+		assert!(out.changed, "same-format diff chain should route through the git filter");
+		assert_eq!(out.filter, "chain-git");
 	}
 
 	#[test]
