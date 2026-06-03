@@ -5,6 +5,7 @@
 ### Added
 
 - Added minimizer options `sourceOutlineLevel`, `aiSmartEnabled`, `aiSmartProvider`, and `legacyFilters` to the `MinimizerOptions` native surface. The opt-in AI-summary overlay (`aiSmartEnabled`) is now compiled into the distributed addon via `napi build --features ai-smart` and gated at runtime by the new knobs; it is disabled by default and fail-closed.
+- Added the `applyShellMinimizer` native API (plus the `ShellMinimizerApplyOptions` type) to run the shell-output minimizer over an already-captured command result without spawning a shell. Returns a `MinimizerResult` only when the output was actually rewritten, and `null` for disabled/omitted/passthrough cases, matching the inline `executeShell` minimizer contract.
 
 ## [15.7.0] - 2026-05-31
 
