@@ -702,10 +702,14 @@ async fn run_shell_command_single(
 					minimizer::MinimizerOutput::passthrough(&buffered.text)
 				},
 			};
-			if minimized.filter != "passthrough" {
-				let original_text = minimized
-					.original_text
-					.unwrap_or_else(|| minimized.text.clone());
+			// Surface telemetry only when the filter actually rewrote the output
+			// and kept the original buffer. A supported command whose filter
+			// intentionally passes output through (e.g. `git show HEAD:path`) is
+			// labeled with its program but leaves `changed == false`; gating on the
+			// label alone would leak a no-op result with no real replacement.
+			if minimized.changed
+				&& let Some(original_text) = minimized.original_text
+			{
 				let output_bytes = u32::try_from(minimized.text.len()).unwrap_or(u32::MAX);
 				minimized_out = Some(MinimizerResult {
 					filter: minimized.filter.to_string(),
