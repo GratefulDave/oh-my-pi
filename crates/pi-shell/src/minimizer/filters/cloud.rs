@@ -50,7 +50,8 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 
 /// Returns `true` when the full command is `aws s3 ls [...]` (not `cp`, `sync`,
 /// `rm`, etc.). Skips flags between `s3` and the action token so
-/// `aws --no-cli-pager s3 ls` is still recognised while `aws s3 cp` is excluded.
+/// `aws --no-cli-pager s3 ls` is still recognised while `aws s3 cp` is
+/// excluded.
 fn is_s3_ls(command: &str) -> bool {
 	let mut past_s3 = false;
 	for token in command.split_whitespace() {
