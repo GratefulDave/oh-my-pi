@@ -6,7 +6,7 @@
  */
 import * as path from "node:path";
 import { isEnoent, peekFile } from "@oh-my-pi/pi-utils";
-import { LRUCache } from "lru-cache/raw";
+import { LRUCache } from "lru-cache";
 import { settings } from "../config/settings";
 import { ToolError } from "./tool-errors";
 
