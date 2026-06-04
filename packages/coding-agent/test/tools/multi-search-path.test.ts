@@ -61,9 +61,10 @@ describe.skipIf(isWindows)("search with omitted paths", () => {
 		const tool = tools.find(entry => entry.name === "search");
 		if (!tool) throw new Error("Missing search tool");
 
-		// Callers that omit `paths` would otherwise be rejected at schema
-		// validation with `paths: Invalid input` and never run. Omission must
-		// degrade to a workspace-root scan rather than fail the tool call.
+		// Callers that omit `paths` (including the Antigravity/Gemini bridge and
+		// context-mode routing) would otherwise be rejected at schema validation
+		// with `paths: Invalid input` and never run. Omission must degrade to a
+		// workspace-root scan rather than fail the tool call.
 		const result = await tool.execute("search-default-paths", { pattern: "default-needle" });
 
 		const text = getText(result);
