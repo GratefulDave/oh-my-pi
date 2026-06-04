@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { $which } from "@oh-my-pi/pi-utils";
-import { LRUCache } from "lru-cache/raw";
+import { LRUCache } from "lru-cache";
 
 // ════════════════════════════════════════════════════════════════════════════
 // Types
