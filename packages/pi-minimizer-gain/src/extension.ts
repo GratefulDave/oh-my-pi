@@ -56,19 +56,28 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 			ctx.ui.setEditorText("");
 
 			await ctx.ui.custom<void>(
-				(tui, theme, _keybindings, done) =>
-					new MinimizerGainOverlayComponent(
+				(tui, theme, _keybindings, done) => {
+					// Box lets the loadContext callback read the live scope after the
+					// component is constructed — avoids closing over the stale initialScope.
+					const ref: { component: MinimizerGainOverlayComponent | null } = { component: null };
+					const component = new MinimizerGainOverlayComponent(
 						theme as GainTheme,
 						dualContext,
 						() => tui.requestRender(),
 						() => done(undefined),
-						async () => ({
-							current: await loadMinimizerGainContext({ cwd, all: false, days: parsed.days }),
-							all: await loadMinimizerGainContext({ cwd, all: true, days: parsed.days }),
-							diagnostic: await buildDiagnosticForCwd(initialScope === 0 ? cwd : undefined),
-						}),
+						async () => {
+							const scopeCwd = ref.component?.activeScopeIndex === 0 ? cwd : undefined;
+							return {
+								current: await loadMinimizerGainContext({ cwd, all: false, days: parsed.days }),
+								all: await loadMinimizerGainContext({ cwd, all: true, days: parsed.days }),
+								diagnostic: await buildDiagnosticForCwd(scopeCwd),
+							};
+						},
 						initialScope,
-					),
+					);
+					ref.component = component;
+					return component;
+				},
 				{ overlay: true },
 			);
 		},

@@ -162,6 +162,10 @@ export class MinimizerGainOverlayComponent {
 		clearInterval(this.#refreshInterval);
 		this.#refreshInterval = undefined;
 	}
+	get activeScopeIndex(): ScopeIndex {
+		return this.#activeScopeIndex;
+	}
+
 
 	invalidate(): void {}
 

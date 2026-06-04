@@ -4,7 +4,7 @@
  * Provides `/pm` (profile-manager) as a profile management slash command
  * that lives outside the OMP source tree and survives upstream pulls.
  *
- * Runs on stock OMP: profiles are persisted directly to `.omp/settings.json`
+ * Runs on stock OMP: profiles are persisted directly to `~/.omp/agent/config.yml`
  * (the `activeModelProfile` + `modelProfiles` schema) and the active model is
  * switched through the public ExtensionAPI (`setModel` / `setThinkingLevel`).
  * No LEX fork binary or fork-only imports are required.
@@ -19,7 +19,9 @@
  */
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
+import { YAML } from "bun";
 import type { Model } from "@oh-my-pi/pi-ai";
 import type {
 	ExtensionAPI,
@@ -82,17 +84,18 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 	});
 }
 
-// ── settings store (direct .omp/settings.json I/O) ────────────────────────────
+// ── settings store (~/.omp/agent/config.yml, YAML) ───────────────────────────
 
-function settingsPath(ctx: ExtensionCommandContext): string {
-	return path.join(ctx.cwd, ".omp", "settings.json");
+function settingsPath(): string {
+	const configDir = process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".omp", "agent");
+	return path.join(configDir, "config.yml");
 }
 
-function readSettings(ctx: ExtensionCommandContext): OmpSettings {
-	const file = settingsPath(ctx);
+function readSettings(): OmpSettings {
+	const file = settingsPath();
 	try {
 		const raw = fs.readFileSync(file, "utf8");
-		const parsed = JSON.parse(raw);
+		const parsed = YAML.parse(raw);
 		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
 			return parsed as OmpSettings;
 		}
@@ -102,10 +105,10 @@ function readSettings(ctx: ExtensionCommandContext): OmpSettings {
 	return {};
 }
 
-function writeSettings(ctx: ExtensionCommandContext, settings: OmpSettings): void {
-	const file = settingsPath(ctx);
+function writeSettings(settings: OmpSettings): void {
+	const file = settingsPath();
 	fs.mkdirSync(path.dirname(file), { recursive: true });
-	fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+	fs.writeFileSync(file, YAML.stringify(settings, null, 2), "utf8");
 }
 
 function getProfiles(settings: OmpSettings): Record<string, ModelProfile> {
@@ -212,7 +215,7 @@ function profileNames(settings: OmpSettings): string[] {
 async function handleNoArg(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
 	if (!ctx.hasUI) return printList(pi, ctx);
 
-	const settings = readSettings(ctx);
+	const settings = readSettings();
 	const active = settings.activeModelProfile;
 	const names = profileNames(settings);
 	const choices = [DEFAULT_PROFILE_NAME, ...names.filter(n => n !== DEFAULT_PROFILE_NAME), "Create new profile..."];
@@ -234,7 +237,7 @@ async function handleNoArg(pi: ExtensionAPI, ctx: ExtensionCommandContext): Prom
 }
 
 function printList(pi: ExtensionAPI, ctx: ExtensionCommandContext): void {
-	const settings = readSettings(ctx);
+	const settings = readSettings();
 	const active = settings.activeModelProfile;
 	let out = "Model profiles:\n";
 	out += `  ${!active || active === DEFAULT_PROFILE_NAME ? "*" : " "} ${DEFAULT_PROFILE_NAME}\n`;
@@ -246,7 +249,7 @@ function printList(pi: ExtensionAPI, ctx: ExtensionCommandContext): void {
 }
 
 function handleShow(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName: string | undefined): void {
-	const settings = readSettings(ctx);
+	const settings = readSettings();
 	if (rawName) {
 		const name = normalizeProfileName(rawName);
 		const profile = getProfiles(settings)[name];
@@ -281,18 +284,18 @@ async function handleCreate(pi: ExtensionAPI, ctx: ExtensionCommandContext, args
 	const name = normalizeProfileName(args[0]);
 	const activate = !args.includes("--no-activate");
 
-	const settings = readSettings(ctx);
+	const settings = readSettings();
 	const profiles = { ...getProfiles(settings) };
 	profiles[name] = snapshotCurrent(pi, ctx, settings);
 	settings.modelProfiles = profiles;
 
 	if (activate) {
 		settings.activeModelProfile = name;
-		writeSettings(ctx, settings);
+		writeSettings(settings);
 		const status = await applyProfile(pi, ctx, profiles[name]);
 		notify(pi, `Created and switched to profile: ${name}. ${status}`);
 	} else {
-		writeSettings(ctx, settings);
+		writeSettings(settings);
 		notify(pi, `Created profile: ${name}`);
 	}
 }
@@ -302,11 +305,11 @@ async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName
 		notify(pi, "Usage: /pm use <name|default>");
 		return;
 	}
-	const settings = readSettings(ctx);
+	const settings = readSettings();
 
 	if (rawName === DEFAULT_PROFILE_NAME) {
 		delete settings.activeModelProfile;
-		writeSettings(ctx, settings);
+		writeSettings(settings);
 		notify(pi, `Active profile: ${DEFAULT_PROFILE_NAME}`);
 		return;
 	}
@@ -318,7 +321,7 @@ async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName
 		return;
 	}
 	settings.activeModelProfile = name;
-	writeSettings(ctx, settings);
+	writeSettings(settings);
 	const status = await applyProfile(pi, ctx, profile);
 	notify(pi, `Active profile: ${name}. ${status}`);
 }
@@ -329,7 +332,7 @@ async function handleDelete(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawN
 		return;
 	}
 	const name = normalizeProfileName(rawName);
-	const settings = readSettings(ctx);
+	const settings = readSettings();
 	const profiles = { ...getProfiles(settings) };
 	if (!profiles[name]) {
 		notify(pi, `Unknown profile: ${name}`);
@@ -338,6 +341,6 @@ async function handleDelete(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawN
 	delete profiles[name];
 	settings.modelProfiles = profiles;
 	if (settings.activeModelProfile === name) delete settings.activeModelProfile;
-	writeSettings(ctx, settings);
+	writeSettings(settings);
 	notify(pi, `Deleted profile: ${name}`);
 }
