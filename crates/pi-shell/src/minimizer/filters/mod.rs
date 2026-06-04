@@ -102,7 +102,9 @@ fn run_invoked_word(command: &str) -> Option<&str> {
 	let mut tokens = command
 		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
 		.filter(|tok| !tok.is_empty());
-	tokens.by_ref().find(|tok| matches!(*tok, "run" | "-m" | "--module"))?;
+	tokens
+		.by_ref()
+		.find(|tok| matches!(*tok, "run" | "-m" | "--module"))?;
 	tokens.find(|tok| !tok.starts_with('-'))
 }
 
@@ -309,8 +311,8 @@ fn uv_wrapper_tool<'a>(ctx: &'a MinimizerCtx<'_>) -> Option<&'a str> {
 /// find the invoked command word we must also skip these options' values, or
 /// the value (`pytest`) is mistaken for the command and routes arbitrary output
 /// through that tool's filter. Covers the value-taking options of the wrappers
-/// routed here — `uv run`, `npx`, `pnpm dlx`, `bun x`. The `--opt=value` form is
-/// already a single flag token and needs no entry here.
+/// routed here — `uv run`, `npx`, `pnpm dlx`, `bun x`. The `--opt=value` form
+/// is already a single flag token and needs no entry here.
 const WRAPPER_VALUE_OPTIONS: &[&str] = &[
 	// uv run
 	"--with",
@@ -359,14 +361,14 @@ fn next_command_word<'a>(tokens: &mut impl Iterator<Item = &'a str>) -> Option<&
 }
 
 /// The command/tool word a wrapper invocation actually executes: the first
-/// non-flag token after a single wrapper keyword (`run`/`dlx`/`exec`), or — when
-/// none is present — the first non-flag token after the program. Value-taking
-/// options (`--with pytest`) have their value skipped so it is not mistaken for
-/// the command. A leading `python`/`python3`/`py` interpreter is descended
-/// through its `-m`/`--module` argument so `uv run python -m pytest` resolves to
-/// `pytest`. Tool names that appear only as later arguments
-/// (`uv run build -- pytest`, `uv run echo pytest`, `uv run --with pytest echo`)
-/// are never returned.
+/// non-flag token after a single wrapper keyword (`run`/`dlx`/`exec`), or —
+/// when none is present — the first non-flag token after the program.
+/// Value-taking options (`--with pytest`) have their value skipped so it is not
+/// mistaken for the command. A leading `python`/`python3`/`py` interpreter is
+/// descended through its `-m`/`--module` argument so `uv run python -m pytest`
+/// resolves to `pytest`. Tool names that appear only as later arguments
+/// (`uv run build -- pytest`, `uv run echo pytest`, `uv run --with pytest
+/// echo`) are never returned.
 fn wrapper_command_word(command: &str) -> Option<&str> {
 	let mut tokens = command
 		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
@@ -461,7 +463,8 @@ mod tests {
 	#[test]
 	fn pkg_test_routing_ignores_test_as_argument() {
 		let config = MinimizerConfig::default();
-		// a non-test script that merely passes `test` as an argument must not route as a test
+		// a non-test script that merely passes `test` as an argument must not route as
+		// a test
 		assert!(!is_pkg_test_invocation(&ctx("npm", Some("run"), "npm run build -- test", &config)));
 		assert!(is_pkg_test_invocation(&ctx("npm", Some("run"), "npm run test", &config)));
 		assert!(is_pkg_test_invocation(&ctx("npm", Some("test"), "npm test", &config)));
@@ -488,10 +491,7 @@ mod tests {
 			Some("pytest")
 		);
 		assert_eq!(uv_wrapper_tool(&ctx("uv", Some("run"), "uv run echo pytest", &config)), None);
-		assert_eq!(
-			uv_wrapper_tool(&ctx("uv", Some("run"), "uv run build -- pytest", &config)),
-			None
-		);
+		assert_eq!(uv_wrapper_tool(&ctx("uv", Some("run"), "uv run build -- pytest", &config)), None);
 	}
 
 	#[test]
@@ -539,7 +539,8 @@ mod tests {
 	#[test]
 	fn uv_run_echo_pytest_is_left_opaque() {
 		let config = MinimizerConfig::default();
-		// `pytest` is an argument to `echo`, not the invoked command — output must pass through
+		// `pytest` is an argument to `echo`, not the invoked command — output must pass
+		// through
 		let context = ctx("uv", Some("run"), "uv run echo pytest", &config);
 		let input = "collected 2 items\npytest\n";
 		let out = filter(&context, input, 0);

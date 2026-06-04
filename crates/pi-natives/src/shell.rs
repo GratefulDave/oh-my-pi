@@ -372,10 +372,10 @@ pub struct ShellMinimizerApplyOptions {
 /// passes the output through unchanged. A missing `exit_code` is treated as
 /// success (`0`).
 #[napi(ts_return_type = "Promise<MinimizerResult | null>")]
-pub fn apply_shell_minimizer<'env>(
-	env: &'env Env,
+pub fn apply_shell_minimizer(
+	env: &Env,
 	options: ShellMinimizerApplyOptions,
-) -> Result<PromiseRaw<'env, Option<MinimizerResult>>> {
+) -> Result<PromiseRaw<'_, Option<MinimizerResult>>> {
 	// Returns a Promise rather than a sync value: minimization can run over a
 	// multi-megabyte capture buffer, and a sync `#[napi]` fn would do that CPU
 	// work on the JS main thread and stall the event loop. Run the whole pass on
@@ -390,9 +390,9 @@ pub fn apply_shell_minimizer<'env>(
 /// Pure, blocking core of [`apply_shell_minimizer`], factored out so it can run
 /// inside `spawn_blocking` and be unit-tested without an N-API `Env`.
 ///
-/// Mirrors the persistent-shell path (`pi_shell::shell`): surface telemetry only
-/// when the minimizer actually rewrote the output and kept the original buffer.
-/// The disabled / passthrough cases report `changed: false` with no
+/// Mirrors the persistent-shell path (`pi_shell::shell`): surface telemetry
+/// only when the minimizer actually rewrote the output and kept the original
+/// buffer. The disabled / passthrough cases report `changed: false` with no
 /// `original_text`, and yield `None`.
 fn run_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<MinimizerResult> {
 	let minimizer = options.minimizer?;

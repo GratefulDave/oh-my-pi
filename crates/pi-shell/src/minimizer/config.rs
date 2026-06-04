@@ -131,7 +131,9 @@ impl MinimizerConfig {
 		}
 		cfg.legacy_filters_active = resolve_legacy_filters(
 			opts.legacy_filters,
-			std::env::var("OMP_MINIMIZER_LEGACY_FILTERS").ok().as_deref(),
+			std::env::var("OMP_MINIMIZER_LEGACY_FILTERS")
+				.ok()
+				.as_deref(),
 		);
 		if let Some(path) = opts.settings_path.as_deref()
 			&& !path.is_empty()
@@ -257,8 +259,9 @@ impl SettingsFile {
 fn resolve_legacy_filters(option: Option<bool>, env_value: Option<&str>) -> bool {
 	match option {
 		Some(v) => v,
-		None => env_value
-			.is_some_and(|raw| matches!(raw.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes")),
+		None => env_value.is_some_and(|raw| {
+			matches!(raw.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes")
+		}),
 	}
 }
 

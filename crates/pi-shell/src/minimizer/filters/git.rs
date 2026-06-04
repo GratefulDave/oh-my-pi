@@ -2025,9 +2025,18 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		assert!(out.changed);
 		// Branch is preserved (re-emitted as `[branch]`) — it's the primary thing
 		// users scan stash lists for — while the "WIP on "/"On " noise is stripped.
-		assert!(out.text.contains("stash@{0}: [feature-x] abc1234 fix: something"));
-		assert!(out.text.contains("stash@{1}: [main] def5678 chore: clean up"));
-		assert!(out.text.contains("stash@{2}: [dev] ghi9012 feat: add widget"));
+		assert!(
+			out.text
+				.contains("stash@{0}: [feature-x] abc1234 fix: something")
+		);
+		assert!(
+			out.text
+				.contains("stash@{1}: [main] def5678 chore: clean up")
+		);
+		assert!(
+			out.text
+				.contains("stash@{2}: [dev] ghi9012 feat: add widget")
+		);
 		assert!(!out.text.contains("WIP on "));
 		assert!(!out.text.contains("On main:"));
 	}
