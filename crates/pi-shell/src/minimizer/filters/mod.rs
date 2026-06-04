@@ -304,21 +304,77 @@ fn uv_wrapper_tool<'a>(ctx: &'a MinimizerCtx<'_>) -> Option<&'a str> {
 	])
 }
 
+/// Wrapper options whose value is the *following* token (`--with pytest`),
+/// rather than being self-contained (`--with=pytest`). When skipping flags to
+/// find the invoked command word we must also skip these options' values, or
+/// the value (`pytest`) is mistaken for the command and routes arbitrary output
+/// through that tool's filter. Covers the value-taking options of the wrappers
+/// routed here — `uv run`, `npx`, `pnpm dlx`, `bun x`. The `--opt=value` form is
+/// already a single flag token and needs no entry here.
+const WRAPPER_VALUE_OPTIONS: &[&str] = &[
+	// uv run
+	"--with",
+	"--with-requirements",
+	"--with-editable",
+	"--python",
+	"-p",
+	"--from",
+	"--directory",
+	"--project",
+	"--index",
+	"--default-index",
+	"--index-url",
+	"--extra-index-url",
+	"--find-links",
+	"-f",
+	"--cache-dir",
+	"--config-file",
+	"--refresh-package",
+	"--resolution",
+	"--prerelease",
+	"--exclude-newer",
+	"--link-mode",
+	"--color",
+	"--python-preference",
+	// npx / pnpm dlx
+	"--package",
+	"-c",
+	"--call",
+	"--node-arg",
+];
+
+/// Advance `tokens` to the next invoked-command word, skipping flag tokens and
+/// the space-separated values of value-taking options (see
+/// [`WRAPPER_VALUE_OPTIONS`]). Inline `--opt=value` flags are skipped whole.
+fn next_command_word<'a>(tokens: &mut impl Iterator<Item = &'a str>) -> Option<&'a str> {
+	while let Some(tok) = tokens.next() {
+		if !tok.starts_with('-') {
+			return Some(tok);
+		}
+		if !tok.contains('=') && WRAPPER_VALUE_OPTIONS.contains(&tok) {
+			tokens.next(); // consume the option's value
+		}
+	}
+	None
+}
+
 /// The command/tool word a wrapper invocation actually executes: the first
 /// non-flag token after a single wrapper keyword (`run`/`dlx`/`exec`), or — when
-/// none is present — the first non-flag token after the program. A leading
-/// `python`/`python3`/`py` interpreter is descended through its `-m`/`--module`
-/// argument so `uv run python -m pytest` resolves to `pytest`. Tool names that
-/// appear only as later arguments (`uv run build -- pytest`,
-/// `uv run echo pytest`) are never returned.
+/// none is present — the first non-flag token after the program. Value-taking
+/// options (`--with pytest`) have their value skipped so it is not mistaken for
+/// the command. A leading `python`/`python3`/`py` interpreter is descended
+/// through its `-m`/`--module` argument so `uv run python -m pytest` resolves to
+/// `pytest`. Tool names that appear only as later arguments
+/// (`uv run build -- pytest`, `uv run echo pytest`, `uv run --with pytest echo`)
+/// are never returned.
 fn wrapper_command_word(command: &str) -> Option<&str> {
 	let mut tokens = command
 		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
 		.filter(|tok| !tok.is_empty());
 	tokens.next()?; // drop the program token
-	let mut word = tokens.find(|tok| !tok.starts_with('-'))?;
+	let mut word = next_command_word(&mut tokens)?;
 	if matches!(word, "run" | "dlx" | "exec") {
-		word = tokens.find(|tok| !tok.starts_with('-'))?;
+		word = next_command_word(&mut tokens)?;
 	}
 	if matches!(word, "python" | "python3" | "py") {
 		let mut saw_module = false;
@@ -436,6 +492,48 @@ mod tests {
 			uv_wrapper_tool(&ctx("uv", Some("run"), "uv run build -- pytest", &config)),
 			None
 		);
+	}
+
+	#[test]
+	fn uv_wrapper_skips_value_taking_option_values() {
+		let config = MinimizerConfig::default();
+		// `--with <pkg>` consumes the following token as its value; that value must
+		// not be mistaken for the invoked command and route output through it.
+		assert_eq!(
+			uv_wrapper_tool(&ctx("uv", Some("run"), "uv run --with pytest echo hi", &config)),
+			None
+		);
+		assert_eq!(
+			uv_wrapper_tool(&ctx("uv", Some("run"), "uv run --with pytest build", &config)),
+			None
+		);
+		// the genuinely invoked tool still routes when preceded by a value option
+		assert_eq!(
+			uv_wrapper_tool(&ctx("uv", Some("run"), "uv run --python 3.12 pytest", &config)),
+			Some("pytest")
+		);
+		// inline `--opt=value` is a single token; the command word follows it
+		assert_eq!(
+			uv_wrapper_tool(&ctx("uv", Some("run"), "uv run --with=pytest echo hi", &config)),
+			None
+		);
+		// `python -m <module>` descent still resolves through a value option
+		assert_eq!(
+			uv_wrapper_tool(&ctx("uv", Some("run"), "uv run --with foo python -m pytest", &config)),
+			Some("pytest")
+		);
+	}
+
+	#[test]
+	fn uv_run_with_option_value_is_left_opaque() {
+		let config = MinimizerConfig::default();
+		// `pytest` is the value of `--with`, the invoked command is `echo` — output
+		// (including PASS/✓-style lines) must pass through untouched.
+		let context = ctx("uv", Some("run"), "uv run --with pytest echo PASS", &config);
+		let input = "collected 2 items\nPASS\n";
+		let out = filter(&context, input, 0);
+		assert_eq!(out.text, input);
+		assert!(!out.changed);
 	}
 
 	#[test]
