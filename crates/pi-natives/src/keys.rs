@@ -919,10 +919,7 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 				// distinguish ctrl+h from Backspace, ctrl+m from Enter, etc.
 				// Skip the raw fast-path for those bytes so that a bare \r
 				// cannot match ctrl+m in legacy mode.
-				if !matches!(raw, 0x08 | 0x09 | 0x0a | 0x0d)
-					&& bytes.len() == 1
-					&& bytes[0] == raw
-				{
+				if !matches!(raw, 0x08 | 0x09 | 0x0a | 0x0d) && bytes.len() == 1 && bytes[0] == raw {
 					return true;
 				}
 				return mok_matches(codepoint, MOD_CTRL) || kitty_matches(codepoint, MOD_CTRL);

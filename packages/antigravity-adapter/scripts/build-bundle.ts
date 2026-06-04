@@ -7,7 +7,7 @@ const result = await Bun.build({
 	outdir: path.join(root, "dist"),
 	target: "bun",
 	format: "esm",
-	naming: "extension.bundle.js",
+	naming: "antigravity.bundle.js",
 	external: ["@oh-my-pi/pi-coding-agent"],
 	plugins: [
 		{
