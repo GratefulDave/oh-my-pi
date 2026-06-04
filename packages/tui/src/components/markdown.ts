@@ -1,4 +1,4 @@
-import { LRUCache } from "lru-cache/raw";
+import { LRUCache } from "lru-cache";
 import { Marked, marked, type Token, Tokenizer, type Tokens } from "marked";
 import type { SymbolTheme } from "../symbols";
 import { TERMINAL } from "../terminal-capabilities";

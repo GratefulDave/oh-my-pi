@@ -20,7 +20,7 @@
  * short history of full-file versions so in-session edit chains can still
  * recover against the version a stale tag names.
  */
-import { LRUCache } from "lru-cache/raw";
+import { LRUCache } from "lru-cache";
 import { computeFileHash } from "./format";
 
 /**

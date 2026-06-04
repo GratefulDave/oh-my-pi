@@ -6,7 +6,7 @@ import { htmlToMarkdown } from "@oh-my-pi/pi-natives";
 import { type Component, Text } from "@oh-my-pi/pi-tui";
 import { $which, ptree, truncate } from "@oh-my-pi/pi-utils";
 import { parseHTML } from "linkedom";
-import { LRUCache } from "lru-cache/raw";
+import { LRUCache } from "lru-cache";
 import type { Settings } from "../config/settings";
 import type { RenderResultOptions } from "../extensibility/custom-tools/types";
 import { type Theme, theme } from "../modes/theme/theme";
