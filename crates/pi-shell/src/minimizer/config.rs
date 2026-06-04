@@ -131,7 +131,9 @@ impl MinimizerConfig {
 		}
 		cfg.legacy_filters_active = resolve_legacy_filters(
 			opts.legacy_filters,
-			std::env::var("OMP_MINIMIZER_LEGACY_FILTERS").ok().as_deref(),
+			std::env::var("OMP_MINIMIZER_LEGACY_FILTERS")
+				.ok()
+				.as_deref(),
 		);
 		if let Some(path) = opts.settings_path.as_deref()
 			&& !path.is_empty()
@@ -207,6 +209,7 @@ struct SettingsFile {
 	except:               Option<Vec<String>>,
 	max_capture_bytes:    Option<u32>,
 	source_outline_level: Option<String>,
+	legacy_filters:       Option<bool>,
 	#[serde(flatten)]
 	tables:               HashMap<String, toml::Value>,
 }
@@ -239,6 +242,9 @@ impl SettingsFile {
 		{
 			cfg.source_outline_level = level;
 		}
+		if let Some(v) = self.legacy_filters {
+			cfg.legacy_filters_active = resolve_legacy_filters(Some(v), None);
+		}
 		for (k, v) in self.tables {
 			if v.is_table() && k != "filters" && k != "tests" {
 				cfg.per_command.insert(k.to_lowercase(), v);
@@ -257,8 +263,9 @@ impl SettingsFile {
 fn resolve_legacy_filters(option: Option<bool>, env_value: Option<&str>) -> bool {
 	match option {
 		Some(v) => v,
-		None => env_value
-			.is_some_and(|raw| matches!(raw.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes")),
+		None => env_value.is_some_and(|raw| {
+			matches!(raw.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes")
+		}),
 	}
 }
 
@@ -390,5 +397,13 @@ mod tests {
 		for raw in ["0", "false", "no", ""] {
 			assert!(!super::resolve_legacy_filters(None, Some(raw)), "{raw:?} should not enable");
 		}
+	}
+
+	#[test]
+	fn settings_file_parses_legacy_filters_switch() {
+		let file: SettingsFile = toml::from_str("legacy_filters = true\n").unwrap();
+		let mut cfg = MinimizerConfig::default();
+		file.merge_into(&mut cfg);
+		assert!(cfg.legacy_filters_active());
 	}
 }

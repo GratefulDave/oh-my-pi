@@ -991,10 +991,10 @@ fn starts_with_ts_method(s: &str) -> bool {
 	paren_idx.is_some()
 }
 
-/// Strip Python function/class bodies. We detect a `def`, `async def`, or
-/// `class` line ending with `:`, emit the signature, then drop every following
-/// line whose indentation is strictly greater than the signature's, replacing
-/// the run with a single `    ...` placeholder.
+/// Strip Python function bodies while preserving class members. Function and
+/// method declarations keep their signatures with a single placeholder body;
+/// class bodies are recursively outlined so method signatures and class
+/// attributes stay visible.
 fn strip_python_bodies(input: &str) -> String {
 	let lines: Vec<&str> = input.lines().collect();
 	let mut out = String::with_capacity(input.len() / 2);
@@ -1006,7 +1006,32 @@ fn strip_python_bodies(input: &str) -> String {
 		let is_def = trimmed.starts_with("def ") || trimmed.starts_with("async def ");
 		let is_class = trimmed.starts_with("class ");
 		let ends_with_colon = trimmed.trim_end().ends_with(':');
-		if (is_def || is_class) && ends_with_colon {
+		if is_class && ends_with_colon {
+			out.push_str(line);
+			out.push('\n');
+			i += 1;
+			let body_start = i;
+			while i < lines.len() {
+				let body_line = lines[i];
+				if body_line.trim().is_empty() {
+					i += 1;
+					continue;
+				}
+				let body_indent = body_line
+					.chars()
+					.take_while(|c| *c == ' ' || *c == '\t')
+					.count();
+				if body_indent <= indent {
+					break;
+				}
+				i += 1;
+			}
+			if body_start < i {
+				out.push_str(&strip_python_bodies(&lines[body_start..i].join("\n")));
+			}
+			continue;
+		}
+		if is_def && ends_with_colon {
 			out.push_str(line);
 			out.push('\n');
 			i += 1;
@@ -1231,6 +1256,38 @@ mod tests {
 			out.text,
 			"Cargo.toml: rtk\ndependencies: 3\n  clap 4\n  anyhow 1.0\n  serde_json 1\n"
 		);
+	}
+
+	#[test]
+	fn aggressive_python_outline_preserves_class_members() {
+		let cfg = MinimizerConfig {
+			enabled: true,
+			source_outline_level: OutlineLevel::Aggressive,
+			..Default::default()
+		};
+		let ctx = ctx_command("cat", "cat src/example.py", &cfg);
+		let input = concat!(
+			"class Example:\n",
+			"    kind = \"demo\"\n",
+			"\n",
+			"    def one(self):\n",
+			"        print('hidden')\n",
+			"\n",
+			"    async def two(self):\n",
+			"        return 2\n",
+			"\n",
+			"def outside():\n",
+			"    return 3\n",
+		);
+		let out = filter(&ctx, input, 0);
+		assert!(out.text.contains("class Example:"));
+		assert!(out.text.contains("    kind = \"demo\""));
+		assert!(out.text.contains("    def one(self):"));
+		assert!(out.text.contains("    async def two(self):"));
+		assert!(out.text.contains("def outside():"));
+		assert!(!out.text.contains("print('hidden')"));
+		assert!(!out.text.contains("return 2"));
+		assert!(!out.text.contains("return 3"));
 	}
 
 	#[test]

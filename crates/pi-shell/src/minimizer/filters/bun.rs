@@ -69,16 +69,50 @@ fn is_test_invocation(program: &str, subcommand: Option<&str>, command: &str) ->
 		(program, subcommand),
 		("bun", Some("test")) | ("bunx", Some("jest" | "vitest" | "playwright"))
 	) || is_exec_package_subcommand(program, subcommand)
-		&& (command_contains_tool(command, &["jest", "vitest", "playwright"])
-			|| command_contains_test_script(command))
+		&& command_invoked_word(command).is_some_and(|token| {
+			["jest", "vitest", "playwright"].contains(&token) || is_test_script_token(token)
+		})
 }
-fn command_contains_test_script(command: &str) -> bool {
-	command
-		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
-		.any(is_test_script_token)
+
+fn command_invoked_word(command: &str) -> Option<&str> {
+	let mut after_marker = false;
+	let mut skip_option_value = false;
+	for raw in command.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&')) {
+		let token = trim_command_token(raw);
+		if token.is_empty() {
+			continue;
+		}
+		if !after_marker {
+			if matches!(token, "run" | "exec") {
+				after_marker = true;
+			}
+			continue;
+		}
+		if skip_option_value {
+			skip_option_value = false;
+			continue;
+		}
+		if token.starts_with('-') {
+			if bun_wrapper_option_takes_value(token) && !token.contains('=') {
+				skip_option_value = true;
+			}
+			continue;
+		}
+		return Some(token);
+	}
+	None
 }
+
+fn trim_command_token(token: &str) -> &str {
+	token.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'))
+}
+
+fn bun_wrapper_option_takes_value(token: &str) -> bool {
+	matches!(token, "--filter" | "--cwd" | "--env-file" | "--preload" | "-F" | "-C" | "-r")
+}
+
 fn is_test_script_token(token: &str) -> bool {
-	let token = token.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'));
+	let token = trim_command_token(token);
 	matches!(token, "test" | "t" | "e2e" | "spec") || token.starts_with("test:")
 }
 
@@ -87,55 +121,44 @@ fn is_exec_package_subcommand(program: &str, subcommand: Option<&str>) -> bool {
 }
 
 fn is_check_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
-	is_exec_package_subcommand(program, subcommand) && command_contains_check_script(command)
-}
-
-fn command_contains_check_script(command: &str) -> bool {
-	command
-		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
-		.any(is_check_script_token)
+	is_exec_package_subcommand(program, subcommand)
+		&& command_invoked_word(command).is_some_and(is_check_script_token)
 }
 
 fn is_check_script_token(token: &str) -> bool {
-	let token = token.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'));
+	let token = trim_command_token(token);
 	matches!(token, "check") || token.starts_with("check:")
 }
 
 fn is_lint_script_token(token: &str) -> bool {
-	let token = token.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'));
+	let token = trim_command_token(token);
 	matches!(token, "lint" | "typecheck" | "type-check")
 		|| token.starts_with("lint:")
 		|| token.starts_with("typecheck:")
 		|| token.starts_with("type-check:")
 }
 
-fn command_contains_lint_script(command: &str) -> bool {
-	command
-		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
-		.any(is_lint_script_token)
-}
-
 fn is_lint_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
 	matches!((program, subcommand), ("bun" | "bunx", Some("tsc" | "eslint" | "biome")))
 		|| is_exec_package_subcommand(program, subcommand)
-			&& (command_contains_tool(command, &["tsc", "eslint", "biome"])
-				|| command_contains_lint_script(command))
+			&& command_invoked_word(command).is_some_and(|token| {
+				["tsc", "eslint", "biome"].contains(&token) || is_lint_script_token(token)
+			})
 }
 
 fn is_js_tool_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
 	matches!((program, subcommand), ("bun" | "bunx", Some("next" | "prettier" | "prisma")))
 		|| is_exec_package_subcommand(program, subcommand)
-			&& command_contains_tool(command, &["next", "prettier", "prisma"])
-}
-fn is_cpp_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
-	matches!((program, subcommand), ("bunx", Some(subcommand)) if BUN_CPP_TOOL_SUBCOMMANDS.contains(&subcommand))
-		|| is_exec_package_subcommand(program, subcommand) && cpp::supports_invocation(command)
+			&& command_invoked_word(command)
+				.is_some_and(|token| ["next", "prettier", "prisma"].contains(&token))
 }
 
-fn command_contains_tool(command: &str, tools: &[&str]) -> bool {
-	command
-		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
-		.any(|token| tools.contains(&token))
+fn is_cpp_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
+	matches!((program, subcommand), ("bunx", Some(subcommand)) if BUN_CPP_TOOL_SUBCOMMANDS.contains(&subcommand))
+		|| is_exec_package_subcommand(program, subcommand)
+			&& command_invoked_word(command).is_some_and(|token| {
+				BUN_CPP_TOOL_SUBCOMMANDS.contains(&token) || cpp::supports_invocation(token)
+			})
 }
 
 fn filter_bun_check(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
@@ -535,6 +558,16 @@ mod tests {
 		let ctx = ctx("bun", Some("run"), "bun run build", &cfg);
 		let out = filter(&ctx, "Resolving dependencies\nDownloaded foo\nerror: failed\n", 1);
 		assert!(!out.text.contains("Resolving dependencies"));
+		assert!(out.text.contains("error: failed"));
+	}
+
+	#[test]
+	fn bun_run_build_argument_named_test_stays_on_package_filter() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx("bun", Some("run"), "bun run build -- test", &cfg);
+		let out = filter(&ctx, "PASS emitted by build\n✓ emitted by build\nerror: failed\n", 1);
+		assert!(out.text.contains("PASS emitted by build"));
+		assert!(out.text.contains("✓ emitted by build"));
 		assert!(out.text.contains("error: failed"));
 	}
 }

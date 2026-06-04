@@ -271,7 +271,7 @@ fn filter_helm(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
 	}
 	match ctx.subcommand {
 		Some("list" | "ls" | "status") => compact_table(input, 20),
-		Some("install" | "upgrade" | "template" | "lint") => compact_build_or_progress(input),
+		Some("install" | "upgrade" | "lint") => compact_build_or_progress(input),
 		_ => head_tail_dedup(input),
 	}
 }
@@ -546,6 +546,15 @@ mod tests {
 		assert!(!out.contains("Pulling fs layer"));
 		assert!(!out.contains("Pull complete"));
 		assert!(out.contains("Status: Downloaded newer image for docker.io/library/app:latest"));
+	}
+
+	#[test]
+	fn helm_template_keeps_manifest_yaml_opaque() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let helm_ctx = ctx("helm", Some("template"), &cfg);
+		let input = "apiVersion: v1\nkind: ConfigMap\ndata:\n  phase: Waiting\n";
+		let out = filter(&helm_ctx, input, 0).text;
+		assert_eq!(out, input);
 	}
 
 	#[test]
