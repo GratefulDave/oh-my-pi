@@ -3,8 +3,10 @@
 // ---------------------------------------------------------------------------
 
 import { ObserverDashboard } from "./dashboard";
+import { type RenderOptions, renderJobResult, type ThemeLike, type ToolResult } from "./job-renderer";
 import {
 	onAgentStart,
+	onIrcMessage,
 	onSubagentLifecycle,
 	onSubagentProgress,
 	onTokensUsed,
@@ -33,6 +35,7 @@ import {
 
 const TASK_SUBAGENT_PROGRESS_CHANNEL = "task:subagent:progress";
 const TASK_SUBAGENT_LIFECYCLE_CHANNEL = "task:subagent:lifecycle";
+const IRC_MESSAGE_CHANNEL = "irc:message";
 
 type ProviderUsage = {
 	input?: number;
@@ -48,24 +51,101 @@ type ProviderResponseEvent = {
 	response?: { model?: string; usage?: ProviderUsage };
 };
 
+type SubagentRetryState = {
+	attempt: number;
+	maxAttempts: number;
+	delayMs: number;
+	errorMessage: string;
+	startedAtMs: number;
+};
+
+type SubagentRetryFailure = {
+	attempt: number;
+	errorMessage: string;
+};
+type SubagentRecentTool = {
+	tool: string;
+	args: string;
+	endMs: number;
+};
+
+type SubagentProgressSnapshot = {
+	id?: string;
+	agent?: string;
+	status: SubagentStatus;
+	tokens?: number;
+	toolCount?: number;
+	cost?: number;
+	index?: number;
+	task?: string;
+	assignment?: string;
+	description?: string;
+	currentTool?: string;
+	currentToolArgs?: string;
+	currentToolStartMs?: number;
+	lastIntent?: string;
+	recentOutput?: string[];
+	durationMs?: number;
+	contextTokens?: number;
+	contextWindow?: number;
+	resolvedModel?: string;
+	retryState?: SubagentRetryState;
+	retryFailure?: SubagentRetryFailure;
+	error?: string;
+	abortReason?: string;
+	agentSource?: string;
+	sessionFile?: string;
+	recentTools?: SubagentRecentTool[];
+	extractedToolData?: Record<string, unknown[]>;
+	inflightTaskDetails?: unknown;
+};
+
 type SubagentProgressPayload = {
 	id: string;
+	index?: number;
 	agent?: string;
+	task?: string;
+	assignment?: string;
+	description?: string;
 	status: string;
-	progress: {
-		id?: string;
-		agent?: string;
-		status: SubagentStatus;
-		tokens?: number;
-		toolCount?: number;
-		cost?: number;
-	};
+	progress: SubagentProgressSnapshot;
 };
 
 type SubagentLifecyclePayload = {
 	id: string;
 	agent?: string;
+	description?: string;
+	task?: string;
+	index?: number;
 	status: "started" | SubagentStatus;
+};
+
+type IrcMessagePayload = {
+	timestamp?: number;
+	channel?: string;
+	from?: string;
+	to?: string;
+	body?: string;
+	kind?: "message" | "reply";
+	delivered?: string[];
+	failed?: string[];
+};
+
+type IrcCustomMessage = {
+	customType?: string;
+	timestamp?: number;
+	details?: {
+		from?: string;
+		to?: string;
+		message?: string;
+		reply?: string;
+		body?: string;
+		kind?: "message" | "reply";
+	};
+};
+
+type IrcSessionEvent = {
+	message?: IrcCustomMessage;
 };
 
 type ExtensionCommandContext = {
@@ -99,11 +179,69 @@ type ExtensionAPI = {
 		name: string,
 		command: { description: string; handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> | void },
 	): void;
+	registerToolRenderer?(
+		toolName: string,
+		renderer: {
+			inline?: boolean;
+			mergeCallAndResult?: boolean;
+			renderResult?: (result: ToolResult, options: RenderOptions, theme: ThemeLike) => unknown;
+		},
+	): void;
 };
 
 /** Map a lifecycle status string onto the observer's SubagentStatus union. */
 function lifecycleToStatus(status: SubagentLifecyclePayload["status"]): SubagentStatus {
 	return status === "started" ? "running" : status;
+}
+
+function isSubagentStatus(status: unknown): status is SubagentStatus {
+	return (
+		status === "pending" ||
+		status === "running" ||
+		status === "completed" ||
+		status === "failed" ||
+		status === "aborted"
+	);
+}
+
+function recordIrcPayload(payload: IrcMessagePayload | undefined): void {
+	if (!payload || typeof payload.body !== "string") return;
+	onIrcMessage({
+		timestamp: typeof payload.timestamp === "number" ? payload.timestamp : Date.now(),
+		channel: payload.channel ?? payload.to ?? "irc",
+		from: payload.from ?? "unknown",
+		to: payload.to ?? payload.channel ?? "irc",
+		body: payload.body,
+		kind: payload.kind ?? "message",
+		delivered: payload.delivered ?? [],
+		failed: payload.failed ?? [],
+	});
+}
+
+function recordIrcSessionEvent(event: unknown): void {
+	const message = (event as IrcSessionEvent | undefined)?.message;
+	const details = message?.details;
+	if (!details) return;
+	if (message?.customType === "irc:incoming") {
+		recordIrcPayload({ timestamp: message.timestamp, from: details.from, to: "@Main", body: details.message });
+	} else if (message?.customType === "irc:autoreply") {
+		recordIrcPayload({
+			timestamp: message.timestamp,
+			from: "Main",
+			to: details.to,
+			body: details.reply,
+			kind: "reply",
+		});
+	} else if (message?.customType === "irc:relay") {
+		recordIrcPayload({
+			timestamp: message.timestamp,
+			channel: details.to,
+			from: details.from,
+			to: details.to,
+			body: details.body,
+			kind: details.kind,
+		});
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -144,7 +282,7 @@ export default function observer(pi: ExtensionAPI): void {
 	pi.events.on(TASK_SUBAGENT_PROGRESS_CHANNEL, data => {
 		const payload = data as SubagentProgressPayload | undefined;
 		const progress = payload?.progress;
-		if (!progress || typeof progress.id !== "string") return;
+		if (!progress || typeof progress.id !== "string" || !isSubagentStatus(progress.status)) return;
 		onSubagentProgress({
 			id: progress.id,
 			agent: progress.agent ?? payload?.agent ?? "subagent",
@@ -152,13 +290,46 @@ export default function observer(pi: ExtensionAPI): void {
 			tokens: progress.tokens ?? 0,
 			toolCount: progress.toolCount ?? 0,
 			cost: progress.cost ?? 0,
+			index: progress.index ?? payload.index,
+			task: progress.task ?? payload.task,
+			assignment: progress.assignment ?? payload.assignment,
+			description: progress.description ?? payload.description,
+			currentTool: progress.currentTool,
+			currentToolArgs: progress.currentToolArgs,
+			currentToolStartMs: progress.currentToolStartMs,
+			lastIntent: progress.lastIntent,
+			recentOutput: progress.recentOutput,
+			durationMs: progress.durationMs,
+			contextTokens: progress.contextTokens,
+			contextWindow: progress.contextWindow,
+			resolvedModel: progress.resolvedModel,
+			retryState: progress.retryState,
+			retryFailure: progress.retryFailure,
+			failureReason: progress.error ?? progress.abortReason,
+			agentSource: progress.agentSource,
+			sessionFile: progress.sessionFile,
+			recentTools: progress.recentTools,
+			extractedToolData: progress.extractedToolData,
+			inflightTaskDetails: progress.inflightTaskDetails,
 		});
 	});
 
 	pi.events.on(TASK_SUBAGENT_LIFECYCLE_CHANNEL, data => {
 		const payload = data as SubagentLifecyclePayload | undefined;
-		if (!payload || typeof payload.id !== "string") return;
-		onSubagentLifecycle(payload.id, payload.agent ?? "subagent", lifecycleToStatus(payload.status));
+		if (!payload || typeof payload.id !== "string" || !isSubagentStatus(lifecycleToStatus(payload.status))) return;
+		onSubagentLifecycle(payload.id, payload.agent ?? "subagent", lifecycleToStatus(payload.status), {
+			index: payload.index,
+			task: payload.task,
+			description: payload.description,
+		});
+	});
+
+	pi.events.on(IRC_MESSAGE_CHANNEL, data => {
+		recordIrcPayload(data as IrcMessagePayload | undefined);
+	});
+
+	pi.on("irc_message", event => {
+		recordIrcSessionEvent(event);
 	});
 
 	// Track token usage from provider responses.
@@ -173,6 +344,13 @@ export default function observer(pi: ExtensionAPI): void {
 				onTokensUsed(modelId, input, output);
 			}
 		}
+	});
+
+	pi.registerToolRenderer?.("job", {
+		inline: true,
+		mergeCallAndResult: true,
+		renderResult: (result: ToolResult, options: RenderOptions, theme: ThemeLike) =>
+			renderJobResult(result, options, theme),
 	});
 
 	// Register /observe slash command.

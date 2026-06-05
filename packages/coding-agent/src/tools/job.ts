@@ -7,17 +7,15 @@ import { type AsyncJob, type AsyncJobManager, isBackgroundJobSupportEnabled } fr
 import type { RenderResultOptions } from "../extensibility/custom-tools/types";
 import type { Theme } from "../modes/theme/theme";
 import jobDescription from "../prompts/tools/job.md" with { type: "text" };
-import { Ellipsis, Hasher, type RenderCache, renderStatusLine, renderTreeList, truncateToWidth } from "../tui";
+import { Ellipsis, Hasher, type RenderCache, renderStatusLine, truncateToWidth } from "../tui";
 import type { ToolSession } from "./index";
 import {
-	formatBadge,
 	formatDuration,
 	formatEmptyMessage,
 	formatStatusIcon,
 	getPreviewLines,
 	PREVIEW_LIMITS,
 	replaceTabs,
-	type ToolUIColor,
 	type ToolUIStatus,
 } from "./render-utils";
 import { ToolError } from "./tool-errors";
@@ -345,13 +343,14 @@ interface JobRenderArgs {
 }
 
 const COLLAPSED_LIST_LIMIT = PREVIEW_LIMITS.COLLAPSED_ITEMS;
-const LABEL_MAX_WIDTH = 60;
+const LABEL_MAX_WIDTH = 64;
 const PREVIEW_LINES_COLLAPSED = 1;
 const PREVIEW_LINES_EXPANDED = 4;
 const LABEL_LINES_COLLAPSED = 1;
 const LABEL_LINES_EXPANDED = 3;
-const PREVIEW_LINE_WIDTH = 80;
-
+const PREVIEW_LINE_WIDTH = 88;
+const AGENT_HEADER = "● Agents";
+const CHILD_PREFIX = "└ ";
 function statusToIcon(status: JobSnapshot["status"]): ToolUIStatus {
 	switch (status) {
 		case "completed":
@@ -362,19 +361,6 @@ function statusToIcon(status: JobSnapshot["status"]): ToolUIStatus {
 			return "aborted";
 		case "running":
 			return "running";
-	}
-}
-
-function statusToColor(status: JobSnapshot["status"]): ToolUIColor {
-	switch (status) {
-		case "completed":
-			return "success";
-		case "failed":
-			return "error";
-		case "cancelled":
-			return "warning";
-		case "running":
-			return "accent";
 	}
 }
 
@@ -390,6 +376,65 @@ function describeTarget(args: JobRenderArgs | undefined): string {
 	}
 	if (parts.length === 0) return "all running jobs";
 	return parts.join(", ");
+}
+
+function formatJobTitle(job: JobSnapshot, theme: Theme): string {
+	const rawLabel = (job.label || "(no label)").split(/\r?\n/)[0] ?? "(no label)";
+	const label = truncateToWidth(replaceTabs(rawLabel), LABEL_MAX_WIDTH, Ellipsis.Unicode);
+	if (job.id === label || label.length === 0) return theme.bold(job.id);
+	return `${theme.bold(job.id)} ${theme.fg("toolOutput", label)}`;
+}
+
+function renderJobAgentLines(
+	jobs: readonly JobSnapshot[],
+	options: { expanded: boolean; spinnerFrame: number; theme: Theme },
+): string[] {
+	const visibleJobs = options.expanded ? jobs : jobs.slice(0, COLLAPSED_LIST_LIMIT);
+	const remaining = jobs.length - visibleJobs.length;
+	const lines: string[] = [];
+	for (let index = 0; index < visibleJobs.length; index++) {
+		const job = visibleJobs[index]!;
+		const isLast = remaining === 0 && index === visibleJobs.length - 1;
+		const branch = isLast ? "└" : "├";
+		const continuePrefix = isLast ? "  " : "│ ";
+		const icon = formatStatusIcon(
+			statusToIcon(job.status),
+			options.theme,
+			job.status === "running" ? options.spinnerFrame : undefined,
+		);
+		const durationText = options.theme.fg("dim", formatDuration(job.durationMs));
+		lines.push(`${options.theme.fg("dim", branch)} ${icon} ${formatJobTitle(job, options.theme)} · ${durationText}`);
+
+		if (job.status === "running") {
+			lines.push(
+				`${options.theme.fg("dim", continuePrefix + CHILD_PREFIX)}${options.theme.fg("dim", `Running in background (ID: ${job.id})`)}`,
+			);
+		}
+
+		const rawLabelLines = (job.label || "").split(/\r?\n/);
+		const maxLabelLines = options.expanded ? LABEL_LINES_EXPANDED : LABEL_LINES_COLLAPSED;
+		for (const labelLine of rawLabelLines.slice(1, maxLabelLines)) {
+			lines.push(
+				`${options.theme.fg("dim", continuePrefix + CHILD_PREFIX)}${options.theme.fg("toolOutput", truncateToWidth(replaceTabs(labelLine), LABEL_MAX_WIDTH, Ellipsis.Unicode))}`,
+			);
+		}
+
+		const preview = job.errorText?.trim() || job.resultText?.trim();
+		if (preview) {
+			const maxLines = options.expanded ? PREVIEW_LINES_EXPANDED : PREVIEW_LINES_COLLAPSED;
+			const previewLines = getPreviewLines(preview, maxLines, PREVIEW_LINE_WIDTH, Ellipsis.Unicode);
+			const tone = job.errorText ? "error" : "dim";
+			for (const pl of previewLines) {
+				lines.push(`${options.theme.fg("dim", continuePrefix + CHILD_PREFIX)}${options.theme.fg(tone, pl)}`);
+			}
+		} else if (job.status === "running") {
+			lines.push(`${options.theme.fg("dim", continuePrefix + CHILD_PREFIX)}${options.theme.fg("dim", "thinking…")}`);
+		}
+	}
+	if (remaining > 0) {
+		lines.push(`${options.theme.fg("dim", "└")} ${options.theme.fg("muted", `○ ${remaining} queued`)}`);
+	}
+	return lines;
 }
 
 export const jobToolRenderer = {
@@ -417,28 +462,7 @@ export const jobToolRenderer = {
 		const counts = { completed: 0, failed: 0, cancelled: 0, running: 0 };
 		for (const job of jobs) counts[job.status]++;
 
-		const meta: string[] = [];
-		if (counts.completed > 0) meta.push(uiTheme.fg("success", `${counts.completed} done`));
-		if (counts.failed > 0) meta.push(uiTheme.fg("error", `${counts.failed} failed`));
-		if (counts.cancelled > 0) meta.push(uiTheme.fg("warning", `${counts.cancelled} cancelled`));
-		if (counts.running > 0) meta.push(uiTheme.fg("accent", `${counts.running} running`));
-
-		const headerIcon: ToolUIStatus = counts.failed > 0 ? "warning" : counts.running > 0 ? "info" : "success";
-		const description =
-			counts.running > 0
-				? `waiting on ${counts.running} of ${jobs.length}`
-				: `${jobs.length} ${jobs.length === 1 ? "job" : "jobs"} settled`;
-
-		const header = renderStatusLine(
-			{
-				icon: headerIcon,
-				spinnerFrame: counts.running > 0 ? options.spinnerFrame : undefined,
-				title: "Job",
-				description,
-				meta,
-			},
-			uiTheme,
-		);
+		const hasRunning = counts.running > 0;
 
 		// Sort: running first (so user sees what's still pending), then failed, then completed/cancelled.
 		const statusOrder: Record<JobSnapshot["status"], number> = {
@@ -460,54 +484,17 @@ export const jobToolRenderer = {
 				const spinnerFrame = options.spinnerFrame ?? 0;
 				const key = new Hasher().bool(expanded).u32(width).u32(spinnerFrame).digest();
 				if (cached?.key === key) return cached.lines;
+				const itemLines = renderJobAgentLines(sortedJobs, {
+					expanded,
+					spinnerFrame,
+					theme: uiTheme,
+				});
 
-				const itemLines = renderTreeList<JobSnapshot>(
-					{
-						items: sortedJobs,
-						expanded,
-						maxCollapsed: COLLAPSED_LIST_LIMIT,
-						itemType: "job",
-						renderItem: job => {
-							const lines: string[] = [];
-							const icon = formatStatusIcon(
-								statusToIcon(job.status),
-								uiTheme,
-								job.status === "running" ? options.spinnerFrame : undefined,
-							);
-							const typeBadge = formatBadge(job.type, statusToColor(job.status), uiTheme);
-							const idText = uiTheme.fg("muted", job.id);
-							const rawLabelLines = (job.label || "(no label)").split(/\r?\n/);
-							const maxLabelLines = expanded ? LABEL_LINES_EXPANDED : LABEL_LINES_COLLAPSED;
-							const visibleLabelLines = rawLabelLines
-								.slice(0, maxLabelLines)
-								.map(l => truncateToWidth(replaceTabs(l), LABEL_MAX_WIDTH, Ellipsis.Unicode));
-							if (rawLabelLines.length > maxLabelLines && visibleLabelLines.length > 0) {
-								const last = visibleLabelLines[visibleLabelLines.length - 1]!;
-								visibleLabelLines[visibleLabelLines.length - 1] = `${last} …`;
-							}
-							const durationText = uiTheme.fg("dim", formatDuration(job.durationMs));
-							const headLabel = uiTheme.fg("toolOutput", visibleLabelLines[0] ?? "");
-							lines.push(`${icon} ${idText} ${typeBadge} ${headLabel} ${durationText}`);
-							for (let i = 1; i < visibleLabelLines.length; i++) {
-								lines.push(`  ${uiTheme.fg("toolOutput", visibleLabelLines[i]!)}`);
-							}
-
-							const preview = job.errorText?.trim() || job.resultText?.trim();
-							if (preview) {
-								const maxLines = expanded ? PREVIEW_LINES_EXPANDED : PREVIEW_LINES_COLLAPSED;
-								const previewLines = getPreviewLines(preview, maxLines, PREVIEW_LINE_WIDTH, Ellipsis.Unicode);
-								const tone = job.errorText ? "error" : "dim";
-								for (const pl of previewLines) {
-									lines.push(`  ${uiTheme.fg(tone, pl)}`);
-								}
-							}
-							return lines;
-						},
-					},
-					uiTheme,
-				);
-
-				const all = [header, ...itemLines].map(l => truncateToWidth(l, width, Ellipsis.Unicode));
+				const all = [
+					...(hasRunning ? [`${formatStatusIcon("running", uiTheme, spinnerFrame)} Working...`] : []),
+					AGENT_HEADER,
+					...itemLines,
+				].map(l => truncateToWidth(l, width, Ellipsis.Unicode));
 				cached = { key, lines: all };
 				return all;
 			},
