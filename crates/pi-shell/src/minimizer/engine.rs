@@ -784,6 +784,49 @@ strip_lines_matching = [".*"]
 		assert_eq!(out.filter, "chain-git");
 	}
 
+
+	#[test]
+	fn git_diff_raw_and_default_diff_stays_opaque() {
+		// `git diff --raw && git diff` share the `diff` subcommand but have
+		// incompatible output formats (raw vs unified). They MUST get distinct
+		// format keys so the chain stays opaque.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let input = ":100644 100644 12345... abcde... M\tsrc/a.rs\n diff --git a/src/a.rs b/src/a.rs\nindex abc..def 100644\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-old\n+new\n";
+		let out = apply("git diff --raw && git diff", input, 0, &cfg);
+		assert!(!out.changed, "raw+unified diff must stay opaque");
+		assert_eq!(out.filter, "compound");
+		assert_eq!(out.text, input, "captured output must be preserved verbatim");
+	}
+
+	#[test]
+	fn git_diff_summary_and_default_diff_stays_opaque() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let input = " create mode 100644 src/a.rs\n delete mode 100644 src/b.rs\n";
+		let out = apply("git diff --summary && git diff", input, 0, &cfg);
+		assert!(!out.changed, "summary+unified diff must stay opaque");
+		assert_eq!(out.filter, "compound");
+	}
+
+	#[test]
+	fn git_diff_check_and_default_diff_stays_opaque() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let input = "src/a.rs:1: leftover conflict marker\n";
+		let out = apply("git diff --check && git diff", input, 0, &cfg);
+		assert!(!out.changed, "check+unified diff must stay opaque");
+		assert_eq!(out.filter, "compound");
+	}
+
+	#[test]
+	fn git_diff_same_raw_format_routes_through_git_filter() {
+		// Same subcommand AND same raw format: safe to route through the git
+		// filter, even though compact_diff_output cannot rewrite raw-format diff.
+		// The critical check is chain-git vs compound — routing means the filter
+		// ran and returned unchanged output, not that the chain stayed opaque.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let input = ":100644 100644 12345... abcde... M\tsrc/a.rs\n:100644 100644 67890... fghij... M\tsrc/b.rs\n";
+		let out = apply("git diff --raw && git diff --raw HEAD~1", input, 0, &cfg);
+		assert_eq!(out.filter, "chain-git", "same-raw-format diff chain should route through the git filter");
+	}
 	#[test]
 	fn mixed_chain_stays_opaque_in_whole_buffer_minimization() {
 		// A mixed chain (`git status` + unrelated `echo`) must NOT route the whole
