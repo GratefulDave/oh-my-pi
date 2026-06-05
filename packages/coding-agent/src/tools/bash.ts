@@ -27,6 +27,7 @@ import { truncateForPrompt } from "./approval";
 import { applyBashFixups } from "./bash-command-fixup";
 import { type BashInteractiveResult, runInteractiveBashPty } from "./bash-interactive";
 import { checkBashInterception } from "./bash-interceptor";
+import { appendBashMinimizerGainRecord } from "./bash-minimizer-gain";
 import { canUseInteractiveBashPty } from "./bash-pty-selection";
 import { expandInternalUrls, type InternalUrlExpansionOptions } from "./bash-skill-urls";
 import { formatStyledTruncationWarning, type OutputMeta, stripOutputNotice } from "./output-meta";
@@ -98,6 +99,30 @@ async function saveBashOriginalArtifact(session: ToolSession, originalText: stri
 	} catch {
 		return undefined;
 	}
+}
+
+async function saveBashMinimizedArtifactAndGain(
+	session: ToolSession,
+	command: string,
+	cwd: string,
+	originalText: string,
+	info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
+): Promise<string | undefined> {
+	const artifactId = await saveBashOriginalArtifact(session, originalText);
+	try {
+		await appendBashMinimizerGainRecord({
+			command,
+			cwd,
+			filter: info.filter,
+			inputBytes: info.inputBytes,
+			outputBytes: info.outputBytes,
+			exitCode: info.exitCode,
+			agentDir: session.settings.getAgentDir(),
+		});
+	} catch (error) {
+		logger.warn("Failed to append bash minimizer gain record", { error });
+	}
+	return artifactId;
 }
 
 const bashSchemaBase = z.object({
@@ -519,7 +544,14 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 							latestText = tailBuffer.text();
 							void reportProgress(latestText, { async: { state: "running", jobId, type: "bash" } });
 						},
-						onMinimizedSave: originalText => saveBashOriginalArtifact(this.session, originalText),
+						onMinimizedSave: (originalText, info) =>
+							saveBashMinimizedArtifactAndGain(
+								this.session,
+								options.command,
+								options.commandCwd,
+								originalText,
+								info,
+							),
 					});
 					const wallTimeMs = performance.now() - wallTimeStart;
 					const finalResult = this.#buildCompletedResult(result, options.timeoutSec, {
@@ -978,7 +1010,8 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					artifactPath,
 					artifactId,
 					onChunk: streamTailUpdates(tailBuffer, onUpdate),
-					onMinimizedSave: originalText => saveBashOriginalArtifact(this.session, originalText),
+					onMinimizedSave: (originalText, info) =>
+						saveBashMinimizedArtifactAndGain(this.session, command, commandCwd, originalText, info),
 				});
 		const wallTimeMs = performance.now() - wallTimeStart;
 		if (result.cancelled) {

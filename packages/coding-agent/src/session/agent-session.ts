@@ -204,6 +204,7 @@ import {
 	selectDiscoverableToolNamesByServer,
 } from "../tool-discovery/tool-index";
 import { assertEditableFile } from "../tools/auto-generated-guard";
+import { appendBashMinimizerGainRecord } from "../tools/bash-minimizer-gain";
 import type { CheckpointState } from "../tools/checkpoint";
 import { outputMeta } from "../tools/output-meta";
 import { normalizeLocalScheme, resolveToCwd } from "../tools/path-utils";
@@ -8299,6 +8300,29 @@ export class AgentSession {
 		}
 	}
 
+	async #saveBashMinimizedArtifactAndGain(
+		command: string,
+		cwd: string,
+		originalText: string,
+		info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
+	): Promise<string | undefined> {
+		const artifactId = await this.#saveBashOriginalArtifact(originalText);
+		try {
+			await appendBashMinimizerGainRecord({
+				command,
+				cwd,
+				filter: info.filter,
+				inputBytes: info.inputBytes,
+				outputBytes: info.outputBytes,
+				exitCode: info.exitCode,
+				agentDir: this.settings.getAgentDir(),
+			});
+		} catch (error) {
+			logger.warn("Failed to append bash minimizer gain record", { error });
+		}
+		return artifactId;
+	}
+
 	/**
 	 * Execute a bash command.
 	 * Adds result to agent context and session.
@@ -8336,7 +8360,8 @@ export class AgentSession {
 				signal: abortController.signal,
 				sessionKey: this.sessionId,
 				timeout: clampTimeout("bash") * 1000,
-				onMinimizedSave: originalText => this.#saveBashOriginalArtifact(originalText),
+				onMinimizedSave: (originalText, info) =>
+					this.#saveBashMinimizedArtifactAndGain(command, cwd, originalText, info),
 			});
 
 			this.recordBashResult(command, result, options);
