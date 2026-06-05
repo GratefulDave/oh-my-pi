@@ -123,8 +123,7 @@ fn is_js_tool_invocation(program: &str, subcommand: Option<&str>, command: &str)
 fn is_cpp_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
 	matches!((program, subcommand), ("bunx", Some(subcommand)) if BUN_CPP_TOOL_SUBCOMMANDS.contains(&subcommand))
 		|| is_exec_package_subcommand(program, subcommand)
-			&& bun_invoked_word(command)
-				.is_some_and(|w| BUN_CPP_TOOL_SUBCOMMANDS.contains(&w))
+			&& bun_invoked_word(command).is_some_and(|w| BUN_CPP_TOOL_SUBCOMMANDS.contains(&w))
 }
 
 fn filter_bun_check(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
