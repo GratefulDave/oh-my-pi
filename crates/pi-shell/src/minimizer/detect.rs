@@ -319,6 +319,24 @@ fn detect_subcommand(program: &str, args: &[String]) -> Option<String> {
 			],
 			&[],
 		),
+		"npx" => first_non_global_arg(
+			args,
+			&[
+				"--workspace",
+				"-w",
+				"--package",
+				"-p",
+				"--prefix",
+				"--cache",
+				"--registry",
+				"--userconfig",
+				"--call",
+				"--shell",
+				"--node-arg",
+			],
+			&["--yes", "--no", "--no-install", "--quiet", "--silent", "--verbose"],
+			&[],
+		),
 		"pnpm" => first_non_global_arg(
 			args,
 			&["--dir", "-C", "--filter", "-F", "--workspace", "--config", "--store-dir"],
@@ -623,4 +641,25 @@ fn detects_bun_globals_and_subcommands() {
 	let command = detect("env CI=1 /usr/local/bin/bun test").expect("bun test is detected");
 	assert_eq!(command.program, "bun");
 	assert_eq!(command.subcommand.as_deref(), Some("test"));
+}
+
+#[test]
+fn npx_workspace_value_is_skipped_in_subcommand_detection() {
+	// `npx -w <workspace>` is a value-taking option; the workspace name must
+	// not be returned as the subcommand. The actual tool name follows after
+	// the option value.
+	let command = detect("npx -w vitest echo PASS").expect("npx command is detected");
+	assert_eq!(command.program, "npx");
+	assert_eq!(command.subcommand.as_deref(), Some("echo"));
+
+	// plain npx invocation with an actual tool still resolves correctly
+	let command = detect("npx vitest").expect("npx vitest is detected");
+	assert_eq!(command.program, "npx");
+	assert_eq!(command.subcommand.as_deref(), Some("vitest"));
+
+	// workspace value that happens to be a tool name is skipped; the next
+	// token is the actual tool
+	let command = detect("npx -w my-workspace vitest").expect("npx with workspace is detected");
+	assert_eq!(command.program, "npx");
+	assert_eq!(command.subcommand.as_deref(), Some("vitest"));
 }
