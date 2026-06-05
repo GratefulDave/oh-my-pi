@@ -174,14 +174,24 @@ fn apply_chain(
 			// incompatible renderers (`--name-only` listing vs `--stat`), so a
 			// combined `git diff --name-only && git diff --stat` buffer routed
 			// through one would corrupt the other segment's output. Require an
-			// identical diff format signature across segments. `diff` is the only
-			// flag-format-sensitive renderer among the rebuild-from-parse git
-			// filters, so other subcommands need no extra gate.
+			// identical diff format signature across segments.
 			identity.subcommand.as_deref() != Some("diff") || {
 				let want = filters::git::diff_format_key(&segments[0].command);
 				segments
 					.iter()
 					.all(|seg| filters::git::diff_format_key(&seg.command) == want)
+			}
+		} && {
+			// Same-subcommand stash chains are still unsafe: different stash
+			// actions share the detected "stash" subcommand but use different
+			// filter paths. `git stash list` produces a parsed listing while
+			// `git stash drop` emits a one-line confirmation — feeding both
+			// through `condense_stash_list` would corrupt the drop output.
+			identity.subcommand.as_deref() != Some("stash") || {
+				let want = filters::git::stash_action_key(&segments[0].command);
+				segments
+					.iter()
+					.all(|seg| filters::git::stash_action_key(&seg.command) == want)
 			}
 		} {
 			let subcommand = identity.subcommand.as_deref();

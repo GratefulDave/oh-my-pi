@@ -63,10 +63,8 @@ fn effective_tool_from_command<'a>(
 }
 
 fn is_npx_like(program: &str, subcommand: Option<&str>) -> bool {
-	matches!(program, "npx" | "bunx")
-		|| matches!((program, subcommand), ("pnpm", Some("dlx")))
+	matches!(program, "npx" | "bunx") || matches!((program, subcommand), ("pnpm", Some("dlx")))
 }
-
 
 fn filter_next(input: &str, exit_code: i32) -> String {
 	let mut out = String::new();
