@@ -322,7 +322,23 @@ fn filter_helm(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
 }
 
 fn is_log_command(ctx: &MinimizerCtx<'_>) -> bool {
-	ctx.subcommand == Some("logs") || ctx.command.split_whitespace().any(|part| part == "logs")
+	if ctx.subcommand == Some("logs") {
+		return true;
+	}
+	// `docker compose logs <service>` — the action is `logs` but subcommand
+	// resolves to `compose`.  Walk from the `compose` token to find the
+	// sub-sub-command rather than scanning the whole command (which would
+	// catch `docker build -t logs .`).
+	if ctx.subcommand == Some("compose") {
+		let mut tokens = ctx.command.split_whitespace();
+		while let Some(tok) = tokens.next() {
+			if tok == "compose" {
+				return tokens.by_ref().find(|t| !t.starts_with('-')) == Some("logs")
+					|| tokens.by_ref().any(|t| t == "logs");
+			}
+		}
+	}
+	false
 }
 
 fn is_table_command(ctx: &MinimizerCtx<'_>) -> bool {
