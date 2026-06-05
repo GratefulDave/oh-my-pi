@@ -64,6 +64,7 @@ fn is_non_exec_package_subcommand(subcommand: &str) -> bool {
 	BUN_PACKAGE_SUBCOMMANDS.contains(&subcommand) && !matches!(subcommand, "run" | "exec")
 }
 
+
 fn is_test_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
 	matches!(
 		(program, subcommand),
@@ -124,7 +125,6 @@ fn is_check_invocation(program: &str, subcommand: Option<&str>, command: &str) -
 	is_exec_package_subcommand(program, subcommand)
 		&& command_invoked_word(command).is_some_and(is_check_script_token)
 }
-
 fn is_check_script_token(token: &str) -> bool {
 	let token = trim_command_token(token);
 	matches!(token, "check") || token.starts_with("check:")
