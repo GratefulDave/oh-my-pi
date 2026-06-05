@@ -390,9 +390,9 @@ pub fn apply_shell_minimizer<'env>(
 /// Pure, blocking core of [`apply_shell_minimizer`], factored out so it can run
 /// inside `spawn_blocking` and be unit-tested without an N-API `Env`.
 ///
-/// Mirrors the persistent-shell path (`pi_shell::shell`): surface telemetry only
-/// when the minimizer actually rewrote the output and kept the original buffer.
-/// The disabled / passthrough cases report `changed: false` with no
+/// Mirrors the persistent-shell path (`pi_shell::shell`): surface telemetry
+/// only when the minimizer actually rewrote the output and kept the original
+/// buffer. The disabled / passthrough cases report `changed: false` with no
 /// `original_text`, and yield `None`.
 fn run_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<MinimizerResult> {
 	let minimizer = options.minimizer?;
