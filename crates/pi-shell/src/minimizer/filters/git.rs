@@ -172,10 +172,39 @@ pub(crate) fn diff_format_key(command: &str) -> u8 {
 	}
 }
 
-// Stash action key for chain-segmentation gating (must be kept in sync with
-// the dispatch order in [`condense_stash`]).
+// Stash action key for chain-segmentation gating.  Each recognised stash
+// action gets a unique key so that only identical-action chains (e.g.
+// `git stash push && git stash push`) route through `condense_stash`;
+// mixed-action chains (`push && drop`) stay opaque.
 pub(crate) fn stash_action_key(command: &str) -> u8 {
-	u8::from(has_token(command, "list"))
+	if has_token(command, "list") {
+		return 1;
+	}
+	if has_token(command, "push") || has_token(command, "save") {
+		return 2;
+	}
+	if has_token(command, "pop") {
+		return 3;
+	}
+	if has_token(command, "apply") {
+		return 4;
+	}
+	if has_token(command, "drop") {
+		return 5;
+	}
+	if has_token(command, "clear") {
+		return 6;
+	}
+	if has_token(command, "create") {
+		return 7;
+	}
+	if has_token(command, "show") {
+		return 8;
+	}
+	if has_token(command, "branch") {
+		return 9;
+	}
+	0 // bare `git stash`
 }
 
 fn compact_diff_listing(input: &str, mode: DiffListingMode) -> String {
