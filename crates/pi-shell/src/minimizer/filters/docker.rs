@@ -70,6 +70,13 @@ fn filter_kubectl(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String
 			if is_structured_kubectl_output(input) {
 				return primitives::head_tail_lines(input, 80, 40);
 			}
+			// Non-table output formats (`-o name`, `-o jsonpath/...`,
+			// `-o go-template/...`, `--no-headers`) produce listings, not
+			// tables — `compact_table` would treat the first entry as a
+			// header and corrupt the requested format.
+			if is_kubectl_list_output(ctx.command) {
+				return primitives::head_tail_lines(input, 80, 40);
+			}
 			compact_table(input, 20)
 		},
 		Some("describe") => {
@@ -79,11 +86,49 @@ fn filter_kubectl(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String
 	}
 }
 
-// ── kubectl JSON compaction ──────────────────────────────────────────────────
+fn is_kubectl_list_output(command: &str) -> bool {
+	let mut tokens = command.split_whitespace();
+	while let Some(tok) = tokens.next() {
+		if (tok == "-o" || tok == "--output")
+			&& let Some(fmt) = tokens.next()
+		{
+			let base = fmt.split('=').next().unwrap_or(fmt);
+			if matches!(
+				base,
+				"name"
+					| "jsonpath"
+					| "go-template"
+					| "go-template-file"
+					| "custom-columns"
+					| "custom-columns-file"
+			) {
+				return true;
+			}
+		}
+		if let Some(val) = tok
+			.strip_prefix("-o=")
+			.or_else(|| tok.strip_prefix("--output="))
+		{
+			let base = val.split('=').next().unwrap_or(val);
+			if matches!(
+				base,
+				"name"
+					| "jsonpath"
+					| "go-template"
+					| "go-template-file"
+					| "custom-columns"
+					| "custom-columns-file"
+			) {
+				return true;
+			}
+		}
+		if tok == "--no-headers" {
+			return true;
+		}
+	}
+	false
+}
 
-/// Returns true when the `kubectl get` output is structured JSON or YAML
-/// (i.e. `-o json` single-object or `-o yaml`) rather than a tabular listing.
-/// Used to avoid rewriting manifests as a fake row-count table.
 fn is_structured_kubectl_output(input: &str) -> bool {
 	let t = input.trim_start();
 	// Single-object -o json (starts with '{' but is not a List handled above)
