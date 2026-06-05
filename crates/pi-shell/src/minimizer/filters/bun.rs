@@ -64,7 +64,6 @@ fn is_non_exec_package_subcommand(subcommand: &str) -> bool {
 	BUN_PACKAGE_SUBCOMMANDS.contains(&subcommand) && !matches!(subcommand, "run" | "exec")
 }
 
-
 fn is_test_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
 	matches!(
 		(program, subcommand),
