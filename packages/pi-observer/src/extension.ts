@@ -148,6 +148,12 @@ type IrcSessionEvent = {
 	message?: IrcCustomMessage;
 };
 
+type CustomTheme = {
+	fg?: (color: string, text: string) => string;
+	bold?: (text: string) => string;
+	dim?: (text: string) => string;
+};
+
 type ExtensionCommandContext = {
 	cwd: string;
 	ui: {
@@ -155,7 +161,7 @@ type ExtensionCommandContext = {
 		custom<T>(
 			factory: (
 				tui: { requestRender(): void; terminal?: { rows: number } },
-				theme: { fg(color: string, text: string): string; bold(text: string): string; dim(text: string): string },
+				theme: CustomTheme,
 				keybindings: unknown,
 				done: (result: T) => void,
 			) => unknown,
@@ -242,6 +248,41 @@ function recordIrcSessionEvent(event: unknown): void {
 			kind: details.kind,
 		});
 	}
+}
+
+function normalizeTheme(theme: CustomTheme): {
+	fg(color: string, text: string): string;
+	bold(text: string): string;
+	dim(text: string): string;
+} {
+	const rawFg = typeof theme.fg === "function" ? theme.fg.bind(theme) : undefined;
+	const fg = (color: string, text: string): string => {
+		if (!rawFg) return text;
+		try {
+			return rawFg(color, text);
+		} catch {
+			return text;
+		}
+	};
+	const rawBold = typeof theme.bold === "function" ? theme.bold.bind(theme) : undefined;
+	const bold = (text: string): string => {
+		if (!rawBold) return text;
+		try {
+			return rawBold(text);
+		} catch {
+			return text;
+		}
+	};
+	const rawDim = typeof theme.dim === "function" ? theme.dim.bind(theme) : undefined;
+	const dim = (text: string): string => {
+		if (!rawDim) return fg("dim", text);
+		try {
+			return rawDim(text);
+		} catch {
+			return fg("dim", text);
+		}
+	};
+	return { fg, bold, dim };
 }
 
 // ---------------------------------------------------------------------------
@@ -362,7 +403,7 @@ export default function observer(pi: ExtensionAPI): void {
 			await ctx.ui.custom<void>(
 				(tui, theme, _keybindings, done) => {
 					const dashboard = new ObserverDashboard(
-						{ fg: theme.fg.bind(theme), bold: theme.bold.bind(theme), dim: theme.dim.bind(theme) },
+						normalizeTheme(theme),
 						() => tui.requestRender(),
 						() => done(undefined),
 					);

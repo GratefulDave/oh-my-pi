@@ -10,6 +10,7 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import observer from "../src/extension";
+import { stripAnsi } from "../src/renderer";
 import {
 	getStats,
 	getSubagentTotals,
@@ -21,6 +22,38 @@ import {
 const PROGRESS_CHANNEL = "task:subagent:progress";
 const LIFECYCLE_CHANNEL = "task:subagent:lifecycle";
 const IRC_CHANNEL = "irc:message";
+
+type FakeCustomTheme = {
+	fg?: (color: string, text: string) => string;
+	bold?: (text: string) => string;
+	dim?: (text: string) => string;
+};
+
+type FakeCustomView = {
+	render(width: number, height: number): string[];
+	destroy(): void;
+};
+
+type FakeCommandContext = {
+	cwd: string;
+	ui: {
+		setEditorText(text: string): void;
+		custom<T>(
+			factory: (
+				tui: { requestRender(): void; terminal?: { rows: number } },
+				theme: FakeCustomTheme,
+				keybindings: unknown,
+				done: (result: T) => void,
+			) => unknown,
+			options?: { overlay?: boolean },
+		): Promise<T>;
+	};
+};
+
+type FakeCommand = {
+	description: string;
+	handler: (args: string, ctx: FakeCommandContext) => Promise<void> | void;
+};
 
 /** Minimal EventBus matching coding-agent's on/emit contract. */
 class FakeEventBus {
@@ -39,15 +72,29 @@ class FakeEventBus {
 function makeFakePi() {
 	const events = new FakeEventBus();
 	const sessionHandlers = new Map<string, (event: unknown) => void>();
+	const commands = new Map<string, FakeCommand>();
 	const pi = {
 		events,
 		setLabel() {},
 		on(event: string, handler: (event: unknown) => void) {
 			sessionHandlers.set(event, handler);
 		},
-		registerCommand() {},
+		registerCommand(name: string, command: FakeCommand) {
+			commands.set(name, command);
+		},
 	};
-	return { pi: pi as Parameters<typeof observer>[0], events, sessionHandlers };
+	return { pi: pi as Parameters<typeof observer>[0], events, sessionHandlers, commands };
+}
+
+function isFakeCustomView(value: unknown): value is FakeCustomView {
+	return (
+		value != null &&
+		typeof value === "object" &&
+		"render" in value &&
+		"destroy" in value &&
+		typeof value.render === "function" &&
+		typeof value.destroy === "function"
+	);
 }
 
 describe("pi-observer subagent fan-in", () => {
@@ -191,6 +238,49 @@ describe("pi-observer subagent fan-in", () => {
 		const after = getSubagentTotals();
 		expect(after.activeCount).toBe(0);
 		expect(after.tokens).toBe(1234);
+	});
+
+	test("observe command tolerates custom UI themes without dim helper", async () => {
+		const { pi, commands } = makeFakePi();
+		observer(pi);
+		const command = commands.get("observe");
+		expect(command).toBeDefined();
+		let editorText: string | undefined;
+		let rendered: string[] = [];
+		const ctx: FakeCommandContext = {
+			cwd: "/tmp",
+			ui: {
+				setEditorText(text: string): void {
+					editorText = text;
+				},
+				async custom<T>(factory): Promise<T> {
+					const view = factory(
+						{ requestRender() {} },
+						{
+							fg(color: string, text: string): string {
+								if (color !== "dim") throw new Error(`Unknown theme color: ${color}`);
+								return text;
+							},
+							bold(text: string): string {
+								return text;
+							},
+						},
+						undefined,
+						() => {},
+					);
+					if (!isFakeCustomView(view)) throw new Error("Expected observer dashboard view");
+					rendered = view.render(120, 50).map(stripAnsi);
+					view.destroy();
+					return undefined as T;
+				},
+			},
+		};
+
+		await command!.handler("", ctx);
+
+		expect(editorText).toBe("");
+		expect(rendered).toContain("parity-distribution-diagnosis");
+		expect(rendered.some(line => line.includes("Diagnose · 1 node ┬ Active diagnosis"))).toBe(true);
 	});
 
 	test("end-to-end: optional IRC EventBus records are bounded and normalized", () => {
