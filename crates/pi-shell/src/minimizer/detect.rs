@@ -612,7 +612,6 @@ mod tests {
 			assert_eq!(detected.subcommand.as_deref(), Some("lambda"), "{command}");
 		}
 	}
-
 }
 
 #[test]

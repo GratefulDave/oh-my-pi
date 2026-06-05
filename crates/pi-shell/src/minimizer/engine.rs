@@ -169,21 +169,21 @@ fn apply_chain(
 						.and_then(|id| id.subcommand.as_deref())
 						== want
 				})
+			} && {
+			// A shared subcommand is not enough: within `diff`, flags select
+			// incompatible renderers (`--name-only` listing vs `--stat`), so a
+			// combined `git diff --name-only && git diff --stat` buffer routed
+			// through one would corrupt the other segment's output. Require an
+			// identical diff format signature across segments. `diff` is the only
+			// flag-format-sensitive renderer among the rebuild-from-parse git
+			// filters, so other subcommands need no extra gate.
+			identity.subcommand.as_deref() != Some("diff") || {
+				let want = filters::git::diff_format_key(&segments[0].command);
+				segments
+					.iter()
+					.all(|seg| filters::git::diff_format_key(&seg.command) == want)
 			}
-			&& {
-				// A shared subcommand is not enough: within `diff`, flags select
-				// incompatible renderers (`--name-only` listing vs `--stat`), so a
-				// combined `git diff --name-only && git diff --stat` buffer routed
-				// through one would corrupt the other segment's output. Require an
-				// identical diff format signature across segments. `diff` is the only
-				// flag-format-sensitive renderer among the rebuild-from-parse git
-				// filters, so other subcommands need no extra gate.
-				identity.subcommand.as_deref() != Some("diff") || {
-					let want = filters::git::diff_format_key(&segments[0].command);
-					segments.iter().all(|seg| filters::git::diff_format_key(&seg.command) == want)
-				}
-			}
-		{
+		} {
 			let subcommand = identity.subcommand.as_deref();
 			let ctx = MinimizerCtx { program: &identity.program, subcommand, command, config };
 			let out =
@@ -191,7 +191,8 @@ fn apply_chain(
 					Ok(out) => out,
 					Err(_) => MinimizerOutput::passthrough(captured),
 				};
-			return ensure_success_visible(out.labeled("chain-git"), exit_code).with_original(captured);
+			return ensure_success_visible(out.labeled("chain-git"), exit_code)
+				.with_original(captured);
 		}
 		// All-git but mixed (or unsupported) subcommands: stay opaque rather than
 		// routing the whole buffer through one subcommand filter and dropping the
@@ -257,7 +258,8 @@ fn is_shell_fd_mutating_segment(segment: &plan::ChainSegment) -> bool {
 		if matches!(word, "exec" | "eval" | "source" | ".") {
 			return true;
 		}
-		if word == "command" || word == "builtin" || word.starts_with('-') || is_env_assignment(word) {
+		if word == "command" || word == "builtin" || word.starts_with('-') || is_env_assignment(word)
+		{
 			continue;
 		}
 		// First real command word is something other than `exec`.
@@ -766,7 +768,8 @@ strip_lines_matching = [".*"]
 		// diff filter would treat it as a stat buffer) corrupts the listing
 		// segment's output. Diverging diff formats must stay opaque.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
-		let input = "src/a.rs\nsrc/b.rs\n src/a.rs | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n";
+		let input =
+			"src/a.rs\nsrc/b.rs\n src/a.rs | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n";
 		let out = apply("git diff --name-only && git diff --stat", input, 0, &cfg);
 		assert!(!out.changed, "differing diff formats must stay passthrough");
 		assert_eq!(out.filter, "compound");
@@ -784,14 +787,15 @@ strip_lines_matching = [".*"]
 		assert_eq!(out.filter, "chain-git");
 	}
 
-
 	#[test]
 	fn git_diff_raw_and_default_diff_stays_opaque() {
 		// `git diff --raw && git diff` share the `diff` subcommand but have
 		// incompatible output formats (raw vs unified). They MUST get distinct
 		// format keys so the chain stays opaque.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
-		let input = ":100644 100644 12345... abcde... M\tsrc/a.rs\n diff --git a/src/a.rs b/src/a.rs\nindex abc..def 100644\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-old\n+new\n";
+		let input = ":100644 100644 12345... abcde... M\tsrc/a.rs\n diff --git a/src/a.rs \
+		             b/src/a.rs\nindex abc..def 100644\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 \
+		             @@\n-old\n+new\n";
 		let out = apply("git diff --raw && git diff", input, 0, &cfg);
 		assert!(!out.changed, "raw+unified diff must stay opaque");
 		assert_eq!(out.filter, "compound");
@@ -823,9 +827,13 @@ strip_lines_matching = [".*"]
 		// The critical check is chain-git vs compound — routing means the filter
 		// ran and returned unchanged output, not that the chain stayed opaque.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
-		let input = ":100644 100644 12345... abcde... M\tsrc/a.rs\n:100644 100644 67890... fghij... M\tsrc/b.rs\n";
+		let input = ":100644 100644 12345... abcde... M\tsrc/a.rs\n:100644 100644 67890... fghij... \
+		             M\tsrc/b.rs\n";
 		let out = apply("git diff --raw && git diff --raw HEAD~1", input, 0, &cfg);
-		assert_eq!(out.filter, "chain-git", "same-raw-format diff chain should route through the git filter");
+		assert_eq!(
+			out.filter, "chain-git",
+			"same-raw-format diff chain should route through the git filter"
+		);
 	}
 	#[test]
 	fn mixed_chain_stays_opaque_in_whole_buffer_minimization() {
@@ -872,10 +880,7 @@ strip_lines_matching = [".*"]
 		// pre-segmentation single-exec behavior is restored.
 		let mut cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		cfg.legacy_filters_active = true;
-		assert_eq!(
-			mode_for("git diff --stat && git diff --name-only", &cfg),
-			MinimizerMode::None
-		);
+		assert_eq!(mode_for("git diff --stat && git diff --name-only", &cfg), MinimizerMode::None);
 		assert_eq!(mode_for("git diff ; printf done", &cfg), MinimizerMode::None);
 	}
 

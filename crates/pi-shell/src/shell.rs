@@ -812,8 +812,7 @@ async fn run_shell_command_segmented_chain(
 				if next_input_bytes > max_capture_bytes {
 					aggregate = None;
 				} else {
-					let minimized =
-						minimizer::apply(&segment.command, &buffered.text, exit, config);
+					let minimized = minimizer::apply(&segment.command, &buffered.text, exit, config);
 					capture.push(
 						&buffered.text,
 						buffered.input_bytes,
