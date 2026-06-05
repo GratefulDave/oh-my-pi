@@ -272,21 +272,16 @@ fn normalize_uv_form(subcommand: Option<&str>, command: &str) -> Option<&'static
 		return Some(tool);
 	}
 	if sub == "-m" {
-		let tokens = command.split_whitespace();
-		let mut after_dash_m = false;
-		for token in tokens {
-			if after_dash_m
-				&& !token.starts_with('-')
-				&& let Some(&tool) = ALLOWLIST.iter().find(|&&tool| tool == token)
-			{
-				return Some(tool);
-			}
-			if token == "-m" {
-				after_dash_m = true;
-			}
-		}
+		// Only the immediate next non-flag token after `-m` may select a tool;
+		// scanning all subsequent tokens would pick up positional arguments
+		// (e.g. `uv -m my_module pytest` where `pytest` is an arg to `my_module`).
+		let mut tokens = command.split_whitespace().skip_while(|t| t != &"-m");
+		tokens.next(); // consume `-m` itself
+		let next = tokens.next().filter(|tok| !tok.starts_with('-'))?;
+		ALLOWLIST.iter().find(|&&tool| tool == next).copied()
+	} else {
+		None
 	}
-	None
 }
 
 fn uv_wrapper_tool<'a>(ctx: &'a MinimizerCtx<'_>) -> Option<&'a str> {
