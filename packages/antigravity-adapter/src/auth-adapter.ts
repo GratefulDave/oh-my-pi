@@ -133,7 +133,6 @@ export async function fetchBridgeModels(
 ): Promise<readonly Model<Api>[] | null | undefined> {
 	const credentials = deserializeBridgeCredentials(apiKey);
 	const headers = getAntigravityHeaders();
-	const userAgent = headers["User-Agent"];
 
 	const parts = parsePackedRefresh(credentials.refresh);
 	const body = parts.managedProjectId
@@ -148,7 +147,7 @@ export async function fetchBridgeModels(
 			headers: {
 				Authorization: `Bearer ${credentials.access}`,
 				"Content-Type": "application/json",
-				"User-Agent": userAgent,
+				...headers,
 			},
 			body: JSON.stringify(body),
 		});
