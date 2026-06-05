@@ -342,6 +342,8 @@ const WRAPPER_VALUE_OPTIONS: &[&str] = &[
 	"--package",
 	"-c",
 	"--call",
+	"--workspace",
+	"-w",
 	"--node-arg",
 ];
 
@@ -400,16 +402,19 @@ fn wrapper_invokes(ctx: &MinimizerCtx<'_>, tools: &[&str]) -> bool {
 }
 
 fn wrapper_invoked_tool<'a>(ctx: &'a MinimizerCtx<'_>, tools: &[&'a str]) -> Option<&'a str> {
-	ctx.subcommand
-		.and_then(|subcommand| tools.iter().copied().find(|tool| *tool == subcommand))
-		.or_else(|| {
-			// Only the explicitly invoked command word may select a wrapped-tool
-			// filter; a tool name appearing as a later argument (e.g.
-			// `uv run build -- pytest`, `uv run echo pytest`) must not route
-			// output through that tool.
-			let word = wrapper_command_word(ctx.command)?;
-			tools.iter().copied().find(|&tool| tool == word)
-		})
+	// Prefer wrapper_command_word over ctx.subcommand: it properly skips
+	// value-taking option values (e.g. -w, --workspace, --with) that
+	// detect_subcommand may mistake for the invoked tool name.
+	let word = wrapper_command_word(ctx.command)?;
+	match tools.iter().copied().find(|&tool| tool == word) {
+		Some(tool) => Some(tool),
+		None => {
+			// Fallback: detect_subcommand may have normalized case or
+			// resolved through program-specific logic.
+			ctx.subcommand
+				.and_then(|subcommand| tools.iter().copied().find(|tool| *tool == subcommand))
+		},
+	}
 }
 
 #[cfg(test)]
