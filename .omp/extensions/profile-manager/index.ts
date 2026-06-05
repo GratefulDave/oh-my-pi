@@ -26,6 +26,7 @@ import type { Model } from "@oh-my-pi/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
+	ExtensionContext,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 
 // ── local types (inlined, no fork imports) ───────────────────────────────────
@@ -62,6 +63,10 @@ const PROFILE_KEYS = ["modelRoles", "defaultThinkingLevel", "enabledModels", "cy
 
 export default function profileManagerExtension(pi: ExtensionAPI): void {
 	pi.setLabel("Profile Manager");
+
+	pi.on("session_start", async (_event, ctx) => {
+		await applyActiveProfileOnStartup(pi, ctx);
+	});
 
 	pi.registerCommand("pm", {
 		description: "Manage named model profiles",
@@ -166,7 +171,7 @@ function resolveModel(ctx: ExtensionCommandContext, id: string): Model | undefin
  * cycleOrder, enabledModels, or modelProviderOrder. Those persist to
  * settings.json for the binary to consume on load/reload.
  */
-async function applyProfile(pi: ExtensionAPI, ctx: ExtensionCommandContext, profile: ModelProfile): Promise<string> {
+async function applyProfile(pi: ExtensionAPI, ctx: ExtensionContext, profile: ModelProfile): Promise<string> {
 	const selector = profile.modelRoles?.default;
 	if (!selector) return "No 'default' model role to apply live; persisted profile config.";
 
@@ -182,6 +187,36 @@ async function applyProfile(pi: ExtensionAPI, ctx: ExtensionCommandContext, prof
 		pi.setThinkingLevel(level as Parameters<ExtensionAPI["setThinkingLevel"]>[0]);
 	}
 	return `Switched model to ${model.provider}/${model.id}${level ? ` (${level})` : ""}.`;
+}
+
+function persistProfileConfig(settings: OmpSettings, profile: ModelProfile): void {
+	if (profile.modelRoles !== undefined) settings.modelRoles = structuredClone(profile.modelRoles);
+	else delete settings.modelRoles;
+
+	if (profile.defaultThinkingLevel !== undefined) settings.defaultThinkingLevel = profile.defaultThinkingLevel;
+	else delete settings.defaultThinkingLevel;
+
+	if (profile.enabledModels !== undefined) settings.enabledModels = structuredClone(profile.enabledModels);
+	else delete settings.enabledModels;
+
+	if (profile.cycleOrder !== undefined) settings.cycleOrder = structuredClone(profile.cycleOrder);
+	else delete settings.cycleOrder;
+
+	if (profile.modelProviderOrder !== undefined) settings.modelProviderOrder = structuredClone(profile.modelProviderOrder);
+	else delete settings.modelProviderOrder;
+}
+
+async function applyActiveProfileOnStartup(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	const settings = readSettings();
+	const active = settings.activeModelProfile;
+	if (!active || active === DEFAULT_PROFILE_NAME) return;
+
+	const profile = getProfiles(settings)[active];
+	if (!profile) return;
+
+	persistProfileConfig(settings, profile);
+	writeSettings(settings);
+	await applyProfile(pi, ctx, profile);
 }
 
 /** Snapshot the current model config (live model + top-level settings) into a profile. */
@@ -228,11 +263,6 @@ async function handleNoArg(pi: ExtensionAPI, ctx: ExtensionCommandContext): Prom
 		return handleCreate(pi, ctx, [name]);
 	}
 
-	if (choice === DEFAULT_PROFILE_NAME) return handleUse(pi, ctx, DEFAULT_PROFILE_NAME);
-	if (active === choice) {
-		notify(pi, `Already on profile: ${choice}`);
-		return;
-	}
 	return handleUse(pi, ctx, choice);
 }
 
@@ -291,6 +321,7 @@ async function handleCreate(pi: ExtensionAPI, ctx: ExtensionCommandContext, args
 
 	if (activate) {
 		settings.activeModelProfile = name;
+		persistProfileConfig(settings, profiles[name]);
 		writeSettings(settings);
 		const status = await applyProfile(pi, ctx, profiles[name]);
 		notify(pi, `Created and switched to profile: ${name}. ${status}`);
@@ -321,6 +352,7 @@ async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName
 		return;
 	}
 	settings.activeModelProfile = name;
+	persistProfileConfig(settings, profile);
 	writeSettings(settings);
 	const status = await applyProfile(pi, ctx, profile);
 	notify(pi, `Active profile: ${name}. ${status}`);
