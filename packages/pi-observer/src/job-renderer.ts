@@ -85,11 +85,27 @@ function sortedJobs(jobs: JobSnapshot[]): JobSnapshot[] {
 	});
 }
 
+function safeFg(theme: ThemeLike, color: string, text: string): string {
+	try {
+		return theme.fg(color, text);
+	} catch {
+		return text;
+	}
+}
+
+function safeBold(theme: ThemeLike, text: string): string {
+	try {
+		return theme.bold(text);
+	} catch {
+		return text;
+	}
+}
+
 function jobTitle(job: JobSnapshot, theme: ThemeLike): string {
 	const rawLabel = job.label.split(/\r?\n/)[0]?.trim() ?? "";
 	const label = truncate(rawLabel, LABEL_WIDTH);
-	if (!label || label === job.id) return theme.bold(job.id);
-	return `${theme.bold(job.id)} ${theme.fg("toolOutput", label)}`;
+	if (!label || label === job.id) return safeBold(theme, job.id);
+	return `${safeBold(theme, job.id)} ${safeFg(theme, "toolOutput", label)}`;
 }
 
 function previewLines(job: JobSnapshot, expanded: boolean): string[] {
@@ -115,19 +131,21 @@ function renderJobLines(jobs: JobSnapshot[], options: RenderOptions, theme: Them
 		const branch = isLast ? "└" : "├";
 		const childPrefix = isLast ? "  └" : "│ └";
 		lines.push(
-			`${theme.fg("dim", branch)} ${statusIcon(job, options)} ${jobTitle(job, theme)} · ${theme.fg("dim", formatDuration(job.durationMs))}`,
+			`${safeFg(theme, "dim", branch)} ${statusIcon(job, options)} ${jobTitle(job, theme)} · ${safeFg(theme, "dim", formatDuration(job.durationMs))}`,
 		);
 		if (job.status === "running") {
-			lines.push(`${theme.fg("dim", childPrefix)} ${theme.fg("dim", `running background detail · ${job.id}`)}`);
+			lines.push(
+				`${safeFg(theme, "dim", childPrefix)} ${safeFg(theme, "dim", `running background detail · ${job.id}`)}`,
+			);
 		}
 		for (const line of previewLines(job, options.expanded)) {
-			lines.push(`${theme.fg("dim", childPrefix)} ${theme.fg(job.errorText ? "error" : "dim", line)}`);
+			lines.push(`${safeFg(theme, "dim", childPrefix)} ${safeFg(theme, job.errorText ? "error" : "dim", line)}`);
 		}
 		if (job.status === "running" && previewLines(job, options.expanded).length === 0) {
-			lines.push(`${theme.fg("dim", childPrefix)} ${theme.fg("dim", "thinking…")}`);
+			lines.push(`${safeFg(theme, "dim", childPrefix)} ${safeFg(theme, "dim", "thinking…")}`);
 		}
 	}
-	if (remaining > 0) lines.push(`${theme.fg("dim", "└")} ${theme.fg("muted", `○ ${remaining} queued`)}`);
+	if (remaining > 0) lines.push(`${safeFg(theme, "dim", "└")} ${safeFg(theme, "muted", `○ ${remaining} queued`)}`);
 	return lines;
 }
 
