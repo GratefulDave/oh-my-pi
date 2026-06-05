@@ -106,13 +106,13 @@ export function buildObserverHierarchy(stats: ObserverStats, now: number): Obser
 		{
 			id: ROOT_PHASE_ID,
 			kind: "phase",
-			label: "Active diagnosis",
+			label: "Session observability",
 			status: totals.activeCount > 0 ? "active" : "idle",
 			summary: `${completed}/${agents.length} agents · ${formatDuration(Math.max(0, now - stats.sessionStartTime))}`,
 			metrics: { ...totals },
 			children: phaseChildren,
 			detail: [
-				"Phase · Active diagnosis",
+				"Session observability",
 				`${agents.length} agents · ${totals.activeCount} active · ${failed} failed`,
 				`${formatCount(totals.tokens)} tokens · ${totals.toolCount} tools · $${totals.cost.toFixed(4)}`,
 				"",
