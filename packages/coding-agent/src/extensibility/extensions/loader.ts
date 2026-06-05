@@ -34,6 +34,7 @@ import type {
 	ProviderConfig,
 	RegisteredCommand,
 	ToolDefinition,
+	ToolRendererDefinition,
 } from "./types";
 
 installLegacyPiSpecifierShim();
@@ -148,6 +149,13 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 			definition: tool,
 			extensionPath: this.extension.path,
 		});
+	}
+
+	registerToolRenderer<TArgs = unknown, TDetails = unknown>(
+		toolName: string,
+		renderer: ToolRendererDefinition<TArgs, TDetails>,
+	): void {
+		this.extension.toolRenderers.set(toolName, renderer as ToolRendererDefinition);
 	}
 
 	registerCommand(
@@ -270,6 +278,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		resolvedPath,
 		handlers: new Map(),
 		tools: new Map(),
+		toolRenderers: new Map(),
 		assistantThinkingRenderers: [],
 		messageRenderers: new Map(),
 		commands: new Map(),

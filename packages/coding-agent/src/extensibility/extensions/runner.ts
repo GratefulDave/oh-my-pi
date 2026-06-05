@@ -45,6 +45,7 @@ import type {
 	SessionCompactingResult,
 	ToolCallEvent,
 	ToolCallEventResult,
+	ToolRendererDefinition,
 	ToolResultEvent,
 	ToolResultEventResult,
 	UserBashEvent,
@@ -314,6 +315,14 @@ export class ExtensionRunner {
 			}
 		}
 		return tools;
+	}
+
+	getToolRenderer(toolName: string): ToolRendererDefinition | undefined {
+		for (const ext of this.extensions) {
+			const renderer = ext.toolRenderers.get(toolName);
+			if (renderer) return renderer;
+		}
+		return undefined;
 	}
 
 	/**
