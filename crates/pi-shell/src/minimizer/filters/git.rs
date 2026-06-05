@@ -172,6 +172,16 @@ pub(crate) fn diff_format_key(command: &str) -> u8 {
 	}
 }
 
+// Stash action key for chain-segmentation gating (must be kept in sync with
+// the dispatch order in [`condense_stash`]).
+pub(crate) fn stash_action_key(command: &str) -> u8 {
+	if has_token(command, "list") {
+		1 // parsed listing — incompatible with confirmation-style outputs
+	} else {
+		0 // all other stash actions produce confirmation-style one-liners
+	}
+}
+
 fn compact_diff_listing(input: &str, mode: DiffListingMode) -> String {
 	let mut entries = Vec::new();
 	for line in input.lines() {
