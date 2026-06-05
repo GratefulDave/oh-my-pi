@@ -493,6 +493,7 @@ describe("createAgentSession credential_disabled subscription", () => {
 					],
 				]),
 				tools: new Map(),
+				toolRenderers: new Map(),
 				assistantThinkingRenderers: [],
 				messageRenderers: new Map(),
 				commands: new Map(),

@@ -86,14 +86,42 @@ export class ExtensionToolWrapper<TParameters extends TSchema = TSchema, TDetail
 	declare parameters: TParameters;
 	declare label: string;
 	declare strict: boolean;
+	renderCall?: (args: any, options: any, theme: any) => any;
+	renderResult?: (result: any, options: any, theme: any, args?: any) => any;
 
 	constructor(
 		private tool: AgentTool<TParameters, TDetails>,
 		private runner: ExtensionRunner,
 	) {
+		const toolRenderer = runner.getToolRenderer(tool.name);
+		if (toolRenderer?.renderCall) {
+			this.renderCall = (args: any, options: any, theme: any) =>
+				toolRenderer.renderCall!(
+					args,
+					{ expanded: options.expanded, isPartial: options.isPartial, spinnerFrame: options.spinnerFrame },
+					theme as Theme,
+				);
+		}
+		if (toolRenderer?.renderResult) {
+			this.renderResult = (result: any, options: any, theme: any, args?: any) =>
+				toolRenderer.renderResult!(
+					result,
+					{ expanded: options.expanded, isPartial: options.isPartial, spinnerFrame: options.spinnerFrame },
+					theme as Theme,
+					args,
+				);
+		}
 		applyToolProxy(tool, this);
+		if (toolRenderer?.inline !== undefined) {
+			Object.defineProperty(this, "inline", { value: toolRenderer.inline, enumerable: true });
+		}
+		if (toolRenderer?.mergeCallAndResult !== undefined) {
+			Object.defineProperty(this, "mergeCallAndResult", {
+				value: toolRenderer.mergeCallAndResult,
+				enumerable: true,
+			});
+		}
 	}
-
 	/**
 	 * Forward browser mode changes when available.
 	 */

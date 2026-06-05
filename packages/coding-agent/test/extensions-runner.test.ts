@@ -12,6 +12,7 @@ import {
 	ExtensionRunner,
 	testSetExtensionHandlerTimeoutMs,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/runner";
+import { ExtensionToolWrapper } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/wrapper";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { getProjectAgentDir, logger, TempDir } from "@oh-my-pi/pi-utils";
@@ -55,6 +56,54 @@ describe("ExtensionRunner", () => {
 			errors: result.errors.filter(error => isTestScoped(error.path)),
 		};
 	};
+
+	describe("tool renderers", () => {
+		it("lets extensions override a built-in tool renderer without replacing execution", async () => {
+			fs.writeFileSync(
+				path.join(extensionsDir, "tool-renderer.ts"),
+				`
+				import { Text } from "@oh-my-pi/pi-tui";
+				export default function(pi) {
+					pi.registerToolRenderer("job", {
+						inline: true,
+						mergeCallAndResult: true,
+						renderResult: () => new Text("extension job renderer", 0, 0),
+					});
+				}
+			`,
+			);
+			const result = await loadTestExtensions();
+			const runner = new ExtensionRunner(
+				result.extensions,
+				result.runtime,
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+			);
+			const wrapped = new ExtensionToolWrapper(
+				{
+					name: "job",
+					label: "Job",
+					description: "built-in job",
+					parameters: {},
+					execute: async () => ({ content: [{ type: "text", text: "built-in execute" }] }),
+				} as never,
+				runner,
+			);
+
+			const component = wrapped.renderResult?.(
+				{ content: [] },
+				{ expanded: false, isPartial: false },
+				{
+					fg: (_color: string, text: string) => text,
+					bold: (text: string) => text,
+				},
+			);
+			expect((wrapped as { inline?: boolean }).inline).toBe(true);
+			expect((wrapped as { mergeCallAndResult?: boolean }).mergeCallAndResult).toBe(true);
+			expect(component?.render(80).map((line: string) => line.trimEnd())).toEqual(["extension job renderer"]);
+		});
+	});
 
 	describe("shortcut conflicts", () => {
 		it("warns when extension shortcut conflicts with built-in", async () => {
