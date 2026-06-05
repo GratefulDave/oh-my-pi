@@ -64,18 +64,23 @@ fn is_non_exec_package_subcommand(subcommand: &str) -> bool {
 	BUN_PACKAGE_SUBCOMMANDS.contains(&subcommand) && !matches!(subcommand, "run" | "exec")
 }
 
+fn bun_invoked_word(command: &str) -> Option<&str> {
+	let mut tokens = command
+		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
+		.filter(|tok| !tok.is_empty());
+	// Skip program token and find the `run`/`exec` marker
+	tokens.by_ref().find(|tok| matches!(*tok, "run" | "exec"))?;
+	// First non-flag token after the marker is the invoked script/tool
+	tokens.find(|tok| !tok.starts_with('-'))
+}
+
 fn is_test_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
 	matches!(
 		(program, subcommand),
 		("bun", Some("test")) | ("bunx", Some("jest" | "vitest" | "playwright"))
 	) || is_exec_package_subcommand(program, subcommand)
-		&& (command_contains_tool(command, &["jest", "vitest", "playwright"])
-			|| command_contains_test_script(command))
-}
-fn command_contains_test_script(command: &str) -> bool {
-	command
-		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
-		.any(is_test_script_token)
+		&& bun_invoked_word(command)
+			.is_some_and(|w| is_test_script_token(w) || matches!(w, "jest" | "vitest" | "playwright"))
 }
 fn is_test_script_token(token: &str) -> bool {
 	let token = token.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'));
@@ -87,15 +92,9 @@ fn is_exec_package_subcommand(program: &str, subcommand: Option<&str>) -> bool {
 }
 
 fn is_check_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
-	is_exec_package_subcommand(program, subcommand) && command_contains_check_script(command)
+	is_exec_package_subcommand(program, subcommand)
+		&& bun_invoked_word(command).is_some_and(is_check_script_token)
 }
-
-fn command_contains_check_script(command: &str) -> bool {
-	command
-		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
-		.any(is_check_script_token)
-}
-
 fn is_check_script_token(token: &str) -> bool {
 	let token = token.trim_matches(|ch| matches!(ch, '\'' | '"' | '`'));
 	matches!(token, "check") || token.starts_with("check:")
@@ -109,33 +108,23 @@ fn is_lint_script_token(token: &str) -> bool {
 		|| token.starts_with("type-check:")
 }
 
-fn command_contains_lint_script(command: &str) -> bool {
-	command
-		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
-		.any(is_lint_script_token)
-}
-
 fn is_lint_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
 	matches!((program, subcommand), ("bun" | "bunx", Some("tsc" | "eslint" | "biome")))
 		|| is_exec_package_subcommand(program, subcommand)
-			&& (command_contains_tool(command, &["tsc", "eslint", "biome"])
-				|| command_contains_lint_script(command))
+			&& bun_invoked_word(command)
+				.is_some_and(|w| is_lint_script_token(w) || matches!(w, "tsc" | "eslint" | "biome"))
 }
 
 fn is_js_tool_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
 	matches!((program, subcommand), ("bun" | "bunx", Some("next" | "prettier" | "prisma")))
 		|| is_exec_package_subcommand(program, subcommand)
-			&& command_contains_tool(command, &["next", "prettier", "prisma"])
+			&& bun_invoked_word(command).is_some_and(|w| matches!(w, "next" | "prettier" | "prisma"))
 }
 fn is_cpp_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
 	matches!((program, subcommand), ("bunx", Some(subcommand)) if BUN_CPP_TOOL_SUBCOMMANDS.contains(&subcommand))
-		|| is_exec_package_subcommand(program, subcommand) && cpp::supports_invocation(command)
-}
-
-fn command_contains_tool(command: &str, tools: &[&str]) -> bool {
-	command
-		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
-		.any(|token| tools.contains(&token))
+		|| is_exec_package_subcommand(program, subcommand)
+			&& bun_invoked_word(command)
+				.is_some_and(|w| BUN_CPP_TOOL_SUBCOMMANDS.contains(&w))
 }
 
 fn filter_bun_check(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {

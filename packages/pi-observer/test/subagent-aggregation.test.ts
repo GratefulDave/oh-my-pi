@@ -279,8 +279,8 @@ describe("pi-observer subagent fan-in", () => {
 		await command!.handler("", ctx);
 
 		expect(editorText).toBe("");
-		expect(rendered).toContain("parity-distribution-diagnosis");
-		expect(rendered.some(line => line.includes("Diagnose · 1 node ┬ Active diagnosis"))).toBe(true);
+		expect(rendered).toContain("session-observability");
+		expect(rendered.some(line => line.includes("Observability · 1 node ┬ Session observability"))).toBe(true);
 	});
 
 	test("end-to-end: optional IRC EventBus records are bounded and normalized", () => {

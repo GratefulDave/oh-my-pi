@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
-// Observer dashboard — live TUI overlay showing diagnostic agent activity.
+// Observer dashboard — live TUI overlay showing observability data.
 // ---------------------------------------------------------------------------
 
+import { matchesKey } from "@oh-my-pi/pi-tui";
 import { buildObserverHierarchy, type ObserverHierarchy, type ObserverNode, statusGlyph } from "./hierarchy";
-import { stripAnsi, truncateVisible } from "./renderer";
+import { stripAnsi, truncateVisible, visibleWidth } from "./renderer";
 import { formatDuration, getSessionUptime, getStats, getSubagentTotals, type ObserverStats } from "./stats-collector";
 
 interface ObserverTheme {
@@ -20,7 +21,9 @@ const REFRESH_INTERVAL_MS = 500;
 const LEFT_MIN_WIDTH = 20;
 const LEFT_MAX_WIDTH = 38;
 const ROOT_SCOPE = "__root__";
-const FOOTER = "↑↓ select · ↵ drill/expand · ←/esc back";
+const FOOTER = "↑↓ select/scroll · ↵ drill/expand · tab pane · ←/esc back";
+
+type ActivePane = "tree" | "detail";
 
 function isDownKey(key: string): boolean {
 	return key === "down" || key === "arrowdown" || key === "j" || key === "ctrl+n";
@@ -38,10 +41,50 @@ function isBackKey(key: string): boolean {
 	return key === "escape" || key === "left" || key === "arrowleft" || key === "backspace";
 }
 
-function padPlain(text: string, width: number): string {
-	const clean = stripAnsi(text);
-	const clipped = truncateVisible(clean, width);
-	return clipped + " ".repeat(Math.max(0, width - stripAnsi(clipped).length));
+function isEscapeInput(data: string): boolean {
+	if (data === "escape" || data === "esc" || data === "\x1b") return true;
+	// Ghostty/Kitty keyboard protocol may report Escape as CSI 27 variants
+	// instead of the legacy single ESC byte.
+	return /^\x1b\[(?:27(?:;[0-9]+)*[u~]|27;[0-9;]*27~)$/.test(data);
+}
+
+function isArrowInput(data: string, direction: "up" | "down" | "right" | "left"): boolean {
+	const finalByte = direction === "up" ? "A" : direction === "down" ? "B" : direction === "right" ? "C" : "D";
+	return (
+		data === `\x1b[${finalByte}` ||
+		data === `\x1bO${finalByte}` ||
+		new RegExp(`^\\x1b\\[[0-9;]*${finalByte}$`).test(data)
+	);
+}
+
+function normalizeInput(data: string): string {
+	if (isEscapeInput(data) || matchesKey(data, "escape") || matchesKey(data, "esc")) return "escape";
+	if (isArrowInput(data, "up") || matchesKey(data, "up")) return "up";
+	if (isArrowInput(data, "down") || matchesKey(data, "down")) return "down";
+	if (isArrowInput(data, "right") || matchesKey(data, "right")) return "right";
+	if (isArrowInput(data, "left") || matchesKey(data, "left")) return "left";
+	if (matchesKey(data, "enter") || matchesKey(data, "return")) return "enter";
+	if (matchesKey(data, "tab")) return "tab";
+	if (matchesKey(data, "ctrl+n")) return "ctrl+n";
+	if (matchesKey(data, "ctrl+p")) return "ctrl+p";
+	switch (data) {
+		case "\r":
+		case "\n":
+			return "enter";
+		case "\t":
+			return "tab";
+		case "\x0e":
+			return "ctrl+n";
+		case "\x10":
+			return "ctrl+p";
+		default:
+			return data;
+	}
+}
+
+function padLine(text: string, width: number): string {
+	const clipped = truncateVisible(text, width);
+	return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
 }
 
 function wrapPlain(text: string, width: number, maxLines: number): string[] {
@@ -69,13 +112,32 @@ function scopeKey(parentId: string | undefined): string {
 	return parentId ?? ROOT_SCOPE;
 }
 
+function colorForStatus(status: ObserverNode["status"]): string {
+	switch (status) {
+		case "completed":
+			return "success";
+		case "failed":
+		case "aborted":
+			return "error";
+		case "running":
+		case "active":
+			return "accent";
+		case "pending":
+			return "warning";
+		default:
+			return "muted";
+	}
+}
+
 export class ObserverDashboard {
 	#refreshHandle: TimerHandle | undefined;
 	#lastStats: ObserverStats | undefined;
 	#path: string[] = [];
 	#cursorByParent = new Map<string, number>();
 	#scrollByParent = new Map<string, number>();
+	#rightPaneNodeId: string | undefined;
 	#expandedDetailId: string | undefined;
+	#activePane: ActivePane = "tree";
 	#width = 100;
 	#height = 36;
 
@@ -90,10 +152,27 @@ export class ObserverDashboard {
 		}, REFRESH_INTERVAL_MS);
 	}
 
+	handleInput(data: string): void {
+		this.act(normalizeInput(data));
+	}
+
+	invalidate(): void {}
+
 	act(key: string): boolean {
+		if (key === "tab") return this.#togglePane();
 		if (isBackKey(key)) {
+			if (this.#expandedDetailId != null) {
+				this.#expandedDetailId = undefined;
+				this.#rightPaneNodeId = this.#currentParentId();
+				this.#activePane = "tree";
+				this.requestRender();
+				return true;
+			}
 			if (this.#path.length > 0) {
 				this.#path.pop();
+				this.#activePane = "tree";
+				this.#rightPaneNodeId = this.#currentParentId();
+				this.#expandedDetailId = undefined;
 				this.requestRender();
 				return true;
 			}
@@ -120,7 +199,7 @@ export class ObserverDashboard {
 		this.#height = height;
 	}
 
-	render(width: number, height: number): string[] {
+	render(width: number, height = this.#height): string[] {
 		if (width > 0 && height > 0) this.layout(width, height);
 		const stats = this.#lastStats ?? (getStats() as ObserverStats);
 		const now = Date.now();
@@ -130,13 +209,11 @@ export class ObserverDashboard {
 		const panelHeight = Math.max(12, this.#height - 7);
 		const agents = [...stats.subagents.values()];
 		const completed = agents.filter(agent => agent.status === "completed").length;
-		const lines = ["─".repeat(panelWidth)];
-		lines.push(this.theme.bold(this.theme.fg("cyan", "parity-distribution-diagnosis")));
+		const lines = [this.theme.fg("border", "─".repeat(panelWidth))];
+		lines.push(this.theme.bold(this.theme.fg("accent", "session-observability")));
 		lines.push(
 			this.theme.dim(
-				`${`Diagnose agent activity by cluster: root cause + lever + expected movement`.padEnd(
-					Math.max(0, panelWidth - 24),
-				)}${completed}/${agents.length} agents · ${formatDuration(getSessionUptime())}`,
+				`${"Real-time agents, tasks, intercom, and metrics".padEnd(Math.max(0, panelWidth - 24))}${completed}/${agents.length} agents · ${formatDuration(getSessionUptime())}`,
 			),
 		);
 		lines.push("");
@@ -160,16 +237,19 @@ export class ObserverDashboard {
 		const children = hierarchy.getChildren(parentId);
 		const selected = this.#selectedNode(hierarchy);
 		const title = this.#panelTitle(hierarchy, selected, children.length, width);
-		const top = `┌${title}${"─".repeat(Math.max(0, width - title.length - 2))}┐`;
+		const top = this.theme.fg("border", `┌${title}${"─".repeat(Math.max(0, width - visibleWidth(title) - 2))}┐`);
 		const left = this.#renderScopeList(children, selected, leftWidth, bodyHeight, parentId);
-		const right = selected
-			? this.#renderNodeDetail(selected, rightWidth, bodyHeight)
+		const rightNode = this.#rightPaneNode(hierarchy, selected);
+		const right = rightNode
+			? this.#renderNodeDetail(rightNode, rightWidth, bodyHeight)
 			: [this.theme.dim("No hierarchy nodes observed yet")];
 		const lines = [top];
 		for (let i = 0; i < bodyHeight; i++) {
-			lines.push(`│${padPlain(left[i] ?? "", leftWidth)}│${padPlain(right[i] ?? "", rightWidth)}│`);
+			lines.push(
+				`${this.theme.fg("border", "│")}${padLine(left[i] ?? "", leftWidth)}${this.theme.fg("border", "│")}${padLine(right[i] ?? "", rightWidth)}${this.theme.fg("border", "│")}`,
+			);
 		}
-		lines.push(`└${"─".repeat(leftWidth)}┴${"─".repeat(rightWidth)}┘`);
+		lines.push(this.theme.fg("border", `└${"─".repeat(leftWidth)}┴${"─".repeat(rightWidth)}┘`));
 		return lines;
 	}
 
@@ -191,12 +271,16 @@ export class ObserverDashboard {
 			const index = first + offset;
 			const marker = selected?.id === node.id || index === cursor ? "❯" : " ";
 			const childHint = node.children.length > 0 ? "›" : " ";
-			return truncateVisible(`${marker} ${statusGlyph(node.status)} ${node.label} ${childHint}`, width);
+			const paneMark = this.#activePane === "tree" && marker === "❯" ? "▌" : " ";
+			const label = `${paneMark}${marker} ${statusGlyph(node.status)} ${node.label} ${childHint}`;
+			const color = marker === "❯" ? "borderAccent" : colorForStatus(node.status);
+			return truncateVisible(this.theme.fg(color, label), width);
 		});
-		if (first > 0 && lines.length > 0) lines[0] = truncateVisible(`↑ ${lines[0].slice(2)}`, width);
+		if (first > 0 && lines.length > 0)
+			lines[0] = truncateVisible(this.theme.fg("borderAccent", `↑ ${stripAnsi(lines[0]).slice(2)}`), width);
 		if (first + height < children.length && lines.length > 0) {
 			const last = lines.length - 1;
-			lines[last] = truncateVisible(`↓ ${lines[last]!.slice(2)}`, width);
+			lines[last] = truncateVisible(this.theme.fg("borderAccent", `↓ ${stripAnsi(lines[last]!).slice(2)}`), width);
 		}
 		return lines;
 	}
@@ -204,22 +288,30 @@ export class ObserverDashboard {
 	#renderNodeDetail(node: ObserverNode, width: number, height: number): string[] {
 		const expanded = this.#expandedDetailId === node.id;
 		const lines: string[] = [];
-		lines.push(`${statusGlyph(node.status)} ${node.kind.toUpperCase()} · ${node.label}`);
-		lines.push(node.summary);
-		if (node.children.length > 0) lines.push(`${node.children.length} children · ↵ drill`);
-		else lines.push(expanded ? "Expanded · ↵ collapse" : "Leaf · ↵ expand");
+		const panePrefix = this.#activePane === "detail" ? "▌" : " ";
+		lines.push(
+			this.theme.fg(
+				colorForStatus(node.status),
+				`${panePrefix}${statusGlyph(node.status)} ${node.kind.toUpperCase()} · ${node.label}`,
+			),
+		);
+		lines.push(this.theme.fg("toolOutput", node.summary));
+		if (node.children.length > 0) lines.push(this.theme.dim(`${node.children.length} children · ↵ drill`));
+		else lines.push(this.theme.dim(expanded ? "Expanded · ↵ collapse" : "Leaf · ↵ expand"));
 		if (node.metrics) {
 			const metricParts: string[] = [];
 			if (node.metrics.tokens != null) metricParts.push(`${node.metrics.tokens.toLocaleString("en-US")} tok`);
 			if (node.metrics.toolCount != null) metricParts.push(`${node.metrics.toolCount} tools`);
 			if (node.metrics.durationMs != null) metricParts.push(formatDuration(node.metrics.durationMs));
 			if (node.metrics.cost != null) metricParts.push(`$${node.metrics.cost.toFixed(4)}`);
-			if (metricParts.length > 0) lines.push(metricParts.join(" · "));
+			if (metricParts.length > 0) lines.push(this.theme.fg("muted", metricParts.join(" · ")));
 		}
 		lines.push("");
 		const detailLines = node.detail ?? [node.summary];
 		for (const detail of detailLines) {
-			for (const wrapped of wrapPlain(detail, width - 2, expanded ? height : 3)) lines.push(wrapped);
+			for (const wrapped of wrapPlain(detail, width - 2, expanded ? height * 3 : 3)) {
+				lines.push(this.theme.fg(detail.startsWith("  ") ? "toolOutput" : "text", wrapped));
+			}
 			if (!expanded && lines.length >= height - 2) break;
 		}
 		return lines.slice(0, height);
@@ -232,10 +324,11 @@ export class ObserverDashboard {
 		width: number,
 	): string {
 		const breadcrumb = hierarchy.getBreadcrumb(this.#path);
-		const scope = breadcrumb.length > 0 ? breadcrumb.map(node => node.label).join(" · ") : "Diagnose";
+		const scope = breadcrumb.length > 0 ? breadcrumb.map(node => node.label).join(" · ") : "Observability";
 		const selectedPart = selected ? ` ┬ ${selected.label}` : "";
+		const panePart = this.#activePane === "detail" ? " [detail]" : " [tree]";
 		return truncateVisible(
-			` ${scope} · ${siblingCount} ${siblingCount === 1 ? "node" : "nodes"}${selectedPart} `,
+			` ${scope} · ${siblingCount} ${siblingCount === 1 ? "node" : "nodes"}${selectedPart}${panePart} `,
 			width - 2,
 		);
 	}
@@ -248,9 +341,14 @@ export class ObserverDashboard {
 		if (!selected) return false;
 		if (selected.children.length > 0) {
 			this.#path.push(selected.id);
+			this.#rightPaneNodeId = selected.id;
+			this.#expandedDetailId = undefined;
+			this.#activePane = "tree";
 			this.#clampPath(hierarchy);
 		} else {
 			this.#expandedDetailId = this.#expandedDetailId === selected.id ? undefined : selected.id;
+			this.#rightPaneNodeId = this.#expandedDetailId;
+			this.#activePane = "detail";
 		}
 		this.requestRender();
 		return true;
@@ -270,6 +368,21 @@ export class ObserverDashboard {
 		this.#ensureCursorVisible(key, next, Math.max(1, this.#height - 9), children.length);
 		this.requestRender();
 		return true;
+	}
+
+	#togglePane(): boolean {
+		const stats = this.#lastStats ?? (getStats() as ObserverStats);
+		const hierarchy = buildObserverHierarchy(stats, Date.now());
+		if (!this.#selectedNode(hierarchy)) return false;
+		this.#activePane = this.#activePane === "tree" ? "detail" : "tree";
+		this.requestRender();
+		return true;
+	}
+
+	#rightPaneNode(hierarchy: ObserverHierarchy, selected: ObserverNode | undefined): ObserverNode | undefined {
+		const explicit = hierarchy.getNode(this.#rightPaneNodeId);
+		if (explicit) return explicit;
+		return selected;
 	}
 
 	#clampPath(hierarchy: ObserverHierarchy): void {
