@@ -166,7 +166,6 @@ export class MinimizerGainOverlayComponent {
 		return this.#activeScopeIndex;
 	}
 
-
 	invalidate(): void {}
 
 	async refresh(): Promise<void> {
@@ -545,8 +544,8 @@ export class MinimizerGainOverlayComponent {
 				clean(this.#dim(`    last: ${diag.lastParseError.error} (line ${diag.lastParseError.lineNumber})`), width),
 			);
 		}
-		lines.push(clean(`  ${this.#keyword("Minimizer enabled")}: ${diag.minimizerEnabled}`, width));
-		lines.push(clean(`  ${this.#keyword("Native binding loaded")}: ${diag.nativeBindingLoaded}`, width));
+		lines.push(clean(`  ${this.#keyword("Records observed")}: ${diag.recordsObserved}`, width));
+		lines.push(clean(`  ${this.#keyword("Scoped records observed")}: ${diag.scopedRecordsObserved}`, width));
 		lines.push(clean(`  ${this.#keyword("CWD filter")}: ${diag.cwdFilter ?? "(all)"}`, width));
 		lines.push(clean(`  ${this.#keyword("Distinct cwds")}: ${formatFullNumber(diag.distinctCwdsCount)}`, width));
 		if (diag.recordCountInScope === 0 && diag.distinctCwdsCount > 0) {

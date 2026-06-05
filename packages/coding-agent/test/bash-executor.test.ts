@@ -6,7 +6,7 @@ import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config
 import { executeBash } from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
 import { DEFAULT_MAX_BYTES } from "@oh-my-pi/pi-coding-agent/session/streaming-output";
 import * as shellSnapshot from "@oh-my-pi/pi-coding-agent/utils/shell-snapshot";
-import type { Shell } from "@oh-my-pi/pi-natives";
+import type { Shell, ShellRunResult } from "@oh-my-pi/pi-natives";
 import * as piNatives from "@oh-my-pi/pi-natives";
 
 // Matches the schema default for `tools.artifactHeadBytes` (20 KB) used by
@@ -109,6 +109,54 @@ describe("executeBash", () => {
 		expect(result.output.trim()).toBe("hello");
 		expect(seenChunk).not.toBeNull();
 		expect(seenChunk ?? "").toContain("hello");
+	});
+
+	it("passes minimizer telemetry and exit code to onMinimizedSave", async () => {
+		const nativeResult: ShellRunResult = {
+			exitCode: 7,
+			cancelled: false,
+			timedOut: false,
+			minimized: {
+				filter: "bun-test",
+				text: "short\n",
+				originalText: "very long output\n",
+				inputBytes: 17,
+				outputBytes: 6,
+			},
+		};
+		vi.spyOn(piNatives.Shell.prototype, "run").mockImplementation((_options, onChunk) => {
+			onChunk?.(null, nativeResult.minimized?.originalText ?? "");
+			return Promise.resolve(nativeResult);
+		});
+		const seen: Array<{
+			originalText: string;
+			filter: string;
+			inputBytes: number;
+			outputBytes: number;
+			exitCode: number | null;
+		}> = [];
+
+		const result = await executeBash("bun test noisy.test.ts", {
+			cwd: tempDir,
+			timeout: 5000,
+			sessionKey: "minimized-telemetry",
+			onMinimizedSave: async (originalText, info) => {
+				seen.push({ originalText, ...info });
+				return "raw-1";
+			},
+		});
+
+		expect(result.output).toContain("short");
+		expect(result.output).toContain("artifact://raw-1");
+		expect(seen).toEqual([
+			{
+				originalText: "very long output\n",
+				filter: "bun-test",
+				inputBytes: 17,
+				outputBytes: 6,
+				exitCode: 7,
+			},
+		]);
 	});
 
 	it("returns even if command spawns a background job", async () => {
