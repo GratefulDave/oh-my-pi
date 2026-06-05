@@ -300,8 +300,8 @@ export interface MinimizerGainDiagnostic {
 	lastReadError: ErrorStamp | null;
 	parseErrorCount: number;
 	lastParseError: ParseErrorStamp | null;
-	minimizerEnabled: boolean;
-	nativeBindingLoaded: boolean;
+	recordsObserved: boolean;
+	scopedRecordsObserved: boolean;
 	cwdFilter: string | null;
 	distinctCwdsCount: number;
 	distinctCwdsSample: string[];
@@ -399,15 +399,6 @@ export async function buildMinimizerGainDiagnostic(
 	const status = getMinimizerGainStatus();
 	const loadDurationMs = Date.now() - start;
 
-	let nativeBindingLoaded = false;
-	try {
-		const piNatives = await import("@oh-my-pi/pi-natives");
-		nativeBindingLoaded = typeof piNatives.applyShellMinimizer === "function";
-	} catch {
-		nativeBindingLoaded = false;
-	}
-	const minimizerEnabled = nativeBindingLoaded;
-
 	return {
 		recordsFilePath,
 		exists,
@@ -429,8 +420,8 @@ export async function buildMinimizerGainDiagnostic(
 		lastReadError: status.lastReadError,
 		parseErrorCount: status.parseErrorCount,
 		lastParseError: status.lastParseError,
-		minimizerEnabled,
-		nativeBindingLoaded,
+		recordsObserved: recordCount > 0,
+		scopedRecordsObserved: recordCountInScope > 0,
 		cwdFilter,
 		distinctCwdsCount: distinctCwds.size,
 		distinctCwdsSample,

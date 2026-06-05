@@ -34,7 +34,7 @@ export interface BashExecutorOptions {
 	 */
 	onMinimizedSave?: (
 		originalText: string,
-		info: { filter: string; inputBytes: number; outputBytes: number },
+		info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
 	) => Promise<string | undefined>;
 }
 
@@ -290,6 +290,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 					filter: minimized.filter,
 					inputBytes: minimized.inputBytes,
 					outputBytes: minimized.outputBytes,
+					exitCode: winner.result.exitCode ?? null,
 				});
 				if (artifactId) {
 					const sep = minimized.text.endsWith("\n") ? "" : "\n";
