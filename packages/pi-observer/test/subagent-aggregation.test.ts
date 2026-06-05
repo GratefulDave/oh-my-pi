@@ -20,6 +20,7 @@ import {
 
 const PROGRESS_CHANNEL = "task:subagent:progress";
 const LIFECYCLE_CHANNEL = "task:subagent:lifecycle";
+const IRC_CHANNEL = "irc:message";
 
 /** Minimal EventBus matching coding-agent's on/emit contract. */
 class FakeEventBus {
@@ -37,13 +38,16 @@ class FakeEventBus {
 /** Minimal ExtensionAPI stub exposing just what observer() touches. */
 function makeFakePi() {
 	const events = new FakeEventBus();
+	const sessionHandlers = new Map<string, (event: unknown) => void>();
 	const pi = {
 		events,
 		setLabel() {},
-		on() {},
+		on(event: string, handler: (event: unknown) => void) {
+			sessionHandlers.set(event, handler);
+		},
 		registerCommand() {},
 	};
-	return { pi: pi as Parameters<typeof observer>[0], events };
+	return { pi: pi as Parameters<typeof observer>[0], events, sessionHandlers };
 }
 
 describe("pi-observer subagent fan-in", () => {
@@ -64,6 +68,60 @@ describe("pi-observer subagent fan-in", () => {
 		// Second snapshot is cumulative for the same id -> overwrite, not add.
 		onSubagentProgress({ id: "a1", agent: "explore", status: "running", tokens: 250, toolCount: 5, cost: 0.03 });
 		expect(getSubagentTotals()).toEqual({ count: 1, activeCount: 1, tokens: 250, toolCount: 5, cost: 0.03 });
+	});
+
+	test("progress preserves hierarchy fields when later cumulative updates omit them", () => {
+		onSubagentProgress({
+			id: "a1",
+			agent: "explore",
+			status: "running",
+			tokens: 100,
+			toolCount: 2,
+			cost: 0.01,
+			agentSource: "project",
+			sessionFile: "/tmp/session.jsonl",
+			recentTools: [{ tool: "read", args: "dashboard.ts", endMs: 10 }],
+			extractedToolData: {
+				task: [{ results: [], progress: [{ id: "nested", agent: "executor", status: "running", task: "nested" }] }],
+			},
+			inflightTaskDetails: { results: [], progress: [{ id: "live", agent: "reviewer", status: "running" }] },
+		});
+		onSubagentProgress({ id: "a1", agent: "explore", status: "running", tokens: 250, toolCount: 5, cost: 0.03 });
+
+		const subagent = getStats().subagents.get("a1");
+		expect(subagent?.agentSource).toBe("project");
+		expect(subagent?.sessionFile).toBe("/tmp/session.jsonl");
+		expect(subagent?.recentTools).toEqual([{ tool: "read", args: "dashboard.ts", endMs: 10 }]);
+		expect(subagent?.extractedToolData?.task).toHaveLength(1);
+		expect(subagent?.inflightTaskDetails).toEqual({
+			results: [],
+			progress: [{ id: "live", agent: "reviewer", status: "running" }],
+		});
+	});
+
+	test("lifecycle merge does not wipe task hierarchy fields", () => {
+		onSubagentProgress({
+			id: "a1",
+			agent: "explore",
+			status: "running",
+			tokens: 100,
+			toolCount: 2,
+			cost: 0.01,
+			recentTools: [{ tool: "edit", args: "hierarchy.ts", endMs: 10 }],
+			extractedToolData: { task: [{ results: [{ id: "done", agent: "executor", status: "completed" }] }] },
+			inflightTaskDetails: { results: [], async: { state: "running", jobId: "job-1", type: "task" } },
+		});
+		onSubagentLifecycle("a1", "explore", "completed", { task: "trace bug" });
+
+		const subagent = getStats().subagents.get("a1");
+		expect(subagent?.status).toBe("completed");
+		expect(subagent?.task).toBe("trace bug");
+		expect(subagent?.recentTools).toEqual([{ tool: "edit", args: "hierarchy.ts", endMs: 10 }]);
+		expect(subagent?.extractedToolData?.task).toHaveLength(1);
+		expect(subagent?.inflightTaskDetails).toEqual({
+			results: [],
+			async: { state: "running", jobId: "job-1", type: "task" },
+		});
 	});
 
 	test("multiple subagents sum; lifecycle flips active count", () => {
@@ -92,7 +150,23 @@ describe("pi-observer subagent fan-in", () => {
 			index: 0,
 			agent: "explore",
 			task: "trace bug",
-			progress: { id: "sub-1", agent: "explore", status: "running", tokens: 1234, toolCount: 7, cost: 0.12 },
+			progress: {
+				id: "sub-1",
+				agent: "explore",
+				status: "running",
+				tokens: 1234,
+				toolCount: 7,
+				cost: 0.12,
+				description: "Trace bug",
+				currentTool: "read",
+				durationMs: 1500,
+				resolvedModel: "anthropic/claude-sonnet-4",
+				agentSource: "builtin",
+				sessionFile: "/tmp/sub-1.jsonl",
+				recentTools: [{ tool: "read", args: "stats", endMs: 10 }],
+				extractedToolData: { task: [{ results: [], progress: [] }] },
+				inflightTaskDetails: { results: [], progress: [] },
+			},
 		});
 
 		const totals = getSubagentTotals();
@@ -100,12 +174,76 @@ describe("pi-observer subagent fan-in", () => {
 		expect(totals.tokens).toBe(1234);
 		expect(totals.toolCount).toBe(7);
 		expect(totals.cost).toBeCloseTo(0.12, 6);
+		const subagent = getStats().subagents.get("sub-1");
+		expect(subagent?.description).toBe("Trace bug");
+		expect(subagent?.task).toBe("trace bug");
+		expect(subagent?.currentTool).toBe("read");
+		expect(subagent?.durationMs).toBe(1500);
+		expect(subagent?.resolvedModel).toBe("anthropic/claude-sonnet-4");
+		expect(subagent?.agentSource).toBe("builtin");
+		expect(subagent?.sessionFile).toBe("/tmp/sub-1.jsonl");
+		expect(subagent?.recentTools).toEqual([{ tool: "read", args: "stats", endMs: 10 }]);
+		expect(subagent?.extractedToolData?.task).toHaveLength(1);
+		expect(subagent?.inflightTaskDetails).toEqual({ results: [], progress: [] });
 
 		// Lifecycle "completed" marks it inactive but keeps its accumulated totals.
 		events.emit(LIFECYCLE_CHANNEL, { id: "sub-1", agent: "explore", status: "completed", index: 0 });
 		const after = getSubagentTotals();
 		expect(after.activeCount).toBe(0);
 		expect(after.tokens).toBe(1234);
+	});
+
+	test("end-to-end: optional IRC EventBus records are bounded and normalized", () => {
+		const { pi, events } = makeFakePi();
+		observer(pi);
+
+		events.emit(IRC_CHANNEL, {
+			timestamp: 1,
+			channel: "#agents",
+			from: "Main",
+			to: "#agents",
+			body: "hello",
+			kind: "message",
+			delivered: ["executor"],
+			failed: [],
+		});
+
+		expect(getStats().ircMessages).toEqual([
+			{
+				timestamp: 1,
+				channel: "#agents",
+				from: "Main",
+				to: "#agents",
+				body: "hello",
+				kind: "message",
+				delivered: ["executor"],
+				failed: [],
+			},
+		]);
+	});
+
+	test("end-to-end: session IRC messages are normalized without host changes", () => {
+		const { pi, sessionHandlers } = makeFakePi();
+		observer(pi);
+
+		sessionHandlers.get("irc_message")?.({
+			message: {
+				customType: "irc:relay",
+				timestamp: 2,
+				details: { from: "executor", to: "@Main", body: "/me finished", kind: "reply" },
+			},
+		});
+
+		expect(getStats().ircMessages.at(-1)).toEqual({
+			timestamp: 2,
+			channel: "@Main",
+			from: "executor",
+			to: "@Main",
+			body: "/me finished",
+			kind: "reply",
+			delivered: [],
+			failed: [],
+		});
 	});
 
 	test("malformed payloads are ignored", () => {
