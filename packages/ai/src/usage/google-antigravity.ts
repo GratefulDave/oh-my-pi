@@ -136,8 +136,7 @@ async function fetchAntigravityUsage(params: UsageFetchParams, ctx: UsageFetchCo
 	const accessToken = resolveAccessToken(params);
 	if (!accessToken) return null;
 
-	const baseUrl = params.baseUrl?.replace(/\/+$/, "") || DEFAULT_ENDPOINT;
-	const url = `${baseUrl}${FETCH_AVAILABLE_MODELS_PATH}`;
+	const url = `${DEFAULT_ENDPOINT}${FETCH_AVAILABLE_MODELS_PATH}`;
 	const response = await ctx.fetch(url, {
 		method: "POST",
 		headers: {
