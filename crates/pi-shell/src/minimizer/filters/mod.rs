@@ -2,7 +2,6 @@
 
 use crate::minimizer::{MinimizerCtx, MinimizerOutput};
 
-pub mod ai_smart;
 pub mod cloud;
 pub mod cpp;
 
@@ -91,27 +90,35 @@ fn is_test_script_token(token: &str) -> bool {
 	matches!(token, "test" | "t" | "e2e" | "spec") || token.starts_with("test:")
 }
 
-fn command_contains_test_script(command: &str) -> bool {
-	command
+/// The script/command word a `run`-style invocation targets: the first
+/// non-flag token after the `run`/`-m`/`--module` marker. Returns `None` when
+/// no marker (or no following word) is present.
+///
+/// Selecting only this word — instead of scanning the entire command line —
+/// keeps tool/script names that appear merely as later arguments from
+/// mis-routing output through a test/lint/wrapped-tool filter. Examples that
+/// must NOT route as tests: `npm run build -- test`, `uv run echo pytest`.
+fn run_invoked_word(command: &str) -> Option<&str> {
+	let mut tokens = command
 		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
-		.any(is_test_script_token)
+		.filter(|tok| !tok.is_empty());
+	tokens
+		.by_ref()
+		.find(|tok| matches!(*tok, "run" | "-m" | "--module"))?;
+	tokens.find(|tok| !tok.starts_with('-'))
 }
 
 fn is_pkg_test_invocation(ctx: &MinimizerCtx<'_>) -> bool {
 	matches!(ctx.subcommand, Some("test" | "t"))
-		|| matches!(ctx.subcommand, Some("run")) && command_contains_test_script(ctx.command)
+		|| (matches!(ctx.subcommand, Some("run"))
+			&& run_invoked_word(ctx.command).is_some_and(is_test_script_token))
 }
 
 fn is_pkg_lint_invocation(ctx: &MinimizerCtx<'_>) -> bool {
 	matches!(ctx.subcommand, Some("run"))
-		&& (command_contains_lint_script(ctx.command)
-			|| command_contains_tool(ctx.command, &["tsc", "eslint", "biome"]))
-}
-
-fn command_contains_lint_script(command: &str) -> bool {
-	command
-		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
-		.any(is_lint_script_token)
+		&& run_invoked_word(ctx.command).is_some_and(|word| {
+			is_lint_script_token(word) || matches!(word, "tsc" | "eslint" | "biome")
+		})
 }
 
 fn is_lint_script_token(token: &str) -> bool {
@@ -120,12 +127,6 @@ fn is_lint_script_token(token: &str) -> bool {
 		|| token.starts_with("lint:")
 		|| token.starts_with("typecheck:")
 		|| token.starts_with("type-check:")
-}
-
-fn command_contains_tool(command: &str, tools: &[&str]) -> bool {
-	command
-		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
-		.any(|token| tools.contains(&token))
 }
 
 /// Apply the matching built-in filter.
@@ -271,21 +272,16 @@ fn normalize_uv_form(subcommand: Option<&str>, command: &str) -> Option<&'static
 		return Some(tool);
 	}
 	if sub == "-m" {
-		let tokens = command.split_whitespace();
-		let mut after_dash_m = false;
-		for token in tokens {
-			if after_dash_m
-				&& !token.starts_with('-')
-				&& let Some(&tool) = ALLOWLIST.iter().find(|&&tool| tool == token)
-			{
-				return Some(tool);
-			}
-			if token == "-m" {
-				after_dash_m = true;
-			}
-		}
+		// Only the immediate next non-flag token after `-m` may select a tool;
+		// scanning all subsequent tokens would pick up positional arguments
+		// (e.g. `uv -m my_module pytest` where `pytest` is an arg to `my_module`).
+		let mut tokens = command.split_whitespace().skip_while(|t| t != &"-m");
+		tokens.next(); // consume `-m` itself
+		let next = tokens.next().filter(|tok| !tok.starts_with('-'))?;
+		ALLOWLIST.iter().find(|&&tool| tool == next).copied()
+	} else {
+		None
 	}
-	None
 }
 
 fn uv_wrapper_tool<'a>(ctx: &'a MinimizerCtx<'_>) -> Option<&'a str> {
@@ -305,18 +301,120 @@ fn uv_wrapper_tool<'a>(ctx: &'a MinimizerCtx<'_>) -> Option<&'a str> {
 	])
 }
 
+/// Wrapper options whose value is the *following* token (`--with pytest`),
+/// rather than being self-contained (`--with=pytest`). When skipping flags to
+/// find the invoked command word we must also skip these options' values, or
+/// the value (`pytest`) is mistaken for the command and routes arbitrary output
+/// through that tool's filter. Covers the value-taking options of the wrappers
+/// routed here — `uv run`, `npx`, `pnpm dlx`, `bun x`. The `--opt=value` form
+/// is already a single flag token and needs no entry here.
+const WRAPPER_VALUE_OPTIONS: &[&str] = &[
+	// uv run
+	"--with",
+	"--with-requirements",
+	"--with-editable",
+	"--python",
+	"-p",
+	"--from",
+	"--directory",
+	"--project",
+	"--index",
+	"--default-index",
+	"--index-url",
+	"--extra-index-url",
+	"--find-links",
+	"-f",
+	"--cache-dir",
+	"--config-file",
+	"--refresh-package",
+	"--resolution",
+	"--prerelease",
+	"--exclude-newer",
+	"--link-mode",
+	"--color",
+	"--python-preference",
+	// npx / pnpm dlx
+	"--package",
+	"-c",
+	"--call",
+	"--workspace",
+	"-w",
+	"--node-arg",
+];
+
+/// Advance `tokens` to the next invoked-command word, skipping flag tokens and
+/// the space-separated values of value-taking options (see
+/// [`WRAPPER_VALUE_OPTIONS`]). Inline `--opt=value` flags are skipped whole.
+fn next_command_word<'a>(tokens: &mut impl Iterator<Item = &'a str>) -> Option<&'a str> {
+	while let Some(tok) = tokens.next() {
+		if !tok.starts_with('-') {
+			return Some(tok);
+		}
+		if !tok.contains('=') && WRAPPER_VALUE_OPTIONS.contains(&tok) {
+			tokens.next(); // consume the option's value
+		}
+	}
+	None
+}
+
+/// The command/tool word a wrapper invocation actually executes: the first
+/// non-flag token after a single wrapper keyword (`run`/`dlx`/`exec`), or —
+/// when none is present — the first non-flag token after the program.
+/// Value-taking options (`--with pytest`) have their value skipped so it is not
+/// mistaken for the command. A leading `python`/`python3`/`py` interpreter is
+/// descended through its `-m`/`--module` argument so `uv run python -m pytest`
+/// resolves to `pytest`. Tool names that appear only as later arguments
+/// (`uv run build -- pytest`, `uv run echo pytest`, `uv run --with pytest
+/// echo`) are never returned.
+fn wrapper_command_word(command: &str) -> Option<&str> {
+	let mut tokens = command
+		.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
+		.filter(|tok| !tok.is_empty());
+	tokens.next()?; // drop the program token
+	let mut word = next_command_word(&mut tokens)?;
+	if matches!(word, "run" | "dlx" | "exec") {
+		word = next_command_word(&mut tokens)?;
+	}
+	if matches!(word, "python" | "python3" | "py") {
+		while let Some(tok) = tokens.next() {
+			if tok == "--" {
+				return Some(word);
+			}
+			if matches!(tok, "-c" | "--command") {
+				return Some(word);
+			}
+			if matches!(tok, "-m" | "--module") {
+				return tokens
+					.find(|candidate| !candidate.starts_with('-'))
+					.or(Some(word));
+			}
+			if tok.starts_with('-') {
+				continue;
+			}
+			return Some(tok);
+		}
+	}
+	Some(word)
+}
+
 fn wrapper_invokes(ctx: &MinimizerCtx<'_>, tools: &[&str]) -> bool {
 	wrapper_invoked_tool(ctx, tools).is_some()
 }
 
 fn wrapper_invoked_tool<'a>(ctx: &'a MinimizerCtx<'_>, tools: &[&'a str]) -> Option<&'a str> {
-	ctx.subcommand
-		.and_then(|subcommand| tools.iter().copied().find(|tool| *tool == subcommand))
-		.or_else(|| {
-			ctx.command
-				.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&'))
-				.find(|token| tools.contains(token))
-		})
+	// Prefer wrapper_command_word over ctx.subcommand: it properly skips
+	// value-taking option values (e.g. -w, --workspace, --with) that
+	// detect_subcommand may mistake for the invoked tool name.
+	let word = wrapper_command_word(ctx.command)?;
+	match tools.iter().copied().find(|&tool| tool == word) {
+		Some(tool) => Some(tool),
+		None => {
+			// Fallback: detect_subcommand may have normalized case or
+			// resolved through program-specific logic.
+			ctx.subcommand
+				.and_then(|subcommand| tools.iter().copied().find(|tool| *tool == subcommand))
+		},
+	}
 }
 
 #[cfg(test)]
@@ -350,6 +448,106 @@ mod tests {
 		let config = MinimizerConfig::default();
 		let context = ctx("pnpm", Some("dlx"), "pnpm dlx unknown-tool", &config);
 		let input = "line 1\nline 2\n";
+		let out = filter(&context, input, 0);
+		assert_eq!(out.text, input);
+		assert!(!out.changed);
+	}
+
+	#[test]
+	fn run_invoked_word_picks_script_not_arguments() {
+		assert_eq!(run_invoked_word("npm run build -- test"), Some("build"));
+		assert_eq!(run_invoked_word("npm run test"), Some("test"));
+		assert_eq!(run_invoked_word("npm run --silent test:unit"), Some("test:unit"));
+		assert_eq!(run_invoked_word("uv run echo pytest"), Some("echo"));
+		assert_eq!(run_invoked_word("uv run build -- pytest"), Some("build"));
+		assert_eq!(run_invoked_word("uv run -- pytest"), Some("pytest"));
+		assert_eq!(run_invoked_word("uv run python -m pytest"), Some("python"));
+		assert_eq!(run_invoked_word("npm ci"), None);
+	}
+
+	#[test]
+	fn pkg_test_routing_ignores_test_as_argument() {
+		let config = MinimizerConfig::default();
+		// a non-test script that merely passes `test` as an argument must not route as
+		// a test
+		assert!(!is_pkg_test_invocation(&ctx("npm", Some("run"), "npm run build -- test", &config)));
+		assert!(is_pkg_test_invocation(&ctx("npm", Some("run"), "npm run test", &config)));
+		assert!(is_pkg_test_invocation(&ctx("npm", Some("test"), "npm test", &config)));
+	}
+
+	#[test]
+	fn pkg_lint_routing_ignores_tool_as_argument() {
+		let config = MinimizerConfig::default();
+		assert!(!is_pkg_lint_invocation(&ctx(
+			"pnpm",
+			Some("run"),
+			"pnpm run build -- eslint",
+			&config
+		)));
+		assert!(is_pkg_lint_invocation(&ctx("pnpm", Some("run"), "pnpm run lint", &config)));
+		assert!(is_pkg_lint_invocation(&ctx("pnpm", Some("run"), "pnpm run tsc", &config)));
+	}
+
+	#[test]
+	fn uv_wrapper_ignores_tool_as_argument() {
+		let config = MinimizerConfig::default();
+		assert_eq!(
+			uv_wrapper_tool(&ctx("uv", Some("run"), "uv run pytest", &config)),
+			Some("pytest")
+		);
+		assert_eq!(uv_wrapper_tool(&ctx("uv", Some("run"), "uv run echo pytest", &config)), None);
+		assert_eq!(uv_wrapper_tool(&ctx("uv", Some("run"), "uv run build -- pytest", &config)), None);
+	}
+
+	#[test]
+	fn uv_wrapper_skips_value_taking_option_values() {
+		let config = MinimizerConfig::default();
+		// `--with <pkg>` consumes the following token as its value; that value must
+		// not be mistaken for the invoked command and route output through it.
+		assert_eq!(
+			uv_wrapper_tool(&ctx("uv", Some("run"), "uv run --with pytest echo hi", &config)),
+			None
+		);
+		assert_eq!(
+			uv_wrapper_tool(&ctx("uv", Some("run"), "uv run --with pytest build", &config)),
+			None
+		);
+		// the genuinely invoked tool still routes when preceded by a value option
+		assert_eq!(
+			uv_wrapper_tool(&ctx("uv", Some("run"), "uv run --python 3.12 pytest", &config)),
+			Some("pytest")
+		);
+		// inline `--opt=value` is a single token; the command word follows it
+		assert_eq!(
+			uv_wrapper_tool(&ctx("uv", Some("run"), "uv run --with=pytest echo hi", &config)),
+			None
+		);
+		// `python -m <module>` descent still resolves through a value option
+		assert_eq!(
+			uv_wrapper_tool(&ctx("uv", Some("run"), "uv run --with foo python -m pytest", &config)),
+			Some("pytest")
+		);
+	}
+
+	#[test]
+	fn uv_run_with_option_value_is_left_opaque() {
+		let config = MinimizerConfig::default();
+		// `pytest` is the value of `--with`, the invoked command is `echo` — output
+		// (including PASS/✓-style lines) must pass through untouched.
+		let context = ctx("uv", Some("run"), "uv run --with pytest echo PASS", &config);
+		let input = "collected 2 items\nPASS\n";
+		let out = filter(&context, input, 0);
+		assert_eq!(out.text, input);
+		assert!(!out.changed);
+	}
+
+	#[test]
+	fn uv_run_echo_pytest_is_left_opaque() {
+		let config = MinimizerConfig::default();
+		// `pytest` is an argument to `echo`, not the invoked command — output must pass
+		// through
+		let context = ctx("uv", Some("run"), "uv run echo pytest", &config);
+		let input = "collected 2 items\npytest\n";
 		let out = filter(&context, input, 0);
 		assert_eq!(out.text, input);
 		assert!(!out.changed);
@@ -611,6 +809,15 @@ mod tests {
 		let out = filter(&context, PYTEST_FAILURE_INPUT, 1).text;
 		assert!(out.contains("FAILED tests/test_x.py::test_fail"));
 		assert!(out.contains("pytest: 1 failed, 1 passed"));
+	}
+
+	#[test]
+	fn uv_run_python_script_with_pytest_argument_stays_opaque() {
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("run"), "uv run python scripts/report.py -m pytest", &config);
+		let out = filter(&context, PYTEST_FAILURE_INPUT, 1);
+		assert_eq!(out.text, PYTEST_FAILURE_INPUT);
+		assert!(!out.changed);
 	}
 
 	#[test]

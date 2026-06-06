@@ -10,8 +10,6 @@ strip_lines_matching = [
   "^\\s+\\|\\s*$",
   "^In file included from",
   "^\\s+from\\s",
-  "^\\d+ warnings? generated",
-  "^\\d+ errors? generated",
 ]
 max_lines = 50
 on_empty = "gcc: ok"
@@ -30,7 +28,7 @@ main.c:15:12: warning: unused variable 'x' [-Wunused-variable]
 2 warnings generated.
 1 error generated.
 """
-expected = "main.c:10:5: error: use of undeclared identifier 'foo'\n    foo();\n    ^\nmain.c:15:12: warning: unused variable 'x' [-Wunused-variable]\n    int x = 42;\n        ^\n"
+expected = "main.c:10:5: error: use of undeclared identifier 'foo'\n    foo();\n    ^\nmain.c:15:12: warning: unused variable 'x' [-Wunused-variable]\n    int x = 42;\n        ^\n2 warnings generated.\n1 error generated.\n"
 
 [[tests.gcc]]
 name = "clean compilation"
@@ -59,7 +57,7 @@ foo.c:3:10: fatal error: 'missing.h' file not found
          ^~~~~~~~~~~
 1 error generated.
 """
-expected = "foo.c:3:10: fatal error: 'missing.h' file not found\n#include \"missing.h\"\n         ^~~~~~~~~~~\n"
+expected = "foo.c:3:10: fatal error: 'missing.h' file not found\n#include \"missing.h\"\n         ^~~~~~~~~~~\n1 error generated.\n"
 
 [[tests.gcc]]
 name = "clang++ variant errors"
@@ -69,4 +67,4 @@ foo.cpp:8:5: error: unknown type name 'Widget'
     ^
 1 error generated.
 """
-expected = "foo.cpp:8:5: error: unknown type name 'Widget'\n    Widget w;\n    ^\n"
+expected = "foo.cpp:8:5: error: unknown type name 'Widget'\n    Widget w;\n    ^\n1 error generated.\n"

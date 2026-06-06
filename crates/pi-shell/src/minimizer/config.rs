@@ -17,7 +17,6 @@ use serde::Deserialize;
 use crate::minimizer::pipeline::{self, PipelineRegistry, SUPPORTED_SCHEMA_VERSION};
 
 const DEFAULT_MAX_CAPTURE_BYTES: u32 = 4 * 1024 * 1024;
-const DEFAULT_AI_SMART_PROVIDER: &str = "deepseek";
 
 /// Source-outline aggressiveness for `cat <source-file>` minimization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -63,11 +62,6 @@ pub struct MinimizerOptions {
 	/// Source-outline level for `cat <source-file>` minimization. Accepts
 	/// `"default"` (current behavior) or `"aggressive"` (strip function bodies).
 	pub source_outline_level: Option<String>,
-	/// Master switch for the AI-summary filter (W4 / rtk smart). Default off.
-	pub ai_smart_enabled:     Option<bool>,
-	/// Provider key for the AI summarizer (e.g. `"deepseek"`). Default
-	/// `"deepseek"` when [`Self::ai_smart_enabled`] is true.
-	pub ai_smart_provider:    Option<String>,
 	/// Kill-switch to fall back to the pre-PR (legacy) filter behavior for
 	/// grep / find / pytest. When `Some(true)`, filters that opted into the
 	/// always-shrink Tier 1 / Tier 2 behavior skip the new code path and
@@ -90,11 +84,6 @@ pub struct MinimizerConfig {
 	pub user_pipelines:        Option<Arc<PipelineRegistry>>,
 	/// Aggressiveness for source-outline body stripping in `compact_cat_output`.
 	pub source_outline_level:  OutlineLevel,
-	/// Master switch for the AI summary filter (W4). When false, the filter
-	/// is a no-op passthrough.
-	pub ai_smart_enabled:      bool,
-	/// Provider key for the AI summarizer (defaults to `"deepseek"`).
-	pub ai_smart_provider:     String,
 	/// Resolved kill-switch: when true, opted-in filters (Tier 1 grep/find,
 	/// Tier 2 pytest) return the pre-PR legacy behavior. Resolved at
 	/// `from_options()` time from caller-supplied
@@ -113,22 +102,8 @@ impl Default for MinimizerConfig {
 			per_command:           HashMap::new(),
 			user_pipelines:        None,
 			source_outline_level:  OutlineLevel::Default,
-			ai_smart_enabled:      false,
-			ai_smart_provider:     DEFAULT_AI_SMART_PROVIDER.to_string(),
 			legacy_filters_active: false,
 		}
-	}
-}
-
-impl MinimizerConfig {
-	/// Returns `true` when the legacy-filter kill-switch is active.
-	///
-	/// Provided as a method so call-sites read naturally as
-	/// `ctx.config.legacy_filters_active()` while test setup can still do
-	/// direct field assignment.
-	#[inline]
-	pub const fn legacy_filters_active(&self) -> bool {
-		self.legacy_filters_active
 	}
 }
 
@@ -154,22 +129,13 @@ impl MinimizerConfig {
 		{
 			cfg.source_outline_level = level;
 		}
-		if let Some(v) = opts.ai_smart_enabled {
-			cfg.ai_smart_enabled = v;
-		}
-		cfg.legacy_filters_active = match opts.legacy_filters {
-			Some(v) => v,
-			None => std::env::var("OMP_MINIMIZER_LEGACY_FILTERS")
+		let legacy_requested = resolve_legacy_filters(
+			opts.legacy_filters,
+			std::env::var("OMP_MINIMIZER_LEGACY_FILTERS")
 				.ok()
-				.is_some_and(|raw| {
-					matches!(raw.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes")
-				}),
-		};
-		if let Some(provider) = opts.ai_smart_provider.as_deref()
-			&& !provider.is_empty()
-		{
-			cfg.ai_smart_provider = provider.to_string();
-		}
+				.as_deref(),
+		);
+		cfg.legacy_filters_active = legacy_requested;
 		if let Some(path) = opts.settings_path.as_deref()
 			&& !path.is_empty()
 		{
@@ -193,6 +159,12 @@ impl MinimizerConfig {
 				}
 				if let Ok(file) = toml::from_str::<SettingsFile>(&contents) {
 					file.merge_into(&mut cfg);
+					if opts.enabled == Some(false) {
+						cfg.enabled = false;
+					}
+					if legacy_requested {
+						cfg.legacy_filters_active = true;
+					}
 				}
 				match pipeline::parse_file(&contents, "user") {
 					Ok((pipelines, tests)) => {
@@ -228,6 +200,11 @@ impl MinimizerConfig {
 	pub fn per_command(&self, program: &str) -> Option<&toml::Value> {
 		self.per_command.get(&program.to_lowercase())
 	}
+
+	/// Whether opted-in filters should fall back to pre-PR legacy behavior.
+	pub const fn legacy_filters_active(&self) -> bool {
+		self.legacy_filters_active
+	}
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -239,8 +216,7 @@ struct SettingsFile {
 	except:               Option<Vec<String>>,
 	max_capture_bytes:    Option<u32>,
 	source_outline_level: Option<String>,
-	ai_smart_enabled:     Option<bool>,
-	ai_smart_provider:    Option<String>,
+	legacy_filters:       Option<bool>,
 	#[serde(flatten)]
 	tables:               HashMap<String, toml::Value>,
 }
@@ -273,19 +249,30 @@ impl SettingsFile {
 		{
 			cfg.source_outline_level = level;
 		}
-		if let Some(v) = self.ai_smart_enabled {
-			cfg.ai_smart_enabled = v;
-		}
-		if let Some(provider) = self.ai_smart_provider
-			&& !provider.is_empty()
-		{
-			cfg.ai_smart_provider = provider;
+		if let Some(v) = self.legacy_filters {
+			cfg.legacy_filters_active = resolve_legacy_filters(Some(v), None);
 		}
 		for (k, v) in self.tables {
 			if v.is_table() && k != "filters" && k != "tests" {
 				cfg.per_command.insert(k.to_lowercase(), v);
 			}
 		}
+	}
+}
+
+/// Resolve the effective `legacy_filters_active` flag from the caller option
+/// and the raw `OMP_MINIMIZER_LEGACY_FILTERS` env value.
+///
+/// Pure so it can be unit-tested without mutating the process-global
+/// environment (the test harness runs tests in one process in parallel). An
+/// explicit option always wins; otherwise a truthy env value enables the
+/// legacy path.
+fn resolve_legacy_filters(option: Option<bool>, env_value: Option<&str>) -> bool {
+	match option {
+		Some(v) => v,
+		None => env_value.is_some_and(|raw| {
+			matches!(raw.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes")
+		}),
 	}
 }
 
@@ -397,22 +384,62 @@ mod tests {
 	}
 
 	#[test]
-	fn legacy_filters_option_none_defaults_false_without_env() {
-		// With no caller override and (in this test process) no env var set
-		// by the test, the default is false.
-		// SAFETY: we explicitly clear the var; CARGO_TEST runs in the same
-		// process so other tests reading this var must not race; we accept
-		// this is best-effort and the option-override tests above carry the
-		// real assurance.
-		// SAFETY: env_remove is safe in single-threaded test context; this
-		// test only confirms the default branch when env is absent.
-		unsafe {
-			std::env::remove_var("OMP_MINIMIZER_LEGACY_FILTERS");
+	fn resolve_legacy_filters_prefers_option_over_env() {
+		// The pure resolver lets us exercise every branch without mutating the
+		// process-global env var (which would race the parallel test harness).
+		assert!(super::resolve_legacy_filters(Some(true), Some("0")));
+		assert!(!super::resolve_legacy_filters(Some(false), Some("1")));
+	}
+
+	#[test]
+	fn resolve_legacy_filters_defaults_false_without_env() {
+		assert!(!super::resolve_legacy_filters(None, None));
+	}
+
+	#[test]
+	fn resolve_legacy_filters_honors_truthy_env_when_option_absent() {
+		for raw in ["1", "true", "yes", " TRUE ", "Yes"] {
+			assert!(super::resolve_legacy_filters(None, Some(raw)), "{raw:?} should enable");
 		}
+		for raw in ["0", "false", "no", ""] {
+			assert!(!super::resolve_legacy_filters(None, Some(raw)), "{raw:?} should not enable");
+		}
+	}
+
+	#[test]
+	fn settings_file_parses_legacy_filters_switch() {
+		let file: SettingsFile = toml::from_str("legacy_filters = true\n").unwrap();
+		let mut cfg = MinimizerConfig::default();
+		file.merge_into(&mut cfg);
+		assert!(cfg.legacy_filters_active());
+	}
+
+	#[test]
+	fn explicit_disabled_option_overrides_enabled_settings_file() {
+		let path = std::env::temp_dir()
+			.join(format!("omp-minimizer-config-disabled-{}.toml", std::process::id()));
+		std::fs::write(&path, "enabled = true\n").unwrap();
 		let cfg = MinimizerConfig::from_options(&MinimizerOptions {
-			enabled: Some(true),
+			enabled: Some(false),
+			settings_path: Some(path.display().to_string()),
 			..Default::default()
 		});
-		assert!(!cfg.legacy_filters_active());
+		let _ = std::fs::remove_file(&path);
+		assert!(!cfg.enabled);
+	}
+
+	#[test]
+	fn explicit_legacy_true_overrides_disabled_settings_file() {
+		let path = std::env::temp_dir()
+			.join(format!("omp-minimizer-config-legacy-{}.toml", std::process::id()));
+		std::fs::write(&path, "legacy_filters = false\n").unwrap();
+		let cfg = MinimizerConfig::from_options(&MinimizerOptions {
+			enabled: Some(true),
+			settings_path: Some(path.display().to_string()),
+			legacy_filters: Some(true),
+			..Default::default()
+		});
+		let _ = std::fs::remove_file(&path);
+		assert!(cfg.legacy_filters_active());
 	}
 }

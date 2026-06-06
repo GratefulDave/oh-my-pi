@@ -2167,16 +2167,12 @@ fn setup_process_substitution(
 //
 // We keep the `F_SETPIPE_SZ` fast path for Linux (avoids a thread spawn
 // for the common in-process case) but fall through to a detached writer
-// thread on every other platform, and on Linux when the kernel rejects
-// the requested size (body > `pipe-max-size`). The thread owns the
-// writer; it terminates naturally when the consumer drains the pipe or
-// drops the reader (`BrokenPipe`), so no `JoinHandle` is retained.
-//
-// `target_family = "wasm"` has no `F_SETPIPE_SZ` and no usable std
-// threads (`thread::Builder::spawn` returns an error), so neither path
-// above applies. There we write the body inline on the calling thread,
-// matching upstream's synchronous behavior; this is the only path that
-// keeps here-docs/here-strings working on that target.
+// thread on every other platform with OS threads, and on Linux when the
+// kernel rejects the requested size (body > `pipe-max-size`). The thread
+// owns the writer; it terminates naturally when the consumer drains the
+// pipe or drops the reader (`BrokenPipe`), so no `JoinHandle` is retained.
+// Targets without OS thread support keep upstream's synchronous write path
+// so heredocs continue to work there instead of failing at thread spawn.
 fn setup_open_file_with_contents(contents: &str) -> Result<OpenFile, error::Error> {
 	let (reader, mut writer) = std::io::pipe()?;
 	let bytes = contents.as_bytes();
@@ -2197,25 +2193,18 @@ fn setup_open_file_with_contents(contents: &str) -> Result<OpenFile, error::Erro
 			return Ok(reader.into());
 		}
 	}
-
-	// WASM inline path: std threads are unsupported here, so the detached
-	// writer thread below cannot run. Write the body inline on the calling
-	// thread (upstream's synchronous behavior). This can deadlock if the
-	// body exceeds the pipe buffer, but it is the only viable path on this
-	// target.
 	#[cfg(target_family = "wasm")]
 	{
 		writer.write_all(bytes)?;
 		drop(writer);
-		Ok(reader.into())
+		return Ok(reader.into());
 	}
-
-	// Generic path: detached writer thread. Writing inline deadlocks
-	// once `bytes.len()` exceeds the OS pipe buffer (Windows ~4 KiB,
-	// macOS 16-64 KiB), neither of which has a `F_SETPIPE_SZ`
-	// equivalent.
 	#[cfg(not(target_family = "wasm"))]
 	{
+		// Generic path: detached writer thread. Writing inline deadlocks
+		// once `bytes.len()` exceeds the OS pipe buffer (Windows ~4 KiB,
+		// macOS 16-64 KiB), neither of which has a `F_SETPIPE_SZ`
+		// equivalent.
 		let payload = bytes.to_vec();
 		std::thread::Builder::new()
 			.name("brush-heredoc-writer".into())
@@ -2225,7 +2214,7 @@ fn setup_open_file_with_contents(contents: &str) -> Result<OpenFile, error::Erro
 				// nothing useful to do with that error here.
 				let _ = writer.write_all(&payload);
 			})?;
-
-		Ok(reader.into())
 	}
+
+	Ok(reader.into())
 }

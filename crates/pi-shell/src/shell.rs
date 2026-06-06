@@ -1,9 +1,7 @@
 //! Runtime-agnostic brush shell execution.
 
-#[cfg(windows)]
-use std::collections::HashSet;
 use std::{
-	collections::HashMap,
+	collections::{HashMap, HashSet},
 	fs,
 	io::{self, Write},
 	str,
@@ -242,6 +240,7 @@ async fn run_shell_session(
 	ct: &mut CancelToken,
 ) -> Result<ShellRunResult> {
 	let tokio_cancel = CancellationToken::new();
+	let baseline_descendants = process::current_descendant_pids();
 
 	let mut run_task = tokio::spawn({
 		let session = session.clone();
@@ -264,6 +263,7 @@ async fn run_shell_session(
 		res = &mut run_task => res,
 		reason = ct.wait() => {
 			tokio_cancel.cancel();
+			terminate_new_descendants(&baseline_descendants).await;
 			let graceful = time::timeout(Duration::from_secs(2), &mut run_task).await;
 			if graceful.is_err() {
 				run_task.abort();
@@ -308,6 +308,7 @@ async fn run_shell_oneshot(
 	ct: CancelToken,
 ) -> Result<ShellExecuteResult> {
 	let tokio_cancel = CancellationToken::new();
+	let baseline_descendants = process::current_descendant_pids();
 
 	let mut task = tokio::spawn({
 		let tokio_cancel = tokio_cancel.clone();
@@ -321,6 +322,7 @@ async fn run_shell_oneshot(
 		result = &mut task => result,
 		reason = ct.wait() => {
 			tokio_cancel.cancel();
+			terminate_new_descendants(&baseline_descendants).await;
 			let graceful = time::timeout(Duration::from_secs(2), &mut task).await;
 			if graceful.is_err() {
 				task.abort();
@@ -353,6 +355,7 @@ async fn run_shell_oneshot_streams(
 	ct: CancelToken,
 ) -> Result<ShellExecuteResult> {
 	let tokio_cancel = CancellationToken::new();
+	let baseline_descendants = process::current_descendant_pids();
 
 	let mut task = tokio::spawn({
 		let tokio_cancel = tokio_cancel.clone();
@@ -366,6 +369,7 @@ async fn run_shell_oneshot_streams(
 		result = &mut task => result,
 		reason = ct.wait() => {
 			tokio_cancel.cancel();
+			terminate_new_descendants(&baseline_descendants).await;
 			let graceful = time::timeout(Duration::from_secs(2), &mut task).await;
 			if graceful.is_err() {
 				task.abort();
@@ -602,21 +606,6 @@ impl ChainCapture {
 	}
 }
 
-fn reason_only_minimizer_result(
-	filter: &'static str,
-	original_text: String,
-	input_bytes: usize,
-) -> MinimizerResult {
-	let output_bytes = u32::try_from(original_text.len()).unwrap_or(u32::MAX);
-	MinimizerResult {
-		filter: filter.to_string(),
-		text: original_text.clone(),
-		original_text,
-		input_bytes: u32::try_from(input_bytes).unwrap_or(u32::MAX),
-		output_bytes,
-	}
-}
-
 async fn run_shell_command(
 	session: &mut ShellSessionCore,
 	options: &ShellRunConfig,
@@ -693,12 +682,13 @@ async fn run_shell_command_single(
 	if let Some(buffered) = command_run.buffered
 		&& let Some(config) = options.minimizer.as_ref()
 	{
-		if buffered.exceeded {
-			if matches!(minimizer_mode, minimizer::engine::MinimizerMode::WholeCommand) {
-				minimized_out =
-					Some(reason_only_minimizer_result("too-large", String::new(), buffered.input_bytes));
-			}
-		} else {
+		// When the capture cap is exceeded the output was streamed raw and never
+		// buffered, so nothing was minimized — leave `minimized` absent, matching
+		// every other passthrough path and `apply_shell_minimizer`. Previously a
+		// `too-large` result with empty `text`/`original_text` was emitted, which a
+		// consumer keying off `minimized` presence could mistake for a real rewrite
+		// that produced empty output.
+		if !buffered.exceeded {
 			let minimized = match minimizer_mode {
 				minimizer::engine::MinimizerMode::WholeCommand => minimizer::apply(
 					&options.command,
@@ -713,10 +703,16 @@ async fn run_shell_command_single(
 					minimizer::MinimizerOutput::passthrough(&buffered.text)
 				},
 			};
-			if minimized.filter != "passthrough" {
-				let original_text = minimized
-					.original_text
-					.unwrap_or_else(|| minimized.text.clone());
+			// Surface telemetry only when the filter actually rewrote the output
+			// and kept the original buffer — same contract as `apply_shell_minimizer`
+			// in `pi-natives`. A supported filter that runs but leaves the output
+			// unchanged (e.g. a short `git diff --name-only`) reports `changed:
+			// false` with no `original_text` and must NOT set `minimized`, or API
+			// consumers keying off `result.minimized` are misled. The separate
+			// `too-large` reason path above is unaffected.
+			if minimized.changed
+				&& let Some(original_text) = minimized.original_text
+			{
 				let output_bytes = u32::try_from(minimized.text.len()).unwrap_or(u32::MAX);
 				minimized_out = Some(MinimizerResult {
 					filter: minimized.filter.to_string(),
@@ -776,8 +772,6 @@ async fn run_shell_command_segmented_chain(
 
 	let params = session.shell.default_exec_params();
 	let mut aggregate = Some(ChainCapture::new());
-	let mut aggregate_dropped_too_large = false;
-	let mut overflow_input_bytes = 0usize;
 	let mut previous_succeeded = true;
 	let mut last_result = None;
 	let max_capture_bytes = config.max_capture_bytes as usize;
@@ -809,14 +803,13 @@ async fn run_shell_command_segmented_chain(
 
 		if let Some(buffered) = command_run.buffered {
 			if buffered.exceeded {
-				aggregate_dropped_too_large = aggregate.is_some();
-				overflow_input_bytes = overflow_input_bytes.saturating_add(buffered.input_bytes);
+				// Cap exceeded mid-chain: output streamed raw, drop the buffered
+				// aggregate so the remaining segments stream too. No minimization
+				// happened, so we emit no `minimized` telemetry (see below).
 				aggregate = None;
 			} else if let Some(capture) = aggregate.as_mut() {
 				let next_input_bytes = capture.input_bytes.saturating_add(buffered.input_bytes);
 				if next_input_bytes > max_capture_bytes {
-					aggregate_dropped_too_large = true;
-					overflow_input_bytes = next_input_bytes;
 					aggregate = None;
 				} else {
 					let minimized = minimizer::apply(&segment.command, &buffered.text, exit, config);
@@ -844,6 +837,10 @@ async fn run_shell_command_segmented_chain(
 	};
 
 	let minimized_out = aggregate
+		// Only surface telemetry when the segmented chain actually rewrote the
+		// output; a `chain-noop` capture (`changed == false`) must yield `None`,
+		// matching the public `ShellRunResult.minimized` contract.
+		.filter(|capture| capture.changed)
 		.map(|capture| {
 			let minimized = minimizer::chain_output(
 				capture.text,
@@ -858,11 +855,11 @@ async fn run_shell_command_segmented_chain(
 				input_bytes:   u32::try_from(minimized.input_bytes).unwrap_or(u32::MAX),
 				output_bytes:  u32::try_from(minimized.output_bytes).unwrap_or(u32::MAX),
 			}
-		})
-		.or_else(|| {
-			aggregate_dropped_too_large
-				.then(|| reason_only_minimizer_result("too-large", String::new(), overflow_input_bytes))
 		});
+	// A chain that overflowed the aggregate cap streamed its output raw and was
+	// not minimized — `minimized_out` stays `None`, matching the whole-command
+	// path and `apply_shell_minimizer`. (Previously a `too-large` result with
+	// empty `text` was emitted, a footgun for consumers keying off presence.)
 
 	Ok((result, minimized_out))
 }
@@ -929,34 +926,7 @@ async fn run_shell_command_once(
 		let baseline_descendants = baseline_descendants.clone();
 		async move {
 			cancel_token.cancelled().await;
-			// Rescan-and-signal loop. Each pass picks up grandchildren spawned
-			// during the previous wave's grace period, then exits early as soon
-			// as no descendants remain. The first wave is SIGTERM so well-behaved
-			// programs get a chance to clean up; subsequent waves escalate to
-			// SIGKILL. Cheaper than the previous 20 Hz tracker loop and avoids
-			// the constant kernel chatter when no cancellation ever happens.
-			const WAVES: u32 = 3;
-			for wave in 0..WAVES {
-				let mut targets = process::TerminationTargets::new();
-				process::add_new_descendants(&mut targets, &baseline_descendants);
-				if targets.is_empty() {
-					return;
-				}
-				let signal = if wave == 0 {
-					process::TERM_SIGNAL
-				} else {
-					process::KILL_SIGNAL
-				};
-				targets.signal(signal);
-				if wave + 1 < WAVES {
-					let pause = if wave == 0 {
-						Duration::from_millis(75)
-					} else {
-						Duration::from_millis(150)
-					};
-					time::sleep(pause).await;
-				}
-			}
+			terminate_new_descendants(&baseline_descendants).await;
 		}
 	});
 	let source_info = SourceInfo::from("pi-natives:command");
@@ -1265,6 +1235,33 @@ async fn read_output_bytes(
 	}
 }
 
+// Rescan-and-signal loop for cancellation. Each pass picks up descendants
+// spawned during the previous wave's grace period, then exits as soon as no
+// targets remain so unrelated later commands are not swept into old cancels.
+async fn terminate_new_descendants<S: std::hash::BuildHasher + Sync>(baseline: &HashSet<i32, S>) {
+	const WAVES: u32 = 3;
+	for wave in 0..WAVES {
+		let mut targets = process::TerminationTargets::new();
+		process::add_new_descendants(&mut targets, baseline);
+		if targets.is_empty() {
+			return;
+		}
+		let signal = if wave == 0 {
+			process::TERM_SIGNAL
+		} else {
+			process::KILL_SIGNAL
+		};
+		targets.signal(signal);
+		if wave + 1 < WAVES {
+			let pause = if wave == 0 {
+				Duration::from_millis(75)
+			} else {
+				Duration::from_millis(150)
+			};
+			time::sleep(pause).await;
+		}
+	}
+}
 fn terminate_background_jobs(shell: &mut BrushShell) {
 	let mut targets = process::TerminationTargets::new();
 	for job in &mut shell.jobs_mut().jobs {
@@ -1895,94 +1892,58 @@ mod tests {
 		use brush_core::commands::{ChildSessionAction, child_session_action};
 
 		/// Interactive brush, leading its own pgroup, terminal stdin: foreground.
-		/// Terminal foregrounding wins regardless of pipeline/job-control state.
 		#[test]
 		fn interactive_with_terminal_stdin_takes_foreground() {
-			assert_eq!(
-				child_session_action(true, true, false, true),
-				ChildSessionAction::TakeForeground,
-			);
-			assert_eq!(
-				child_session_action(true, true, true, true),
-				ChildSessionAction::TakeForeground,
-			);
-			assert_eq!(
-				child_session_action(true, true, true, false),
-				ChildSessionAction::TakeForeground,
-			);
+			assert_eq!(child_session_action(true, true, false), ChildSessionAction::TakeForeground,);
+			// Terminal foregrounding wins even when this is the first stage of a
+			// pipeline; no detach is attempted.
+			assert_eq!(child_session_action(true, true, true), ChildSessionAction::TakeForeground,);
 		}
 
-		/// Brush leading a new pgroup with non-terminal stdin, NOT in a pipeline:
-		/// detach. `setsid()` keeps the child off the host's controlling tty.
+		/// Brush leading a new pgroup with non-terminal stdin always detaches —
+		/// including the first stage of a pipeline. `setsid()` keeps the child
+		/// off the host's controlling tty; the spawn path skips
+		/// `process_group(...)` for detached children, so later stages no longer
+		/// try to `setpgid`-join a leader that has moved sessions (the historical
+		/// EPERM hazard).
 		#[test]
-		fn new_pgroup_non_terminal_non_pipeline_detaches() {
-			assert_eq!(
-				child_session_action(true, false, false, false),
-				ChildSessionAction::DetachSession,
-			);
-			assert_eq!(
-				child_session_action(true, false, false, true),
-				ChildSessionAction::DetachSession,
-			);
+		fn non_terminal_stdin_detaches_regardless_of_pipeline() {
+			assert_eq!(child_session_action(true, false, false), ChildSessionAction::DetachSession,);
+			assert_eq!(child_session_action(true, false, true), ChildSessionAction::DetachSession,);
 		}
 
-		/// First stage of a pipeline that leads a new pgroup: detach only matters
-		/// for job control. `new_pg` alone (embedded hosts force it on the leader
-		/// while job control stays off) is not a real, parent-managed group, so
-		/// the leader detaches to keep off the host's controlling tty; with job
-		/// control on it stays in the group so later stages' `setpgid()` succeeds.
-		/// `execute_external_command` skips the group-join for detaching stages,
-		/// so a detached leader never makes a later stage EPERM.
-		#[test]
-		fn pipeline_leader_detaches_unless_job_control_active() {
-			assert_eq!(
-				child_session_action(true, false, true, false),
-				ChildSessionAction::DetachSession,
-			);
-			assert_eq!(child_session_action(true, false, true, true), ChildSessionAction::None,);
-		}
-
-		/// Non-interactive brush, terminal stdin: nothing to do (parent already
-		/// wired pgroup membership).
+		/// Non-interactive brush, terminal stdin, no pipeline: nothing to do.
 		#[test]
 		fn non_interactive_with_terminal_stdin_does_nothing() {
-			assert_eq!(child_session_action(false, true, false, false), ChildSessionAction::None,);
-			assert_eq!(child_session_action(false, true, true, false), ChildSessionAction::None,);
+			assert_eq!(child_session_action(false, true, false), ChildSessionAction::None,);
+		}
+
+		/// Non-interactive brush, terminal stdin, joining a pipeline pgroup:
+		/// nothing to do (parent already wired pgroup membership).
+		#[test]
+		fn non_interactive_terminal_stdin_in_pipeline_does_nothing() {
+			assert_eq!(child_session_action(false, true, true), ChildSessionAction::None,);
 		}
 
 		/// **Embedded host bug fix.** Non-interactive brush, non-terminal stdin,
-		/// no pipeline: detach so the child cannot SIGTTIN/SIGTTOU the host. This
-		/// is the case that regressed before this fix (PR #895).
+		/// no pipeline pgroup: detach so the child cannot SIGTTIN/SIGTTOU the
+		/// host. This is the case that regressed before this fix and is the
+		/// motivating bug for PR #895.
 		#[test]
 		fn embedded_host_with_non_terminal_stdin_detaches() {
-			assert_eq!(
-				child_session_action(false, false, false, false),
-				ChildSessionAction::DetachSession,
-			);
+			assert_eq!(child_session_action(false, false, false), ChildSessionAction::DetachSession,);
 		}
 
-		/// **Pipeline tty-safety (no job control).** Non-interactive brush,
-		/// non-terminal stdin (pipe), multi-command pipeline, job control off
-		/// (embedded host): detach. An interactive child in such a pipeline
-		/// (`true | zsh -i | cat`) would otherwise open `/dev/tty`, `tcsetpgrp`
-		/// itself to the foreground, and leave the host stopped. The embedded
-		/// host cancels via the descendant tree, not a shared pgroup.
+		/// **Pipeline tty-safety.** Non-interactive brush, non-terminal stdin
+		/// (pipe), and a multi-command pipeline: detach. An interactive child in
+		/// a pipeline (`zsh -i ... | awk`) would otherwise open `/dev/tty`,
+		/// `tcsetpgrp` itself to the foreground, and leave the host stopped on
+		/// its next tty read (`suspended (tty input)`). Each stage gets its own
+		/// session instead; the embedded host cancels via the descendant tree,
+		/// not a shared pgroup, and pipes are session-independent.
 		#[test]
-		fn no_job_control_pipeline_stage_detaches() {
-			assert_eq!(
-				child_session_action(false, false, true, false),
-				ChildSessionAction::DetachSession,
-			);
-		}
-
-		/// **Job-controlled later pipeline stage.** Non-terminal stdin, multi-
-		/// command pipeline, job control on, joining the leader's group
-		/// (`new_pg == false`): stay in the group. Detaching would `setsid()`
-		/// the stage out of the shared pipeline pgroup and break job-control
-		/// signal propagation (e.g. `sleep 10 | cat`).
-		#[test]
-		fn job_controlled_later_pipeline_stage_stays_in_group() {
-			assert_eq!(child_session_action(false, false, true, true), ChildSessionAction::None,);
+		fn pipeline_stage_with_non_terminal_stdin_detaches() {
+			assert_eq!(child_session_action(false, false, true), ChildSessionAction::DetachSession,);
 		}
 	}
 
@@ -2070,7 +2031,9 @@ replace = [{ pattern = "hello", replacement = "HI" }]
 		assert!(!result.cancelled);
 		assert!(!result.timed_out);
 		assert_eq!(output, "");
-		assert_eq!(result.minimized.expect("chain noop").filter, "chain-noop");
+		// `false && printf` short-circuits: nothing is rewritten, so a no-op chain
+		// must surface no minimizer telemetry (None).
+		assert!(result.minimized.is_none(), "chain noop must not surface telemetry");
 	}
 
 	#[cfg(unix)]
@@ -2133,7 +2096,7 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 
 	#[cfg(unix)]
 	#[tokio::test(flavor = "multi_thread")]
-	async fn whole_command_exceeding_capture_cap_reports_too_large_and_streams_raw() {
+	async fn whole_command_exceeding_capture_cap_streams_raw_without_minimized() {
 		let root = unique_temp_dir("whole-cap");
 		let minimizer = printf_minimizer(&root.join("minimizer.toml"), Some(1024));
 		let (result, output) =
@@ -2143,12 +2106,10 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 		assert_eq!(result.exit_code, Some(0));
 		assert_eq!(output.len(), 1200);
 		assert!(output.ends_with('x'));
-		let minimized = result.minimized.expect("too-large result");
-		assert_eq!(minimized.filter, "too-large");
-		assert_eq!(minimized.text, "");
-		assert_eq!(minimized.original_text, "");
-		assert_eq!(minimized.input_bytes, 1200);
-		assert_eq!(minimized.output_bytes, 0);
+		// Output exceeded the capture cap: streamed raw and never buffered, so
+		// nothing was minimized. `minimized` must be absent (not a `too-large`
+		// result with empty `text`, which would mislead presence-keyed consumers).
+		assert!(result.minimized.is_none());
 	}
 
 	#[cfg(unix)]
@@ -2190,10 +2151,9 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 		assert_eq!(result.exit_code, Some(0));
 		assert_eq!(output.len(), 1200);
 		assert!(output.ends_with('y'));
-		let minimized = result.minimized.expect("too-large result");
-		assert_eq!(minimized.filter, "too-large");
-		assert_eq!(minimized.text, "");
-		assert_eq!(minimized.original_text, "");
+		// Aggregate cap exceeded: the chain streamed its output raw and was not
+		// minimized, so `minimized` is absent (not an empty-text `too-large`).
+		assert!(result.minimized.is_none());
 	}
 
 	#[cfg(unix)]

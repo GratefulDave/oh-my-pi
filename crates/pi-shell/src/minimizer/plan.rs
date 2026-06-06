@@ -254,7 +254,7 @@ fn simple_segment(pipeline: &Pipeline) -> Option<(String, String)> {
 		},
 		// Compound shell syntax (if / for / while / subshell / { ... }) is
 		// not something the minimizer should touch.
-		Command::Compound(..) | Command::Function(_) | Command::ExtendedTest(_) => None,
+		Command::Compound(..) | Command::Function(_) | Command::ExtendedTest(..) => None,
 	}
 }
 
@@ -274,7 +274,7 @@ fn classify_pipeline(pipeline: &Pipeline) -> Option<CommandPlan> {
 		},
 		// Compound shell syntax (if / for / while / subshell / { ... }) is
 		// not something the minimizer should touch.
-		Command::Compound(..) | Command::Function(_) | Command::ExtendedTest(_) => {
+		Command::Compound(..) | Command::Function(_) | Command::ExtendedTest(..) => {
 			Some(CommandPlan::Compound)
 		},
 	}

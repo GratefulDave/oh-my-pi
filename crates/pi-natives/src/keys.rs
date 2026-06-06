@@ -484,6 +484,20 @@ const fn raw_ctrl_char(letter: u8) -> u8 {
 	(letter.to_ascii_lowercase() - b'a') + 1
 }
 
+/// Control bytes that legacy terminals send for named keys (Backspace, Tab,
+/// LF, CR/Enter, Escape, DEL).
+///
+/// In legacy encoding (no Kitty protocol, no `modifyOtherKeys`), pressing
+/// Ctrl+H/I/J/M/[ produces the same single byte the terminal also sends for
+/// Backspace/Tab/Enter/Escape. Without an enhanced encoding the two are
+/// physically indistinguishable, so we resolve them to the named key — that's
+/// what every user expects when they press Enter — and require the enhanced
+/// encoding to match `ctrl+<letter>` separately.
+#[inline]
+const fn is_named_key_legacy_byte(b: u8) -> bool {
+	matches!(b, 0x08 | 0x09 | 0x0a | 0x0d | 0x1b | 0x7f)
+}
+
 /// CTRL+symbol legacy mappings
 const fn ctrl_symbol_to_byte(symbol: u8) -> Option<u8> {
 	match symbol {
@@ -537,6 +551,35 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 	let Some(ParsedKeyId { key, modifier }) = parse_key_id(key_id) else {
 		return false;
 	};
+
+	// ESC-prefixed sequences (terminals with metaSendsEscape / "Use Option as
+	// Meta"): \x1b\x1b[...] = Alt + inner-key. Strip the ESC prefix and match the
+	// inner sequence against the base key (without alt modifier).
+	// Example: \x1b\x1b[A matches "alt+up" because \x1b[A matches "up".
+	// Active in BOTH legacy and kitty mode (mixed mode) because terminals like
+	// Zellij in mixed mode may send legacy Alt sequences alongside Kitty ones.
+	if modifier & MOD_ALT != 0
+		&& bytes.len() > 2
+		&& bytes[0] == 0x1b
+		&& bytes[1] == 0x1b
+		&& (bytes[2] == b'[' || bytes[2] == b'O')
+	{
+		let inner_modifier = modifier & !MOD_ALT;
+		let inner_key_id: String = if inner_modifier == 0 {
+			key.to_string()
+		} else {
+			let mut s = String::with_capacity(16);
+			if inner_modifier & MOD_SHIFT != 0 {
+				s.push_str("shift+");
+			}
+			if inner_modifier & MOD_CTRL != 0 {
+				s.push_str("ctrl+");
+			}
+			s.push_str(key);
+			s
+		};
+		return matches_key_inner(&bytes[1..], &inner_key_id, true);
+	}
 
 	// Parse Kitty once (avoid repeated parsing in branches).
 	let kitty_parsed = parse_kitty_sequence_bytes(bytes);
@@ -608,29 +651,6 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 		|keycode: i32, m: u32| -> bool { mok.is_some_and(|(mm, kk)| kk == keycode && mm == m) };
 
 	// Named keys (case-insensitive)
-	// Mixed-mode Alt handling: terminals can still send ESC-prefixed legacy CSI/SS3
-	// sequences (for example `\x1b\x1b[A` for Alt+Up, `\x1b\x1b[1;2A` for
-	// Alt+Shift+Up) even while Kitty protocol reporting is active.
-	// `parse_key_inner` recognizes these as `alt+...`; mirror that behavior here
-	// so `matches_key("alt+up")` / `matches_key("alt+shift+up")` agree with
-	// `parse_key()` for any modifier combination that includes ALT.
-	if modifier & MOD_ALT != 0
-		&& bytes.len() > 2
-		&& bytes[0] == 0x1b
-		&& bytes[1] == 0x1b
-		&& (bytes[2] == b'[' || bytes[2] == b'O')
-		&& let Some(inner_key_id) = parse_key_inner(&bytes[1..], true)
-	{
-		// inner_key_id is e.g. "up" for alt+up or "shift+up" for alt+shift+up.
-		// Verify the key name and the non-ALT portion of the modifier both match.
-		if let Some(ParsedKeyId { key: inner_k, modifier: inner_m }) =
-			parse_key_id(&inner_key_id)
-		{
-			if inner_k.eq_ignore_ascii_case(key) && inner_m == modifier & !MOD_ALT {
-				return true;
-			}
-		}
-	}
 	if key.eq_ignore_ascii_case("escape") || key.eq_ignore_ascii_case("esc") {
 		if modifier != 0 {
 			return false;
@@ -869,14 +889,10 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 		// disambiguate.
 		if modifier == (MOD_CTRL | MOD_ALT) && is_letter {
 			let ctrl_char = raw_ctrl_char(ch);
-			// Skip if ctrl_char is also a named-key byte (Backspace=0x08,
-			// Tab=0x09, LF=0x0a, CR=0x0d) so that e.g. \x1b\r is not
-			// accepted as ctrl+alt+m – it is Alt+Enter; only enhanced
-			// encodings (Kitty/modifyOtherKeys) can disambiguate.
-			if !matches!(ctrl_char, 0x08 | 0x09 | 0x0a | 0x0d)
-				&& bytes.len() == 2
+			if bytes.len() == 2
 				&& bytes[0] == 0x1b
 				&& bytes[1] == ctrl_char
+				&& !is_named_key_legacy_byte(ctrl_char)
 			{
 				return true;
 			}
@@ -904,27 +920,22 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 		if modifier == MOD_CTRL {
 			if is_letter {
 				let raw = raw_ctrl_char(ch);
-				// Bytes 0x08/0x09/0x0a/0x0d are shared with named keys
-				// (Backspace/Tab/Enter) – only enhanced encodings can
-				// distinguish ctrl+h from Backspace, ctrl+m from Enter, etc.
-				// Skip the raw fast-path for those bytes so that a bare \r
-				// cannot match ctrl+m in legacy mode.
-				if !matches!(raw, 0x08 | 0x09 | 0x0a | 0x0d)
-					&& bytes.len() == 1
-					&& bytes[0] == raw
-				{
+				// `\r`/`\t`/`\x08`/`\x1b`/`\n` are physically the same byte the terminal
+				// sends for Enter/Tab/Backspace/Escape, so the legacy fast-path can only
+				// claim them when the byte is not a named key. Enhanced encodings still
+				// match below via kitty_matches/mok_matches.
+				if bytes.len() == 1 && bytes[0] == raw && !is_named_key_legacy_byte(raw) {
 					return true;
 				}
 				return mok_matches(codepoint, MOD_CTRL) || kitty_matches(codepoint, MOD_CTRL);
 			}
 
-			// ctrl+symbol legacy mapping (layout dependent)
-			// 0x1b (ctrl+[) is also the ESC byte – the named Escape key – so only
-			// enhanced encodings can distinguish the two; skip the legacy fast-path
-			// to prevent a plain Escape press from firing a ctrl+[ binding.
+			// ctrl+symbol legacy mapping (layout dependent). Same caveat as above: skip
+			// the fast-path when the produced byte coincides with a named key (e.g.
+			// ctrl+[ → ESC).
 			if let Some(legacy_ctrl) = ctrl_symbol_to_byte(ch)
-				&& legacy_ctrl != 0x1b
 				&& bytes == [legacy_ctrl]
+				&& !is_named_key_legacy_byte(legacy_ctrl)
 			{
 				return true;
 			}
@@ -1070,6 +1081,7 @@ fn parse_key_inner(bytes: &[u8], kitty_protocol_active: bool) -> Option<Cow<'sta
 	{
 		return Some(Cow::Owned(format!("alt+{inner_key}")));
 	}
+
 	// Fixed CSI / SS3 sequences not covered by LEGACY_SEQUENCES
 	match bytes {
 		b"\x1b[Z" => Some(Cow::Borrowed("shift+tab")),
@@ -1618,15 +1630,49 @@ mod tests {
 	}
 
 	#[test]
-	fn escape_does_not_match_ctrl_bracket() {
-		// 0x1b is both the named Escape byte and what ctrl+[ produces.  In legacy
-		// mode the two are indistinguishable, so a bare ESC must NOT fire a ctrl+[
-		// binding – only enhanced encodings (Kitty / modifyOtherKeys) can tell them
-		// apart.
-		assert!(!matches_key_inner(b"\x1b", "ctrl+[", false));
-		assert!(!matches_key_inner(b"\x1b", "ctrl+[", true));
-		// The named Escape key must still match the same byte.
+	fn ctrl_letter_does_not_steal_named_key_legacy_bytes() {
+		// Issue #1354: pressing Enter sends `\r` (0x0d) and that byte is also
+		// the legacy encoding of Ctrl+M. In legacy mode the two are physically
+		// indistinguishable, so `\r` MUST resolve to Enter and MUST NOT match
+		// ctrl+m. Same goes for the other named-key collisions.
+		assert!(matches_key_inner(b"\r", "enter", false));
+		assert!(!matches_key_inner(b"\r", "ctrl+m", false));
+
+		assert!(matches_key_inner(b"\n", "enter", false));
+		assert!(!matches_key_inner(b"\n", "ctrl+j", false));
+
+		assert!(matches_key_inner(b"\t", "tab", false));
+		assert!(!matches_key_inner(b"\t", "ctrl+i", false));
+
+		assert!(matches_key_inner(b"\x08", "backspace", false));
+		assert!(!matches_key_inner(b"\x08", "ctrl+h", false));
+
 		assert!(matches_key_inner(b"\x1b", "escape", false));
-		assert!(matches_key_inner(b"\x1b", "escape", true));
+		assert!(!matches_key_inner(b"\x1b", "ctrl+[", false));
+
+		// Non-colliding ctrl+letter still works through the legacy fast-path.
+		assert!(matches_key_inner(b"\x03", "ctrl+c", false));
+		assert!(matches_key_inner(b"\x18", "ctrl+x", false));
+
+		// Enhanced encodings still let ctrl+<colliding-letter> match — that's
+		// the whole point of the protocol upgrade.
+		assert!(matches_key_inner(b"\x1b[109;5u", "ctrl+m", true));
+		assert!(matches_key_inner(b"\x1b[27;5;109~", "ctrl+m", false));
+		assert!(matches_key_inner(b"\x1b[105;5u", "ctrl+i", true));
+		assert!(matches_key_inner(b"\x1b[27;5;91~", "ctrl+[", false));
+	}
+
+	#[test]
+	fn ctrl_alt_letter_does_not_steal_alt_enter() {
+		// `\x1b\r` is Alt+Enter in legacy mode; it must not also satisfy
+		// ctrl+alt+m. Enhanced encodings still match.
+		assert!(matches_key_inner(b"\x1b\r", "alt+enter", false));
+		assert!(!matches_key_inner(b"\x1b\r", "ctrl+alt+m", false));
+		assert!(!matches_key_inner(b"\x1b\t", "ctrl+alt+i", false));
+		assert!(!matches_key_inner(b"\x1b\x08", "ctrl+alt+h", false));
+
+		// CSI-u / modifyOtherKeys forms still resolve ctrl+alt+<colliding>.
+		assert!(matches_key_inner(b"\x1b[109;7u", "ctrl+alt+m", true));
+		assert!(matches_key_inner(b"\x1b[27;7;109~", "ctrl+alt+m", false));
 	}
 }

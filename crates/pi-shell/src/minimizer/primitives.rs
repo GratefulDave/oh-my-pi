@@ -2,34 +2,21 @@
 
 use std::collections::BTreeMap;
 
-/// Named head/tail cap configurations for common output classes.
-///
-/// Each variant encodes a threshold (above which capping triggers) plus the
-/// head/tail line counts used by [`head_tail_cap`]. Using named classes
-/// instead of per-callsite magic numbers keeps the policy in one place.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CapClass {
-	/// General command noise / error output (errors, warnings, stack traces).
 	Errors,
-	/// Warning-heavy output.
 	Warnings,
-	/// Short reference or stat lists (git diff --stat, branch listings).
 	List,
-	/// Package manager install/update inventory listings.
 	Inventory,
-	/// Large binary-inspection output (xxd, strings, od).
-	Large,
 }
 
 impl CapClass {
-	/// Threshold above which `head_tail_cap` applies the cap.
 	pub const fn lines(self) -> usize {
 		match self {
 			Self::Errors => 160,
 			Self::Warnings => 120,
 			Self::List => 80,
 			Self::Inventory => 40,
-			Self::Large => 500,
 		}
 	}
 }
@@ -113,6 +100,14 @@ pub fn head_tail_lines(input: &str, head: usize, tail: usize) -> String {
 		out.push('\n');
 	}
 	out
+}
+
+/// Keep head/tail lines using a named cap class.
+pub fn head_tail_cap(input: &str, class: CapClass) -> String {
+	let cap = class.lines();
+	let head = reduced(cap, cap / 3);
+	let tail = cap - head;
+	head_tail_lines(input, head, tail)
 }
 
 /// Drop lines matching any of the supplied predicates.
@@ -313,20 +308,6 @@ pub fn keep_lines_regex(input: &str, set: &regex::RegexSet) -> String {
 		out.push('\n');
 	}
 	out
-}
-
-/// Apply a named head/tail cap to `input`.
-///
-/// Delegates to [`head_tail_lines`] using the head/tail counts encoded in
-/// `cap`. Callers should guard with `input.lines().count() > cap.lines()`
-/// before calling when they want to avoid the string clone on short inputs,
-/// but calling unconditionally is also correct (the inner function short-
-/// circuits when the line count is within bounds).
-pub fn head_tail_cap(input: &str, class: CapClass) -> String {
-	let cap = class.lines();
-	let head = reduced(cap, cap / 3);
-	let tail = cap - head;
-	head_tail_lines(input, head, tail)
 }
 
 #[cfg(test)]

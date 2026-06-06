@@ -41,19 +41,13 @@ pub struct MinimizerOptions {
 	/// Maximum captured bytes per command before the engine falls back to
 	/// the raw, un-minimized output. Default 4 MiB.
 	pub max_capture_bytes:    Option<u32>,
-	/// Source-outline aggressiveness for `cat <source-file>` minimization.
-	/// Accepts `"default"` (current behavior) or `"aggressive"` (strip
-	/// function/method bodies for ts/tsx/js/jsx/py/rs/go).
+	/// Source-outline level for `cat <source-file>` minimization. Accepts
+	/// `"default"` (current behavior) or `"aggressive"` (strip function bodies).
 	pub source_outline_level: Option<String>,
-	/// Master switch for the AI-summary filter (W4 / rtk smart). Defaults
-	/// to off; only effective when the host crate is built with the
-	/// `ai-smart` Cargo feature.
-	pub ai_smart_enabled:     Option<bool>,
-	/// Provider key for the AI summarizer. Defaults to `"deepseek"`.
-	pub ai_smart_provider:    Option<String>,
-	/// Kill-switch to fall back to pre-PR legacy behavior for the
-	/// always-shrink filters (grep, find, pytest). When unset, defers to
-	/// the `OMP_MINIMIZER_LEGACY_FILTERS` env var; default `false`.
+	/// Kill-switch to fall back to the pre-PR (legacy) filter behavior for
+	/// grep / find / pytest. When `Some(true)`, filters that opted into the
+	/// always-shrink Tier 1 / Tier 2 behavior skip the new code path. When
+	/// `None`, defers to the `OMP_MINIMIZER_LEGACY_FILTERS` env var.
 	pub legacy_filters:       Option<bool>,
 }
 
@@ -67,8 +61,6 @@ impl From<MinimizerOptions> for minimizer::MinimizerOptions {
 			except:               value.except,
 			max_capture_bytes:    value.max_capture_bytes,
 			source_outline_level: value.source_outline_level,
-			ai_smart_enabled:     value.ai_smart_enabled,
-			ai_smart_provider:    value.ai_smart_provider,
 			legacy_filters:       value.legacy_filters,
 		}
 	}
@@ -131,20 +123,13 @@ pub struct ShellExecuteOptions<'env> {
 	pub signal:        Option<Unknown<'env>>,
 }
 
-#[napi(object)]
-pub struct ShellMinimizerApplyOptions {
-	pub command:   String,
-	pub captured:  String,
-	pub exit_code: Option<i32>,
-	pub minimizer: Option<MinimizerOptions>,
-}
-
 /// Telemetry for a single minimization.
 ///
-/// Surfaced when the minimizer rewrote output or emitted a reason-only
-/// miss label. The session layer should persist `original_text` only for
-/// actual rewrites; reason-only records keep `text` unchanged and must not
-/// trigger artifact persistence.
+/// Surfaced when the minimizer actually rewrote the command's output. The
+/// session layer is expected to persist `original_text` via its
+/// `ArtifactManager`, splice the resulting `artifact://<id>` reference
+/// into `text`, and replace any previously streamed raw output with the
+/// minimized text.
 #[napi(object)]
 pub struct MinimizerResult {
 	/// Dispatch label produced by the minimizer (e.g. `"git"`,
@@ -297,31 +282,6 @@ pub fn execute_shell<'env>(
 	})
 }
 
-#[napi]
-pub fn apply_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<MinimizerResult> {
-	let minimizer = options.minimizer?;
-	let minimizer_options: minimizer::MinimizerOptions = minimizer.into();
-	let config = minimizer::MinimizerConfig::from_options(&minimizer_options);
-	let output = minimizer::apply(
-		&options.command,
-		&options.captured,
-		options.exit_code.unwrap_or(1),
-		&config,
-	);
-	if output.filter != "passthrough" {
-		let original_text = output.original_text.unwrap_or_else(|| output.text.clone());
-		let output_bytes = u32::try_from(output.text.len()).unwrap_or(u32::MAX);
-		return Some(MinimizerResult {
-			filter: output.filter.to_string(),
-			text: output.text,
-			original_text,
-			input_bytes: u32::try_from(output.input_bytes).unwrap_or(u32::MAX),
-			output_bytes,
-		});
-	}
-	None
-}
-
 fn bridge_chunks(
 	on_chunk: Option<ThreadsafeFunction<String>>,
 ) -> (Option<mpsc::UnboundedSender<String>>, Option<napi::tokio::task::JoinHandle<()>>) {
@@ -384,6 +344,85 @@ pub fn apply_bash_fixups(command: String) -> BashFixupResult {
 	core_apply_bash_fixups(&command).into()
 }
 
+/// Inputs for [`apply_shell_minimizer`]: a captured command's text plus the
+/// minimizer configuration to run against it.
+#[napi(object)]
+pub struct ShellMinimizerApplyOptions {
+	/// The command line that produced `captured` (used to select a filter).
+	pub command:   String,
+	/// The full captured stdout/stderr to minimize.
+	pub captured:  String,
+	/// The command's exit status; omitted is treated as success (`0`).
+	pub exit_code: Option<i32>,
+	/// Minimizer configuration; when omitted the call is a no-op (`null`).
+	pub minimizer: Option<MinimizerOptions>,
+}
+
+/// Run the shell-output minimizer over an already-captured command result,
+/// without spawning a shell.
+///
+/// This is the one-shot counterpart to the minimization that
+/// [`execute_shell`] performs inline: callers that captured a command's output
+/// elsewhere can pass it here to obtain the same telemetry.
+///
+/// Returns [`MinimizerResult`] **only** when the minimizer actually rewrote the
+/// output (`changed == true`) and retained the original buffer, mirroring the
+/// persistent-shell path. Returns `null` for every no-op case: when
+/// `minimizer` is omitted, when the config is disabled, or when the filter
+/// passes the output through unchanged. A missing `exit_code` is treated as
+/// success (`0`).
+///
+/// Async (returns a Promise): minimization can scan multi-megabyte captured
+/// output, so the work runs on a blocking pool to avoid stalling the JS event
+/// loop.
+#[napi(ts_return_type = "Promise<MinimizerResult | null>")]
+pub fn apply_shell_minimizer(
+	env: &Env,
+	options: ShellMinimizerApplyOptions,
+) -> Result<PromiseRaw<'_, Option<MinimizerResult>>> {
+	// Returns a Promise rather than a sync value: minimization can run over a
+	// multi-megabyte capture buffer, and a sync `#[napi]` fn would do that CPU
+	// work on the JS main thread and stall the event loop. Run the whole pass on
+	// a blocking pool, mirroring `execute_shell`.
+	task::future(env, "shell.minimize", async move {
+		napi::tokio::task::spawn_blocking(move || run_shell_minimizer(options))
+			.await
+			.map_err(|err| Error::from_reason(err.to_string()))
+	})
+}
+
+/// Pure, blocking core of [`apply_shell_minimizer`], factored out so it can run
+/// inside `spawn_blocking` and be unit-tested without an N-API `Env`.
+///
+/// Mirrors the persistent-shell path (`pi_shell::shell`): surface telemetry
+/// only when the minimizer actually rewrote the output and kept the original
+/// buffer. The disabled / passthrough cases report `changed: false` with no
+/// `original_text`, and yield `None`.
+fn run_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<MinimizerResult> {
+	let minimizer = options.minimizer?;
+	let minimizer_options: minimizer::MinimizerOptions = minimizer.into();
+	let config = minimizer::MinimizerConfig::from_options(&minimizer_options);
+	let output = minimizer::apply(
+		&options.command,
+		&options.captured,
+		options.exit_code.unwrap_or(0),
+		&config,
+	);
+	if output.changed
+		&& let Some(original_text) = output.original_text
+	{
+		let output_bytes = u32::try_from(output.text.len()).unwrap_or(u32::MAX);
+		return Some(MinimizerResult {
+			filter: output.filter.to_string(),
+			text: output.text,
+			original_text,
+			input_bytes: u32::try_from(output.input_bytes).unwrap_or(u32::MAX),
+			output_bytes,
+		});
+	}
+	None
+}
+
 #[cfg(test)]
 mod tests {
 	use std::time::Duration;
@@ -397,16 +436,45 @@ mod tests {
 	use super::CoreShell;
 
 	#[test]
-	fn apply_shell_minimizer_keeps_chain_first_reason_when_chain_dispatch_does_not_rewrite() {
-		let result = super::apply_shell_minimizer(super::ShellMinimizerApplyOptions {
-			command:   "git diff ; printf done".to_string(),
-			captured:  "diff --git a/file.rs b/file.rs\n".to_string(),
+	fn apply_shell_minimizer_surfaces_rewrite_with_original() {
+		let captured = "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n";
+		let result = super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
+			command:   "git diff".to_string(),
+			captured:  captured.to_string(),
 			exit_code: Some(0),
 			minimizer: Some(super::MinimizerOptions { enabled: Some(true), ..Default::default() }),
 		})
-		.expect("expected minimizer result");
-		assert_eq!(result.filter, "chain-first");
-		assert_eq!(result.text, result.original_text);
+		.expect("an enabled, supported command should surface a rewrite");
+		assert_eq!(result.filter, "git");
+		// A genuine rewrite carries the untouched capture in `original_text`
+		// and a strictly different minimized `text`.
+		assert_eq!(result.original_text, captured);
+		assert_ne!(result.text, result.original_text);
+		assert_eq!(result.input_bytes as usize, captured.len());
+	}
+
+	#[test]
+	fn apply_shell_minimizer_returns_none_when_disabled() {
+		// `enabled: false` keeps the engine in passthrough — no telemetry.
+		assert!(
+			super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
+				command:   "git diff".to_string(),
+				captured:  "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n".to_string(),
+				exit_code: Some(0),
+				minimizer: Some(super::MinimizerOptions { enabled: Some(false), ..Default::default() }),
+			})
+			.is_none()
+		);
+		// A missing minimizer handle is also a no-op.
+		assert!(
+			super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
+				command:   "git diff".to_string(),
+				captured:  "diff --git a/file.rs b/file.rs\n".to_string(),
+				exit_code: Some(0),
+				minimizer: None,
+			})
+			.is_none()
+		);
 	}
 
 	mod child_session_action_tests {
@@ -414,81 +482,39 @@ mod tests {
 
 		#[test]
 		fn interactive_with_terminal_stdin_takes_foreground() {
-			assert_eq!(
-				child_session_action(true, true, false, true),
-				ChildSessionAction::TakeForeground
-			);
-			assert_eq!(
-				child_session_action(true, true, true, true),
-				ChildSessionAction::TakeForeground
-			);
-			assert_eq!(
-				child_session_action(true, true, true, false),
-				ChildSessionAction::TakeForeground
-			);
+			assert_eq!(child_session_action(true, true, false), ChildSessionAction::TakeForeground);
+			assert_eq!(child_session_action(true, true, true), ChildSessionAction::TakeForeground);
 		}
 
 		#[test]
-		fn new_pgroup_non_terminal_non_pipeline_detaches() {
-			// Leading a new pgroup but not in a pipeline: setsid keeps it off the
-			// host's controlling tty.
-			assert_eq!(
-				child_session_action(true, false, false, false),
-				ChildSessionAction::DetachSession
-			);
-			assert_eq!(
-				child_session_action(true, false, false, true),
-				ChildSessionAction::DetachSession
-			);
-		}
-
-		#[test]
-		fn pipeline_leader_detaches_unless_job_control_active() {
-			// Job control off (embedded host forces NewProcessGroup on the leader):
-			// the leader has no job-control consumer, so it must detach like every
-			// other no-job-control stage — otherwise `zsh -i -c ... | cat` keeps the
-			// host's controlling tty. The spawn path skips the group-join for
-			// detaching later stages, so this does not reintroduce the setpgid EPERM.
-			assert_eq!(
-				child_session_action(true, false, true, false),
-				ChildSessionAction::DetachSession
-			);
-			// Job control on: the leader anchors a real, parent-managed group; stay
-			// in it so later stages' setpgid succeeds and signals propagate.
-			assert_eq!(child_session_action(true, false, true, true), ChildSessionAction::None);
+		fn non_terminal_stdin_detaches_regardless_of_pipeline() {
+			assert_eq!(child_session_action(true, false, false), ChildSessionAction::DetachSession);
+			// A leading-new-pgroup stage of a pipeline still detaches: setsid keeps
+			// it off the host's controlling tty.
+			assert_eq!(child_session_action(true, false, true), ChildSessionAction::DetachSession);
 		}
 
 		#[test]
 		fn non_interactive_with_terminal_stdin_does_nothing() {
-			assert_eq!(child_session_action(false, true, false, false), ChildSessionAction::None);
-			assert_eq!(child_session_action(false, true, true, false), ChildSessionAction::None);
+			assert_eq!(child_session_action(false, true, false), ChildSessionAction::None);
+		}
+
+		#[test]
+		fn non_interactive_terminal_stdin_in_pipeline_does_nothing() {
+			assert_eq!(child_session_action(false, true, true), ChildSessionAction::None);
 		}
 
 		#[test]
 		fn embedded_host_with_non_terminal_stdin_detaches() {
-			assert_eq!(
-				child_session_action(false, false, false, false),
-				ChildSessionAction::DetachSession
-			);
+			assert_eq!(child_session_action(false, false, false), ChildSessionAction::DetachSession);
 		}
 
 		#[test]
-		fn no_job_control_pipeline_stage_detaches() {
-			// Regression: an interactive child inside an embedded (no-job-control)
-			// pipeline (`zsh -i | awk`) must not stay in the host session and seize
-			// its tty. With job control off the stage detaches.
-			assert_eq!(
-				child_session_action(false, false, true, false),
-				ChildSessionAction::DetachSession
-			);
-		}
-
-		#[test]
-		fn job_controlled_later_pipeline_stage_stays_in_group() {
-			// A later stage of a job-controlled pipeline joins the leader's group
-			// (new_pg == false); detaching would setsid it out and break job-control
-			// signal propagation (e.g. `sleep 10 | cat`).
-			assert_eq!(child_session_action(false, false, true, true), ChildSessionAction::None);
+		fn pipeline_stage_with_non_terminal_stdin_detaches() {
+			// Regression: an interactive child inside a pipeline (`zsh -i | awk`)
+			// must not stay in the host session and seize its tty. Pre-fix this
+			// returned `None`, leaving the stage attached and able to SIGTTIN the host.
+			assert_eq!(child_session_action(false, false, true), ChildSessionAction::DetachSession);
 		}
 	}
 

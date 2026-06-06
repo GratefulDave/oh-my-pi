@@ -319,6 +319,24 @@ fn detect_subcommand(program: &str, args: &[String]) -> Option<String> {
 			],
 			&[],
 		),
+		"npx" => first_non_global_arg(
+			args,
+			&[
+				"--workspace",
+				"-w",
+				"--package",
+				"-p",
+				"--prefix",
+				"--cache",
+				"--registry",
+				"--userconfig",
+				"--call",
+				"--shell",
+				"--node-arg",
+			],
+			&["--yes", "--no", "--no-install", "--quiet", "--silent", "--verbose"],
+			&[],
+		),
 		"pnpm" => first_non_global_arg(
 			args,
 			&["--dir", "-C", "--filter", "-F", "--workspace", "--config", "--store-dir"],
@@ -360,6 +378,45 @@ fn detect_subcommand(program: &str, args: &[String]) -> Option<String> {
 		"aws" => skip_aws_global_options(args)
 			.and_then(|index| args.get(index))
 			.map(|arg| arg.to_lowercase()),
+		"uv" | "uvx" => first_non_global_arg(
+			args,
+			&[
+				"--directory",
+				"-C",
+				"--project",
+				"-p",
+				"--cache-dir",
+				"--config-file",
+				"--config-setting",
+				"--python",
+				"--python-preference",
+				"--exclude-newer",
+				"--color",
+				"--allow-insecure-host",
+				"--no-binary",
+				"--only-binary",
+			],
+			&[
+				"--offline",
+				"--no-cache",
+				"--no-cache-dir",
+				"--no-progress",
+				"--native-tls",
+				"--no-native-tls",
+				"--quiet",
+				"-q",
+				"--verbose",
+				"-v",
+				"--upgrade",
+				"--no-upgrade",
+				"--require-hashes",
+				"--verify-hashes",
+				"--no-verify-hashes",
+				"--no-build",
+				"--reinstall",
+			],
+			&[],
+		),
 		"jest" | "vitest" => first_non_global_arg(args, &[], &[], &[]),
 		_ => args
 			.iter()
@@ -612,7 +669,6 @@ mod tests {
 			assert_eq!(detected.subcommand.as_deref(), Some("lambda"), "{command}");
 		}
 	}
-
 }
 
 #[test]
@@ -624,4 +680,25 @@ fn detects_bun_globals_and_subcommands() {
 	let command = detect("env CI=1 /usr/local/bin/bun test").expect("bun test is detected");
 	assert_eq!(command.program, "bun");
 	assert_eq!(command.subcommand.as_deref(), Some("test"));
+}
+
+#[test]
+fn npx_workspace_value_is_skipped_in_subcommand_detection() {
+	// `npx -w <workspace>` is a value-taking option; the workspace name must
+	// not be returned as the subcommand. The actual tool name follows after
+	// the option value.
+	let command = detect("npx -w vitest echo PASS").expect("npx command is detected");
+	assert_eq!(command.program, "npx");
+	assert_eq!(command.subcommand.as_deref(), Some("echo"));
+
+	// plain npx invocation with an actual tool still resolves correctly
+	let command = detect("npx vitest").expect("npx vitest is detected");
+	assert_eq!(command.program, "npx");
+	assert_eq!(command.subcommand.as_deref(), Some("vitest"));
+
+	// workspace value that happens to be a tool name is skipped; the next
+	// token is the actual tool
+	let command = detect("npx -w my-workspace vitest").expect("npx with workspace is detected");
+	assert_eq!(command.program, "npx");
+	assert_eq!(command.subcommand.as_deref(), Some("vitest"));
 }

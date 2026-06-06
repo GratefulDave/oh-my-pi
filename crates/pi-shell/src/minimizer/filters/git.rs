@@ -36,7 +36,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 
 	let cleaned = primitives::strip_ansi(input);
 	let text = match ctx.subcommand {
-		Some("status") if is_status_machine_format(ctx.command) => condense_status(&cleaned),
+		Some("status") if is_status_machine_format(ctx.command) => cleaned,
 		Some("status") => condense_status(&cleaned),
 		Some("diff") if is_stat_format(ctx.command) => condense_diff_stat(&cleaned),
 		Some("diff") => {
@@ -50,14 +50,25 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 				compact_diff_output(&cleaned)
 			}
 		},
+		Some("show") if is_show_custom_format(ctx.command) => cleaned,
 		Some("show") => condense_show(&cleaned),
 		Some("log") => condense_log(&cleaned, 32, 16),
+		// Non-listing branch formats produce single values or one-liner
+		// confirmations (e.g. `--show-current` → `main`, `--delete` →
+		// `Deleted branch feature (was abc123).`).  `condense_branch`
+		// would rewrite those as `local: main\n` / `local: Deleted
+		// branch…`, changing the meaning of the requested output, so
+		// skip it and passthrough the cleaned buffer.
+		Some("branch") if is_branch_non_listing(ctx.command) => cleaned,
 		Some("branch") => condense_branch(&cleaned),
+		Some("tag") if is_tag_non_listing(ctx.command) => cleaned,
 		Some("tag") => primitives::compact_listing(&cleaned, 40),
 		Some("stash") => condense_stash(ctx.command, &cleaned, exit_code),
 		Some("worktree") => cleaned,
+		Some("push") if has_token(ctx.command, "--porcelain") => cleaned,
 		Some("push") => condense_push(&cleaned, exit_code),
 		Some("pull") => condense_pull(&cleaned, exit_code),
+		Some("fetch") if has_token(ctx.command, "--porcelain") => cleaned,
 		Some("fetch") => condense_fetch(&cleaned, exit_code),
 		Some("commit") => condense_commit(&cleaned, exit_code),
 		Some("merge" | "rebase" | "checkout" | "switch" | "restore" | "clean" | "reset" | "add") => {
@@ -108,9 +119,9 @@ fn has_token(command: &str, token: &str) -> bool {
 }
 
 fn is_status_machine_format(command: &str) -> bool {
-	command.split_whitespace().any(|part| {
-		matches!(part, "-s" | "--short" | "--porcelain" | "--porcelain=v1" | "--porcelain=v2")
-	})
+	command
+		.split_whitespace()
+		.any(|part| matches!(part, "--porcelain" | "--porcelain=v1" | "--porcelain=v2"))
 }
 
 fn is_stat_format(command: &str) -> bool {
@@ -148,6 +159,63 @@ fn diff_listing_mode(command: &str) -> Option<DiffListingMode> {
 	} else {
 		None
 	}
+}
+pub(crate) fn diff_format_key(command: &str) -> u8 {
+	if is_stat_format(command) {
+		1
+	} else {
+		match diff_listing_mode(command) {
+			Some(DiffListingMode::NameOnly) => 2,
+			Some(DiffListingMode::NameStatus) => 3,
+			Some(DiffListingMode::Numstat) => 4,
+			None => {
+				if has_token(command, "--raw") {
+					5
+				} else if has_token(command, "--summary") {
+					6
+				} else if has_token(command, "--check") {
+					7
+				} else {
+					0
+				}
+			},
+		}
+	}
+}
+
+// Stash action key for chain-segmentation gating.  Each recognised stash
+// action gets a unique key so that only identical-action chains (e.g.
+// `git stash push && git stash push`) route through `condense_stash`;
+// mixed-action chains (`push && drop`) stay opaque.
+pub(crate) fn stash_action_key(command: &str) -> u8 {
+	if has_token(command, "list") {
+		return 1;
+	}
+	if has_token(command, "push") || has_token(command, "save") {
+		return 2;
+	}
+	if has_token(command, "pop") {
+		return 3;
+	}
+	if has_token(command, "apply") {
+		return 4;
+	}
+	if has_token(command, "drop") {
+		return 5;
+	}
+	if has_token(command, "clear") {
+		return 6;
+	}
+	if has_token(command, "create") {
+		return 7;
+	}
+	if has_token(command, "show") {
+		return 8;
+	}
+	if has_token(command, "branch") {
+		return 9;
+	}
+	0 // bare `git stash`
 }
 
 fn compact_diff_listing(input: &str, mode: DiffListingMode) -> String {
@@ -198,6 +266,11 @@ struct StatusSummary {
 fn condense_status(input: &str) -> String {
 	let mut summary = StatusSummary::default();
 	let mut in_untracked = false;
+	// Long-format `git status` groups entries under section headers. `modified:`
+	// and `deleted:` appear in both the staged ("Changes to be committed:") and
+	// unstaged ("Changes not staged for commit:") sections, so we must track the
+	// active section to count them correctly.
+	let mut in_staged = false;
 	let mut state: Option<&str> = None;
 
 	for line in input.lines() {
@@ -223,11 +296,24 @@ fn condense_status(input: &str) -> String {
 			}
 			continue;
 		}
-		if trimmed.starts_with("Untracked files:") {
-			in_untracked = true;
+		if trimmed.starts_with("Changes to be committed:") {
+			in_staged = true;
+			in_untracked = false;
 			continue;
 		}
-		if parse_long_status_line(trimmed, in_untracked, &mut summary) {
+		if trimmed.starts_with("Changes not staged for commit:")
+			|| trimmed.starts_with("Unmerged paths:")
+		{
+			in_staged = false;
+			in_untracked = false;
+			continue;
+		}
+		if trimmed.starts_with("Untracked files:") {
+			in_untracked = true;
+			in_staged = false;
+			continue;
+		}
+		if parse_long_status_line(trimmed, in_staged, in_untracked, &mut summary) {
 			continue;
 		}
 		if !trimmed.starts_with('(')
@@ -292,7 +378,7 @@ fn parse_short_status_line(line: &str, summary: &mut StatusSummary) -> bool {
 	}
 	if status == "??" {
 		summary.untracked += 1;
-	} else if is_unmerged_short_status(status) {
+	} else if status.contains('U') {
 		summary.conflicts += 1;
 	} else {
 		let bytes = status.as_bytes();
@@ -307,30 +393,36 @@ fn parse_short_status_line(line: &str, summary: &mut StatusSummary) -> bool {
 	true
 }
 
-/// Whether a `git status --short` XY code denotes an unmerged (conflicted)
-/// path. Per `git-status(1)`, conflicts are: `DD`, `AU`, `UD`, `UA`, `DU`,
-/// `AA`, `UU`. A plain `status.contains('U')` test misses `AA` (both added)
-/// and `DD` (both deleted), so they are matched explicitly here.
-fn is_unmerged_short_status(status: &str) -> bool {
-	matches!(status, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU")
-}
-
 fn is_short_status(status: &str) -> bool {
 	status
 		.bytes()
 		.all(|byte| matches!(byte, b' ' | b'M' | b'A' | b'D' | b'R' | b'C' | b'U' | b'?' | b'!'))
 }
 
-fn parse_long_status_line(line: &str, in_untracked: bool, summary: &mut StatusSummary) -> bool {
+fn parse_long_status_line(
+	line: &str,
+	in_staged: bool,
+	in_untracked: bool,
+	summary: &mut StatusSummary,
+) -> bool {
+	// `modified:`/`deleted:` are staged or unstaged depending on the active
+	// section; `new file:`/`renamed:` only appear staged. The unmerged-path
+	// forms are always conflicts regardless of section.
 	for (prefix, label, staged) in [
-		("modified:", "M", false),
-		("deleted:", "D", false),
+		("modified:", "M", in_staged),
+		("deleted:", "D", in_staged),
 		("new file:", "A", true),
 		("renamed:", "R", true),
 		("both modified:", "UU", false),
+		("both added:", "AA", false),
+		("both deleted:", "DD", false),
+		("added by us:", "AU", false),
+		("added by them:", "UA", false),
+		("deleted by us:", "DU", false),
+		("deleted by them:", "UD", false),
 	] {
 		if let Some(path) = line.strip_prefix(prefix) {
-			if label == "UU" {
+			if matches!(label, "UU" | "AA" | "DD" | "AU" | "UA" | "DU" | "UD") {
 				summary.conflicts += 1;
 			} else if staged {
 				summary.staged += 1;
@@ -513,9 +605,20 @@ fn skip_log_line(trimmed: &str) -> bool {
 		|| trimmed.starts_with("Author:")
 		|| trimmed.starts_with("Date:")
 		|| trimmed.starts_with("Merge:")
-		|| trimmed.contains('|')
+		|| is_log_stat_line(trimmed)
 		|| trimmed.contains("files changed")
 		|| trimmed.contains("file changed")
+}
+
+fn is_log_stat_line(trimmed: &str) -> bool {
+	let Some((_path, stat)) = trimmed.split_once(" | ") else {
+		return false;
+	};
+	stat
+		.trim_start()
+		.bytes()
+		.next()
+		.is_some_and(|byte| byte.is_ascii_digit())
 }
 
 fn is_git_trailer(trimmed: &str) -> bool {
@@ -577,6 +680,84 @@ fn push_show_commit_summary(out: &mut String, prelude: &str) {
 		out.push('\n');
 		body_lines += 1;
 	}
+}
+/// Whether `git branch` was invoked with non-listing flags (mutations, value
+/// retrieval, or config) whose output `condense_branch` would corrupt by
+/// treating the output as a listing.
+fn is_branch_non_listing(command: &str) -> bool {
+	let tokens: Vec<&str> = command.split_whitespace().collect();
+	// Find the "branch" token and scan flags after it
+	let idx = tokens.iter().position(|&t| t == "branch");
+	let Some(idx) = idx else { return false };
+	tokens[idx + 1..].iter().any(|&tok| {
+		if !tok.starts_with('-') {
+			return false; // non-flag args after the command (branch names) are fine
+		}
+		!matches!(
+			tok,
+			// Listing flags — skip to allow `condense_branch` to handle them
+			"--list"
+				| "-l" | "--merged"
+				| "--no-merged"
+				| "--contains"
+				| "--no-contains"
+				| "--points-at"
+				| "--verbose"
+				| "-v" | "--all"
+				| "-a" | "--remotes"
+				| "-r" | "--sort"
+				| "--column"
+				| "--no-column"
+				| "--ignore-case"
+				| "--abbrev"
+		)
+	})
+}
+/// Whether `git tag` was invoked with non-listing flags (verification,
+/// deletion, creation, or custom formatting) whose output `compact_listing`
+/// would corrupt by treating it as a plain tag-name listing.
+fn is_tag_non_listing(command: &str) -> bool {
+	if !has_token(command, "tag") {
+		return false;
+	}
+
+	let tokens: Vec<&str> = command.split_whitespace().collect();
+	let idx = tokens.iter().position(|&t| t == "tag");
+	let Some(idx) = idx else { return false };
+	tokens[idx + 1..].iter().any(|&tok| {
+		if !tok.starts_with('-') {
+			return false;
+		}
+		!matches!(
+			tok,
+			"--list"
+				| "-l" | "--contains"
+				| "--no-contains"
+				| "--merged"
+				| "--no-merged"
+				| "--points-at"
+				| "--sort"
+				| "--column"
+				| "--no-column"
+				| "--ignore-case"
+		)
+	})
+}
+
+/// Whether `git show` was invoked with custom output format flags that
+/// `condense_show` would corrupt (pre-diff content would be truncated/
+/// rewritten as commit summary).
+fn is_show_custom_format(command: &str) -> bool {
+	has_token(command, "--format")
+		|| has_token(command, "--name-only")
+		|| has_token(command, "--name-status")
+		|| has_token(command, "--stat")
+		|| has_token(command, "--numstat")
+		|| has_token(command, "--shortstat")
+		|| has_token(command, "--summary")
+		|| has_token(command, "--check")
+		|| has_token(command, "--dirstat")
+		|| has_token(command, "--diff-filter")
 }
 
 fn condense_branch(input: &str) -> String {
@@ -648,9 +829,13 @@ fn condense_branch(input: &str) -> String {
 }
 
 fn has_local_tracking_branch(remote: &str, current: Option<&str>, local: &[String]) -> bool {
-	let branch = remote
-		.rsplit_once('/')
-		.map_or(remote, |(_remote, branch)| branch);
+	// Only the conventional `origin/<branch>` mirror is treated as redundant with
+	// a local branch of the same name. Same-named branches on other remotes
+	// (e.g. `upstream/main` alongside `origin/main`) are distinct refs and must
+	// be preserved in the summary.
+	let Some(branch) = remote.strip_prefix("origin/") else {
+		return false;
+	};
 	current == Some(branch) || local.iter().any(|local| local == branch)
 }
 
@@ -874,7 +1059,10 @@ fn condense_commit(input: &str, exit_code: i32) -> String {
 				return format!("ok {hash}\n");
 			}
 		}
-		return "ok\n".to_string();
+		// No commit hash found — likely a `--dry-run` invocation that exits 0
+		// but prints a status-style listing instead of a "[branch hash]" line.
+		// Preserve/condense the output rather than replacing it with bare "ok".
+		return condense_noisy_output(input);
 	}
 
 	if input.contains("nothing to commit") {
@@ -1089,21 +1277,14 @@ fn condense_fetch(input: &str, exit_code: i32) -> String {
 			// Branch fetch lines: " * branch       name -> FETCH_HEAD" or "   hash..hash
 			// name -> name"
 			if trimmed.starts_with('*') || trimmed.starts_with(" *") {
-				// Count range updates (`..`) and newly created refs
-				// (`* [new branch]`, `* [new tag]`).  Plain FETCH_HEAD lines
-				// (`* branch  main -> FETCH_HEAD`) are kept for context but do
-				// not increment the counter — the ref was already known.
-				if trimmed.contains("..") || trimmed.contains("[new") {
+				if trimmed.contains("..") {
 					updates += 1;
 				}
 				kept.push(trimmed.to_string());
 				continue;
 			}
 			if trimmed.contains(" -> ") && (trimmed.starts_with('-') || trimmed.contains("..")) {
-				// Count range updates (`..`) and deleted refs
-				// (`- [deleted] old -> origin/old`) so pruned branches appear
-				// in the summary line.
-				if trimmed.contains("..") || trimmed.starts_with('-') {
+				if trimmed.contains("..") {
 					updates += 1;
 				}
 				kept.push(trimmed.to_string());
@@ -1155,6 +1336,9 @@ fn condense_stash(command: &str, input: &str, exit_code: i32) -> String {
 	if has_token(command, "list") {
 		return condense_stash_list(input);
 	}
+	if input.contains("No local changes to save") {
+		return "No local changes to save\n".to_string();
+	}
 	if exit_code == 0 {
 		let sub = stash_subcommand(command);
 		// Bare "stash" defaults to push
@@ -1175,10 +1359,6 @@ fn condense_stash(command: &str, input: &str, exit_code: i32) -> String {
 		return primitives::compact_listing(input, 40);
 	}
 
-	// Non-zero exit: keep it, but check for "No local changes to save"
-	if input.contains("No local changes to save") {
-		return "No local changes to save\n".to_string();
-	}
 	condense_noisy_output(input)
 }
 
@@ -1198,23 +1378,24 @@ fn condense_stash_list(input: &str) -> String {
 		} else {
 			("", trimmed)
 		};
-		// Strip "WIP on <branch>: " or "On <branch>: " noise, keep stash ref.
-		let compact = if let Some(rest) = after_stash.strip_prefix("WIP on ") {
-			rest
-				.split_once(": ")
-				.map_or(after_stash, |(_branch, msg)| msg.trim())
-		} else if let Some(rest) = after_stash.strip_prefix("On ") {
-			rest
-				.split_once(": ")
-				.map_or(after_stash, |(_branch, msg)| msg.trim())
-		} else {
-			after_stash
+		// Strip the "WIP on "/"On " prefix but KEEP <branch> — it's the primary
+		// thing users scan a stash list for ("which branch is this stash from?").
+		// Re-emit it compactly as `[branch] <message>` instead of dropping it.
+		let compact = match after_stash
+			.strip_prefix("WIP on ")
+			.or_else(|| after_stash.strip_prefix("On "))
+		{
+			Some(rest) => rest.split_once(": ").map_or_else(
+				|| after_stash.to_string(),
+				|(branch, msg)| format!("[{}] {}", branch.trim(), msg.trim()),
+			),
+			None => after_stash.to_string(),
 		};
 		if !stash_ref.is_empty() {
 			out.push_str(stash_ref);
 			out.push_str(": ");
 		}
-		out.push_str(compact);
+		out.push_str(&compact);
 		out.push('\n');
 	}
 	if count == 0 {
@@ -1268,6 +1449,7 @@ mod tests {
 			 scratch.txt\nUU conflicted.rs\n"
 		);
 	}
+
 	#[test]
 	fn long_status_clean_is_compacted() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
@@ -1302,6 +1484,64 @@ mod tests {
 ";
 		let out = filter(&ctx, input, 0);
 		assert_eq!(out.text, "* main\nlocal: feat/a fix/b\nremote-only (2): origin/x upstream/y\n");
+	}
+
+	#[test]
+	fn branch_listing_keeps_same_named_branch_on_other_remote() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("branch"), "git branch -a", &cfg);
+		// Local `main` makes `origin/main` redundant, but `upstream/main` is a
+		// distinct ref and must survive.
+		let input = "\
+* main
+  remotes/origin/main
+  remotes/upstream/main
+";
+		let out = filter(&ctx, input, 0);
+		assert!(out.text.contains("upstream/main"), "{:?}", out.text);
+		assert!(!out.text.contains("origin/main"), "{:?}", out.text);
+	}
+
+	#[test]
+	fn tag_format_output_is_passthrough() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx =
+			test_ctx(Some("tag"), "git tag --format=%(refname:short)|%(taggerdate:short)", &cfg);
+		let input = (0..45)
+			.map(|idx| format!("v1.{idx}|2026-06-06\n"))
+			.collect::<String>();
+
+		let out = filter(&ctx, &input, 0);
+
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn tag_delete_output_is_passthrough() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("tag"), "git tag -d v1.0 v1.1", &cfg);
+		let input = (0..45)
+			.map(|idx| format!("Deleted tag 'v1.{idx}' (was abc1234)\n"))
+			.collect::<String>();
+
+		let out = filter(&ctx, &input, 0);
+
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn tag_listing_is_compacted() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("tag"), "git tag --list", &cfg);
+		let input = (0..45).map(|idx| format!("v1.{idx}\n")).collect::<String>();
+
+		let out = filter(&ctx, &input, 0);
+
+		assert!(out.changed);
+		assert!(out.text.starts_with("45 entries\n"));
+		assert!(out.text.contains("…\n"));
 	}
 
 	#[test]
@@ -1391,6 +1631,15 @@ mod tests {
 		             today\n\n README.md | 8 ++++++++\n 1 file changed, 8 insertions(+)\n";
 		let out = filter(&ctx, input, 0);
 		assert_eq!(out.text, "c84fa3c fix: add website URL (rtk-ai.app)\n");
+	}
+
+	#[test]
+	fn log_stat_line_detection_preserves_graph_pipes() {
+		assert!(skip_log_line("README.md | 8 ++++++++"));
+		assert!(skip_log_line("src/lib.rs |  18 ++"));
+		assert!(!skip_log_line("| * commit message"));
+		assert!(!skip_log_line("|\\"));
+		assert!(!skip_log_line("discussion uses | as separator"));
 	}
 
 	#[test]
@@ -1903,6 +2152,14 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	}
 
 	#[test]
+	fn stash_empty_message_stays_opaque() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("stash"), "git stash", &cfg);
+		let out = filter(&ctx, "No local changes to save\n", 0);
+		assert_eq!(out.text, "No local changes to save\n");
+	}
+
+	#[test]
 	fn stash_apply_success() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("stash"), "git stash apply", &cfg);
@@ -1963,9 +2220,20 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		             def5678 chore: clean up\nstash@{2}: WIP on dev: ghi9012 feat: add widget\n";
 		let out = filter(&ctx, input, 0);
 		assert!(out.changed);
-		assert!(out.text.contains("stash@{0}: abc1234 fix: something"));
-		assert!(out.text.contains("stash@{1}: def5678 chore: clean up"));
-		assert!(out.text.contains("stash@{2}: ghi9012 feat: add widget"));
+		// Branch is preserved (re-emitted as `[branch]`) — it's the primary thing
+		// users scan stash lists for — while the "WIP on "/"On " noise is stripped.
+		assert!(
+			out.text
+				.contains("stash@{0}: [feature-x] abc1234 fix: something")
+		);
+		assert!(
+			out.text
+				.contains("stash@{1}: [main] def5678 chore: clean up")
+		);
+		assert!(
+			out.text
+				.contains("stash@{2}: [dev] ghi9012 feat: add widget")
+		);
 		assert!(!out.text.contains("WIP on "));
 		assert!(!out.text.contains("On main:"));
 	}

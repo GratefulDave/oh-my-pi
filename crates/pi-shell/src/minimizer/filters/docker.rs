@@ -62,8 +62,21 @@ fn filter_kubectl(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String
 	match ctx.subcommand {
 		Some("logs") => filter_logs(input),
 		Some("get") => {
+			// Explicit JSON/YAML output — passthrough, never compact to table
+			if is_explicit_kubectl_json_yaml(ctx.command) {
+				return input.to_string();
+			}
 			if let Some(compacted) = try_compact_kubectl_json(input) {
 				return compacted;
+			}
+			// `-o yaml` or single-object `-o json` from content (already
+			// caught above by flag check, but handle content-detected too).
+			if is_structured_kubectl_output(input) {
+				return primitives::head_tail_lines(input, 80, 40);
+			}
+			// Non-table output formats produce listings, not tables
+			if is_kubectl_non_table_format(ctx.command) {
+				return primitives::head_tail_lines(input, 80, 40);
 			}
 			compact_table(input, 20)
 		},
@@ -75,6 +88,127 @@ fn filter_kubectl(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String
 }
 
 // ── kubectl JSON compaction ──────────────────────────────────────────────────
+
+/// Returns true when the `kubectl get` output is structured JSON or YAML
+/// (i.e. `-o json` single-object or `-o yaml`) rather than a tabular listing.
+/// Used to avoid rewriting manifests as a fake row-count table.
+fn is_structured_kubectl_output(input: &str) -> bool {
+	let t = input.trim_start();
+	// Single-object -o json (starts with '{' but is not a List handled above)
+	// or -o yaml (starts with "apiVersion:" or "kind:").
+	t.starts_with('{') || t.starts_with("apiVersion:") || t.starts_with("kind:")
+}
+
+/// Whether `kubectl get` was invoked with explicit `-o json` or `-o yaml`.
+///
+/// Handles all three kubectl `-o` forms:
+///   `-o json`      (space-separated)
+///   `-o=json`      (attached with `=`)
+///   `-ojson`       (fully attached, no separator — common CLI shorthand)
+fn is_explicit_kubectl_json_yaml(command: &str) -> bool {
+	let mut tokens = command.split_whitespace();
+	while let Some(tok) = tokens.next() {
+		if (tok == "-o" || tok == "--output")
+			&& let Some(fmt) = tokens.next()
+		{
+			let base = fmt.split('=').next().unwrap_or(fmt);
+			if matches!(base, "json" | "yaml") {
+				return true;
+			}
+		}
+		if let Some(val) = tok
+			.strip_prefix("-o=")
+			.or_else(|| tok.strip_prefix("--output="))
+		{
+			let base = val.split('=').next().unwrap_or(val);
+			if matches!(base, "json" | "yaml") {
+				return true;
+			}
+		}
+		// Fully-attached form: `-ojson`, `-oyaml`, `-ojsonpath=...`, etc.
+		if let Some(val) = tok.strip_prefix("-o").filter(|v| !v.is_empty() && !v.starts_with('=')) {
+			let base = val.split('=').next().unwrap_or(val);
+			if matches!(base, "json" | "yaml") {
+				return true;
+			}
+		}
+	}
+	false
+}
+
+/// Whether `kubectl get` was invoked with a non-table output format.
+/// These formats (`-o name`, `-o jsonpath/...`, `-o go-template/...`,
+/// `-o template/...`, `-o custom-columns/...`, `--no-headers`) produce
+/// listings or single values, not tables — `compact_table` would treat
+/// the first entry as a header and corrupt the requested format.
+///
+/// Handles all three kubectl `-o` forms:
+///   `-o name`      (space-separated)
+///   `-o=name`      (attached with `=`)
+///   `-oname`       (fully attached, no separator — common CLI shorthand)
+fn is_kubectl_non_table_format(command: &str) -> bool {
+	let mut tokens = command.split_whitespace();
+	while let Some(tok) = tokens.next() {
+		if (tok == "-o" || tok == "--output")
+			&& let Some(fmt) = tokens.next()
+		{
+			let base = fmt.split('=').next().unwrap_or(fmt);
+			if matches!(
+				base,
+				"name"
+					| "jsonpath"
+					| "go-template"
+					| "go-template-file"
+					| "template"
+					| "templatefile"
+					| "custom-columns"
+					| "custom-columns-file"
+			) {
+				return true;
+			}
+		}
+		if let Some(val) = tok
+			.strip_prefix("-o=")
+			.or_else(|| tok.strip_prefix("--output="))
+		{
+			let base = val.split('=').next().unwrap_or(val);
+			if matches!(
+				base,
+				"name"
+					| "jsonpath"
+					| "go-template"
+					| "go-template-file"
+					| "template"
+					| "templatefile"
+					| "custom-columns"
+					| "custom-columns-file"
+			) {
+				return true;
+			}
+		}
+		// Fully-attached form: `-oname`, `-ojsonpath=...`, `-ogo-template=...`, etc.
+		if let Some(val) = tok.strip_prefix("-o").filter(|v| !v.is_empty() && !v.starts_with('=')) {
+			let base = val.split('=').next().unwrap_or(val);
+			if matches!(
+				base,
+				"name"
+					| "jsonpath"
+					| "go-template"
+					| "go-template-file"
+					| "template"
+					| "templatefile"
+					| "custom-columns"
+					| "custom-columns-file"
+			) {
+				return true;
+			}
+		}
+		if tok == "--no-headers" {
+			return true;
+		}
+	}
+	false
+}
 
 /// Try to parse kubectl `get -o json` output and produce a compact table.
 /// Returns None if input is not recognized JSON or if schema is unexpected.
@@ -256,13 +390,30 @@ fn filter_helm(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
 	}
 	match ctx.subcommand {
 		Some("list" | "ls" | "status") => compact_table(input, 20),
-		Some("install" | "upgrade" | "template" | "lint") => compact_build_or_progress(input),
+		Some("install" | "upgrade" | "lint") => compact_build_or_progress(input),
+		Some("template") => input.to_string(),
 		_ => head_tail_dedup(input),
 	}
 }
 
 fn is_log_command(ctx: &MinimizerCtx<'_>) -> bool {
-	ctx.subcommand == Some("logs") || ctx.command.split_whitespace().any(|part| part == "logs")
+	if ctx.subcommand == Some("logs") {
+		return true;
+	}
+	// `docker compose logs <service>` — the action is `logs` but subcommand
+	// resolves to `compose`.  Walk from the `compose` token to find the
+	// sub-sub-command rather than scanning the whole command (which would
+	// catch `docker build -t logs .`).
+	if ctx.subcommand == Some("compose") {
+		let mut tokens = ctx.command.split_whitespace();
+		while let Some(tok) = tokens.next() {
+			if tok == "compose" {
+				return tokens.by_ref().find(|t| !t.starts_with('-')) == Some("logs")
+					|| tokens.by_ref().any(|t| t == "logs");
+			}
+		}
+	}
+	false
 }
 
 fn is_table_command(ctx: &MinimizerCtx<'_>) -> bool {
@@ -726,5 +877,100 @@ mod tests {
 		let out = filter(&kubectl_ctx, input, 1).text;
 		// Non-zero exit with non-logs → preserve verbatim
 		assert_eq!(out, input);
+	}
+
+	#[test]
+	fn helm_template_keeps_manifest_yaml_opaque() {
+		// `helm template` renders chart manifests — arbitrary YAML, not build
+		// progress. Lines like "phase: Waiting" are field values, not status
+		// noise, so they must not be dropped by compact_build_or_progress.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let helm_ctx = ctx("helm", Some("template"), &cfg);
+		let input = "apiVersion: v1\nkind: ConfigMap\ndata:\n  phase: Waiting\n  action: Downloading\n";
+		let out = filter(&helm_ctx, input, 0).text;
+		assert_eq!(out, input, "helm template output must be preserved verbatim");
+	}
+
+	// ── Attached -o format tests ────────────────────────────────────────────
+
+	#[test]
+	fn kubectl_get_ojson_attached_preserves_json() {
+		// `-ojson` (no space, no `=`) must be treated as `-o json`.
+		// A kubectl List JSON must NOT be rewritten into a table summary.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "kubectl",
+			subcommand: Some("get"),
+			command:    "kubectl get pods -ojson",
+			config:     &cfg,
+		};
+		let input = r#"{"apiVersion":"v1","kind":"List","items":[{"kind":"Pod","metadata":{"name":"p","namespace":"default"},"spec":{"nodeName":"n","containers":[{"name":"c","image":"img"}]},"status":{"phase":"Running","podIP":"1.2.3.4","startTime":"2024-01-01T00:00:00Z","containerStatuses":[{"name":"c","ready":true,"restartCount":0}]}}]}"#;
+		let out = filter(&ctx, input, 0).text;
+		assert_eq!(out, input, "-ojson must passthrough verbatim, not be compacted to a table");
+	}
+
+	#[test]
+	fn kubectl_get_oyaml_attached_preserves_yaml() {
+		// `-oyaml` must be treated as `-o yaml` — passthrough, no table compaction.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "kubectl",
+			subcommand: Some("get"),
+			command:    "kubectl get pod my-pod -oyaml",
+			config:     &cfg,
+		};
+		let input = "apiVersion: v1\nkind: Pod\nmetadata:\n  name: my-pod\nspec:\n  containers: []\n";
+		let out = filter(&ctx, input, 0).text;
+		assert_eq!(out, input, "-oyaml must passthrough verbatim");
+	}
+
+	#[test]
+	fn kubectl_get_oname_attached_skips_table_compaction() {
+		// `-oname` must be treated as `-o name` — listings, not tables.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "kubectl",
+			subcommand: Some("get"),
+			command:    "kubectl get pods -oname",
+			config:     &cfg,
+		};
+		// `-o name` output is one `resource/name` per line — compact_table
+		// would corrupt it by treating the first line as a header.
+		let input = "pod/alpha\npod/beta\npod/gamma\n";
+		let out = filter(&ctx, input, 0).text;
+		assert!(!out.contains("rows"), "-oname output must not be table-compacted, got: {out}");
+	}
+
+	#[test]
+	fn kubectl_get_ojsonpath_attached_skips_table_compaction() {
+		// `-ojsonpath=...` must be treated as non-table.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "kubectl",
+			subcommand: Some("get"),
+			command:    "kubectl get pods -ojsonpath={.items[*].metadata.name}",
+			config:     &cfg,
+		};
+		let input = "alpha beta gamma\n";
+		let out = filter(&ctx, input, 0).text;
+		assert!(!out.contains("rows"), "-ojsonpath output must not be table-compacted, got: {out}");
+	}
+
+	#[test]
+	fn kubectl_get_owide_attached_still_compacts_table() {
+		// `-owide` IS a table format — it must still go through compact_table.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "kubectl",
+			subcommand: Some("get"),
+			command:    "kubectl get pods -owide",
+			config:     &cfg,
+		};
+		let mut input = String::from("NAME READY STATUS RESTARTS AGE IP NODE\n");
+		for i in 0..25 {
+			input.push_str(&format!("pod-{i} 1/1 Running 0 1h 10.0.0.{i} node\n"));
+		}
+		let out = filter(&ctx, input.as_str(), 0).text;
+		assert!(out.contains("rows"), "-owide is a table format and must be compacted, got: {out}");
 	}
 }

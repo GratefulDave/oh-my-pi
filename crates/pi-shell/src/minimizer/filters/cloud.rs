@@ -48,9 +48,34 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 	}
 }
 
-fn filter_aws(ctx: &MinimizerCtx<'_>, input: &str, _exit_code: i32) -> String {
+/// Returns `true` when the full command is `aws s3 ls [...]` (not `cp`, `sync`,
+/// `rm`, etc.). Skips flags between `s3` and the action token so
+/// `aws --no-cli-pager s3 ls` is still recognised while `aws s3 cp` is
+/// excluded.
+fn is_s3_ls(command: &str) -> bool {
+	let mut past_s3 = false;
+	for token in command.split_whitespace() {
+		if !past_s3 {
+			if token == "s3" {
+				past_s3 = true;
+			}
+		} else if token.starts_with('-') {
+			// skip flags between "s3" and the action word
+		} else {
+			return token == "ls";
+		}
+	}
+	false
+}
+
+fn filter_aws(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
 	let without_progress = strip_transfer_progress(input);
-	if ctx.subcommand == Some("s3")
+	// Only the `ls` listing form should be reshaped into a bucket/date table;
+	// `aws s3 cp`/`sync`/`rm` emit progress/result lines (`upload: ... to
+	// s3://...`) that must not be misparsed as listing rows.
+	if exit_code == 0
+		&& ctx.subcommand == Some("s3")
+		&& is_s3_ls(ctx.command)
 		&& let Some(compacted) = compact_aws_s3_ls_text(&without_progress)
 	{
 		return compacted;
@@ -224,40 +249,94 @@ fn extract_aws_s3_buckets(root: &Value) -> Option<Vec<&Map<String, Value>>> {
 	extract_array(root, &["Buckets", "buckets"])
 }
 
+/// True for an `aws s3 ls` date column (`YYYY-MM-DD`).
+fn is_s3_date(token: &str) -> bool {
+	let mut parts = token.split('-');
+	matches!(
+		(parts.next(), parts.next(), parts.next(), parts.next()),
+		(Some(y), Some(m), Some(d), None)
+			if y.len() == 4
+				&& m.len() == 2
+				&& d.len() == 2
+				&& [y, m, d].iter().all(|p| p.bytes().all(|b| b.is_ascii_digit()))
+	)
+}
+
+/// True for an `aws s3 ls` time column (`HH:MM:SS`).
+fn is_s3_time(token: &str) -> bool {
+	let mut parts = token.split(':');
+	matches!(
+		(parts.next(), parts.next(), parts.next(), parts.next()),
+		(Some(h), Some(m), Some(s), None)
+			if [h, m, s].iter().all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit()))
+	)
+}
+
 fn compact_aws_s3_ls_text(input: &str) -> Option<String> {
-	let rows = input
-		.lines()
-		.filter_map(|line| {
-			let mut parts = line.split_whitespace();
-			let first = parts.next()?;
-			if first == "PRE" {
-				return Some(vec![
-					parts.next()?.trim_end_matches('/').to_string(),
+	let mut rows = Vec::new();
+	let mut passthrough_lines = Vec::new();
+	for line in input.lines() {
+		let mut parts = line.split_whitespace();
+		let Some(first) = parts.next() else {
+			continue;
+		};
+		if first == "PRE" {
+			// A common-prefix name may contain spaces (`PRE my folder/`), so
+			// join the remaining tokens instead of keeping only the first one.
+			let prefix: Vec<&str> = parts.collect();
+			if prefix.is_empty() {
+				passthrough_lines.push(line);
+			} else {
+				rows.push(vec![
+					prefix.join(" ").trim_end_matches('/').to_string(),
 					"prefix".to_string(),
 				]);
 			}
-			// Format: DATE TIME SIZE KEY_NAME
-			// KEY_NAME may contain spaces, so consume the size token then join
-			// the remainder to reconstruct the full key.
-			let time = parts.next()?;
-			let size = parts.next()?;
-			let rest: Vec<&str> = parts.collect();
-			// Skip zero-byte objects with no name continuation.
-			if size == "0" && rest.is_empty() {
-				return None;
-			}
-			let name = if rest.is_empty() {
-				size.to_string()
-			} else {
-				rest.join(" ")
-			};
-			Some(vec![name, format!("{first} {time}")])
-		})
-		.collect::<Vec<_>>();
+			continue;
+		}
+		let Some(time) = parts.next() else {
+			passthrough_lines.push(line);
+			continue;
+		};
+		// Require a real date/time prefix so `--summarize` footers
+		// (`Total Objects: 1`, `Total Size: ...`) and any diagnostic/error
+		// text are not reinterpreted as object rows.
+		if !is_s3_date(first) || !is_s3_time(time) {
+			passthrough_lines.push(line);
+			continue;
+		}
+		let Some(third) = parts.next() else {
+			passthrough_lines.push(line);
+			continue;
+		};
+		if third == "0" && parts.clone().next().is_none() {
+			continue;
+		}
+		// Collect all remaining tokens as the key so that S3 keys
+		// containing spaces (e.g. "reports/June 2026.csv") are
+		// preserved in full rather than truncated to the last token.
+		let rest: Vec<&str> = parts.collect();
+		let name = if rest.is_empty() {
+			third.to_string()
+		} else {
+			rest.join(" ")
+		};
+		rows.push(vec![name, format!("{first} {time}")]);
+	}
 	if rows.is_empty() {
 		None
 	} else {
-		Some(compact_named_rows(&["bucket", "date"], &rows))
+		let mut out = compact_named_rows(&["bucket", "date"], &rows);
+		if !passthrough_lines.is_empty() {
+			if !out.ends_with('\n') {
+				out.push('\n');
+			}
+			for line in passthrough_lines {
+				out.push_str(line);
+				out.push('\n');
+			}
+		}
+		Some(out)
 	}
 }
 
@@ -1417,6 +1496,41 @@ mod tests {
 		let out = filter(&ctx, "2026-05-27 01:02:03 builds\n2026-05-27 01:03:04 logs\n", 0);
 		assert!(out.text.contains("builds\t2026-05-27 01:02:03"));
 		assert_output_pure(&out.text);
+	}
+
+	#[test]
+	fn s3_ls_summarize_footer_is_not_parsed_as_row() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 ls --summarize s3://b/", &cfg);
+		// `--summarize` appends `Total Objects:`/`Total Size:` footers that lack a
+		// real date/time prefix; they must not be reshaped into bogus object rows or
+		// silently dropped.
+		let input = "2026-05-27 01:02:03 100 builds\n\nTotal Objects: 1\nTotal Size: 100\n";
+		let out = filter(&ctx, input, 0);
+		assert!(out.text.contains("builds\t2026-05-27 01:02:03"), "{:?}", out.text);
+		assert!(out.text.contains("Total Objects: 1"), "{:?}", out.text);
+		assert!(out.text.contains("Total Size: 100"), "{:?}", out.text);
+	}
+
+	#[test]
+	fn s3_ls_common_prefix_with_spaces_is_preserved() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 ls s3://b/", &cfg);
+		// `PRE` common-prefix names can contain spaces; the full name must survive
+		// rather than being truncated to the first token.
+		let out = filter(&ctx, "                           PRE my folder/\n", 0);
+		assert!(out.text.contains("my folder"), "{:?}", out.text);
+	}
+
+	#[test]
+	fn s3_cp_output_is_not_parsed_as_listing() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 cp ./file.txt s3://bucket/file.txt", &cfg);
+		// `aws s3 cp` emits a transfer result line, not a listing; it must pass
+		// through untouched rather than be reshaped into a bucket/date table.
+		let input = "upload: ./file.txt to s3://bucket/file.txt\n";
+		let out = filter(&ctx, input, 0);
+		assert_eq!(out.text, input);
 	}
 
 	#[test]
