@@ -1,4 +1,8 @@
-import { getAntigravityUserAgent } from "../providers/google-gemini-headers";
+import {
+	ANTIGRAVITY_FETCH_AVAILABLE_MODELS_PATH,
+	ANTIGRAVITY_PRIMARY_ENDPOINT,
+	getAntigravityCodeAssistHeaders,
+} from "../providers/google-gemini-headers";
 import type {
 	UsageAmount,
 	UsageFetchContext,
@@ -30,9 +34,6 @@ interface AntigravityModelInfo {
 interface AntigravityUsageResponse {
 	models: Record<string, AntigravityModelInfo>;
 }
-
-const DEFAULT_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
-const FETCH_AVAILABLE_MODELS_PATH = "/v1internal:fetchAvailableModels";
 
 function clampFraction(value: number | undefined): number | undefined {
 	if (value === undefined || !Number.isFinite(value)) return undefined;
@@ -125,16 +126,13 @@ async function fetchAntigravityUsage(params: UsageFetchParams, ctx: UsageFetchCo
 
 	const accessToken = resolveAccessToken(params);
 	if (!accessToken) return null;
+	if (!credential.projectId) return null;
 
-	const baseUrl = params.baseUrl?.replace(/\/+$/, "") || DEFAULT_ENDPOINT;
-	const url = `${baseUrl}${FETCH_AVAILABLE_MODELS_PATH}`;
+	const baseUrl = params.baseUrl?.replace(/\/+$/, "") || ANTIGRAVITY_PRIMARY_ENDPOINT;
+	const url = `${baseUrl}${ANTIGRAVITY_FETCH_AVAILABLE_MODELS_PATH}`;
 	const response = await ctx.fetch(url, {
 		method: "POST",
-		headers: {
-			Authorization: `Bearer ${accessToken}`,
-			"Content-Type": "application/json",
-			"User-Agent": getAntigravityUserAgent(),
-		},
+		headers: getAntigravityCodeAssistHeaders(accessToken),
 		body: JSON.stringify({ project: credential.projectId }),
 		signal: params.signal,
 	});

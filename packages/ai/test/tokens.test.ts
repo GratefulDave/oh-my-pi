@@ -234,18 +234,18 @@ describe("Token Statistics on Abort", () => {
 		);
 
 		it.skipIf(!antigravityToken)(
-			"claude-sonnet-4-5 - should include token stats when aborted mid-stream",
+			"claude-sonnet-4-6 - should include token stats when aborted mid-stream",
 			async () => {
-				const llm = getBundledModel("google-antigravity", "claude-sonnet-4-5");
+				const llm = getBundledModel("google-antigravity", "claude-sonnet-4-6");
 				await testTokensOnAbort(llm, { apiKey: antigravityToken });
 			},
 			{ retry: 3, timeout: 30000 },
 		);
 
 		it.skipIf(!antigravityToken)(
-			"gpt-oss-120b-medium - should include token stats when aborted mid-stream",
+			"claude-opus-4-6-thinking - should include token stats when aborted mid-stream",
 			async () => {
-				const llm = getBundledModel("google-antigravity", "gpt-oss-120b-medium");
+				const llm = getBundledModel("google-antigravity", "claude-opus-4-6-thinking");
 				await testTokensOnAbort(llm, { apiKey: antigravityToken });
 			},
 			{ retry: 3, timeout: 30000 },
