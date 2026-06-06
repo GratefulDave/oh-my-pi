@@ -1,4 +1,3 @@
-import models from "../models.json" with { type: "json" };
 import { getAntigravityUserAgent } from "../providers/google-gemini-headers";
 import type {
 	UsageAmount,
@@ -35,7 +34,15 @@ interface AntigravityUsageResponse {
 const DEFAULT_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
 const FETCH_AVAILABLE_MODELS_PATH = "/v1internal:fetchAvailableModels";
 
-const KNOWN_MODEL_IDS = new Set(Object.keys((models as Record<string, unknown>)["google-antigravity"] as Record<string, unknown>));
+const KNOWN_MODEL_IDS = new Set([
+	"gemini-3.5-flash-extra-low",
+	"gemini-3.5-flash-low",
+	"gemini-3-flash-agent",
+	"gemini-3.1-pro-low",
+	"gemini-pro-agent",
+	"claude-sonnet-4-6",
+	"claude-opus-4-6-thinking",
+]);
 
 function clampFraction(value: number | undefined): number | undefined {
 	if (value === undefined || !Number.isFinite(value)) return undefined;
