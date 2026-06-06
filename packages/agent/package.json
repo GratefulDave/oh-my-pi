@@ -36,7 +36,7 @@
 	},
 	"dependencies": {
 		"@oh-my-pi/pi-ai": "^15.9.5",
-		"@oh-my-pi/pi-natives": "^15.9.5",
+		"@oh-my-pi/pi-natives": "workspace:*",
 		"@oh-my-pi/pi-utils": "^15.9.5",
 		"@opentelemetry/api": "catalog:"
 	},

@@ -787,6 +787,7 @@ describe("ExtensionRunner", () => {
 					setSessionName: async name => {
 						await sessionManager.setSessionName(name);
 					},
+					overrideModelRoles: () => {},
 				},
 				{
 					getModel: () => undefined,
@@ -999,6 +1000,7 @@ describe("ExtensionRunner", () => {
 					setThinkingLevel: () => {},
 					getSessionName: () => sessionManager.getSessionName(),
 					setSessionName: async () => {},
+					overrideModelRoles: () => {},
 				},
 				{
 					getModel: () => undefined,
