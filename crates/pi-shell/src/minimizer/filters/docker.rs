@@ -417,11 +417,24 @@ fn is_log_command(ctx: &MinimizerCtx<'_>) -> bool {
 }
 
 fn is_table_command(ctx: &MinimizerCtx<'_>) -> bool {
-	matches!(ctx.subcommand, Some("ps" | "images"))
-		|| ctx
-			.command
-			.split_whitespace()
-			.any(|part| matches!(part, "ps" | "images"))
+	// Match only the parsed subcommand word — never scan arbitrary tokens like
+	// option values or image names. `docker build -t ps .` has `ps` as a token
+	// but the subcommand is `build`, not `ps`, so it must not reach compact_table.
+	if matches!(ctx.subcommand, Some("ps" | "images")) {
+		return true;
+	}
+	// `docker compose ps` — subcommand is `compose`; walk from the `compose`
+	// token to find the sub-sub-command (same pattern as is_log_command).
+	if ctx.subcommand == Some("compose") {
+		let mut tokens = ctx.command.split_whitespace();
+		while let Some(tok) = tokens.next() {
+			if tok == "compose" {
+				let action = tokens.by_ref().find(|t| !t.starts_with('-'));
+				return matches!(action, Some("ps" | "images"));
+			}
+		}
+	}
+	false
 }
 
 fn filter_logs(input: &str) -> String {
@@ -889,6 +902,27 @@ mod tests {
 		let input = "apiVersion: v1\nkind: ConfigMap\ndata:\n  phase: Waiting\n  action: Downloading\n";
 		let out = filter(&helm_ctx, input, 0).text;
 		assert_eq!(out, input, "helm template output must be preserved verbatim");
+	}
+
+	#[test]
+	fn docker_build_with_tag_named_ps_routes_as_build_not_table() {
+		// `docker build -t ps .` is a valid build command: `-t` names the image `ps`.
+		// The token `ps` must NOT cause is_table_command to fire; the subcommand
+		// is `build`, not `ps`, so output goes through compact_build_or_progress.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let build_ctx = MinimizerCtx {
+			program: "docker",
+			subcommand: Some("build"),
+			command: "docker build -t ps .",
+			config: &cfg,
+		};
+		let input = "Step 1/3 : FROM ubuntu\n Successfully built abc123\n";
+		let out = filter(&build_ctx, input, 0).text;
+		// Must not be treated as a table (compact_table wraps with row-count header)
+		assert!(
+			!out.contains("rows"),
+			"docker build -t ps must not route through compact_table, got: {out}"
+		);
 	}
 
 	// ── Attached -o format tests ────────────────────────────────────────────
