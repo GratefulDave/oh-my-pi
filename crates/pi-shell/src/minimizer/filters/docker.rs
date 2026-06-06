@@ -70,6 +70,13 @@ fn filter_kubectl(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String
 			if is_structured_kubectl_output(input) {
 				return primitives::head_tail_lines(input, 80, 40);
 			}
+			// Non-table output formats (`-o name`, `-o jsonpath/...`,
+			// `-o go-template/...`, `-o template/...`, `--no-headers`)
+			// produce listings, not tables — `compact_table` would treat
+			// the first entry as a header and corrupt the requested format.
+			if is_kubectl_non_table_format(ctx.command) {
+				return primitives::head_tail_lines(input, 80, 40);
+			}
 			compact_table(input, 20)
 		},
 		Some("describe") => {
@@ -89,6 +96,58 @@ fn is_structured_kubectl_output(input: &str) -> bool {
 	// Single-object -o json (starts with '{' but is not a List handled above)
 	// or -o yaml (starts with "apiVersion:" or "kind:").
 	t.starts_with('{') || t.starts_with("apiVersion:") || t.starts_with("kind:")
+}
+
+/// Whether `kubectl get` was invoked with a non-table output format.
+/// These formats (`-o name`, `-o jsonpath/...`, `-o go-template/...`,
+/// `-o template/...`, `-o custom-columns/...`, `--no-headers`) produce
+/// listings or single values, not tables — `compact_table` would treat
+/// the first entry as a header and corrupt the requested format.
+fn is_kubectl_non_table_format(command: &str) -> bool {
+	let mut tokens = command.split_whitespace();
+	while let Some(tok) = tokens.next() {
+		if (tok == "-o" || tok == "--output")
+			&& let Some(fmt) = tokens.next()
+		{
+			let base = fmt.split('=').next().unwrap_or(fmt);
+			if matches!(
+				base,
+				"name"
+					| "jsonpath"
+					| "go-template"
+					| "go-template-file"
+					| "template"
+					| "templatefile"
+					| "custom-columns"
+					| "custom-columns-file"
+			) {
+				return true;
+			}
+		}
+		if let Some(val) = tok
+			.strip_prefix("-o=")
+			.or_else(|| tok.strip_prefix("--output="))
+		{
+			let base = val.split('=').next().unwrap_or(val);
+			if matches!(
+				base,
+				"name"
+					| "jsonpath"
+					| "go-template"
+					| "go-template-file"
+					| "template"
+					| "templatefile"
+					| "custom-columns"
+					| "custom-columns-file"
+			) {
+				return true;
+			}
+		}
+		if tok == "--no-headers" {
+			return true;
+		}
+	}
+	false
 }
 
 /// Try to parse kubectl `get -o json` output and produce a compact table.
