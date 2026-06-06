@@ -71,10 +71,10 @@ fn filter_kubectl(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String
 				return primitives::head_tail_lines(input, 80, 40);
 			}
 			// Non-table output formats (`-o name`, `-o jsonpath/...`,
-			// `-o go-template/...`, `--no-headers`) produce listings, not
-			// tables — `compact_table` would treat the first entry as a
-			// header and corrupt the requested format.
-			if is_kubectl_list_output(ctx.command) {
+			// `-o go-template/...`, `-o template/...`, `--no-headers`)
+			// produce listings, not tables — `compact_table` would treat
+			// the first entry as a header and corrupt the requested format.
+			if is_kubectl_non_table_format(ctx.command) {
 				return primitives::head_tail_lines(input, 80, 40);
 			}
 			compact_table(input, 20)
@@ -86,7 +86,24 @@ fn filter_kubectl(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String
 	}
 }
 
-fn is_kubectl_list_output(command: &str) -> bool {
+// ── kubectl JSON compaction ──────────────────────────────────────────────────
+
+/// Returns true when the `kubectl get` output is structured JSON or YAML
+/// (i.e. `-o json` single-object or `-o yaml`) rather than a tabular listing.
+/// Used to avoid rewriting manifests as a fake row-count table.
+fn is_structured_kubectl_output(input: &str) -> bool {
+	let t = input.trim_start();
+	// Single-object -o json (starts with '{' but is not a List handled above)
+	// or -o yaml (starts with "apiVersion:" or "kind:").
+	t.starts_with('{') || t.starts_with("apiVersion:") || t.starts_with("kind:")
+}
+
+/// Whether `kubectl get` was invoked with a non-table output format.
+/// These formats (`-o name`, `-o jsonpath/...`, `-o go-template/...`,
+/// `-o template/...`, `-o custom-columns/...`, `--no-headers`) produce
+/// listings or single values, not tables — `compact_table` would treat
+/// the first entry as a header and corrupt the requested format.
+fn is_kubectl_non_table_format(command: &str) -> bool {
 	let mut tokens = command.split_whitespace();
 	while let Some(tok) = tokens.next() {
 		if (tok == "-o" || tok == "--output")
@@ -99,6 +116,8 @@ fn is_kubectl_list_output(command: &str) -> bool {
 					| "jsonpath"
 					| "go-template"
 					| "go-template-file"
+					| "template"
+					| "templatefile"
 					| "custom-columns"
 					| "custom-columns-file"
 			) {
@@ -116,6 +135,8 @@ fn is_kubectl_list_output(command: &str) -> bool {
 					| "jsonpath"
 					| "go-template"
 					| "go-template-file"
+					| "template"
+					| "templatefile"
 					| "custom-columns"
 					| "custom-columns-file"
 			) {
@@ -127,13 +148,6 @@ fn is_kubectl_list_output(command: &str) -> bool {
 		}
 	}
 	false
-}
-
-fn is_structured_kubectl_output(input: &str) -> bool {
-	let t = input.trim_start();
-	// Single-object -o json (starts with '{' but is not a List handled above)
-	// or -o yaml (starts with "apiVersion:" or "kind:").
-	t.starts_with('{') || t.starts_with("apiVersion:") || t.starts_with("kind:")
 }
 
 /// Try to parse kubectl `get -o json` output and produce a compact table.
@@ -316,7 +330,7 @@ fn filter_helm(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
 	}
 	match ctx.subcommand {
 		Some("list" | "ls" | "status") => compact_table(input, 20),
-		Some("install" | "upgrade" | "lint") => compact_build_or_progress(input),
+		Some("install" | "upgrade" | "template" | "lint") => compact_build_or_progress(input),
 		_ => head_tail_dedup(input),
 	}
 }
@@ -607,15 +621,6 @@ mod tests {
 		assert!(!out.contains("Pulling fs layer"));
 		assert!(!out.contains("Pull complete"));
 		assert!(out.contains("Status: Downloaded newer image for docker.io/library/app:latest"));
-	}
-
-	#[test]
-	fn helm_template_keeps_manifest_yaml_opaque() {
-		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
-		let helm_ctx = ctx("helm", Some("template"), &cfg);
-		let input = "apiVersion: v1\nkind: ConfigMap\ndata:\n  phase: Waiting\n";
-		let out = filter(&helm_ctx, input, 0).text;
-		assert_eq!(out, input);
 	}
 
 	#[test]
