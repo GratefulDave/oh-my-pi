@@ -36,7 +36,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 
 	let cleaned = primitives::strip_ansi(input);
 	let text = match ctx.subcommand {
-		Some("status") if is_status_machine_format(ctx.command) => condense_status(&cleaned),
+		Some("status") if is_status_machine_format(ctx.command) => cleaned,
 		Some("status") => condense_status(&cleaned),
 		Some("diff") if is_stat_format(ctx.command) => condense_diff_stat(&cleaned),
 		Some("diff") => {
@@ -60,11 +60,14 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		// skip it and passthrough the cleaned buffer.
 		Some("branch") if is_branch_non_listing(ctx.command) => cleaned,
 		Some("branch") => condense_branch(&cleaned),
+		Some("tag") if is_tag_non_listing(ctx.command) => cleaned,
 		Some("tag") => primitives::compact_listing(&cleaned, 40),
 		Some("stash") => condense_stash(ctx.command, &cleaned, exit_code),
 		Some("worktree") => cleaned,
+		Some("push") if has_token(ctx.command, "--porcelain") => cleaned,
 		Some("push") => condense_push(&cleaned, exit_code),
 		Some("pull") => condense_pull(&cleaned, exit_code),
+		Some("fetch") if has_token(ctx.command, "--porcelain") => cleaned,
 		Some("fetch") => condense_fetch(&cleaned, exit_code),
 		Some("commit") => condense_commit(&cleaned, exit_code),
 		Some("merge" | "rebase" | "checkout" | "switch" | "restore" | "clean" | "reset" | "add") => {
@@ -115,9 +118,9 @@ fn has_token(command: &str, token: &str) -> bool {
 }
 
 fn is_status_machine_format(command: &str) -> bool {
-	command.split_whitespace().any(|part| {
-		matches!(part, "-s" | "--short" | "--porcelain" | "--porcelain=v1" | "--porcelain=v2")
-	})
+	command
+		.split_whitespace()
+		.any(|part| matches!(part, "--porcelain" | "--porcelain=v1" | "--porcelain=v2"))
 }
 
 fn is_stat_format(command: &str) -> bool {
@@ -601,9 +604,20 @@ fn skip_log_line(trimmed: &str) -> bool {
 		|| trimmed.starts_with("Author:")
 		|| trimmed.starts_with("Date:")
 		|| trimmed.starts_with("Merge:")
-		|| trimmed.contains('|')
+		|| is_log_stat_line(trimmed)
 		|| trimmed.contains("files changed")
 		|| trimmed.contains("file changed")
+}
+
+fn is_log_stat_line(trimmed: &str) -> bool {
+	let Some((_path, stat)) = trimmed.split_once(" | ") else {
+		return false;
+	};
+	stat
+		.trim_start()
+		.bytes()
+		.next()
+		.is_some_and(|byte| byte.is_ascii_digit())
 }
 
 fn is_git_trailer(trimmed: &str) -> bool {
@@ -696,6 +710,36 @@ fn is_branch_non_listing(command: &str) -> bool {
 				| "--no-column"
 				| "--ignore-case"
 				| "--abbrev"
+		)
+	})
+}
+/// Whether `git tag` was invoked with non-listing flags (verification,
+/// deletion, creation, or custom formatting) whose output `compact_listing`
+/// would corrupt by treating it as a plain tag-name listing.
+fn is_tag_non_listing(command: &str) -> bool {
+	if !has_token(command, "tag") {
+		return false;
+	}
+
+	let tokens: Vec<&str> = command.split_whitespace().collect();
+	let idx = tokens.iter().position(|&t| t == "tag");
+	let Some(idx) = idx else { return false };
+	tokens[idx + 1..].iter().any(|&tok| {
+		if !tok.starts_with('-') {
+			return false;
+		}
+		!matches!(
+			tok,
+			"--list"
+				| "-l" | "--contains"
+				| "--no-contains"
+				| "--merged"
+				| "--no-merged"
+				| "--points-at"
+				| "--sort"
+				| "--column"
+				| "--no-column"
+				| "--ignore-case"
 		)
 	})
 }
@@ -1390,6 +1434,7 @@ mod tests {
 			 scratch.txt\nUU conflicted.rs\n"
 		);
 	}
+
 	#[test]
 	fn long_status_clean_is_compacted() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
@@ -1440,6 +1485,48 @@ mod tests {
 		let out = filter(&ctx, input, 0);
 		assert!(out.text.contains("upstream/main"), "{:?}", out.text);
 		assert!(!out.text.contains("origin/main"), "{:?}", out.text);
+	}
+
+	#[test]
+	fn tag_format_output_is_passthrough() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx =
+			test_ctx(Some("tag"), "git tag --format=%(refname:short)|%(taggerdate:short)", &cfg);
+		let input = (0..45)
+			.map(|idx| format!("v1.{idx}|2026-06-06\n"))
+			.collect::<String>();
+
+		let out = filter(&ctx, &input, 0);
+
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn tag_delete_output_is_passthrough() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("tag"), "git tag -d v1.0 v1.1", &cfg);
+		let input = (0..45)
+			.map(|idx| format!("Deleted tag 'v1.{idx}' (was abc1234)\n"))
+			.collect::<String>();
+
+		let out = filter(&ctx, &input, 0);
+
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn tag_listing_is_compacted() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("tag"), "git tag --list", &cfg);
+		let input = (0..45).map(|idx| format!("v1.{idx}\n")).collect::<String>();
+
+		let out = filter(&ctx, &input, 0);
+
+		assert!(out.changed);
+		assert!(out.text.starts_with("45 entries\n"));
+		assert!(out.text.contains("…\n"));
 	}
 
 	#[test]
@@ -1529,6 +1616,15 @@ mod tests {
 		             today\n\n README.md | 8 ++++++++\n 1 file changed, 8 insertions(+)\n";
 		let out = filter(&ctx, input, 0);
 		assert_eq!(out.text, "c84fa3c fix: add website URL (rtk-ai.app)\n");
+	}
+
+	#[test]
+	fn log_stat_line_detection_preserves_graph_pipes() {
+		assert!(skip_log_line("README.md | 8 ++++++++"));
+		assert!(skip_log_line("src/lib.rs |  18 ++"));
+		assert!(!skip_log_line("| * commit message"));
+		assert!(!skip_log_line("|\\"));
+		assert!(!skip_log_line("discussion uses | as separator"));
 	}
 
 	#[test]
