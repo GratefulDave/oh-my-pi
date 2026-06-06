@@ -9,9 +9,7 @@
     "packages/swarm-extension/dist/extension.bundle.js",
     ".omp/extensions/profile-manager/dist/index.js"
   ],
-  "disabledProviders": [
-    "google-antigravity"
-  ],
+  "disabledProviders": [],
   "activeModelProfile": "codex-ag",
   "modelProfiles": {
     "codex-ag": {
@@ -24,18 +22,17 @@
       "defaultThinkingLevel": "medium",
       "enabledModels": [
         "openai-codex/*",
-        "AG-*",
-        "opencode-antigravity/*"
+        "antigravity/*"
       ],
       "modelProviderOrder": [
         "openai-codex",
-        "opencode-antigravity"
+        "google-antigravity"
       ],
       "modelRoles": {
         "default": "openai-codex/gpt-5.5:high",
-        "smol": "AG-gemini-3.5-flash:medium",
-        "plan": "AG-claude-sonnet-4.6-thinking:medium",
-        "slow": "AG-claude-opus-4.6-thinking:xhigh"
+        "smol": "antigravity/gemini-3.5-flash-low:medium",
+        "plan": "antigravity/gemini-3.1-pro-low:medium",
+        "slow": "antigravity/claude-opus-4-6-thinking:high"
       }
     }
   }
