@@ -326,6 +326,8 @@ interface ProviderOverride {
 	transport?: Model<Api>["transport"];
 }
 
+const BUILT_IN_OAUTH_DISCOVERABLE_PROVIDERS = ["google-antigravity", "google-gemini-cli", "openai-codex"] as const;
+
 /**
  * Merge a freshly discovered model with the matching bundled/configured entry
  * (or a runtime provider override when no bundled entry exists).
@@ -550,6 +552,22 @@ function resolveOAuthAccountIdForAccessToken(
 	}
 	if (oauthCredentials.length === 1) {
 		return oauthCredentials[0].accountId;
+	}
+	return undefined;
+}
+
+function resolveOAuthProjectIdForAccessToken(
+	authStorage: AuthStorage,
+	provider: string,
+	accessToken: string,
+): string | undefined {
+	const oauthCredentials = getOAuthCredentialsForProvider(authStorage, provider);
+	const matchingCredential = oauthCredentials.find(credential => credential.access === accessToken);
+	if (matchingCredential) {
+		return matchingCredential.projectId;
+	}
+	if (oauthCredentials.length === 1) {
+		return oauthCredentials[0].projectId;
 	}
 	return undefined;
 }
@@ -1598,20 +1616,30 @@ export class ModelRegistry {
 			{
 				providerId: "google-antigravity",
 				resolveKey: extractGoogleOAuthToken,
-				createOptions: oauthToken =>
-					googleAntigravityModelManagerOptions({
+				createOptions: oauthToken => {
+					const projectId = resolveOAuthProjectIdForAccessToken(
+						this.authStorage,
+						"google-antigravity",
 						oauthToken,
+					);
+					return googleAntigravityModelManagerOptions({
+						oauthToken,
+						projectId,
 						endpoint: this.getProviderBaseUrl("google-antigravity"),
-					}),
+					});
+				},
 			},
 			{
 				providerId: "google-gemini-cli",
 				resolveKey: extractGoogleOAuthToken,
-				createOptions: oauthToken =>
-					googleGeminiCliModelManagerOptions({
+				createOptions: oauthToken => {
+					const projectId = resolveOAuthProjectIdForAccessToken(this.authStorage, "google-gemini-cli", oauthToken);
+					return googleGeminiCliModelManagerOptions({
 						oauthToken,
+						projectId,
 						endpoint: this.getProviderBaseUrl("google-gemini-cli"),
-					}),
+					});
+				},
 			},
 			{
 				providerId: "openai-codex",
@@ -1658,6 +1686,13 @@ export class ModelRegistry {
 			const descriptor = enabledSpecialProviderDescriptors[i];
 			const key = descriptor.resolveKey(specialKeys[i]);
 			if (!isAuthenticated(key)) {
+				this.#providerDiscoveryStates.set(descriptor.providerId, {
+					provider: descriptor.providerId,
+					status: "unauthenticated",
+					optional: false,
+					stale: false,
+					models: [],
+				});
 				continue;
 			}
 			options.push(descriptor.createOptions(key));
@@ -1679,11 +1714,29 @@ export class ModelRegistry {
 			if (options.dynamicModelsAuthoritative && !result.stale) {
 				authoritativeProviders.add(options.providerId);
 			}
+			this.#providerDiscoveryStates.set(options.providerId, {
+				provider: options.providerId,
+				status: result.models.length > 0 ? "ok" : "empty",
+				optional: false,
+				stale: result.stale,
+				fetchedAt: Date.now(),
+				models: models.map(model => model.id),
+			});
 			return { models, authoritativeProviders };
 		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			this.#providerDiscoveryStates.set(options.providerId, {
+				provider: options.providerId,
+				status: "unavailable",
+				optional: false,
+				stale: false,
+				fetchedAt: Date.now(),
+				models: [],
+				error: message,
+			});
 			logger.warn("model discovery failed for provider", {
 				provider: options.providerId,
-				error: error instanceof Error ? error.message : String(error),
+				error: message,
 			});
 			return { models: [], authoritativeProviders: new Set() };
 		}
@@ -2327,16 +2380,40 @@ export class ModelRegistry {
 	hasConfiguredAuth(model: Model<Api>): boolean {
 		return this.#keylessProviders.has(model.provider) || this.authStorage.hasAuth(model.provider);
 	}
-
 	getDiscoverableProviders(): string[] {
 		const disabledProviders = getDisabledProviderIdsFromSettings();
-		return this.#discoverableProviders
-			.filter(provider => !disabledProviders.has(provider.provider))
-			.map(provider => provider.provider);
+		const providers = new Set<string>();
+		for (const provider of this.#discoverableProviders) {
+			if (!disabledProviders.has(provider.provider)) {
+				providers.add(provider.provider);
+			}
+		}
+		for (const provider of BUILT_IN_OAUTH_DISCOVERABLE_PROVIDERS) {
+			if (!disabledProviders.has(provider)) {
+				providers.add(provider);
+			}
+		}
+		return [...providers].sort();
 	}
 
 	getProviderDiscoveryState(provider: string): ProviderDiscoveryState | undefined {
-		return this.#providerDiscoveryStates.get(provider);
+		const state = this.#providerDiscoveryStates.get(provider);
+		if (state) {
+			return state;
+		}
+		if (
+			(BUILT_IN_OAUTH_DISCOVERABLE_PROVIDERS as readonly string[]).includes(provider) &&
+			!this.authStorage.hasAuth(provider)
+		) {
+			return {
+				provider,
+				status: "unauthenticated",
+				optional: false,
+				stale: false,
+				models: [],
+			};
+		}
+		return undefined;
 	}
 
 	/**

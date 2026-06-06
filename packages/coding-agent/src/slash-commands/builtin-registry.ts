@@ -65,6 +65,9 @@ function parseShakeMode(args: string): ShakeMode | { error: string } {
 	if (verb === "images") return "images";
 	return { error: `Unknown /shake mode "${verb}". Use elide or images.` };
 }
+function normalizeOAuthProviderAlias(providerId: string): string {
+	return providerId === "antigravity" ? "google-antigravity" : providerId;
+}
 
 const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 	{
@@ -652,7 +655,8 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 			const manualInput = runtime.ctx.oauthManualInput;
 			const args = command.args.trim();
 			if (args.length > 0) {
-				const matchedProvider = getOAuthProviders().find(provider => provider.id === args);
+				const resolvedProvider = normalizeOAuthProviderAlias(args);
+				const matchedProvider = getOAuthProviders().find(provider => provider.id === resolvedProvider);
 				if (matchedProvider) {
 					if (manualInput.hasPending()) {
 						const pendingProvider = manualInput.pendingProviderId;
@@ -663,7 +667,7 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 						runtime.ctx.editor.setText("");
 						return;
 					}
-					void runtime.ctx.showOAuthSelector("login", matchedProvider.id);
+					void runtime.ctx.showOAuthSelector("login", resolvedProvider);
 					runtime.ctx.editor.setText("");
 					return;
 				}

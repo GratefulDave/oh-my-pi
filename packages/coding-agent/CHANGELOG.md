@@ -97,6 +97,12 @@
 
 - Removed the `/copy last|code|all|cmd` subcommands; every copy target is now reachable by picking it in the `/copy` tree.
 
+### Fixed
+
+- Fixed Antigravity-backed web search and image generation Code Assist calls to reuse the captured agy endpoints and headers instead of sandbox/proxy-era defaults.
+- Fixed Antigravity model selection to expose an unauthenticated provider tab and display/select models as `antigravity/<model-id>`.
+- Fixed Antigravity OAuth provider listings across CLI/TUI/RPC surfaces to use the user-facing `antigravity` provider alias and keep Antigravity models visible in `--list-models antigravity`.
+
 ## [15.9.5] - 2026-06-05
 
 ### Added

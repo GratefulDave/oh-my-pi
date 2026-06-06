@@ -66,6 +66,14 @@ const CALLBACK_SERVER_PROVIDERS = new Set<OAuthProvider>([
 
 const MANUAL_LOGIN_TIP = "Tip: You can complete pairing with /login <redirect URL>.";
 
+function formatOAuthProviderId(providerId: string): string {
+	return providerId === "google-antigravity" ? "antigravity" : providerId;
+}
+
+function normalizeOAuthProviderId(providerId: string): string {
+	return providerId === "antigravity" ? "google-antigravity" : providerId;
+}
+
 export class SelectorController {
 	constructor(private ctx: InteractiveModeContext) {}
 
@@ -925,11 +933,13 @@ export class SelectorController {
 	}
 
 	async #handleOAuthLogin(providerId: string): Promise<void> {
-		this.ctx.showStatus(`Logging in to ${providerId}…`);
+		const resolvedProviderId = normalizeOAuthProviderId(providerId);
+		const displayProviderId = formatOAuthProviderId(resolvedProviderId);
+		this.ctx.showStatus(`Logging in to ${displayProviderId}…`);
 		const manualInput = this.ctx.oauthManualInput;
-		const useManualInput = CALLBACK_SERVER_PROVIDERS.has(providerId as OAuthProvider);
+		const useManualInput = CALLBACK_SERVER_PROVIDERS.has(resolvedProviderId as OAuthProvider);
 		try {
-			await this.ctx.session.modelRegistry.authStorage.login(providerId as OAuthProvider, {
+			await this.ctx.session.modelRegistry.authStorage.login(resolvedProviderId as OAuthProvider, {
 				onAuth: (info: { url: string; instructions?: string }) => {
 					this.ctx.chatContainer.addChild(new Spacer(1));
 					this.ctx.chatContainer.addChild(new Text(theme.fg("dim", info.url), 1, 0));
@@ -972,12 +982,16 @@ export class SelectorController {
 					this.ctx.chatContainer.addChild(new Text(theme.fg("dim", message), 1, 0));
 					this.ctx.ui.requestRender();
 				},
-				onManualCodeInput: useManualInput ? () => manualInput.waitForInput(providerId) : undefined,
+				onManualCodeInput: useManualInput ? () => manualInput.waitForInput(resolvedProviderId) : undefined,
 			});
 			await this.ctx.session.modelRegistry.refresh();
 			this.ctx.chatContainer.addChild(new Spacer(1));
 			this.ctx.chatContainer.addChild(
-				new Text(theme.fg("success", `${theme.status.success} Successfully logged in to ${providerId}`), 1, 0),
+				new Text(
+					theme.fg("success", `${theme.status.success} Successfully logged in to ${displayProviderId}`),
+					1,
+					0,
+				),
 			);
 			this.ctx.chatContainer.addChild(new Text(theme.fg("dim", `Credentials saved to ${getAgentDbPath()}`), 1, 0));
 			this.ctx.ui.requestRender();
@@ -985,7 +999,7 @@ export class SelectorController {
 			this.ctx.showError(`Login failed: ${error instanceof Error ? error.message : String(error)}`);
 		} finally {
 			if (useManualInput) {
-				manualInput.clear(`Manual OAuth input cleared for ${providerId}`);
+				manualInput.clear(`Manual OAuth input cleared for ${displayProviderId}`);
 			}
 		}
 	}
