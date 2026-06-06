@@ -164,31 +164,40 @@ async function fetchAntigravityUsage(params: UsageFetchParams, ctx: UsageFetchCo
 	for (const [modelId, modelInfo] of Object.entries(data.models ?? {})) {
 		if (!KNOWN_MODEL_IDS.has(modelId)) continue;
 		const quotaInfos = normalizeQuotaInfos(modelInfo);
+		if (quotaInfos.length === 0) continue;
+
+		// Collapse all tiers/windows into a single limit per model — pick
+		// the lowest remaining fraction (most constrained quota).
+		let minRemaining: number | undefined;
+		let representativeWindow: UsageWindow | undefined;
 		for (const quotaInfo of quotaInfos) {
-			const amount = buildAmount(quotaInfo);
-			const window = parseWindow(quotaInfo);
-			if (window?.resetsAt) {
-				earliestReset = earliestReset ? Math.min(earliestReset, window.resetsAt) : window.resetsAt;
+			const fr = clampFraction(quotaInfo.remainingFraction);
+			if (fr !== undefined && (minRemaining === undefined || fr < minRemaining)) {
+				minRemaining = fr;
 			}
-			const labelBase = modelInfo.displayName || modelId;
-			const label = quotaInfo.tier ? `${labelBase} (${quotaInfo.tier})` : labelBase;
-			const windowId = window?.id ?? "default";
-			limits.push({
-				id: `${modelId}:${quotaInfo.tier ?? "default"}:${windowId}`,
-				label,
-				scope: {
-					provider: params.provider,
-					accountId: credential.accountId,
-					projectId: credential.projectId,
-					modelId,
-					tier: quotaInfo.tier,
-					windowId,
-				},
-				window,
-				amount,
-				status: getUsageStatus(amount.remainingFraction),
-			});
+			const w = parseWindow(quotaInfo);
+			if (w?.resetsAt) {
+				earliestReset = earliestReset ? Math.min(earliestReset, w.resetsAt) : w.resetsAt;
+				if (!representativeWindow || (representativeWindow.resetsAt !== undefined && w.resetsAt < representativeWindow.resetsAt)) {
+					representativeWindow = w;
+				}
+			}
 		}
+
+		const amount = buildAmount({ remainingFraction: minRemaining });
+		limits.push({
+			id: `${modelId}:default`,
+			label: modelInfo.displayName || modelId,
+			scope: {
+				provider: params.provider,
+				accountId: credential.accountId,
+				projectId: credential.projectId,
+				modelId,
+			},
+			window: representativeWindow,
+			amount,
+			status: getUsageStatus(amount.remainingFraction),
+		});
 	}
 
 	const report: UsageReport = {
