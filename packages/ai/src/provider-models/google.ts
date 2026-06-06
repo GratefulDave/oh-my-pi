@@ -42,31 +42,9 @@ export function googleVertexModelManagerOptions(_config?: GoogleVertexModelManag
 }
 
 export function googleAntigravityModelManagerOptions(
-	config?: GoogleAntigravityModelManagerConfig,
+	_config?: GoogleAntigravityModelManagerConfig,
 ): ModelManagerOptions<"google-gemini-cli"> {
-	const token = config?.oauthToken;
-	const endpoint = config?.endpoint;
-	return {
-		providerId: "google-antigravity",
-		...(token
-			? {
-					fetchDynamicModels: async () => {
-						const models = await fetchAntigravityDiscoveryModels({
-							token,
-							endpoint,
-						});
-						if (models === null) {
-							return null;
-						}
-						return models.map(m => ({
-							...m,
-							provider: "google-antigravity" as const,
-							...(endpoint ? { baseUrl: endpoint } : {}),
-						}));
-					},
-				}
-			: undefined),
-	};
+	return { providerId: "google-antigravity" };
 }
 
 export function googleGeminiCliModelManagerOptions(
