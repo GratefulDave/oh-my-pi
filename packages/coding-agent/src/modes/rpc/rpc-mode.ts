@@ -37,6 +37,18 @@ import type {
 	RpcSessionState,
 } from "./rpc-types";
 
+function formatOAuthProviderId(providerId: string): string {
+	return providerId === "google-antigravity" ? "antigravity" : providerId;
+}
+
+function formatOAuthProviderName(providerId: string, providerName: string): string {
+	return providerId === "google-antigravity" ? "Antigravity" : providerName;
+}
+
+function normalizeOAuthProviderId(providerId: string): string {
+	return providerId === "antigravity" ? "google-antigravity" : providerId;
+}
+
 // Re-export types for consumers
 export type * from "./rpc-types";
 
@@ -734,8 +746,8 @@ export async function runRpcMode(
 
 			case "get_login_providers": {
 				const providers = getOAuthProviders().map(provider => ({
-					id: provider.id,
-					name: provider.name,
+					id: formatOAuthProviderId(provider.id),
+					name: formatOAuthProviderName(provider.id, provider.name),
 					available: provider.available,
 					authenticated: session.modelRegistry.authStorage.hasAuth(provider.id),
 				}));
@@ -743,7 +755,8 @@ export async function runRpcMode(
 			}
 
 			case "login": {
-				const knownProvider = getOAuthProviders().find(p => p.id === command.providerId);
+				const resolvedProviderId = normalizeOAuthProviderId(command.providerId);
+				const knownProvider = getOAuthProviders().find(p => p.id === resolvedProviderId);
 				if (!knownProvider) {
 					return error(id, "login", `Unknown OAuth provider: ${command.providerId}`);
 				}
@@ -755,7 +768,7 @@ export async function runRpcMode(
 				// We use this ordering to self-classify at runtime — no static allowlist.
 				let authEmitted = false;
 				try {
-					await session.modelRegistry.authStorage.login(command.providerId, {
+					await session.modelRegistry.authStorage.login(resolvedProviderId, {
 						onAuth: info => {
 							authEmitted = true;
 							output({

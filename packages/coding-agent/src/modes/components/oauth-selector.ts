@@ -7,6 +7,15 @@ import type { AuthStorage } from "../../session/auth-storage";
 import { DynamicBorder } from "./dynamic-border";
 
 const OAUTH_SELECTOR_MAX_VISIBLE = 10;
+
+function formatOAuthProviderInfo(provider: OAuthProviderInfo): OAuthProviderInfo {
+	return provider.id === "google-antigravity" ? { ...provider, id: "antigravity", name: "Antigravity" } : provider;
+}
+
+function normalizeOAuthProviderId(providerId: string): string {
+	return providerId === "antigravity" ? "google-antigravity" : providerId;
+}
+
 /**
  * Component that renders an OAuth provider selector.
  */
@@ -68,11 +77,14 @@ export class OAuthSelectorComponent extends Container {
 		this.#stopSpinner();
 	}
 	#hasSelectableAuth(providerId: string): boolean {
-		return this.#mode === "logout" ? this.#authStorage.has(providerId) : this.#authStorage.hasAuth(providerId);
+		const resolvedProviderId = normalizeOAuthProviderId(providerId);
+		return this.#mode === "logout"
+			? this.#authStorage.has(resolvedProviderId)
+			: this.#authStorage.hasAuth(resolvedProviderId);
 	}
 
 	#loadProviders(): void {
-		const providers = getOAuthProviders();
+		const providers = getOAuthProviders().map(formatOAuthProviderInfo);
 		this.#allProviders =
 			this.#mode === "logout" ? providers.filter(provider => this.#hasSelectableAuth(provider.id)) : providers;
 		this.#filteredProviders = this.#allProviders;
@@ -105,7 +117,7 @@ export class OAuthSelectorComponent extends Container {
 		if (!this.#validateAuthCallback) return;
 		let isValid = false;
 		try {
-			isValid = await this.#validateAuthCallback(providerId);
+			isValid = await this.#validateAuthCallback(normalizeOAuthProviderId(providerId));
 		} catch {
 			isValid = false;
 		}
@@ -316,7 +328,7 @@ export class OAuthSelectorComponent extends Container {
 			if (selectedProvider?.available) {
 				this.#statusMessage = undefined;
 				this.stopValidation();
-				this.#onSelectCallback(selectedProvider.id);
+				this.#onSelectCallback(normalizeOAuthProviderId(selectedProvider.id));
 			} else if (selectedProvider) {
 				this.#statusMessage = "Provider unavailable in this environment.";
 				this.#updateList();

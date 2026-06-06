@@ -29,6 +29,37 @@ function writeLine(line = ""): void {
 	process.stdout.write(`${line}\n`);
 }
 
+function formatProviderDescriptor(provider: string): string {
+	return provider === "google-antigravity" ? "antigravity" : provider;
+}
+
+function dedupeModels(models: Model<Api>[]): Model<Api>[] {
+	const byDisplayKey = new Map<string, Model<Api>>();
+	for (const model of models) {
+		const key = `${formatProviderDescriptor(model.provider)}\u0000${model.id}`;
+		const existing = byDisplayKey.get(key);
+		if (existing?.provider === "google-antigravity") continue;
+		if (existing && model.provider !== "google-antigravity") continue;
+		byDisplayKey.set(key, model);
+	}
+	return [...byDisplayKey.values()];
+}
+
+function getListableModels(modelRegistry: ModelRegistry, searchPattern: string | undefined): Model<Api>[] {
+	const models = modelRegistry.getAvailable();
+	if (searchPattern?.toLowerCase().includes("antigravity")) {
+		const keys = new Set(models.map(model => `${model.provider}\u0000${model.id}`));
+		for (const model of modelRegistry.getAll()) {
+			if (model.provider !== "google-antigravity") continue;
+			const key = `${model.provider}\u0000${model.id}`;
+			if (keys.has(key)) continue;
+			models.push(model);
+			keys.add(key);
+		}
+	}
+	return dedupeModels(models);
+}
+
 function renderTable<T extends Record<string, string>>(rows: T[], headers: T): void {
 	const widths = Object.fromEntries(
 		Object.keys(headers).map(key => [key, Math.max(headers[key]!.length, ...rows.map(row => row[key]!.length))]),
@@ -51,7 +82,7 @@ function renderTable<T extends Record<string, string>>(rows: T[], headers: T): v
  * List available models, optionally filtered by search pattern
  */
 export async function listModels(modelRegistry: ModelRegistry, searchPattern?: string): Promise<void> {
-	const models = modelRegistry.getAvailable();
+	const models = getListableModels(modelRegistry, searchPattern);
 
 	if (models.length === 0) {
 		writeLine("No models available. Set API keys in environment variables.");
@@ -60,7 +91,11 @@ export async function listModels(modelRegistry: ModelRegistry, searchPattern?: s
 
 	let filteredModels: Model<Api>[] = models;
 	if (searchPattern) {
-		filteredModels = fuzzyFilter(models, searchPattern, model => `${model.provider} ${model.id}`);
+		filteredModels = fuzzyFilter(
+			models,
+			searchPattern,
+			model => `${formatProviderDescriptor(model.provider)} ${model.id}`,
+		);
 	}
 
 	const filteredCanonical = modelRegistry
@@ -73,7 +108,7 @@ export async function listModels(modelRegistry: ModelRegistry, searchPattern?: s
 			if (!selected) return undefined;
 			return {
 				canonical: record.id,
-				selected: `${selected.provider}/${selected.id}`,
+				selected: `${formatProviderDescriptor(selected.provider)}/${selected.id}`,
 				variants: String(record.variants.length),
 				context: formatNumber(selected.contextWindow),
 				maxOut: formatNumber(selected.maxTokens),
@@ -94,7 +129,7 @@ export async function listModels(modelRegistry: ModelRegistry, searchPattern?: s
 	});
 
 	const providerRows = filteredModels.map(model => ({
-		provider: model.provider,
+		provider: formatProviderDescriptor(model.provider),
 		model: model.id,
 		context: formatNumber(model.contextWindow),
 		maxOut: formatNumber(model.maxTokens),

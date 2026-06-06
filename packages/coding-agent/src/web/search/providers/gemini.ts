@@ -9,9 +9,11 @@
  * endpoint.
  */
 import {
+	ANTIGRAVITY_ENDPOINTS,
+	ANTIGRAVITY_STREAM_GENERATE_CONTENT_PATH,
 	ANTIGRAVITY_SYSTEM_INSTRUCTION,
 	type AuthStorage,
-	getAntigravityUserAgent,
+	getAntigravityCodeAssistHeaders,
 	getGeminiCliHeaders,
 } from "@oh-my-pi/pi-ai";
 import { fetchWithRetry } from "@oh-my-pi/pi-utils";
@@ -23,10 +25,8 @@ import { SearchProvider } from "./base";
 import { classifyProviderHttpError, withHardTimeout } from "./utils";
 
 const DEFAULT_ENDPOINT = "https://cloudcode-pa.googleapis.com";
-const ANTIGRAVITY_DAILY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
-const ANTIGRAVITY_SANDBOX_ENDPOINT = "https://daily-cloudcode-pa.sandbox.googleapis.com";
-const ANTIGRAVITY_ENDPOINT_FALLBACKS = [ANTIGRAVITY_DAILY_ENDPOINT, ANTIGRAVITY_SANDBOX_ENDPOINT] as const;
 const DEFAULT_MODEL = "gemini-2.5-flash";
+const ANTIGRAVITY_DEFAULT_MODEL = "gemini-3.5-flash-low";
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 const RATE_LIMIT_BUDGET_MS = 5 * 60 * 1000;
@@ -165,14 +165,13 @@ async function callGeminiSearch(
 	model: string;
 	usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
 }> {
-	const endpoints = auth.isAntigravity ? ANTIGRAVITY_ENDPOINT_FALLBACKS : [DEFAULT_ENDPOINT];
-	const headers = auth.isAntigravity ? { "User-Agent": getAntigravityUserAgent() } : getGeminiCliHeaders();
-
+	const endpoints = auth.isAntigravity ? [...ANTIGRAVITY_ENDPOINTS] : [DEFAULT_ENDPOINT];
+	const modelId = auth.isAntigravity ? ANTIGRAVITY_DEFAULT_MODEL : DEFAULT_MODEL;
 	const requestMetadata = auth.isAntigravity
 		? {
 				requestType: "agent",
 				userAgent: "antigravity",
-				requestId: `agent-${crypto.randomUUID()}`,
+				requestId: `agent/${crypto.randomUUID()}/${Date.now()}/${crypto.randomUUID()}/1`,
 			}
 		: {
 				userAgent: "pi-coding-agent",
@@ -192,7 +191,7 @@ async function callGeminiSearch(
 
 	const requestBody: Record<string, unknown> = {
 		project: auth.projectId,
-		model: DEFAULT_MODEL,
+		model: modelId,
 		request: {
 			contents: [
 				{
@@ -211,29 +210,31 @@ async function callGeminiSearch(
 		...requestMetadata,
 	};
 
-	if (maxOutputTokens !== undefined || temperature !== undefined) {
+	if (maxOutputTokens !== undefined || (!auth.isAntigravity && temperature !== undefined)) {
 		const generationConfig: Record<string, number> = {};
 		if (maxOutputTokens !== undefined) {
 			generationConfig.maxOutputTokens = maxOutputTokens;
 		}
-		if (temperature !== undefined) {
+		if (!auth.isAntigravity && temperature !== undefined) {
 			generationConfig.temperature = temperature;
 		}
 		(requestBody.request as Record<string, unknown>).generationConfig = generationConfig;
 	}
 	const buildInit = (): RequestInit => ({
 		method: "POST",
-		headers: {
-			Authorization: `Bearer ${auth.accessToken}`,
-			"Content-Type": "application/json",
-			Accept: "text/event-stream",
-			...headers,
-		},
+		headers: auth.isAntigravity
+			? getAntigravityCodeAssistHeaders(auth.accessToken)
+			: {
+					Authorization: `Bearer ${auth.accessToken}`,
+					"Content-Type": "application/json",
+					Accept: "text/event-stream",
+					...getGeminiCliHeaders(),
+				},
 		body: JSON.stringify(requestBody),
 		signal: withHardTimeout(signal),
 	});
 	const urlFor = (attempt: number) =>
-		`${endpoints[Math.min(attempt, endpoints.length - 1)]}/v1internal:streamGenerateContent?alt=sse`;
+		`${endpoints[Math.min(attempt, endpoints.length - 1)]}${ANTIGRAVITY_STREAM_GENERATE_CONTENT_PATH}`;
 
 	const response = await fetchWithRetry(urlFor, {
 		...buildInit(),

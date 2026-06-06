@@ -1,6 +1,12 @@
 import * as os from "node:os";
 import * as path from "node:path";
-import { getAntigravityUserAgent, getEnvApiKey, type Model } from "@oh-my-pi/pi-ai";
+import {
+	ANTIGRAVITY_PRIMARY_ENDPOINT,
+	ANTIGRAVITY_STREAM_GENERATE_CONTENT_PATH,
+	getAntigravityCodeAssistHeaders,
+	getEnvApiKey,
+	type Model,
+} from "@oh-my-pi/pi-ai";
 import {
 	CODEX_BASE_URL,
 	getCodexAccountId,
@@ -28,7 +34,7 @@ import { resolveReadPath } from "./path-utils";
 
 const DEFAULT_MODEL = "gemini-3-pro-image-preview";
 const DEFAULT_OPENROUTER_MODEL = "google/gemini-3-pro-image-preview";
-const DEFAULT_ANTIGRAVITY_MODEL = "gemini-3-pro-image";
+const DEFAULT_ANTIGRAVITY_MODEL = "gemini-3.5-flash-low";
 const DEFAULT_XAI_IMAGE_MODEL = "grok-imagine-image";
 const IMAGE_TIMEOUT = 3 * 60 * 1000; // 3 minutes
 const MAX_IMAGE_SIZE = 35 * 1024 * 1024;
@@ -36,7 +42,6 @@ const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const OPENAI_IMAGE_OUTPUT_FORMAT = "webp";
 const OPENAI_IMAGE_MIME_TYPE = "image/webp";
 
-const ANTIGRAVITY_ENDPOINT = "https://daily-cloudcode-pa.sandbox.googleapis.com";
 const IMAGE_SYSTEM_INSTRUCTION =
 	"You are an AI image generator. Generate images based on user descriptions. Focus on creating high-quality, visually appealing images that match the user's request.";
 
@@ -921,7 +926,7 @@ function buildAntigravityRequest(
 			],
 		},
 		requestType: "agent",
-		requestId: `agent-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+		requestId: `agent/${Date.now()}/${crypto.randomUUID()}/${crypto.randomUUID()}/1`,
 		userAgent: "antigravity",
 	};
 }
@@ -1097,14 +1102,9 @@ export const imageGenTool: CustomTool<typeof imageGenSchema, ImageGenToolDetails
 					resolvedImages,
 				);
 
-				const response = await fetch(`${ANTIGRAVITY_ENDPOINT}/v1internal:streamGenerateContent?alt=sse`, {
+				const response = await fetch(`${ANTIGRAVITY_PRIMARY_ENDPOINT}${ANTIGRAVITY_STREAM_GENERATE_CONTENT_PATH}`, {
 					method: "POST",
-					headers: {
-						Authorization: `Bearer ${apiKey.apiKey}`,
-						"Content-Type": "application/json",
-						Accept: "text/event-stream",
-						"User-Agent": getAntigravityUserAgent(),
-					},
+					headers: getAntigravityCodeAssistHeaders(apiKey.apiKey),
 					body: JSON.stringify(requestBody),
 					signal: requestSignal,
 				});
