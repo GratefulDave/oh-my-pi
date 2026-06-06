@@ -52,7 +52,13 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		},
 		Some("show") => condense_show(&cleaned),
 		Some("log") => condense_log(&cleaned, 32, 16),
-		Some("branch") if has_token(ctx.command, "--show-current") => cleaned,
+		// Non-listing branch formats produce single values or one-liner
+		// confirmations (e.g. `--show-current` → `main`, `--delete` →
+		// `Deleted branch feature (was abc123).`).  `condense_branch`
+		// would rewrite those as `local: main\n` / `local: Deleted
+		// branch…`, changing the meaning of the requested output, so
+		// skip it and passthrough the cleaned buffer.
+		Some("branch") if is_branch_non_listing(ctx.command) => cleaned,
 		Some("branch") => condense_branch(&cleaned),
 		Some("tag") => primitives::compact_listing(&cleaned, 40),
 		Some("stash") => condense_stash(ctx.command, &cleaned, exit_code),
@@ -659,6 +665,39 @@ fn push_show_commit_summary(out: &mut String, prelude: &str) {
 		out.push('\n');
 		body_lines += 1;
 	}
+}
+/// Whether `git branch` was invoked with non-listing flags (mutations, value
+/// retrieval, or config) whose output `condense_branch` would corrupt by
+/// treating the output as a listing.
+fn is_branch_non_listing(command: &str) -> bool {
+	let tokens: Vec<&str> = command.split_whitespace().collect();
+	// Find the "branch" token and scan flags after it
+	let idx = tokens.iter().position(|&t| t == "branch");
+	let Some(idx) = idx else { return false };
+	tokens[idx + 1..].iter().any(|&tok| {
+		if !tok.starts_with('-') {
+			return false; // non-flag args after the command (branch names) are fine
+		}
+		!matches!(
+			tok,
+			// Listing flags — skip to allow `condense_branch` to handle them
+			"--list"
+				| "-l" | "--merged"
+				| "--no-merged"
+				| "--contains"
+				| "--no-contains"
+				| "--points-at"
+				| "--verbose"
+				| "-v" | "--all"
+				| "-a" | "--remotes"
+				| "-r" | "--sort"
+				| "--format"
+				| "--column"
+				| "--no-column"
+				| "--ignore-case"
+				| "--abbrev"
+		)
+	})
 }
 
 fn condense_branch(input: &str) -> String {
