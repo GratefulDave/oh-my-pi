@@ -2016,6 +2016,17 @@ describe("ModelRegistry", () => {
 			expect(state?.status).toBe("unauthenticated");
 			expect(state?.models).toContain("local-coder");
 		});
+
+		test("exposes built-in Antigravity as an unauthenticated discoverable provider", async () => {
+			const registry = new ModelRegistry(authStorage, modelsJsonPath);
+
+			expect(registry.getDiscoverableProviders()).toContain("google-antigravity");
+			expect(registry.getProviderDiscoveryState("google-antigravity")).toMatchObject({
+				provider: "google-antigravity",
+				status: "unauthenticated",
+				models: [],
+			});
+		});
 		test("llama.cpp discovery honors configured API key", async () => {
 			authStorage.setRuntimeApiKey("llama.cpp", "test-llama-key");
 			using _hook = hookFetch((input, init) => {

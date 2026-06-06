@@ -4,6 +4,14 @@ import { theme } from "../../modes/theme/theme";
 import { openPath } from "../../utils/open";
 import { DynamicBorder } from "./dynamic-border";
 
+function formatOAuthProviderName(providerId: string): string {
+	if (providerId === "google-antigravity" || providerId === "antigravity") {
+		return "Antigravity";
+	}
+	const providerInfo = getOAuthProviders().find(p => p.id === providerId);
+	return providerInfo?.name || providerId;
+}
+
 /**
  * Login dialog component - replaces editor during OAuth login flow
  */
@@ -23,8 +31,7 @@ export class LoginDialogComponent extends Container {
 		super();
 		this.#tui = tui;
 
-		const providerInfo = getOAuthProviders().find(p => p.id === providerId);
-		const providerName = providerInfo?.name || providerId;
+		const providerName = formatOAuthProviderName(providerId);
 
 		// Top border
 		this.addChild(new DynamicBorder());

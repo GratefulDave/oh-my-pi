@@ -39,7 +39,7 @@ export function parseModelString(
 	const slashIdx = modelStr.indexOf("/");
 	if (slashIdx <= 0) return undefined;
 	const id = modelStr.slice(slashIdx + 1);
-	const provider = modelStr.slice(0, slashIdx);
+	const provider = normalizeProviderDescriptor(modelStr.slice(0, slashIdx));
 	// Strip valid thinking level suffix (e.g., "claude-sonnet-4-6:high" -> id "claude-sonnet-4-6", thinkingLevel "high")
 	const colonIdx = id.lastIndexOf(":");
 	if (colonIdx !== -1) {
@@ -52,11 +52,20 @@ export function parseModelString(
 	return { provider, id };
 }
 
+function formatProviderDescriptor(provider: string): string {
+	return provider === "google-antigravity" ? "antigravity" : provider;
+}
+
+function normalizeProviderDescriptor(provider: string): string {
+	const normalized = provider.trim().toLowerCase();
+	return normalized === "antigravity" ? "google-antigravity" : normalized;
+}
+
 /**
  * Format a model as "provider/modelId" string.
  */
 export function formatModelString(model: Model<Api>): string {
-	return `${model.provider}/${model.id}`;
+	return `${formatProviderDescriptor(model.provider)}/${model.id}`;
 }
 
 export function formatModelSelectorValue(selector: string, thinkingLevel: ThinkingLevel | undefined): string {
@@ -144,7 +153,7 @@ export function resolveProviderModelReference(
 	modelId: string,
 	availableModels: readonly Model<Api>[],
 ): Model<Api> | undefined {
-	const normalizedProvider = provider.trim().toLowerCase();
+	const normalizedProvider = normalizeProviderDescriptor(provider);
 	const normalizedModelId = modelId.trim().toLowerCase();
 	if (!normalizedProvider || !normalizedModelId) {
 		return undefined;
@@ -342,9 +351,9 @@ function tryMatchModel(
 	// Check for provider/modelId format — fuzzy match within provider only.
 	const slashIndex = modelPattern.indexOf("/");
 	if (slashIndex !== -1) {
-		const provider = modelPattern.substring(0, slashIndex);
+		const provider = normalizeProviderDescriptor(modelPattern.substring(0, slashIndex));
 		const modelId = modelPattern.substring(slashIndex + 1);
-		const providerModels = availableModels.filter(m => m.provider.toLowerCase() === provider.toLowerCase());
+		const providerModels = availableModels.filter(m => normalizeProviderDescriptor(m.provider) === provider);
 		if (providerModels.length === 0) {
 			// The prefix is not a known provider in this candidate set, so treat the
 			// slash as part of the raw model ID and continue with generic matching.
@@ -886,9 +895,14 @@ export async function resolveModelScope(
 			// Match against "provider/modelId" format OR just model ID
 			// This allows "*sonnet*" to match without requiring "anthropic/*sonnet*"
 			const matchingModels = availableModels.filter(m => {
-				const fullId = `${m.provider}/${m.id}`;
+				const internalFullId = `${m.provider}/${m.id}`;
+				const displayFullId = `${formatProviderDescriptor(m.provider)}/${m.id}`;
 				const glob = new Bun.Glob(globPattern.toLowerCase());
-				return glob.match(fullId.toLowerCase()) || glob.match(m.id.toLowerCase());
+				return (
+					glob.match(internalFullId.toLowerCase()) ||
+					glob.match(displayFullId.toLowerCase()) ||
+					glob.match(m.id.toLowerCase())
+				);
 			});
 
 			if (matchingModels.length === 0) {
@@ -1024,6 +1038,10 @@ export function resolveCliModel(options: {
 	const providerMap = new Map<string, string>();
 	for (const model of availableModels) {
 		providerMap.set(model.provider.toLowerCase(), model.provider);
+	}
+
+	if (providerMap.has("google-antigravity")) {
+		providerMap.set("antigravity", "google-antigravity");
 	}
 
 	let provider = cliProvider ? providerMap.get(cliProvider.toLowerCase()) : undefined;
