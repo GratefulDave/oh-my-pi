@@ -100,6 +100,11 @@ fn is_structured_kubectl_output(input: &str) -> bool {
 }
 
 /// Whether `kubectl get` was invoked with explicit `-o json` or `-o yaml`.
+///
+/// Handles all three kubectl `-o` forms:
+///   `-o json`      (space-separated)
+///   `-o=json`      (attached with `=`)
+///   `-ojson`       (fully attached, no separator — common CLI shorthand)
 fn is_explicit_kubectl_json_yaml(command: &str) -> bool {
 	let mut tokens = command.split_whitespace();
 	while let Some(tok) = tokens.next() {
@@ -120,6 +125,13 @@ fn is_explicit_kubectl_json_yaml(command: &str) -> bool {
 				return true;
 			}
 		}
+		// Fully-attached form: `-ojson`, `-oyaml`, `-ojsonpath=...`, etc.
+		if let Some(val) = tok.strip_prefix("-o").filter(|v| !v.is_empty() && !v.starts_with('=')) {
+			let base = val.split('=').next().unwrap_or(val);
+			if matches!(base, "json" | "yaml") {
+				return true;
+			}
+		}
 	}
 	false
 }
@@ -129,6 +141,11 @@ fn is_explicit_kubectl_json_yaml(command: &str) -> bool {
 /// `-o template/...`, `-o custom-columns/...`, `--no-headers`) produce
 /// listings or single values, not tables — `compact_table` would treat
 /// the first entry as a header and corrupt the requested format.
+///
+/// Handles all three kubectl `-o` forms:
+///   `-o name`      (space-separated)
+///   `-o=name`      (attached with `=`)
+///   `-oname`       (fully attached, no separator — common CLI shorthand)
 fn is_kubectl_non_table_format(command: &str) -> bool {
 	let mut tokens = command.split_whitespace();
 	while let Some(tok) = tokens.next() {
@@ -154,6 +171,23 @@ fn is_kubectl_non_table_format(command: &str) -> bool {
 			.strip_prefix("-o=")
 			.or_else(|| tok.strip_prefix("--output="))
 		{
+			let base = val.split('=').next().unwrap_or(val);
+			if matches!(
+				base,
+				"name"
+					| "jsonpath"
+					| "go-template"
+					| "go-template-file"
+					| "template"
+					| "templatefile"
+					| "custom-columns"
+					| "custom-columns-file"
+			) {
+				return true;
+			}
+		}
+		// Fully-attached form: `-oname`, `-ojsonpath=...`, `-ogo-template=...`, etc.
+		if let Some(val) = tok.strip_prefix("-o").filter(|v| !v.is_empty() && !v.starts_with('=')) {
 			let base = val.split('=').next().unwrap_or(val);
 			if matches!(
 				base,
@@ -855,5 +889,88 @@ mod tests {
 		let input = "apiVersion: v1\nkind: ConfigMap\ndata:\n  phase: Waiting\n  action: Downloading\n";
 		let out = filter(&helm_ctx, input, 0).text;
 		assert_eq!(out, input, "helm template output must be preserved verbatim");
+	}
+
+	// ── Attached -o format tests ────────────────────────────────────────────
+
+	#[test]
+	fn kubectl_get_ojson_attached_preserves_json() {
+		// `-ojson` (no space, no `=`) must be treated as `-o json`.
+		// A kubectl List JSON must NOT be rewritten into a table summary.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "kubectl",
+			subcommand: Some("get"),
+			command:    "kubectl get pods -ojson",
+			config:     &cfg,
+		};
+		let input = r#"{"apiVersion":"v1","kind":"List","items":[{"kind":"Pod","metadata":{"name":"p","namespace":"default"},"spec":{"nodeName":"n","containers":[{"name":"c","image":"img"}]},"status":{"phase":"Running","podIP":"1.2.3.4","startTime":"2024-01-01T00:00:00Z","containerStatuses":[{"name":"c","ready":true,"restartCount":0}]}}]}"#;
+		let out = filter(&ctx, input, 0).text;
+		assert_eq!(out, input, "-ojson must passthrough verbatim, not be compacted to a table");
+	}
+
+	#[test]
+	fn kubectl_get_oyaml_attached_preserves_yaml() {
+		// `-oyaml` must be treated as `-o yaml` — passthrough, no table compaction.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "kubectl",
+			subcommand: Some("get"),
+			command:    "kubectl get pod my-pod -oyaml",
+			config:     &cfg,
+		};
+		let input = "apiVersion: v1\nkind: Pod\nmetadata:\n  name: my-pod\nspec:\n  containers: []\n";
+		let out = filter(&ctx, input, 0).text;
+		assert_eq!(out, input, "-oyaml must passthrough verbatim");
+	}
+
+	#[test]
+	fn kubectl_get_oname_attached_skips_table_compaction() {
+		// `-oname` must be treated as `-o name` — listings, not tables.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "kubectl",
+			subcommand: Some("get"),
+			command:    "kubectl get pods -oname",
+			config:     &cfg,
+		};
+		// `-o name` output is one `resource/name` per line — compact_table
+		// would corrupt it by treating the first line as a header.
+		let input = "pod/alpha\npod/beta\npod/gamma\n";
+		let out = filter(&ctx, input, 0).text;
+		assert!(!out.contains("rows"), "-oname output must not be table-compacted, got: {out}");
+	}
+
+	#[test]
+	fn kubectl_get_ojsonpath_attached_skips_table_compaction() {
+		// `-ojsonpath=...` must be treated as non-table.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "kubectl",
+			subcommand: Some("get"),
+			command:    "kubectl get pods -ojsonpath={.items[*].metadata.name}",
+			config:     &cfg,
+		};
+		let input = "alpha beta gamma\n";
+		let out = filter(&ctx, input, 0).text;
+		assert!(!out.contains("rows"), "-ojsonpath output must not be table-compacted, got: {out}");
+	}
+
+	#[test]
+	fn kubectl_get_owide_attached_still_compacts_table() {
+		// `-owide` IS a table format — it must still go through compact_table.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "kubectl",
+			subcommand: Some("get"),
+			command:    "kubectl get pods -owide",
+			config:     &cfg,
+		};
+		let mut input = String::from("NAME READY STATUS RESTARTS AGE IP NODE\n");
+		for i in 0..25 {
+			input.push_str(&format!("pod-{i} 1/1 Running 0 1h 10.0.0.{i} node\n"));
+		}
+		let out = filter(&ctx, input.as_str(), 0).text;
+		assert!(out.contains("rows"), "-owide is a table format and must be compacted, got: {out}");
 	}
 }
