@@ -273,50 +273,70 @@ fn is_s3_time(token: &str) -> bool {
 }
 
 fn compact_aws_s3_ls_text(input: &str) -> Option<String> {
-	let rows = input
-		.lines()
-		.filter_map(|line| {
-			let mut parts = line.split_whitespace();
-			let first = parts.next()?;
-			if first == "PRE" {
-				// A common-prefix name may contain spaces (`PRE my folder/`), so
-				// join the remaining tokens instead of keeping only the first one.
-				let prefix: Vec<&str> = parts.collect();
-				if prefix.is_empty() {
-					return None;
-				}
-				return Some(vec![
+	let mut rows = Vec::new();
+	let mut passthrough_lines = Vec::new();
+	for line in input.lines() {
+		let mut parts = line.split_whitespace();
+		let Some(first) = parts.next() else {
+			continue;
+		};
+		if first == "PRE" {
+			// A common-prefix name may contain spaces (`PRE my folder/`), so
+			// join the remaining tokens instead of keeping only the first one.
+			let prefix: Vec<&str> = parts.collect();
+			if prefix.is_empty() {
+				passthrough_lines.push(line);
+			} else {
+				rows.push(vec![
 					prefix.join(" ").trim_end_matches('/').to_string(),
 					"prefix".to_string(),
 				]);
 			}
-			let time = parts.next()?;
-			// Require a real date/time prefix so `--summarize` footers
-			// (`Total Objects: 1`, `Total Size: ...`) and any diagnostic/error
-			// text are not reinterpreted as object rows.
-			if !is_s3_date(first) || !is_s3_time(time) {
-				return None;
-			}
-			let third = parts.next()?;
-			if third == "0" && parts.clone().next().is_none() {
-				return None;
-			}
-			// Collect all remaining tokens as the key so that S3 keys
-			// containing spaces (e.g. "reports/June 2026.csv") are
-			// preserved in full rather than truncated to the last token.
-			let rest: Vec<&str> = parts.collect();
-			let name = if rest.is_empty() {
-				third.to_string()
-			} else {
-				rest.join(" ")
-			};
-			Some(vec![name, format!("{first} {time}")])
-		})
-		.collect::<Vec<_>>();
+			continue;
+		}
+		let Some(time) = parts.next() else {
+			passthrough_lines.push(line);
+			continue;
+		};
+		// Require a real date/time prefix so `--summarize` footers
+		// (`Total Objects: 1`, `Total Size: ...`) and any diagnostic/error
+		// text are not reinterpreted as object rows.
+		if !is_s3_date(first) || !is_s3_time(time) {
+			passthrough_lines.push(line);
+			continue;
+		}
+		let Some(third) = parts.next() else {
+			passthrough_lines.push(line);
+			continue;
+		};
+		if third == "0" && parts.clone().next().is_none() {
+			continue;
+		}
+		// Collect all remaining tokens as the key so that S3 keys
+		// containing spaces (e.g. "reports/June 2026.csv") are
+		// preserved in full rather than truncated to the last token.
+		let rest: Vec<&str> = parts.collect();
+		let name = if rest.is_empty() {
+			third.to_string()
+		} else {
+			rest.join(" ")
+		};
+		rows.push(vec![name, format!("{first} {time}")]);
+	}
 	if rows.is_empty() {
 		None
 	} else {
-		Some(compact_named_rows(&["bucket", "date"], &rows))
+		let mut out = compact_named_rows(&["bucket", "date"], &rows);
+		if !passthrough_lines.is_empty() {
+			if !out.ends_with('\n') {
+				out.push('\n');
+			}
+			for line in passthrough_lines {
+				out.push_str(line);
+				out.push('\n');
+			}
+		}
+		Some(out)
 	}
 }
 
@@ -1483,11 +1503,13 @@ mod tests {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = aws_ctx("s3", "aws s3 ls --summarize s3://b/", &cfg);
 		// `--summarize` appends `Total Objects:`/`Total Size:` footers that lack a
-		// real date/time prefix; they must not be reshaped into bogus object rows.
+		// real date/time prefix; they must not be reshaped into bogus object rows or
+		// silently dropped.
 		let input = "2026-05-27 01:02:03 100 builds\n\nTotal Objects: 1\nTotal Size: 100\n";
 		let out = filter(&ctx, input, 0);
-		assert!(!out.text.contains("Total Objects:"), "{:?}", out.text);
-		assert!(!out.text.contains("Total Size:"), "{:?}", out.text);
+		assert!(out.text.contains("builds\t2026-05-27 01:02:03"), "{:?}", out.text);
+		assert!(out.text.contains("Total Objects: 1"), "{:?}", out.text);
+		assert!(out.text.contains("Total Size: 100"), "{:?}", out.text);
 	}
 
 	#[test]

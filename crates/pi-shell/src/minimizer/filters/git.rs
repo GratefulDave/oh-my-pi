@@ -1336,6 +1336,9 @@ fn condense_stash(command: &str, input: &str, exit_code: i32) -> String {
 	if has_token(command, "list") {
 		return condense_stash_list(input);
 	}
+	if input.contains("No local changes to save") {
+		return "No local changes to save\n".to_string();
+	}
 	if exit_code == 0 {
 		let sub = stash_subcommand(command);
 		// Bare "stash" defaults to push
@@ -1356,10 +1359,6 @@ fn condense_stash(command: &str, input: &str, exit_code: i32) -> String {
 		return primitives::compact_listing(input, 40);
 	}
 
-	// Non-zero exit: keep it, but check for "No local changes to save"
-	if input.contains("No local changes to save") {
-		return "No local changes to save\n".to_string();
-	}
 	condense_noisy_output(input)
 }
 
@@ -2150,6 +2149,14 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		let input = "Saved working directory and index state WIP on main: abc1234 some message\n";
 		let out = filter(&ctx, input, 0);
 		assert_eq!(out.text, "ok stashed\n");
+	}
+
+	#[test]
+	fn stash_empty_message_stays_opaque() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("stash"), "git stash", &cfg);
+		let out = filter(&ctx, "No local changes to save\n", 0);
+		assert_eq!(out.text, "No local changes to save\n");
 	}
 
 	#[test]

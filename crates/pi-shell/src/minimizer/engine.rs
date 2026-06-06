@@ -145,14 +145,11 @@ fn apply_chain(
 	}
 
 	// (d) git-only chain: route the whole captured buffer through the git filter
-	// using the first segment's subcommand as the routing key — but ONLY when
-	// every segment shares that subcommand. A subcommand filter such as
-	// `condense_status` rebuilds its output from its own parse and silently drops
-	// lines it does not recognize, so feeding it a mixed `git status && git log`
-	// buffer would discard the `git log` segment's output entirely. With differing
-	// subcommands we stay opaque (and must NOT fall through to the chain-first
-	// heuristic below, which would route the whole buffer through the first
-	// segment's filter and corrupt it the same way).
+	// only for same-subcommand cases with an explicit compatibility key. Many git
+	// subcommands share one detected word while flags select incompatible output
+	// modes (`commit --dry-run` vs `commit -m`, mixed branch/tag actions, etc.).
+	// Unsupported/mixed variants stay opaque because this whole-buffer path cannot
+	// split captured stdout back into per-segment slices.
 	let all_git = !segments.is_empty()
 		&& segments
 			.iter()
@@ -170,28 +167,21 @@ fn apply_chain(
 						== want
 				})
 			} && {
-			// A shared subcommand is not enough: within `diff`, flags select
-			// incompatible renderers (`--name-only` listing vs `--stat`), so a
-			// combined `git diff --name-only && git diff --stat` buffer routed
-			// through one would corrupt the other segment's output. Require an
-			// identical diff format signature across segments.
-			identity.subcommand.as_deref() != Some("diff") || {
-				let want = filters::git::diff_format_key(&segments[0].command);
-				segments
-					.iter()
-					.all(|seg| filters::git::diff_format_key(&seg.command) == want)
-			}
-		} && {
-			// Same-subcommand stash chains are still unsafe: different stash
-			// actions share the detected "stash" subcommand but use different
-			// filter paths. `git stash list` produces a parsed listing while
-			// `git stash drop` emits a one-line confirmation — feeding both
-			// through `condense_stash_list` would corrupt the drop output.
-			identity.subcommand.as_deref() != Some("stash") || {
-				let want = filters::git::stash_action_key(&segments[0].command);
-				segments
-					.iter()
-					.all(|seg| filters::git::stash_action_key(&seg.command) == want)
+			match identity.subcommand.as_deref() {
+				Some("status") => true,
+				Some("diff") => {
+					let want = filters::git::diff_format_key(&segments[0].command);
+					segments
+						.iter()
+						.all(|seg| filters::git::diff_format_key(&seg.command) == want)
+				},
+				Some("stash") => {
+					let want = filters::git::stash_action_key(&segments[0].command);
+					segments
+						.iter()
+						.all(|seg| filters::git::stash_action_key(&seg.command) == want)
+				},
+				_ => false,
 			}
 		} {
 			let subcommand = identity.subcommand.as_deref();
@@ -746,14 +736,24 @@ strip_lines_matching = [".*"]
 	}
 
 	#[test]
-	fn git_only_chain_same_subcommand_routes_through_git_filter() {
-		// Mode α resolution: an all-git chain whose segments share one subcommand
-		// routes the whole captured buffer through that subcommand's git filter —
-		// the single filter correctly handles the concatenated output.
+	fn git_only_chain_same_status_subcommand_routes_through_git_filter() {
+		// Same-subcommand status chains have one compatible renderer, so the
+		// whole-buffer FFI path may route them through git.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let out = apply("git status && git status", "## main\n M file.rs\n", 0, &cfg);
 		assert!(out.changed, "same-subcommand git chain should route through the git filter");
 		assert_eq!(out.filter, "chain-git");
+	}
+
+	#[test]
+	fn git_commit_chain_differing_actions_stays_opaque() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let input = "On branch main\nChanges to be committed:\n  modified: src/lib.rs\n[main \
+		             abc1234] init\n 1 file changed, 1 insertion(+)\n";
+		let out = apply("git commit --dry-run && git commit -m init", input, 0, &cfg);
+		assert!(!out.changed, "commit actions share a subcommand but not an output contract");
+		assert_eq!(out.filter, "compound");
+		assert_eq!(out.text, input);
 	}
 
 	#[test]

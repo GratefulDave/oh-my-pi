@@ -12,6 +12,21 @@ fn context_has_nul_output(command: &str) -> bool {
 		.any(|tok| tok == "-print0" || tok == "-fprint0")
 }
 
+fn find_outputs_paths_only(command: &str) -> bool {
+	!command.split_whitespace().any(|word| {
+		matches!(
+			word,
+			"-print0"
+				| "-printf"
+				| "-fprintf"
+				| "-ls" | "-fls"
+				| "-exec"
+				| "-execdir"
+				| "-ok" | "-okdir"
+		)
+	})
+}
+
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	let cleaned = primitives::strip_ansi(input);
 	let legacy = ctx.config.legacy_filters_active();
@@ -29,7 +44,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 			"ls" => compact_ls_output(&cleaned).unwrap_or_else(|| compact_listing_output(&cleaned)),
 			"tree" => compact_listing_output(&cleaned),
 			"find" => {
-				if context_has_nul_output(ctx.command) {
+				if context_has_nul_output(ctx.command) || !find_outputs_paths_only(ctx.command) {
 					cleaned
 				} else if legacy {
 					compact_find_output_legacy(&cleaned)
@@ -1130,6 +1145,15 @@ mod tests {
 		cfg: &'a MinimizerConfig,
 	) -> MinimizerCtx<'a> {
 		MinimizerCtx { program, subcommand: None, command, config: cfg }
+	}
+
+	#[test]
+	fn find_printf_output_stays_opaque() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx_command("find", "find . -printf '%p %s\\n'", &cfg);
+		let input = "./a 10\n./b 20\n";
+		let out = filter(&ctx, input, 0);
+		assert_eq!(out.text, input);
 	}
 
 	// migrated for always-group: see T1a (minimizer-filter-remediation).

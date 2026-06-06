@@ -149,11 +149,22 @@ export declare function applyBashFixups(command: string): BashFixupResult
 
 /**
  * Run the shell-output minimizer over an already-captured command result,
- * without spawning a shell. Resolves to a `MinimizerResult` only when the output
- * was actually rewritten, and `null` for disabled/omitted/passthrough cases.
+ * without spawning a shell.
  *
- * Async (returns a Promise): the AI overlay can make a blocking 5s HTTP request,
- * so the work runs on a blocking pool to avoid stalling the JS event loop.
+ * This is the one-shot counterpart to the minimization that
+ * [`execute_shell`] performs inline: callers that captured a command's output
+ * elsewhere can pass it here to obtain the same telemetry.
+ *
+ * Returns [`MinimizerResult`] **only** when the minimizer actually rewrote the
+ * output (`changed == true`) and retained the original buffer, mirroring the
+ * persistent-shell path. Returns `null` for every no-op case: when
+ * `minimizer` is omitted, when the config is disabled, or when the filter
+ * passes the output through unchanged. A missing `exit_code` is treated as
+ * success (`0`).
+ *
+ * Async (returns a Promise): minimization can scan multi-megabyte captured
+ * output, so the work runs on a blocking pool to avoid stalling the JS event
+ * loop.
  */
 export declare function applyShellMinimizer(options: ShellMinimizerApplyOptions): Promise<MinimizerResult | null>
 
@@ -1066,9 +1077,9 @@ export interface MinimizerOptions {
   sourceOutlineLevel?: string
   /**
    * Kill-switch to fall back to the pre-PR (legacy) filter behavior for
-   * grep / find / pytest. When `true`, filters that opted into the
+   * grep / find / pytest. When `Some(true)`, filters that opted into the
    * always-shrink Tier 1 / Tier 2 behavior skip the new code path. When
-   * absent, defers to the `OMP_MINIMIZER_LEGACY_FILTERS` env var.
+   * `None`, defers to the `OMP_MINIMIZER_LEGACY_FILTERS` env var.
    */
   legacyFilters?: boolean
 }
@@ -1273,11 +1284,18 @@ export interface ShellExecuteOptions {
   signal?: unknown
 }
 
-/** Inputs for `applyShellMinimizer`: captured text plus minimizer config. */
+/**
+ * Inputs for [`apply_shell_minimizer`]: a captured command's text plus the
+ * minimizer configuration to run against it.
+ */
 export interface ShellMinimizerApplyOptions {
+  /** The command line that produced `captured` (used to select a filter). */
   command: string
+  /** The full captured stdout/stderr to minimize. */
   captured: string
+  /** The command's exit status; omitted is treated as success (`0`). */
   exitCode?: number
+  /** Minimizer configuration; when omitted the call is a no-op (`null`). */
   minimizer?: MinimizerOptions
 }
 

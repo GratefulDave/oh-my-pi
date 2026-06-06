@@ -371,6 +371,10 @@ pub struct ShellMinimizerApplyOptions {
 /// `minimizer` is omitted, when the config is disabled, or when the filter
 /// passes the output through unchanged. A missing `exit_code` is treated as
 /// success (`0`).
+///
+/// Async (returns a Promise): minimization can scan multi-megabyte captured
+/// output, so the work runs on a blocking pool to avoid stalling the JS event
+/// loop.
 #[napi(ts_return_type = "Promise<MinimizerResult | null>")]
 pub fn apply_shell_minimizer(
 	env: &Env,

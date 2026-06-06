@@ -129,12 +129,13 @@ impl MinimizerConfig {
 		{
 			cfg.source_outline_level = level;
 		}
-		cfg.legacy_filters_active = resolve_legacy_filters(
+		let legacy_requested = resolve_legacy_filters(
 			opts.legacy_filters,
 			std::env::var("OMP_MINIMIZER_LEGACY_FILTERS")
 				.ok()
 				.as_deref(),
 		);
+		cfg.legacy_filters_active = legacy_requested;
 		if let Some(path) = opts.settings_path.as_deref()
 			&& !path.is_empty()
 		{
@@ -158,6 +159,12 @@ impl MinimizerConfig {
 				}
 				if let Ok(file) = toml::from_str::<SettingsFile>(&contents) {
 					file.merge_into(&mut cfg);
+					if opts.enabled == Some(false) {
+						cfg.enabled = false;
+					}
+					if legacy_requested {
+						cfg.legacy_filters_active = true;
+					}
 				}
 				match pipeline::parse_file(&contents, "user") {
 					Ok((pipelines, tests)) => {
@@ -404,6 +411,35 @@ mod tests {
 		let file: SettingsFile = toml::from_str("legacy_filters = true\n").unwrap();
 		let mut cfg = MinimizerConfig::default();
 		file.merge_into(&mut cfg);
+		assert!(cfg.legacy_filters_active());
+	}
+
+	#[test]
+	fn explicit_disabled_option_overrides_enabled_settings_file() {
+		let path = std::env::temp_dir()
+			.join(format!("omp-minimizer-config-disabled-{}.toml", std::process::id()));
+		std::fs::write(&path, "enabled = true\n").unwrap();
+		let cfg = MinimizerConfig::from_options(&MinimizerOptions {
+			enabled: Some(false),
+			settings_path: Some(path.display().to_string()),
+			..Default::default()
+		});
+		let _ = std::fs::remove_file(&path);
+		assert!(!cfg.enabled);
+	}
+
+	#[test]
+	fn explicit_legacy_true_overrides_disabled_settings_file() {
+		let path = std::env::temp_dir()
+			.join(format!("omp-minimizer-config-legacy-{}.toml", std::process::id()));
+		std::fs::write(&path, "legacy_filters = false\n").unwrap();
+		let cfg = MinimizerConfig::from_options(&MinimizerOptions {
+			enabled: Some(true),
+			settings_path: Some(path.display().to_string()),
+			legacy_filters: Some(true),
+			..Default::default()
+		});
+		let _ = std::fs::remove_file(&path);
 		assert!(cfg.legacy_filters_active());
 	}
 }

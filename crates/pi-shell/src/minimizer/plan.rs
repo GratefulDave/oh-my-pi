@@ -25,7 +25,7 @@
 //! we return `Unsupported` and the engine passes through.
 
 use brush_parser::{
-	ParserOptions, SourceInfo,
+	ParserOptions,
 	ast::{
 		AndOr, Command, CommandPrefixOrSuffixItem, CompoundListItem, IoFileRedirectTarget,
 		IoRedirect, Pipeline, Program, SeparatorOperator, Word,
@@ -71,9 +71,8 @@ pub fn analyze(command: &str) -> CommandPlan {
 	}
 
 	let options = ParserOptions::default();
-	let source = SourceInfo::default();
 	let reader = std::io::Cursor::new(command.as_bytes());
-	let mut parser = brush_parser::Parser::new(reader, &options, &source);
+	let mut parser = brush_parser::Parser::new(reader, &options);
 
 	let Ok(program) = parser.parse_program() else {
 		return CommandPlan::Unsupported;
@@ -254,7 +253,7 @@ fn simple_segment(pipeline: &Pipeline) -> Option<(String, String)> {
 		},
 		// Compound shell syntax (if / for / while / subshell / { ... }) is
 		// not something the minimizer should touch.
-		Command::Compound(..) | Command::Function(_) | Command::ExtendedTest(_) => None,
+		Command::Compound(..) | Command::Function(_) | Command::ExtendedTest(..) => None,
 	}
 }
 
@@ -274,7 +273,7 @@ fn classify_pipeline(pipeline: &Pipeline) -> Option<CommandPlan> {
 		},
 		// Compound shell syntax (if / for / while / subshell / { ... }) is
 		// not something the minimizer should touch.
-		Command::Compound(..) | Command::Function(_) | Command::ExtendedTest(_) => {
+		Command::Compound(..) | Command::Function(_) | Command::ExtendedTest(..) => {
 			Some(CommandPlan::Compound)
 		},
 	}

@@ -13,7 +13,9 @@
 - Fixed `git stash list` minimization discarding the `<branch>` from each entry; the branch is the primary thing users scan a stash list for and is now preserved compactly as `stash@{N}: [branch] <hash> <message>`.
 - Fixed a byte/char offset mix in the listing-filter center-truncation that could shift the truncation window off its intended anchor for lines with multibyte leading whitespace (NBSP, ideographic space).
 - Fixed the `too-large` capture-cap path emitting a `minimized` result with empty `text`/`original_text` when output exceeded `maxCaptureBytes` and was streamed raw. Both the whole-command and segmented-chain paths now leave `minimized` absent (matching every other passthrough and `applyShellMinimizer`), so consumers keying off `minimized` presence can no longer mistake an oversized command for an empty rewrite.
-- Fixed `applyShellMinimizer` / whole-buffer chain minimization corrupting output for all-git chains with differing subcommands (e.g. `git status && git log`): the combined capture was routed through the first segment's subcommand filter, whose summary rebuild silently dropped the other segment's lines. Such chains now stay opaque (passthrough); same-subcommand all-git chains still route through the git filter.
+- Fixed `applyShellMinimizer` / whole-buffer chain minimization corrupting output for all-git chains with differing subcommands or incompatible same-subcommand actions (e.g. `git commit --dry-run && git commit -m init`): combined captures now stay opaque unless the git subcommand has an explicit compatible renderer.
+- Fixed per-call minimizer kill switches being weakened by settings files: `enabled: false` remains a hard off switch, and `legacyFilters: true` remains active even when the settings file says otherwise.
+- Fixed conservative minimizer passthrough and preservation gaps for `find -printf`/action output, `aws s3 ls --summarize` footers, `git stash` empty-state output, `uv run python <script> ... pytest` wrapper routing, and gcc/clang diagnostic totals.
 
 ## [15.9.0] - 2026-06-04
 

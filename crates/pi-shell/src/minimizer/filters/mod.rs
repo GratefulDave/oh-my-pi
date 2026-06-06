@@ -376,17 +376,22 @@ fn wrapper_command_word(command: &str) -> Option<&str> {
 		word = next_command_word(&mut tokens)?;
 	}
 	if matches!(word, "python" | "python3" | "py") {
-		let mut saw_module = false;
-		for tok in tokens.by_ref() {
+		while let Some(tok) = tokens.next() {
 			if tok == "--" {
-				break;
+				return Some(word);
 			}
-			if saw_module && !tok.starts_with('-') {
-				return Some(tok);
+			if matches!(tok, "-c" | "--command") {
+				return Some(word);
 			}
 			if matches!(tok, "-m" | "--module") {
-				saw_module = true;
+				return tokens
+					.find(|candidate| !candidate.starts_with('-'))
+					.or(Some(word));
 			}
+			if tok.starts_with('-') {
+				continue;
+			}
+			return Some(tok);
 		}
 	}
 	Some(word)
@@ -804,6 +809,15 @@ mod tests {
 		let out = filter(&context, PYTEST_FAILURE_INPUT, 1).text;
 		assert!(out.contains("FAILED tests/test_x.py::test_fail"));
 		assert!(out.contains("pytest: 1 failed, 1 passed"));
+	}
+
+	#[test]
+	fn uv_run_python_script_with_pytest_argument_stays_opaque() {
+		let config = MinimizerConfig::default();
+		let context = ctx("uv", Some("run"), "uv run python scripts/report.py -m pytest", &config);
+		let out = filter(&context, PYTEST_FAILURE_INPUT, 1);
+		assert_eq!(out.text, PYTEST_FAILURE_INPUT);
+		assert!(!out.changed);
 	}
 
 	#[test]
