@@ -6,8 +6,8 @@
  *
  * Runs on stock OMP: profiles are persisted directly to `~/.omp/agent/config.yml`
  * (the `activeModelProfile` + `modelProfiles` schema) and the active model is
- * switched through the public ExtensionAPI (`setModel` / `setThinkingLevel`).
- * No LEX fork binary or fork-only imports are required.
+ * switched through the public ExtensionAPI (`setModel` / `setThinkingLevel` /
+ * `overrideModelRoles`). No LEX fork binary or fork-only imports are required.
  *
  * Subcommands:
  *   /pm              — interactive selector
@@ -148,7 +148,7 @@ function splitModelSelector(selector: string): { id: string; thinkingLevel?: str
 }
 
 /** Resolve a model selector ("provider/id" or canonical id) via the public registry. */
-function resolveModel(ctx: ExtensionCommandContext, id: string): Model | undefined {
+function resolveModel(ctx: ExtensionContext, id: string): Model | undefined {
 	const slashIdx = id.indexOf("/");
 	if (slashIdx > 0) {
 		const provider = id.slice(0, slashIdx);
@@ -163,15 +163,23 @@ function resolveModel(ctx: ExtensionCommandContext, id: string): Model | undefin
 }
 
 /**
- * Apply a profile's active model + thinking level via the public ExtensionAPI.
- * Returns a status string describing what was applied (or why it was skipped).
+ * Apply a profile's model configuration via the public ExtensionAPI.
  *
- * NOTE: Only the `default` model role and thinking level can be applied live —
- * the public ExtensionAPI exposes no setter for secondary model roles,
- * cycleOrder, enabledModels, or modelProviderOrder. Those persist to
- * settings.json for the binary to consume on load/reload.
+ * - Sets the `default` model live via `pi.setModel()`.
+ * - Applies the thinking level.
+ * - Calls `pi.overrideModelRoles()` with all roles from the profile so that
+ *   sub-agents (task, smol, plan, commit, etc.) are dispatched to the correct
+ *   models immediately without requiring a reload. This updates the in-memory
+ *   Settings object; the roles were already persisted to disk by the caller.
+ *
+ * Returns a status string describing what was applied (or why it was skipped).
  */
 async function applyProfile(pi: ExtensionAPI, ctx: ExtensionContext, profile: ModelProfile): Promise<string> {
+	// Apply all model roles to the live Settings so sub-agent dispatch picks them up.
+	if (profile.modelRoles && Object.keys(profile.modelRoles).length > 0) {
+		pi.overrideModelRoles(profile.modelRoles);
+	}
+
 	const selector = profile.modelRoles?.default;
 	if (!selector) return "No 'default' model role to apply live; persisted profile config.";
 

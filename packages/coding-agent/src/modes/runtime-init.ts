@@ -68,6 +68,7 @@ export async function initializeExtensions(session: AgentSession, options: Initi
 			setSessionName: async name => {
 				await session.sessionManager.setSessionName(name, "user");
 			},
+			overrideModelRoles: roles => session.settings.overrideModelRoles(roles),
 		},
 		// ExtensionContextActions
 		{

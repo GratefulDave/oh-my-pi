@@ -112,6 +112,10 @@ export class ExtensionRuntime implements IExtensionRuntime {
 	setSessionName(): Promise<void> {
 		throw new ExtensionRuntimeNotInitializedError();
 	}
+
+	overrideModelRoles(): void {
+		throw new ExtensionRuntimeNotInitializedError();
+	}
 }
 
 /**
@@ -262,6 +266,10 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 
 	setSessionName(name: string): Promise<void> {
 		return this.runtime.setSessionName(name);
+	}
+
+	overrideModelRoles(roles: Record<string, string>): void {
+		this.runtime.overrideModelRoles(roles);
 	}
 
 	registerProvider(name: string, config: ProviderConfig): void {
