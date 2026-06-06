@@ -24,7 +24,13 @@ import { appendRawHttpRequestDumpFor400, type RawHttpRequestDump, withHttpStatus
 // Refresh is the sole responsibility of AuthStorage (broker-aware, single-flighted);
 // the stream provider trusts the access token threaded through `options.apiKey`.
 import { normalizeSchemaForCCA } from "../utils/schema";
-import { ANTIGRAVITY_SYSTEM_INSTRUCTION, getAntigravityUserAgent, getGeminiCliHeaders } from "./google-gemini-headers";
+import {
+	ANTIGRAVITY_STREAM_ENDPOINTS,
+	ANTIGRAVITY_STREAM_GENERATE_CONTENT_PATH,
+	ANTIGRAVITY_SYSTEM_INSTRUCTION,
+	getAntigravityCodeAssistHeaders,
+	getGeminiCliHeaders,
+} from "./google-gemini-headers";
 import type { Content, FunctionCallingConfigMode, ThinkingConfig } from "./google-shared";
 import {
 	convertMessages,
@@ -39,6 +45,7 @@ import {
 	retainThoughtSignature,
 	startTextOrThinkingBlock,
 } from "./google-shared";
+import type { ThinkingLevel } from "./google-types";
 
 /**
  * Thinking level for Gemini 3 models. Re-exported from `google-shared` so existing
@@ -71,11 +78,9 @@ export interface GoogleGeminiCliOptions extends StreamOptions {
 }
 
 const DEFAULT_ENDPOINT = "https://cloudcode-pa.googleapis.com";
-const ANTIGRAVITY_DAILY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
-const ANTIGRAVITY_SANDBOX_ENDPOINT = "https://daily-cloudcode-pa.sandbox.googleapis.com";
-const ANTIGRAVITY_ENDPOINT_FALLBACKS = [ANTIGRAVITY_DAILY_ENDPOINT, ANTIGRAVITY_SANDBOX_ENDPOINT] as const;
 
 export {
+	ANTIGRAVITY_ENDPOINTS,
 	ANTIGRAVITY_SYSTEM_INSTRUCTION,
 	getAntigravityUserAgent,
 	getGeminiCliHeaders,
@@ -88,7 +93,6 @@ const BASE_DELAY_MS = 1000;
 const MAX_EMPTY_STREAM_RETRIES = 2;
 const EMPTY_STREAM_BASE_DELAY_MS = 500;
 const RATE_LIMIT_BUDGET_MS = 5 * 60 * 1000;
-const CLAUDE_THINKING_BETA_HEADER = "interleaved-thinking-2025-05-14";
 const GOOGLE_GEMINI_REFRESH_SKEW_MS = 60_000;
 const ANTIGRAVITY_REFRESH_SKEW_MS = 60_000;
 
@@ -96,13 +100,30 @@ function isClaudeModel(modelId: string): boolean {
 	return modelId.toLowerCase().includes("claude");
 }
 
-function needsClaudeThinkingBetaHeader(model: Model<"google-gemini-cli">): boolean {
-	return model.provider === "google-antigravity" && model.id.startsWith("claude-") && model.reasoning;
+const ANTIGRAVITY_THINKING_CONFIG_BY_MODEL_ID = new Map<string, ThinkingConfig>([
+	["gemini-3.5-flash-extra-low", { includeThoughts: true, thinkingLevel: "LOW" }],
+	["gemini-3.5-flash-low", { includeThoughts: true, thinkingLevel: "MEDIUM" }],
+	["gemini-3-flash-agent", { includeThoughts: true, thinkingLevel: "HIGH" }],
+	["gemini-3.1-pro-low", { includeThoughts: true, thinkingLevel: "LOW" }],
+	["gemini-pro-agent", { includeThoughts: true, thinkingLevel: "HIGH" }],
+	["claude-sonnet-4-6", { includeThoughts: true }],
+	["claude-opus-4-6-thinking", { includeThoughts: true }],
+]);
+
+export function getAntigravityThinkingConfig(modelId: string): ThinkingConfig | undefined {
+	const config = ANTIGRAVITY_THINKING_CONFIG_BY_MODEL_ID.get(modelId);
+	return config ? { ...config } : undefined;
+}
+
+function buildAntigravityRequestId(context: Context, request: CloudCodeAssistRequest["request"]): string {
+	const sessionId = request.sessionId ?? deriveAntigravitySessionId(context);
+	const turn = context.messages.filter(message => message.role === "user").length || context.messages.length || 1;
+	return `agent/${sessionId}/${Date.now()}/${randomUUID()}/${turn}`;
 }
 
 function shouldInjectAntigravitySystemInstruction(modelId: string): boolean {
 	const normalized = modelId.toLowerCase();
-	return normalized.includes("claude") || normalized.includes("gemini-3");
+	return normalized.includes("claude") || normalized.includes("gemini-3") || normalized === "gemini-pro-agent";
 }
 
 /**
@@ -312,23 +333,22 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 			const { accessToken, projectId } = parsedCredentials;
 
 			const baseUrl = model.baseUrl?.trim();
-			const endpoints = baseUrl ? [baseUrl] : isAntigravity ? ANTIGRAVITY_ENDPOINT_FALLBACKS : [DEFAULT_ENDPOINT];
+			const endpoints = baseUrl ? [baseUrl] : isAntigravity ? [...ANTIGRAVITY_STREAM_ENDPOINTS] : [DEFAULT_ENDPOINT];
 
 			let requestBody = buildRequest(model, context, projectId, options, isAntigravity);
 			const replacementPayload = await options?.onPayload?.(requestBody, model);
 			if (replacementPayload !== undefined) {
 				requestBody = replacementPayload as typeof requestBody;
 			}
-			const headers = isAntigravity ? { "User-Agent": getAntigravityUserAgent() } : getGeminiCliHeaders(model.id);
-
-			const requestHeaders = {
-				Authorization: `Bearer ${accessToken}`,
-				"Content-Type": "application/json",
-				Accept: "text/event-stream",
-				...headers,
-				...(needsClaudeThinkingBetaHeader(model) ? { "anthropic-beta": CLAUDE_THINKING_BETA_HEADER } : {}),
-				...(options?.headers ?? {}),
-			};
+			const requestHeaders = isAntigravity
+				? getAntigravityCodeAssistHeaders(accessToken)
+				: {
+						Authorization: `Bearer ${accessToken}`,
+						"Content-Type": "application/json",
+						Accept: "text/event-stream",
+						...getGeminiCliHeaders(model.id),
+						...(options?.headers ?? {}),
+					};
 			const requestBodyJson = JSON.stringify(requestBody);
 			rawRequestDump = {
 				provider: model.provider,
@@ -340,7 +360,8 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 			};
 
 			const response = await fetchWithRetry(
-				attempt => `${endpoints[Math.min(attempt, endpoints.length - 1)]}/v1internal:streamGenerateContent?alt=sse`,
+				attempt =>
+					`${endpoints[Math.min(attempt, endpoints.length - 1)]}${ANTIGRAVITY_STREAM_GENERATE_CONTENT_PATH}`,
 				{
 					method: "POST",
 					headers: requestHeaders,
@@ -692,39 +713,43 @@ export function buildRequest(
 	const systemPrompts = normalizeSystemPrompts(context.systemPrompt);
 	const contents = convertMessages(model, context);
 	const generationConfig: CloudCodeAssistRequest["request"]["generationConfig"] = {};
-	if (options.temperature !== undefined) {
-		generationConfig.temperature = options.temperature;
-	}
-	if (options.maxTokens !== undefined) {
-		generationConfig.maxOutputTokens = options.maxTokens;
-	}
-	if (options.topP !== undefined) {
-		generationConfig.topP = options.topP;
-	}
-	if (options.topK !== undefined) {
-		generationConfig.topK = options.topK;
-	}
-	if (options.minP !== undefined) {
-		generationConfig.minP = options.minP;
-	}
-	if (options.presencePenalty !== undefined) {
-		generationConfig.presencePenalty = options.presencePenalty;
-	}
-	if (options.repetitionPenalty !== undefined) {
-		generationConfig.repetitionPenalty = options.repetitionPenalty;
-	}
-
-	// Thinking config
-	if (options.thinking?.enabled && model.reasoning) {
-		generationConfig.thinkingConfig = {
-			includeThoughts: true,
-		};
-		// Gemini 3 models use thinkingLevel, older models use thinkingBudget
-		if (options.thinking.level !== undefined) {
-			// Cast to any since our GoogleThinkingLevel mirrors Google's ThinkingLevel enum values
-			generationConfig.thinkingConfig.thinkingLevel = options.thinking.level as any;
-		} else if (options.thinking.budgetTokens !== undefined) {
-			generationConfig.thinkingConfig.thinkingBudget = options.thinking.budgetTokens;
+	if (isAntigravity) {
+		generationConfig.maxOutputTokens = model.maxTokens;
+		const thinkingConfig = getAntigravityThinkingConfig(model.id);
+		if (thinkingConfig) {
+			generationConfig.thinkingConfig = thinkingConfig;
+		}
+	} else {
+		if (options.temperature !== undefined) {
+			generationConfig.temperature = options.temperature;
+		}
+		if (options.maxTokens !== undefined) {
+			generationConfig.maxOutputTokens = options.maxTokens;
+		}
+		if (options.topP !== undefined) {
+			generationConfig.topP = options.topP;
+		}
+		if (options.topK !== undefined) {
+			generationConfig.topK = options.topK;
+		}
+		if (options.minP !== undefined) {
+			generationConfig.minP = options.minP;
+		}
+		if (options.presencePenalty !== undefined) {
+			generationConfig.presencePenalty = options.presencePenalty;
+		}
+		if (options.repetitionPenalty !== undefined) {
+			generationConfig.repetitionPenalty = options.repetitionPenalty;
+		}
+		if (options.thinking?.enabled && model.reasoning) {
+			generationConfig.thinkingConfig = {
+				includeThoughts: true,
+			};
+			if (options.thinking.level !== undefined) {
+				generationConfig.thinkingConfig.thinkingLevel = options.thinking.level as ThinkingLevel;
+			} else if (options.thinking.budgetTokens !== undefined) {
+				generationConfig.thinkingConfig.thinkingBudget = options.thinking.budgetTokens;
+			}
 		}
 	}
 
@@ -767,13 +792,6 @@ export function buildRequest(
 		}
 	}
 
-	if (isAntigravity && !isClaudeModel(model.id) && request.generationConfig?.maxOutputTokens !== undefined) {
-		delete request.generationConfig.maxOutputTokens;
-		if (Object.keys(request.generationConfig).length === 0) {
-			delete request.generationConfig;
-		}
-	}
-
 	if (isAntigravity && isClaudeModel(model.id)) {
 		request.toolConfig = {
 			functionCallingConfig: {
@@ -802,7 +820,7 @@ export function buildRequest(
 			? {
 					requestType: "agent",
 					userAgent: "antigravity",
-					requestId: `agent-${randomUUID()}`,
+					requestId: buildAntigravityRequestId(context, request),
 				}
 			: {}),
 	};

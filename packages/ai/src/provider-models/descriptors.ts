@@ -353,7 +353,7 @@ export const DEFAULT_MODEL_PER_PROVIDER: Record<KnownProvider, string> = {
 	// Providers not in PROVIDER_DESCRIPTORS (special auth or no standard discovery)
 	"alibaba-coding-plan": "qwen3.5-plus",
 	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
-	"google-antigravity": "gemini-3-pro-high",
+	"google-antigravity": "gemini-3.5-flash-low",
 	"google-gemini-cli": "gemini-2.5-pro",
 	"google-vertex": "gemini-3-pro-preview",
 	minimax: "MiniMax-M2.5",

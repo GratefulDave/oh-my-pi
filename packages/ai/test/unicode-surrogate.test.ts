@@ -522,63 +522,63 @@ describe("AI Providers Unicode Surrogate Pair Tests", () => {
 		);
 
 		it.skipIf(!antigravityToken)(
-			"gemini-3-flash - should handle unpaired high surrogate (0xD83D) in tool results",
+			"gemini-3-flash-agent - should handle unpaired high surrogate (0xD83D) in tool results",
 			async () => {
-				const llm = getBundledModel("google-antigravity", "gemini-3-flash");
+				const llm = getBundledModel("google-antigravity", "gemini-3-flash-agent");
 				await testUnpairedHighSurrogate(llm, { apiKey: antigravityToken });
 			},
 			{ retry: 3, timeout: 30000 },
 		);
 
 		it.skipIf(!antigravityToken)(
-			"claude-sonnet-4-5 - should handle emoji in tool results",
+			"claude-sonnet-4-6 - should handle emoji in tool results",
 			async () => {
-				const llm = getBundledModel("google-antigravity", "claude-sonnet-4-5");
+				const llm = getBundledModel("google-antigravity", "claude-sonnet-4-6");
 				await testEmojiInToolResults(llm, { apiKey: antigravityToken });
 			},
 			{ retry: 3, timeout: 30000 },
 		);
 
 		it.skipIf(!antigravityToken)(
-			"claude-sonnet-4-5 - should handle real-world LinkedIn comment data with emoji",
+			"claude-sonnet-4-6 - should handle real-world LinkedIn comment data with emoji",
 			async () => {
-				const llm = getBundledModel("google-antigravity", "claude-sonnet-4-5");
+				const llm = getBundledModel("google-antigravity", "claude-sonnet-4-6");
 				await testRealWorldLinkedInData(llm, { apiKey: antigravityToken });
 			},
 			{ retry: 3, timeout: 30000 },
 		);
 
 		it.skipIf(!antigravityToken)(
-			"claude-sonnet-4-5 - should handle unpaired high surrogate (0xD83D) in tool results",
+			"claude-sonnet-4-6 - should handle unpaired high surrogate (0xD83D) in tool results",
 			async () => {
-				const llm = getBundledModel("google-antigravity", "claude-sonnet-4-5");
+				const llm = getBundledModel("google-antigravity", "claude-sonnet-4-6");
 				await testUnpairedHighSurrogate(llm, { apiKey: antigravityToken });
 			},
 			{ retry: 3, timeout: 30000 },
 		);
 
 		it.skipIf(!antigravityToken)(
-			"gpt-oss-120b-medium - should handle emoji in tool results",
+			"claude-opus-4-6-thinking - should handle emoji in tool results",
 			async () => {
-				const llm = getBundledModel("google-antigravity", "gpt-oss-120b-medium");
+				const llm = getBundledModel("google-antigravity", "claude-opus-4-6-thinking");
 				await testEmojiInToolResults(llm, { apiKey: antigravityToken });
 			},
 			{ retry: 3, timeout: 30000 },
 		);
 
 		it.skipIf(!antigravityToken)(
-			"gpt-oss-120b-medium - should handle real-world LinkedIn comment data with emoji",
+			"claude-opus-4-6-thinking - should handle real-world LinkedIn comment data with emoji",
 			async () => {
-				const llm = getBundledModel("google-antigravity", "gpt-oss-120b-medium");
+				const llm = getBundledModel("google-antigravity", "claude-opus-4-6-thinking");
 				await testRealWorldLinkedInData(llm, { apiKey: antigravityToken });
 			},
 			{ retry: 3, timeout: 30000 },
 		);
 
 		it.skipIf(!antigravityToken)(
-			"gpt-oss-120b-medium - should handle unpaired high surrogate (0xD83D) in tool results",
+			"claude-opus-4-6-thinking - should handle unpaired high surrogate (0xD83D)",
 			async () => {
-				const llm = getBundledModel("google-antigravity", "gpt-oss-120b-medium");
+				const llm = getBundledModel("google-antigravity", "claude-opus-4-6-thinking");
 				await testUnpairedHighSurrogate(llm, { apiKey: antigravityToken });
 			},
 			{ retry: 3, timeout: 30000 },

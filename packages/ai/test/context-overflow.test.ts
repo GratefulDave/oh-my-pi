@@ -338,9 +338,9 @@ describe("Context overflow error handling", () => {
 	describe("Google Antigravity (OAuth)", () => {
 		// Gemini model
 		it.skipIf(!antigravityToken)(
-			"gemini-3-flash - should detect overflow via isContextOverflow",
+			"gemini-3-flash-agent - should detect overflow via isContextOverflow",
 			async () => {
-				const model = getBundledModel("google-antigravity", "gemini-3-flash");
+				const model = getBundledModel("google-antigravity", "gemini-3-flash-agent");
 				const result = await testContextOverflow(model, antigravityToken!);
 				logResult(result);
 
@@ -353,9 +353,9 @@ describe("Context overflow error handling", () => {
 
 		// Anthropic model via Antigravity
 		it.skipIf(!antigravityToken)(
-			"claude-sonnet-4-5 - should detect overflow via isContextOverflow",
+			"claude-sonnet-4-6 - should detect overflow via isContextOverflow",
 			async () => {
-				const model = getBundledModel("google-antigravity", "claude-sonnet-4-5");
+				const model = getBundledModel("google-antigravity", "claude-sonnet-4-6");
 				const result = await testContextOverflow(model, antigravityToken!);
 				logResult(result);
 

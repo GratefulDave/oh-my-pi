@@ -8,12 +8,15 @@ import {
 	shouldRefreshGeminiCliCredentials,
 	streamGoogleGeminiCli,
 } from "../src/providers/google-gemini-cli";
+import { ANTIGRAVITY_CLI_USER_AGENT } from "../src/providers/google-gemini-headers";
 import type { Context, Model, TJsonSchema } from "../src/types";
+import { fetchAntigravityDiscoveryModels, getAntigravityStaticModels } from "../src/utils/discovery/antigravity";
 import { getOAuthApiKey } from "../src/utils/oauth";
+import { ANTIGRAVITY_LOAD_CODE_ASSIST_METADATA } from "../src/utils/oauth/google-antigravity";
 
 function createModel(provider: "google-gemini-cli" | "google-antigravity"): Model<"google-gemini-cli"> {
 	return {
-		id: provider === "google-antigravity" ? "gemini-3-flash" : "gemini-2.5-flash",
+		id: provider === "google-antigravity" ? "gemini-3.5-flash-low" : "gemini-2.5-flash",
 		name: provider,
 		api: "google-gemini-cli",
 		provider,
@@ -167,7 +170,39 @@ describe("Google Gemini CLI alignment", () => {
 		expect(payload.request.sessionId).toMatch(/^-[0-9]+$/);
 		expect(payload.requestType).toBe("agent");
 		expect(payload.userAgent).toBe("antigravity");
-		expect(payload.requestId).toMatch(/^agent-/);
+		expect(payload.requestId).toMatch(/^agent\/[^/]+\/[0-9]+\/[^/]+\/1$/);
+	});
+
+	it("uses model-tied antigravity thinking and strips caller sampling controls", () => {
+		const model = createModel("google-antigravity");
+		const payload = buildRequest(
+			model,
+			createContext(),
+			"proj-123",
+			{
+				temperature: 0.9,
+				topP: 0.8,
+				topK: 12,
+				thinking: { enabled: true, budgetTokens: 99 },
+				maxTokens: 1234,
+			},
+			true,
+		) as {
+			request: {
+				generationConfig?: {
+					temperature?: number;
+					topP?: number;
+					topK?: number;
+					maxOutputTokens?: number;
+					thinkingConfig?: { includeThoughts?: boolean; thinkingLevel?: string };
+				};
+			};
+		};
+
+		expect(payload.request.generationConfig).toEqual({
+			maxOutputTokens: 8192,
+			thinkingConfig: { includeThoughts: true, thinkingLevel: "MEDIUM" },
+		});
 	});
 
 	it("strips patternProperties when antigravity rewrites tools to legacy parameters", () => {
@@ -201,11 +236,8 @@ describe("Google Gemini CLI alignment", () => {
 		expect(parameters).toBeDefined();
 		expect(JSON.stringify(parameters)).not.toContain('"patternProperties"');
 	});
-	it("injects ANTIGRAVITY_SYSTEM_INSTRUCTION for gemini-3.1-pro-high and gemini-3.1-pro-low", () => {
-		// Regression test for #1274: shouldInjectAntigravitySystemInstruction checked
-		// "gemini-3-pro-high" (hyphen) but the deployed model IDs use "gemini-3.1-pro-high" (dot),
-		// so the injection was silently skipped and the Cloud Code Assist API returned HTTP 400.
-		for (const modelId of ["gemini-3.1-pro-high", "gemini-3.1-pro-low"] as const) {
+	it("injects ANTIGRAVITY_SYSTEM_INSTRUCTION for captured Gemini 3 agent models", () => {
+		for (const modelId of ["gemini-pro-agent", "gemini-3.1-pro-low", "gemini-3-flash-agent"] as const) {
 			const model: Model<"google-gemini-cli"> = {
 				...createModel("google-antigravity"),
 				id: modelId,
@@ -225,18 +257,18 @@ describe("Google Gemini CLI alignment", () => {
 			expect(parts.some(p => p.text === "my instructions")).toBe(true);
 		}
 	});
-	it("adds anthropic-beta for Antigravity Claude reasoning models without relying on id suffix", async () => {
+	it("sends captured Antigravity headers without proxy-only extras", async () => {
 		let requestHeaders: Headers | undefined;
-		using _hook = hookFetch(async (_url, init) => {
+		let requestUrl = "";
+		using _hook = hookFetch(async (url, init) => {
+			requestUrl = String(url);
 			requestHeaders = new Headers(init?.headers);
 			return new Response('{"error":{"message":"bad request"}}', { status: 400 });
 		});
 
 		const model: Model<"google-gemini-cli"> = {
 			...createModel("google-antigravity"),
-			id: "claude-sonnet-4-6",
-			name: "Claude Sonnet 4.6",
-			reasoning: true,
+			baseUrl: "",
 		};
 
 		const result = await streamGoogleGeminiCli(model, createContext(), {
@@ -244,10 +276,130 @@ describe("Google Gemini CLI alignment", () => {
 		}).result();
 
 		expect(result.stopReason).toBe("error");
+		expect(requestUrl).toBe("https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse");
 		expect(requestHeaders).toBeDefined();
-		expect(requestHeaders!.get("anthropic-beta")).toBe("interleaved-thinking-2025-05-14");
+		expect(requestHeaders!.get("Authorization")).toBe("Bearer token");
+		expect(requestHeaders!.get("Content-Type")).toBe("application/json");
+		expect(requestHeaders!.get("Accept-Encoding")).toBe("gzip");
+		expect(requestHeaders!.get("User-Agent")).toBe(ANTIGRAVITY_CLI_USER_AGENT);
+		expect(requestHeaders!.get("Accept")).toBeNull();
+		expect(requestHeaders!.get("anthropic-beta")).toBeNull();
 		expect(requestHeaders!.get("X-Goog-Api-Client")).toBeNull();
 		expect(requestHeaders!.get("Client-Metadata")).toBeNull();
+	});
+
+	it("posts Antigravity discovery project body and captured headers", async () => {
+		const calls: Array<{ url: string; headers: Headers; body?: string }> = [];
+		const fetcher = (async (url: string | URL | Request, init?: RequestInit) => {
+			calls.push({
+				url: String(url),
+				headers: new Headers(init?.headers),
+				body: typeof init?.body === "string" ? init.body : undefined,
+			});
+			return new Response(
+				JSON.stringify({
+					models: {
+						"gemini-3.5-flash-extra-low": {
+							displayName: "Gemini 3.5 Flash Low",
+							maxTokens: 100,
+							maxOutputTokens: 20,
+							supportsImages: true,
+							supportsThinking: true,
+						},
+						"gemini-3.5-flash-low": {
+							displayName: "Gemini 3.5 Flash Medium",
+							maxTokens: 100,
+							maxOutputTokens: 20,
+							supportsImages: true,
+							supportsThinking: true,
+						},
+						"gemini-3-flash-agent": {
+							displayName: "Gemini 3.5 Flash High",
+							maxTokens: 100,
+							maxOutputTokens: 20,
+							supportsImages: true,
+							supportsThinking: true,
+						},
+						"gemini-3.1-pro-low": {
+							displayName: "Gemini 3.1 Pro Low",
+							maxTokens: 100,
+							maxOutputTokens: 20,
+							supportsImages: true,
+							supportsThinking: true,
+						},
+						"gemini-pro-agent": {
+							displayName: "Gemini 3.1 Pro High",
+							maxTokens: 100,
+							maxOutputTokens: 20,
+							supportsImages: true,
+							supportsThinking: true,
+						},
+						"claude-sonnet-4-6": {
+							displayName: "Claude Sonnet 4.6 Thinking",
+							maxTokens: 100,
+							maxOutputTokens: 20,
+							supportsImages: true,
+							supportsThinking: true,
+						},
+						"claude-opus-4-6-thinking": {
+							displayName: "Claude Opus 4.6 Thinking",
+							maxTokens: 100,
+							maxOutputTokens: 20,
+							supportsImages: true,
+							supportsThinking: true,
+						},
+					},
+				}),
+				{ status: 200 },
+			);
+		}) as typeof fetch;
+		const models = await fetchAntigravityDiscoveryModels({
+			token: "token",
+			projectId: "restful-helper-123",
+			fetcher,
+		});
+
+		expect(models?.find(model => model.id === "gemini-3.5-flash-low")).toMatchObject({
+			id: "gemini-3.5-flash-low",
+			baseUrl: "https://cloudcode-pa.googleapis.com",
+			reasoning: false,
+			input: ["text", "image"],
+		});
+		expect(models?.map(model => model.id)).toEqual([
+			"claude-opus-4-6-thinking",
+			"claude-sonnet-4-6",
+			"gemini-pro-agent",
+			"gemini-3.1-pro-low",
+			"gemini-3-flash-agent",
+			"gemini-3.5-flash-extra-low",
+			"gemini-3.5-flash-low",
+		]);
+		expect(calls).toHaveLength(1);
+		expect(calls[0]!.url).toBe("https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels");
+		expect(JSON.parse(calls[0]!.body ?? "{}")).toEqual({ project: "restful-helper-123" });
+		expect(calls[0]!.headers.get("User-Agent")).toBe(ANTIGRAVITY_CLI_USER_AGENT);
+		expect(calls[0]!.headers.get("Accept")).toBeNull();
+		expect(calls[0]!.headers.get("Client-Metadata")).toBeNull();
+	});
+
+	it("uses agy loadCodeAssist metadata without extension proxy fields", () => {
+		expect(ANTIGRAVITY_LOAD_CODE_ASSIST_METADATA).toEqual({ ideType: "ANTIGRAVITY" });
+	});
+
+	it("keeps static Antigravity catalog on observed agy model ids without reasoning controls", () => {
+		const models = getAntigravityStaticModels();
+		expect(models.map(model => model.id)).toEqual([
+			"gemini-3.5-flash-extra-low",
+			"gemini-3.5-flash-low",
+			"gemini-3-flash-agent",
+			"gemini-3.1-pro-low",
+			"gemini-pro-agent",
+			"claude-sonnet-4-6",
+			"claude-opus-4-6-thinking",
+		]);
+		expect(models.every(model => model.baseUrl === "https://cloudcode-pa.googleapis.com")).toBe(true);
+		expect(models.every(model => model.reasoning === false)).toBe(true);
+		expect(models.every(model => model.thinking === undefined)).toBe(true);
 	});
 
 	describe("retry guardrails", () => {

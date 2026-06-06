@@ -260,18 +260,18 @@ describe("Tool Call Without Result Tests", () => {
 		);
 
 		it.skipIf(!antigravityToken)(
-			"claude-sonnet-4-5 - should filter out tool calls without corresponding tool results",
+			"claude-sonnet-4-6 - should filter out tool calls without corresponding tool results",
 			async () => {
-				const model = getBundledModel("google-antigravity", "claude-sonnet-4-5");
+				const model = getBundledModel("google-antigravity", "claude-sonnet-4-6");
 				await testToolCallWithoutResult(model, { apiKey: antigravityToken });
 			},
 			{ retry: 3, timeout: 30000 },
 		);
 
 		it.skipIf(!antigravityToken)(
-			"gpt-oss-120b-medium - should filter out tool calls without corresponding tool results",
+			"claude-opus-4-6-thinking - should filter out tool calls without corresponding tool results",
 			async () => {
-				const model = getBundledModel("google-antigravity", "gpt-oss-120b-medium");
+				const model = getBundledModel("google-antigravity", "claude-opus-4-6-thinking");
 				await testToolCallWithoutResult(model, { apiKey: antigravityToken });
 			},
 			{ retry: 3, timeout: 30000 },

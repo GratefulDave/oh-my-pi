@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the built-in Google Antigravity OAuth provider to use the captured agy Code Assist endpoints, headers, project-aware model discovery body, and model-id-tied thinking configs instead of the older sandbox/proxy-shaped wire contract.
+- Fixed Google-style OAuth callback flows so unavailable manual stdin does not abort browser callback waiting.
+
 ## [15.9.2] - 2026-06-05
 
 ### Added

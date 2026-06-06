@@ -36,9 +36,10 @@ import {
 	UNK_MAX_TOKENS,
 } from "../src/provider-models/openai-compat";
 import { getGitLabDuoModels } from "../src/providers/gitlab-duo";
+import { ANTIGRAVITY_PRIMARY_ENDPOINT } from "../src/providers/google-gemini-headers";
 import { JWT_CLAIM_PATH } from "../src/providers/openai-codex/constants";
 import type { Model } from "../src/types";
-import { fetchAntigravityDiscoveryModels } from "../src/utils/discovery/antigravity";
+import { fetchAntigravityDiscoveryModels, getAntigravityStaticModels } from "../src/utils/discovery/antigravity";
 import { fetchCodexModels } from "../src/utils/discovery/codex";
 import type { OAuthProvider } from "../src/utils/oauth/types";
 
@@ -243,8 +244,6 @@ function applyFireworksKimiMaxTokensCap(models: readonly Model[]): Model[] {
 	});
 }
 
-const ANTIGRAVITY_ENDPOINT = "https://daily-cloudcode-pa.sandbox.googleapis.com";
-
 async function getOAuthAccessFromStorage(provider: OAuthProvider): Promise<OAuthAccess | null> {
 	try {
 		const store = await SqliteAuthCredentialStore.open();
@@ -271,28 +270,29 @@ async function getOAuthAccessFromStorage(provider: OAuthProvider): Promise<OAuth
 async function fetchAntigravityModels(): Promise<Model<"google-gemini-cli">[]> {
 	const access = await getOAuthAccessFromStorage("google-antigravity");
 	if (!access) {
-		console.log("No Antigravity credentials found, will use previous models");
-		return [];
+		console.log("No Antigravity credentials found, using static agy model fallback");
+		return getAntigravityStaticModels();
 	}
 	try {
 		console.log("Fetching models from Antigravity API...");
 		const discovered = await fetchAntigravityDiscoveryModels({
 			token: access.accessToken,
-			endpoint: ANTIGRAVITY_ENDPOINT,
+			projectId: access.projectId,
+			endpoint: ANTIGRAVITY_PRIMARY_ENDPOINT,
 		});
 		if (discovered === null) {
-			console.warn("Antigravity API fetch failed, will use previous models");
-			return [];
+			console.warn("Antigravity API fetch failed, using static agy model fallback");
+			return getAntigravityStaticModels();
 		}
 		if (discovered.length > 0) {
 			console.log(`Fetched ${discovered.length} models from Antigravity API`);
 			return discovered;
 		}
-		console.warn("Antigravity API returned no models, will use previous models");
-		return [];
+		console.warn("Antigravity API returned no models, using static agy model fallback");
+		return getAntigravityStaticModels();
 	} catch (error) {
 		console.error("Failed to fetch Antigravity models:", error);
-		return [];
+		return getAntigravityStaticModels();
 	}
 }
 
@@ -399,13 +399,15 @@ async function generateModels() {
 	// not reappear during regeneration.
 	// Discovery-only providers (local inference servers) — never bundle static models.
 	const fetchedKeys = new Set(allModels.map(model => `${model.provider}/${model.id}`));
+	const specialAuthoritativeProviders = new Set<string>(["google-antigravity"]);
 
 	for (const models of Object.values(prevModelsJson as Record<string, Record<string, Model>>)) {
 		for (const model of Object.values(models)) {
 			if (
 				!fetchedKeys.has(`${model.provider}/${model.id}`) &&
 				!DISCOVERY_ONLY_PROVIDERS.has(model.provider) &&
-				!modelsDevAuthoritativeProviders.has(model.provider)
+				!modelsDevAuthoritativeProviders.has(model.provider) &&
+				!specialAuthoritativeProviders.has(model.provider)
 			) {
 				allModels.push(model);
 			}

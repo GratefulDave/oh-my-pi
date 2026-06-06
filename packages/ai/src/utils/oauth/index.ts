@@ -49,7 +49,7 @@ const builtInOAuthProviders: OAuthProviderInfo[] = [
 	},
 	{
 		id: "google-antigravity",
-		name: "Antigravity (Gemini 3, Claude, GPT-OSS)",
+		name: "Antigravity (Gemini 3.5, Gemini 3.1 Pro, Claude)",
 		available: true,
 	},
 	{
