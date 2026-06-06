@@ -50,6 +50,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 				compact_diff_output(&cleaned)
 			}
 		},
+		Some("show") if is_show_custom_format(ctx.command) => cleaned,
 		Some("show") => condense_show(&cleaned),
 		Some("log") => condense_log(&cleaned, 32, 16),
 		// Non-listing branch formats produce single values or one-liner
@@ -702,7 +703,6 @@ fn is_branch_non_listing(command: &str) -> bool {
 				| "-v" | "--all"
 				| "-a" | "--remotes"
 				| "-r" | "--sort"
-				| "--format"
 				| "--column"
 				| "--no-column"
 				| "--ignore-case"
@@ -739,6 +739,22 @@ fn is_tag_non_listing(command: &str) -> bool {
 				| "--ignore-case"
 		)
 	})
+}
+
+/// Whether `git show` was invoked with custom output format flags that
+/// `condense_show` would corrupt (pre-diff content would be truncated/
+/// rewritten as commit summary).
+fn is_show_custom_format(command: &str) -> bool {
+	has_token(command, "--format")
+		|| has_token(command, "--name-only")
+		|| has_token(command, "--name-status")
+		|| has_token(command, "--stat")
+		|| has_token(command, "--numstat")
+		|| has_token(command, "--shortstat")
+		|| has_token(command, "--summary")
+		|| has_token(command, "--check")
+		|| has_token(command, "--dirstat")
+		|| has_token(command, "--diff-filter")
 }
 
 fn condense_branch(input: &str) -> String {
