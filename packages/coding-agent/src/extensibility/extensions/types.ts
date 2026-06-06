@@ -1064,6 +1064,13 @@ export interface ExtensionAPI {
 	/** Set thinking level for the current session. */
 	setThinkingLevel(level: ThinkingLevel): void;
 
+	/**
+	 * Override model roles for the current session (live, in-memory only).
+	 * Affects role dispatch for sub-agents (task, smol, plan, etc.) without
+	 * writing to disk. Call this when applying a profile on session_start.
+	 */
+	overrideModelRoles(roles: Record<string, string>): void;
+
 	/** Get the current session name. */
 	getSessionName(): string | undefined;
 
@@ -1258,6 +1265,7 @@ export interface ExtensionActions {
 	setThinkingLevel: SetThinkingLevelHandler;
 	getSessionName: () => string | undefined;
 	setSessionName: (name: string) => Promise<void>;
+	overrideModelRoles: (roles: Record<string, string>) => void;
 }
 
 /** Actions for ExtensionContext (ctx.* in event handlers). */
