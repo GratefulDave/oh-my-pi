@@ -3,6 +3,10 @@ import { OAuthCallbackFlow } from "../src/utils/oauth/callback-server";
 import type { OAuthCredentials } from "../src/utils/oauth/types";
 
 class TestCallbackFlow extends OAuthCallbackFlow {
+	generateState(): string {
+		return "test-state";
+	}
+
 	async generateAuthUrl(_state: string, redirectUri: string): Promise<{ url: string; instructions?: string }> {
 		return { url: `${redirectUri}?start=1` };
 	}
@@ -70,5 +74,28 @@ describe("OAuthCallbackFlow manual input retries", () => {
 
 		expect(promptCount).toBe(2);
 		expect(credentials.access).toBe("access-second-code");
+	});
+
+	it("continues waiting for the browser callback when manual input is unavailable", async () => {
+		let authUrl = "";
+		const flow = new TestCallbackFlow(
+			{
+				onAuth: ({ url }) => {
+					authUrl = url;
+					setTimeout(() => {
+						void fetch(authUrl.replace("?start=1", "?code=browser-code&state=test-state"));
+					}, 0);
+				},
+				onManualCodeInput: () => {
+					throw new Error("readline was closed");
+				},
+				signal: AbortSignal.timeout(1_000),
+			},
+			14557,
+		);
+
+		const credentials = await flow.login();
+
+		expect(credentials.access).toBe("access-browser-code");
 	});
 });

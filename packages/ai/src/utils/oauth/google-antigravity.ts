@@ -2,7 +2,11 @@
  * Antigravity OAuth flow (Gemini 3, Claude, GPT-OSS via Google Cloud)
  * Uses different OAuth credentials than google-gemini-cli for access to additional models.
  */
-import { getAntigravityUserAgent } from "../../providers/google-gemini-headers";
+import {
+	ANTIGRAVITY_ENDPOINTS,
+	ANTIGRAVITY_LOAD_CODE_ASSIST_PATH,
+	getAntigravityCodeAssistHeaders,
+} from "../../providers/google-gemini-headers";
 import { runGoogleOAuthLogin } from "./google-oauth-shared";
 import type { OAuthController, OAuthCredentials } from "./types";
 
@@ -24,7 +28,7 @@ const SCOPES = [
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-const CLOUD_CODE_ENDPOINT = "https://cloudcode-pa.googleapis.com";
+const CLOUD_CODE_ENDPOINTS = ANTIGRAVITY_ENDPOINTS;
 const TIER_LEGACY = "legacy-tier";
 const PROJECT_ONBOARD_MAX_ATTEMPTS = 5;
 const PROJECT_ONBOARD_INTERVAL_MS = 2000;
@@ -44,8 +48,6 @@ interface LongRunningOperationResponse {
 
 export const ANTIGRAVITY_LOAD_CODE_ASSIST_METADATA = Object.freeze({
 	ideType: "ANTIGRAVITY",
-	platform: "PLATFORM_UNSPECIFIED",
-	pluginType: "GEMINI",
 });
 
 function readProjectId(value: string | { id?: string } | undefined): string | undefined {
@@ -109,42 +111,46 @@ async function onboardProjectWithRetries(
 }
 
 async function discoverProject(accessToken: string, onProgress?: (message: string) => void): Promise<string> {
-	const headers = {
-		Authorization: `Bearer ${accessToken}`,
-		"Content-Type": "application/json",
-		"User-Agent": getAntigravityUserAgent(),
-	};
+	const headers = getAntigravityCodeAssistHeaders(accessToken);
 
 	onProgress?.("Checking for existing project...");
-	const endpoint = CLOUD_CODE_ENDPOINT;
 	try {
-		const loadResponse = await fetch(`${endpoint}/v1internal:loadCodeAssist`, {
-			method: "POST",
-			headers,
-			body: JSON.stringify({
-				metadata: ANTIGRAVITY_LOAD_CODE_ASSIST_METADATA,
-			}),
-		});
+		let lastError: Error | undefined;
+		for (const endpoint of CLOUD_CODE_ENDPOINTS) {
+			try {
+				const loadResponse = await fetch(`${endpoint}${ANTIGRAVITY_LOAD_CODE_ASSIST_PATH}`, {
+					method: "POST",
+					headers,
+					body: JSON.stringify({
+						metadata: ANTIGRAVITY_LOAD_CODE_ASSIST_METADATA,
+					}),
+				});
 
-		if (!loadResponse.ok) {
-			const errorText = await loadResponse.text();
-			throw new Error(`loadCodeAssist failed: ${loadResponse.status} ${loadResponse.statusText}: ${errorText}`);
+				if (!loadResponse.ok) {
+					const errorText = await loadResponse.text();
+					throw new Error(
+						`loadCodeAssist failed: ${loadResponse.status} ${loadResponse.statusText}: ${errorText}`,
+					);
+				}
+
+				const loadPayload = (await loadResponse.json()) as LoadCodeAssistPayload;
+				const existingProject = readProjectId(loadPayload.cloudaicompanionProject);
+				if (existingProject) {
+					return existingProject;
+				}
+
+				const tierId = getDefaultTierId(loadPayload.allowedTiers);
+				onProgress?.("Provisioning project...");
+				const onboardBody = {
+					tierId,
+					metadata: ANTIGRAVITY_LOAD_CODE_ASSIST_METADATA,
+				};
+				return await onboardProjectWithRetries(endpoint, headers, onboardBody, onProgress);
+			} catch (error) {
+				lastError = error instanceof Error ? error : new Error(String(error));
+			}
 		}
-
-		const loadPayload = (await loadResponse.json()) as LoadCodeAssistPayload;
-		const existingProject = readProjectId(loadPayload.cloudaicompanionProject);
-		if (existingProject) {
-			return existingProject;
-		}
-
-		const tierId = getDefaultTierId(loadPayload.allowedTiers);
-		onProgress?.("Provisioning project...");
-		const onboardBody = {
-			tierId,
-			metadata: ANTIGRAVITY_LOAD_CODE_ASSIST_METADATA,
-		};
-		const provisionedProject = await onboardProjectWithRetries(endpoint, headers, onboardBody, onProgress);
-		return provisionedProject;
+		throw lastError ?? new Error("loadCodeAssist failed without an error");
 	} catch (error) {
 		throw new Error(
 			`Could not discover or provision an Antigravity project. ${error instanceof Error ? error.message : String(error)}`,
