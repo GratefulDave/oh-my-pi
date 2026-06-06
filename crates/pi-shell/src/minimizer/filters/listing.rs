@@ -4,6 +4,14 @@ use std::{collections::BTreeMap, path::Path};
 
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, config::OutlineLevel, primitives};
 
+/// Whether `ctx.command` contains a NUL-producing output flag that would
+/// defeat newline-split processing in the compact_* helpers.
+fn context_has_nul_output(command: &str) -> bool {
+	command
+		.split_whitespace()
+		.any(|tok| tok == "-print0" || tok == "-fprint0")
+}
+
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	let cleaned = primitives::strip_ansi(input);
 	let legacy = ctx.config.legacy_filters_active();
@@ -21,7 +29,9 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 			"ls" => compact_ls_output(&cleaned).unwrap_or_else(|| compact_listing_output(&cleaned)),
 			"tree" => compact_listing_output(&cleaned),
 			"find" => {
-				if legacy {
+				if context_has_nul_output(ctx.command) {
+					cleaned
+				} else if legacy {
 					compact_find_output_legacy(&cleaned)
 				} else {
 					compact_find_output(&cleaned)
