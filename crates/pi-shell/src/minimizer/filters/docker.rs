@@ -356,7 +356,8 @@ fn filter_helm(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
 	}
 	match ctx.subcommand {
 		Some("list" | "ls" | "status") => compact_table(input, 20),
-		Some("install" | "upgrade" | "template" | "lint") => compact_build_or_progress(input),
+		Some("install" | "upgrade" | "lint") => compact_build_or_progress(input),
+		Some("template") => input.to_string(),
 		_ => head_tail_dedup(input),
 	}
 }
@@ -842,5 +843,17 @@ mod tests {
 		let out = filter(&kubectl_ctx, input, 1).text;
 		// Non-zero exit with non-logs → preserve verbatim
 		assert_eq!(out, input);
+	}
+
+	#[test]
+	fn helm_template_keeps_manifest_yaml_opaque() {
+		// `helm template` renders chart manifests — arbitrary YAML, not build
+		// progress. Lines like "phase: Waiting" are field values, not status
+		// noise, so they must not be dropped by compact_build_or_progress.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let helm_ctx = ctx("helm", Some("template"), &cfg);
+		let input = "apiVersion: v1\nkind: ConfigMap\ndata:\n  phase: Waiting\n  action: Downloading\n";
+		let out = filter(&helm_ctx, input, 0).text;
+		assert_eq!(out, input, "helm template output must be preserved verbatim");
 	}
 }
