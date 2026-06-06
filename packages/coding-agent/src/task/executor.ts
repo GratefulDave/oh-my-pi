@@ -190,6 +190,14 @@ export interface ExecutorOptions {
 	authStorage?: AuthStorage;
 	modelRegistry?: ModelRegistry;
 	settings?: Settings;
+	/**
+	 * Parent session's already-resolved extensions (extensions + runtime). When provided,
+	 * the subagent session reuses these instead of re-running extension discovery, so it
+	 * inherits provider registrations the parent resolved at load time — including async
+	 * ones — on the shared modelRegistry, avoiding a clear/replay that would drop providers
+	 * (and re-run an extension's async setup, e.g. a re-login).
+	 */
+	preloadedExtensions?: import("../extensibility/extensions").LoadExtensionsResult;
 	/** Override local:// protocol options so subagent shares parent's local:// root */
 	localProtocolOptions?: LocalProtocolOptions;
 	/**
@@ -1279,6 +1287,9 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 					localProtocolOptions: options.localProtocolOptions,
 					telemetry: subagentTelemetry,
 					parentEvalSessionId: options.parentEvalSessionId,
+					// Reuse the parent's resolved extensions so the subagent shares its provider
+					// registrations on the common modelRegistry instead of re-discovering them.
+					preloadedExtensions: options.preloadedExtensions,
 				}),
 			);
 

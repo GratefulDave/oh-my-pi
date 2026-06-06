@@ -17,12 +17,11 @@ export interface GoogleVertexModelManagerConfig {
 
 export interface GoogleAntigravityModelManagerConfig {
 	oauthToken?: string;
-	projectId?: string;
 	endpoint?: string;
 }
+
 export interface GoogleGeminiCliModelManagerConfig {
 	oauthToken?: string;
-	projectId?: string;
 	endpoint?: string;
 }
 
@@ -43,22 +42,9 @@ export function googleVertexModelManagerOptions(_config?: GoogleVertexModelManag
 }
 
 export function googleAntigravityModelManagerOptions(
-	config?: GoogleAntigravityModelManagerConfig,
+	_config?: GoogleAntigravityModelManagerConfig,
 ): ModelManagerOptions<"google-gemini-cli"> {
-	const token = config?.oauthToken;
-	return {
-		providerId: "google-antigravity",
-		...(token
-			? {
-					fetchDynamicModels: () =>
-						fetchAntigravityDiscoveryModels({
-							token,
-							projectId: config?.projectId,
-							endpoint: config?.endpoint,
-						}),
-				}
-			: undefined),
-	};
+	return { providerId: "google-antigravity" };
 }
 
 export function googleGeminiCliModelManagerOptions(
@@ -73,7 +59,6 @@ export function googleGeminiCliModelManagerOptions(
 					fetchDynamicModels: async () => {
 						const models = await fetchAntigravityDiscoveryModels({
 							token,
-							projectId: config?.projectId,
 							endpoint,
 						});
 						if (models === null) {

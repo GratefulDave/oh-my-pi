@@ -1,21 +1,4 @@
-type ExtensionContext = {
-	cwd: string;
-	ui: {
-		notify(message: string, level?: string): void;
-		setStatus(scope: string, text: string): void;
-		setEditorText(text: string): void;
-	};
-};
-
-type ExtensionAPI = {
-	setLabel(label: string): void;
-	registerCommand(
-		name: string,
-		command: { description: string; handler: (args: string, ctx: ExtensionContext) => Promise<void> | void },
-	): void;
-	on(event: string, handler: (event: unknown, ctx: ExtensionContext) => Promise<void> | void): void;
-};
-
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { runFactoryDoctor } from "./doctor";
 import { scaffoldFactory } from "./scaffold";
 

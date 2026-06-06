@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "bun:test";
 import type { Api, Context, Model, Tool } from "@oh-my-pi/pi-ai";
 import type { OAuthLoginCallbacks } from "@oh-my-pi/pi-ai/utils/oauth/types";
 import type { ExtensionAPI, ProviderConfig } from "@oh-my-pi/pi-coding-agent";
+import * as pluginStorage from "opencode-antigravity-auth/dist/src/plugin/storage";
+import * as pluginToken from "opencode-antigravity-auth/dist/src/plugin/token";
 import type { AuthMethod, PluginResult } from "opencode-antigravity-auth/dist/src/plugin/types";
 import {
 	checkBridgeQuotaExhaustion,
@@ -10,6 +12,7 @@ import {
 	fetchBridgeModels,
 	findUpstreamOAuthMethod,
 	loginWithUpstreamOAuth,
+	probeExistingToken,
 	refreshBridgeCredentials,
 	serializeBridgeCredentials,
 	toOAuthCredentials,
@@ -198,6 +201,108 @@ describe("OpenCode Antigravity auth adapter", () => {
 		]);
 
 		await expect(loginWithUpstreamOAuth(method, callbacks())).rejects.toThrow("denied");
+	});
+
+	describe("probeExistingToken", () => {
+		it("returns null when no accounts exist on disk", async () => {
+			vi.spyOn(pluginStorage, "loadAccounts").mockResolvedValue(null);
+
+			const result = await probeExistingToken(noopClient);
+
+			expect(result).toBeNull();
+		});
+
+		it("returns null when accounts array is empty", async () => {
+			vi.spyOn(pluginStorage, "loadAccounts").mockResolvedValue({
+				version: 4,
+				accounts: [],
+				activeIndex: 0,
+			});
+
+			const result = await probeExistingToken(noopClient);
+
+			expect(result).toBeNull();
+		});
+
+		it("returns null when active account is disabled", async () => {
+			vi.spyOn(pluginStorage, "loadAccounts").mockResolvedValue({
+				version: 4,
+				accounts: [
+					{ refreshToken: "tok1", enabled: false, addedAt: 0, lastUsed: 0 },
+					{ refreshToken: "tok2", enabled: true, addedAt: 0, lastUsed: 0 },
+				],
+				activeIndex: 0,
+			});
+			// Even though activeIndex points to disabled[0], fallback finds enabled[1]
+			vi.spyOn(pluginToken, "refreshAccessToken").mockResolvedValue({
+				type: "oauth",
+				refresh: "tok2||",
+				access: "acc2",
+				expires: Date.now() + 3600_000,
+			});
+
+			const result = await probeExistingToken(noopClient);
+
+			expect(result).not.toBeNull();
+			expect(result?.access).toBe("acc2");
+		});
+
+		it("returns credentials when active account refresh succeeds", async () => {
+			vi.spyOn(pluginStorage, "loadAccounts").mockResolvedValue({
+				version: 4,
+				accounts: [
+					{
+						refreshToken: "tok-active",
+						enabled: true,
+						email: "user@example.com",
+						projectId: "proj-1",
+						addedAt: 0,
+						lastUsed: 0,
+					},
+				],
+				activeIndex: 0,
+			});
+			vi.spyOn(pluginToken, "refreshAccessToken").mockResolvedValue({
+				type: "oauth",
+				refresh: "tok-active|proj-1|",
+				access: "acc-active",
+				expires: Date.now() + 3600_000,
+			});
+
+			const result = await probeExistingToken(noopClient);
+
+			expect(result).not.toBeNull();
+			expect(result?.access).toBe("acc-active");
+			expect(result?.refresh).toBe("tok-active|proj-1|");
+			expect(result?.email).toBe("user@example.com");
+			expect(result?.projectId).toBe("proj-1");
+		});
+
+		it("returns null when refresh access token fails", async () => {
+			vi.spyOn(pluginStorage, "loadAccounts").mockResolvedValue({
+				version: 4,
+				accounts: [{ refreshToken: "tok-bad", enabled: true, addedAt: 0, lastUsed: 0 }],
+				activeIndex: 0,
+			});
+			vi.spyOn(pluginToken, "refreshAccessToken").mockRejectedValue(new Error("Token revoked"));
+
+			const result = await probeExistingToken(noopClient);
+
+			expect(result).toBeNull();
+		});
+
+		it("returns null when refresh returns undefined (missing refresh token)", async () => {
+			vi.spyOn(pluginStorage, "loadAccounts").mockResolvedValue({
+				version: 4,
+				accounts: [{ refreshToken: "", enabled: true, addedAt: 0, lastUsed: 0 }],
+				activeIndex: 0,
+			});
+			vi.spyOn(pluginToken, "refreshAccessToken").mockResolvedValue(undefined);
+
+			const result = await probeExistingToken(noopClient);
+
+			expect(result).toBeNull();
+		});
 	});
 });
 
@@ -483,6 +588,7 @@ describe("OpenCode Antigravity extension registration", () => {
 		expect(registered[0].config.models?.map(entry => entry.id)).toContain("antigravity-claude-sonnet-4-6");
 		expect(registered[0].config.api).toBe(BRIDGE_API);
 		expect(typeof registered[0].config.streamSimple).toBe("function");
+		expect(typeof registered[0].config.fetchModels).toBe("function");
 		expect(typeof registered[0].config.oauth?.login).toBe("function");
 		expect(typeof registered[0].config.oauth?.refreshToken).toBe("function");
 	});

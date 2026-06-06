@@ -2,29 +2,7 @@
 // pi-actor-swarm — mailbox-driven multi-agent swarm coordination.
 // ---------------------------------------------------------------------------
 
-type ExtensionCommandContext = {
-	ui: {
-		setEditorText(text: string): void;
-		custom<T>(
-			factory: (
-				tui: { requestRender(): void },
-				theme: { fg(color: string, text: string): string; bold(text: string): string; dim(text: string): string },
-				keybindings: unknown,
-				done: (result: T) => void,
-			) => unknown,
-			options?: { overlay?: boolean },
-		): Promise<T>;
-	};
-};
-
-type ExtensionAPI = {
-	setLabel(label: string): void;
-	registerCommand(
-		name: string,
-		command: { description: string; handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> | void },
-	): void;
-};
-
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { SwarmDashboard } from "./dashboard";
 import { clearSwarm, getConfig, initSwarm, postMessage, type RoutingPolicy, type SwarmAgent } from "./mailbox";
 
@@ -160,7 +138,7 @@ export default function actorSwarm(pi: ExtensionAPI): void {
 			const agent = cfg.agents.find(a => a.id === agentId);
 			if (!agent) {
 				ctx.ui.setEditorText(
-					`Unknown agent "${agentId}". Available:\n${cfg.agents.map(a => `  ${a.id} (${a.role})`).join("\n")}`,
+					`Unknown agent "${agentId}". Available:\n` + cfg.agents.map(a => `  ${a.id} (${a.role})`).join("\n"),
 				);
 				return;
 			}

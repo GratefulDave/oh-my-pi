@@ -62,21 +62,8 @@ fn filter_kubectl(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String
 	match ctx.subcommand {
 		Some("logs") => filter_logs(input),
 		Some("get") => {
-			// Explicit JSON/YAML output — passthrough, never compact to table
-			if is_explicit_kubectl_json_yaml(ctx.command) {
-				return input.to_string();
-			}
 			if let Some(compacted) = try_compact_kubectl_json(input) {
 				return compacted;
-			}
-			// `-o yaml` or single-object `-o json` from content (already
-			// caught above by flag check, but handle content-detected too).
-			if is_structured_kubectl_output(input) {
-				return primitives::head_tail_lines(input, 80, 40);
-			}
-			// Non-table output formats produce listings, not tables
-			if is_kubectl_non_table_format(ctx.command) {
-				return primitives::head_tail_lines(input, 80, 40);
 			}
 			compact_table(input, 20)
 		},
@@ -88,93 +75,6 @@ fn filter_kubectl(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String
 }
 
 // ── kubectl JSON compaction ──────────────────────────────────────────────────
-
-/// Returns true when the `kubectl get` output is structured JSON or YAML
-/// (i.e. `-o json` single-object or `-o yaml`) rather than a tabular listing.
-/// Used to avoid rewriting manifests as a fake row-count table.
-fn is_structured_kubectl_output(input: &str) -> bool {
-	let t = input.trim_start();
-	// Single-object -o json (starts with '{' but is not a List handled above)
-	// or -o yaml (starts with "apiVersion:" or "kind:").
-	t.starts_with('{') || t.starts_with("apiVersion:") || t.starts_with("kind:")
-}
-
-/// Whether `kubectl get` was invoked with explicit `-o json` or `-o yaml`.
-fn is_explicit_kubectl_json_yaml(command: &str) -> bool {
-	let mut tokens = command.split_whitespace();
-	while let Some(tok) = tokens.next() {
-		if (tok == "-o" || tok == "--output")
-			&& let Some(fmt) = tokens.next()
-		{
-			let base = fmt.split('=').next().unwrap_or(fmt);
-			if matches!(base, "json" | "yaml") {
-				return true;
-			}
-		}
-		if let Some(val) = tok
-			.strip_prefix("-o=")
-			.or_else(|| tok.strip_prefix("--output="))
-		{
-			let base = val.split('=').next().unwrap_or(val);
-			if matches!(base, "json" | "yaml") {
-				return true;
-			}
-		}
-	}
-	false
-}
-
-/// Whether `kubectl get` was invoked with a non-table output format.
-/// These formats (`-o name`, `-o jsonpath/...`, `-o go-template/...`,
-/// `-o template/...`, `-o custom-columns/...`, `--no-headers`) produce
-/// listings or single values, not tables — `compact_table` would treat
-/// the first entry as a header and corrupt the requested format.
-fn is_kubectl_non_table_format(command: &str) -> bool {
-	let mut tokens = command.split_whitespace();
-	while let Some(tok) = tokens.next() {
-		if (tok == "-o" || tok == "--output")
-			&& let Some(fmt) = tokens.next()
-		{
-			let base = fmt.split('=').next().unwrap_or(fmt);
-			if matches!(
-				base,
-				"name"
-					| "jsonpath"
-					| "go-template"
-					| "go-template-file"
-					| "template"
-					| "templatefile"
-					| "custom-columns"
-					| "custom-columns-file"
-			) {
-				return true;
-			}
-		}
-		if let Some(val) = tok
-			.strip_prefix("-o=")
-			.or_else(|| tok.strip_prefix("--output="))
-		{
-			let base = val.split('=').next().unwrap_or(val);
-			if matches!(
-				base,
-				"name"
-					| "jsonpath"
-					| "go-template"
-					| "go-template-file"
-					| "template"
-					| "templatefile"
-					| "custom-columns"
-					| "custom-columns-file"
-			) {
-				return true;
-			}
-		}
-		if tok == "--no-headers" {
-			return true;
-		}
-	}
-	false
-}
 
 /// Try to parse kubectl `get -o json` output and produce a compact table.
 /// Returns None if input is not recognized JSON or if schema is unexpected.
@@ -362,23 +262,7 @@ fn filter_helm(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
 }
 
 fn is_log_command(ctx: &MinimizerCtx<'_>) -> bool {
-	if ctx.subcommand == Some("logs") {
-		return true;
-	}
-	// `docker compose logs <service>` — the action is `logs` but subcommand
-	// resolves to `compose`.  Walk from the `compose` token to find the
-	// sub-sub-command rather than scanning the whole command (which would
-	// catch `docker build -t logs .`).
-	if ctx.subcommand == Some("compose") {
-		let mut tokens = ctx.command.split_whitespace();
-		while let Some(tok) = tokens.next() {
-			if tok == "compose" {
-				return tokens.by_ref().find(|t| !t.starts_with('-')) == Some("logs")
-					|| tokens.by_ref().any(|t| t == "logs");
-			}
-		}
-	}
-	false
+	ctx.subcommand == Some("logs") || ctx.command.split_whitespace().any(|part| part == "logs")
 }
 
 fn is_table_command(ctx: &MinimizerCtx<'_>) -> bool {

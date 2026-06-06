@@ -28,18 +28,15 @@ import {
 } from "../src/provider-models/descriptors";
 import {
 	buildXaiOAuthStaticSeed,
-	clampFireworksKimiMaxTokens,
-	isFireworksKimiK2ModelId,
 	MODELS_DEV_PROVIDER_DESCRIPTORS,
 	mapModelsDevToModels,
 	UNK_CONTEXT_WINDOW,
 	UNK_MAX_TOKENS,
 } from "../src/provider-models/openai-compat";
 import { getGitLabDuoModels } from "../src/providers/gitlab-duo";
-import { ANTIGRAVITY_PRIMARY_ENDPOINT } from "../src/providers/google-gemini-headers";
 import { JWT_CLAIM_PATH } from "../src/providers/openai-codex/constants";
 import type { Model } from "../src/types";
-import { fetchAntigravityDiscoveryModels, getAntigravityStaticModels } from "../src/utils/discovery/antigravity";
+import { fetchAntigravityDiscoveryModels } from "../src/utils/discovery/antigravity";
 import { fetchCodexModels } from "../src/utils/discovery/codex";
 import type { OAuthProvider } from "../src/utils/oauth/types";
 
@@ -225,24 +222,7 @@ function applyCodexPricingFallback(models: readonly Model[]): Model[] {
 	});
 }
 
-/**
- * Fireworks-backed Kimi K2.x deployments report `max_completion_tokens: 65536`
- * over `/v1/models`, but Kimi's documented output budget on Fireworks is
- * lower (#1849). Cap them here so the post-processing pass — which also folds
- * in the `prevModelsJson` static fallback used by `firepass` — never lets a
- * stale or inflated upstream value through. The resolver applies the same
- * cap when discovery runs at runtime; this is the bundle-time safety net.
- */
-function applyFireworksKimiMaxTokensCap(models: readonly Model[]): Model[] {
-	const FIREWORKS_KIMI_PROVIDERS = new Set(["fireworks", "firepass"]);
-	return models.map(model => {
-		if (!FIREWORKS_KIMI_PROVIDERS.has(model.provider)) return model;
-		if (!isFireworksKimiK2ModelId(model.id)) return model;
-		const capped = clampFireworksKimiMaxTokens(model.id, model.maxTokens);
-		if (capped === model.maxTokens) return model;
-		return { ...model, maxTokens: capped };
-	});
-}
+const ANTIGRAVITY_ENDPOINT = "https://daily-cloudcode-pa.sandbox.googleapis.com";
 
 async function getOAuthAccessFromStorage(provider: OAuthProvider): Promise<OAuthAccess | null> {
 	try {
@@ -270,29 +250,28 @@ async function getOAuthAccessFromStorage(provider: OAuthProvider): Promise<OAuth
 async function fetchAntigravityModels(): Promise<Model<"google-gemini-cli">[]> {
 	const access = await getOAuthAccessFromStorage("google-antigravity");
 	if (!access) {
-		console.log("No Antigravity credentials found, using static agy model fallback");
-		return getAntigravityStaticModels();
+		console.log("No Antigravity credentials found, will use previous models");
+		return [];
 	}
 	try {
 		console.log("Fetching models from Antigravity API...");
 		const discovered = await fetchAntigravityDiscoveryModels({
 			token: access.accessToken,
-			projectId: access.projectId,
-			endpoint: ANTIGRAVITY_PRIMARY_ENDPOINT,
+			endpoint: ANTIGRAVITY_ENDPOINT,
 		});
 		if (discovered === null) {
-			console.warn("Antigravity API fetch failed, using static agy model fallback");
-			return getAntigravityStaticModels();
+			console.warn("Antigravity API fetch failed, will use previous models");
+			return [];
 		}
 		if (discovered.length > 0) {
 			console.log(`Fetched ${discovered.length} models from Antigravity API`);
 			return discovered;
 		}
-		console.warn("Antigravity API returned no models, using static agy model fallback");
-		return getAntigravityStaticModels();
+		console.warn("Antigravity API returned no models, will use previous models");
+		return [];
 	} catch (error) {
 		console.error("Failed to fetch Antigravity models:", error);
-		return getAntigravityStaticModels();
+		return [];
 	}
 }
 
@@ -399,15 +378,13 @@ async function generateModels() {
 	// not reappear during regeneration.
 	// Discovery-only providers (local inference servers) — never bundle static models.
 	const fetchedKeys = new Set(allModels.map(model => `${model.provider}/${model.id}`));
-	const specialAuthoritativeProviders = new Set<string>(["google-antigravity"]);
 
 	for (const models of Object.values(prevModelsJson as Record<string, Record<string, Model>>)) {
 		for (const model of Object.values(models)) {
 			if (
 				!fetchedKeys.has(`${model.provider}/${model.id}`) &&
 				!DISCOVERY_ONLY_PROVIDERS.has(model.provider) &&
-				!modelsDevAuthoritativeProviders.has(model.provider) &&
-				!specialAuthoritativeProviders.has(model.provider)
+				!modelsDevAuthoritativeProviders.has(model.provider)
 			) {
 				allModels.push(model);
 			}
@@ -417,7 +394,6 @@ async function generateModels() {
 	allModels = applyGlobalModelsDevFallback(allModels, modelsDevModels);
 	allModels = applyPremiumMultiplierOverrides(allModels);
 	allModels = applyCodexPricingFallback(allModels);
-	allModels = applyFireworksKimiMaxTokensCap(allModels);
 	applyGeneratedModelPolicies(allModels);
 	linkOpenAIPromotionTargets(allModels);
 

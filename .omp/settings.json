@@ -1,5 +1,6 @@
 {
   "extensions": [
+    "packages/antigravity-adapter/dist/antigravity.bundle.js",
     "packages/pi-minimizer-gain/dist/gaing.bundle.js",
     "packages/pi-observer/dist/observer.bundle.js",
     "packages/pi-actor-swarm/dist/swarm.bundle.js",
@@ -8,7 +9,9 @@
     "packages/swarm-extension/dist/extension.bundle.js",
     ".omp/extensions/profile-manager/dist/index.js"
   ],
-  "disabledProviders": [],
+  "disabledProviders": [
+    "google-antigravity"
+  ],
   "activeModelProfile": "codex-ag",
   "modelProfiles": {
     "codex-ag": {
@@ -21,17 +24,18 @@
       "defaultThinkingLevel": "medium",
       "enabledModels": [
         "openai-codex/*",
-        "antigravity/*"
+        "AG-*",
+        "opencode-antigravity/*"
       ],
       "modelProviderOrder": [
         "openai-codex",
-        "google-antigravity"
+        "opencode-antigravity"
       ],
       "modelRoles": {
         "default": "openai-codex/gpt-5.5:high",
-        "smol": "antigravity/gemini-3.5-flash-low:medium",
-        "plan": "antigravity/gemini-3.1-pro-low:medium",
-        "slow": "antigravity/claude-opus-4-6-thinking:high"
+        "smol": "AG-gemini-3.5-flash:medium",
+        "plan": "AG-claude-sonnet-4.6-thinking:medium",
+        "slow": "AG-claude-opus-4.6-thinking:xhigh"
       }
     }
   }

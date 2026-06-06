@@ -1,27 +1,4 @@
-type ExtensionCommandContext = {
-	cwd: string;
-	ui: {
-		setEditorText(text: string): void;
-		custom<T>(
-			factory: (
-				tui: { requestRender(): void },
-				theme: unknown,
-				keybindings: unknown,
-				done: (result: T) => void,
-			) => unknown,
-			options?: { overlay?: boolean },
-		): Promise<T>;
-	};
-};
-
-type ExtensionAPI = {
-	setLabel(label: string): void;
-	registerCommand(
-		name: string,
-		command: { description: string; handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> | void },
-	): void;
-};
-
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { buildMinimizerGainDiagnostic, loadMinimizerGainContext } from "./gain-engine";
 import { type DualContext, type GainTheme, MinimizerGainOverlayComponent, type ScopeIndex } from "./overlay";
 
@@ -56,28 +33,19 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 			ctx.ui.setEditorText("");
 
 			await ctx.ui.custom<void>(
-				(tui, theme, _keybindings, done) => {
-					// Box lets the loadContext callback read the live scope after the
-					// component is constructed — avoids closing over the stale initialScope.
-					const ref: { component: MinimizerGainOverlayComponent | null } = { component: null };
-					const component = new MinimizerGainOverlayComponent(
+				(tui, theme, _keybindings, done) =>
+					new MinimizerGainOverlayComponent(
 						theme as GainTheme,
 						dualContext,
 						() => tui.requestRender(),
 						() => done(undefined),
-						async () => {
-							const scopeCwd = ref.component?.activeScopeIndex === 0 ? cwd : undefined;
-							return {
-								current: await loadMinimizerGainContext({ cwd, all: false, days: parsed.days }),
-								all: await loadMinimizerGainContext({ cwd, all: true, days: parsed.days }),
-								diagnostic: await buildDiagnosticForCwd(scopeCwd),
-							};
-						},
+						async () => ({
+							current: await loadMinimizerGainContext({ cwd, all: false, days: parsed.days }),
+							all: await loadMinimizerGainContext({ cwd, all: true, days: parsed.days }),
+							diagnostic: await buildDiagnosticForCwd(initialScope === 0 ? cwd : undefined),
+						}),
 						initialScope,
-					);
-					ref.component = component;
-					return component;
-				},
+					),
 				{ overlay: true },
 			);
 		},

@@ -1,32 +1,4 @@
-type ExtensionCommandContext = {
-	cwd: string;
-	sessionManager: { saveArtifact(content: string, kind: string): Promise<string> };
-	ui: {
-		setEditorText(text: string): void;
-		setStatus(scope: string, text: string): void;
-		notify(message: string, level?: string): void;
-		custom<T>(
-			factory: (
-				tui: { requestRender(): void; terminal: { rows: number } },
-				theme: unknown,
-				keybindings: unknown,
-				done: (result: T) => void,
-			) => unknown,
-			options?: { overlay?: boolean },
-		): Promise<T>;
-	};
-};
-
-type ExtensionAPI = {
-	setLabel(label: string): void;
-	registerFlag(name: string, flag: { type: string; default: string }): void;
-	getFlag?(name: string): unknown;
-	registerCommand(
-		name: string,
-		command: { description: string; handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> | void },
-	): void;
-};
-
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { DelegateMonitorComponent } from "./monitor";
 import { buildContextSummary, buildExternalOrchestrationReport, runExternalAgentsParallel } from "./runner";
 import type {

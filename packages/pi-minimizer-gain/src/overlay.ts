@@ -14,6 +14,10 @@ interface GainTheme {
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
+function visibleWidth(text: string): number {
+	return text.replace(ANSI_RE, "").replace(/[\r\n]/g, "").length;
+}
+
 function truncateToWidth(text: string, maxWidth: number): string {
 	if (maxWidth <= 0) return "";
 	const singleLine = text.replace(/[\r\n]+/g, " ");
@@ -62,9 +66,7 @@ function shortenPath(filePath: string): string {
 }
 
 function formatFullNumber(n: number): string {
-	return Math.round(n)
-		.toString()
-		.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+	return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 type LoadMinimizerGainContext = () => Promise<DualContext>;
 
@@ -76,9 +78,6 @@ type TabIndex = 0 | 1 | 2;
 const SCOPES = ["Current", "All"] as const;
 type ScopeIndex = 0 | 1;
 
-const MISSED_SUBTABS = ["Unhandled", "Savings"] as const;
-type MissedSubIndex = 0 | 1;
-
 export interface DiagnosticErrorSentinel {
 	buildError: string;
 }
@@ -87,6 +86,10 @@ interface DualContext {
 	current: MinimizerGainContext;
 	all: MinimizerGainContext;
 	diagnostic?: MinimizerGainDiagnostic | DiagnosticErrorSentinel;
+}
+
+function formatTokensSavedLabel(usesEstimatedTokensSaved: boolean): string {
+	return usesEstimatedTokensSaved ? "Estimated Tokens Saved" : "Tokens Saved";
 }
 
 function formatExitCodes(exitCodes: Array<number | null>): string {
@@ -130,7 +133,6 @@ export class MinimizerGainOverlayComponent {
 	readonly #loadContext: LoadMinimizerGainContext | undefined;
 	#activeTabIndex: TabIndex = 0;
 	#activeScopeIndex: ScopeIndex = 0;
-	#missedSubIndex: MissedSubIndex = 0;
 	#refreshInterval: ReturnType<typeof setInterval> | undefined;
 	#refreshing = false;
 	#disposed = false;
@@ -162,9 +164,6 @@ export class MinimizerGainOverlayComponent {
 		clearInterval(this.#refreshInterval);
 		this.#refreshInterval = undefined;
 	}
-	get activeScopeIndex(): ScopeIndex {
-		return this.#activeScopeIndex;
-	}
 
 	invalidate(): void {}
 
@@ -193,11 +192,6 @@ export class MinimizerGainOverlayComponent {
 			this.#requestRender();
 			return true;
 		}
-		if (key === "shift+tab") {
-			this.#cycleSecondary();
-			this.#requestRender();
-			return true;
-		}
 		if (key === "s" || key === "S") {
 			this.#activeScopeIndex = ((this.#activeScopeIndex + 1) % SCOPES.length) as ScopeIndex;
 			this.#requestRender();
@@ -220,28 +214,13 @@ export class MinimizerGainOverlayComponent {
 			this.#requestRender();
 			return;
 		}
-		if (matchesKey(data, "shift+tab")) {
-			this.#cycleSecondary();
-			this.#requestRender();
-			return;
-		}
-		if (data === "s" || data === "S") {
+		if (matchesKey(data, "shift+tab") || data === "s" || data === "S") {
 			this.#activeScopeIndex = ((this.#activeScopeIndex + 1) % SCOPES.length) as ScopeIndex;
 			this.#requestRender();
 			return;
 		}
 		if (data === "r" || data === "R") {
 			void this.refresh();
-		}
-	}
-
-	// Shift+Tab cycles the Missed tab's sub-tab (Unhandled/Savings);
-	// on any other tab it falls back to toggling scope.
-	#cycleSecondary(): void {
-		if (TABS[this.#activeTabIndex] === "Missed") {
-			this.#missedSubIndex = ((this.#missedSubIndex + 1) % MISSED_SUBTABS.length) as MissedSubIndex;
-		} else {
-			this.#activeScopeIndex = ((this.#activeScopeIndex + 1) % SCOPES.length) as ScopeIndex;
 		}
 	}
 
@@ -294,11 +273,29 @@ export class MinimizerGainOverlayComponent {
 	}
 
 	#formatTab(label: string, active: boolean): string {
-		return active ? this.#accent(this.#bold(`[ ${label} ]`)) : this.#dim(`  ${label}  `);
+		return active
+			? this.#accent(this.#bold(`[ ${label} ]`))
+			: this.#dim(`  ${label}  `);
 	}
 
 	#formatRow(label: string, value: string, width: number): string {
 		return clean(`  ${this.#keyword(label)}: ${value}`, width);
+	}
+
+	#formatGainRow<
+		T extends {
+			commands: number;
+			savedBytes: number;
+			estimatedTokensSaved: number;
+			usesEstimatedTokensSaved: boolean;
+			tokensSavedRatio: number | null;
+		},
+	>(label: string, row: T, width: number): string {
+		const pctPart = row.tokensSavedRatio !== null ? `, ${(row.tokensSavedRatio * 100).toFixed(1)}% saved` : "";
+		return clean(
+			`  ${label}: ${formatFullNumber(row.commands)} cmds, ${formatNumber(row.savedBytes)} saved, ${formatNumber(row.estimatedTokensSaved)} ${formatTokensSavedLabel(row.usesEstimatedTokensSaved)}${pctPart}`,
+			width,
+		);
 	}
 
 	#formatEfficiencyBar(ratio: number | null): string {
@@ -470,9 +467,9 @@ export class MinimizerGainOverlayComponent {
 						cmd,
 						cmdWidth,
 						formatFullNumber(row.commands),
-						formatNumber(row.avgEstimatedPotentialTokensSaved),
+						`${formatNumber(row.avgEstimatedPotentialTokensSaved)} avg`,
 						COL_AVG_EST,
-						formatNumber(row.estimatedPotentialTokensSaved),
+						`${formatNumber(row.estimatedPotentialTokensSaved)} tok total`,
 						COL_EST_SAVINGS,
 						formatExitCodes(row.exitCodes),
 						COL_EXIT,
@@ -497,9 +494,7 @@ export class MinimizerGainOverlayComponent {
 		}
 		lines.push(clean(this.#heading("Diagnostic"), width));
 		lines.push(clean(`  ${this.#keyword("Records (file-wide)")}: ${formatFullNumber(diag.recordCount)}`, width));
-		lines.push(
-			clean(`  ${this.#keyword("Records (in scope)")}: ${formatFullNumber(diag.recordCountInScope)}`, width),
-		);
+		lines.push(clean(`  ${this.#keyword("Records (in scope)")}: ${formatFullNumber(diag.recordCountInScope)}`, width));
 		lines.push(
 			clean(
 				`  ${this.#success(`Saved: ${formatFullNumber(diag.savedCount)}`)}  ${this.#error(`Missed: ${formatFullNumber(diag.missedCount)}`)}`,
@@ -544,8 +539,8 @@ export class MinimizerGainOverlayComponent {
 				clean(this.#dim(`    last: ${diag.lastParseError.error} (line ${diag.lastParseError.lineNumber})`), width),
 			);
 		}
-		lines.push(clean(`  ${this.#keyword("Records observed")}: ${diag.recordsObserved}`, width));
-		lines.push(clean(`  ${this.#keyword("Scoped records observed")}: ${diag.scopedRecordsObserved}`, width));
+		lines.push(clean(`  ${this.#keyword("Minimizer enabled")}: ${diag.minimizerEnabled}`, width));
+		lines.push(clean(`  ${this.#keyword("Native binding loaded")}: ${diag.nativeBindingLoaded}`, width));
 		lines.push(clean(`  ${this.#keyword("CWD filter")}: ${diag.cwdFilter ?? "(all)"}`, width));
 		lines.push(clean(`  ${this.#keyword("Distinct cwds")}: ${formatFullNumber(diag.distinctCwdsCount)}`, width));
 		if (diag.recordCountInScope === 0 && diag.distinctCwdsCount > 0) {
@@ -580,7 +575,10 @@ export class MinimizerGainOverlayComponent {
 		);
 
 		lines.push(
-			clean(this.#muted(`Scope: ${context.all ? "all repos" : shortenPath(context.cwd ?? process.cwd())}`), width),
+			clean(
+				this.#muted(`Scope: ${context.all ? "all repos" : shortenPath(context.cwd ?? process.cwd())}`),
+				width,
+			),
 		);
 		lines.push("");
 
@@ -605,10 +603,13 @@ export class MinimizerGainOverlayComponent {
 			lines.push(this.#formatRow("Output tokens", formatNumber(outputTok), width));
 			const ratio = context.summary.tokensSavedRatio;
 			const ratioStr = ratio !== null ? ` (${(ratio * 100).toFixed(1)}% saved)` : "";
-			const savedLabel =
-				ratio !== null ? this.#success(`${formatNumber(savedTok)}${ratioStr}`) : formatNumber(savedTok);
+			const savedLabel = ratio !== null
+				? this.#success(`${formatNumber(savedTok)}${ratioStr}`)
+				: formatNumber(savedTok);
 			lines.push(this.#formatRow("Tokens saved", savedLabel, width));
-			lines.push(this.#formatRow("Efficiency", this.#formatEfficiencyBar(ratio), width));
+			lines.push(
+				this.#formatRow("Efficiency", this.#formatEfficiencyBar(ratio), width),
+			);
 			lines.push("");
 			lines.push(clean(this.#heading("By Command"), width));
 			lines.push(clean(this.#border("─".repeat(Math.max(1, contentWidth))), width));
@@ -636,10 +637,7 @@ export class MinimizerGainOverlayComponent {
 						const name = truncateToWidth(shortenPath(row.cwd), 38);
 						const cmdCount = formatFullNumber(row.commands).padStart(6);
 						const saved = this.#success(formatNumber(row.savedBytes).padStart(9));
-						const pctStr =
-							row.tokensSavedRatio !== null
-								? `${(row.tokensSavedRatio * 100).toFixed(1)}%`.padStart(7)
-								: "-".padStart(7);
+						const pctStr = row.tokensSavedRatio !== null ? `${(row.tokensSavedRatio * 100).toFixed(1)}%`.padStart(7) : "-".padStart(7);
 						const colorKey = ratioPercentColor(row.tokensSavedRatio);
 						const barWidth = maxSaved > 0 ? Math.round((row.savedBytes / maxSaved) * 22) : 0;
 						const bar = `${t.fg("success", EFFICIENCY_FILL_CHAR.repeat(barWidth))}${this.#muted(EFFICIENCY_EMPTY_CHAR.repeat(22 - barWidth))}`;
@@ -653,33 +651,23 @@ export class MinimizerGainOverlayComponent {
 				}
 			}
 		} else {
-			const sub = MISSED_SUBTABS[this.#missedSubIndex];
-			lines.push(
-				clean(
-					`  ${this.#formatTab("Unhandled", sub === "Unhandled")} ${this.#dim("|")} ${this.#formatTab("Savings", sub === "Savings")}`,
-					width,
-				),
-			);
-			lines.push("");
-			if (sub === "Unhandled") {
-				lines.push(clean(this.#heading("Largest unminimized shell outputs"), width));
-				if (context.missed.commands.length === 0) {
-					lines.push(clean(this.#dim("No unminimized shell output recorded for this scope yet."), width));
-				} else {
-					lines.push(...this.#renderLargestOutputTable(context.missed.commands, contentWidth));
-				}
+			lines.push(clean(this.#heading("Largest unminimized shell outputs"), width));
+			if (context.missed.commands.length === 0) {
+				lines.push(clean(this.#dim("No unminimized shell output recorded for this scope yet."), width));
 			} else {
-				lines.push(clean(this.#heading("Highest potential token savings"), width));
-				if (context.missed.potentialTokenSavings.length === 0) {
-					lines.push(clean(this.#dim("No potential token savings data."), width));
-				} else {
-					lines.push(...this.#renderPotentialTable(context.missed.potentialTokenSavings, contentWidth));
-				}
+				lines.push(...this.#renderLargestOutputTable(context.missed.commands, contentWidth));
+			}
+			lines.push("");
+			lines.push(clean(this.#heading("Highest potential token savings"), width));
+			if (context.missed.potentialTokenSavings.length === 0) {
+				lines.push(clean(this.#dim("No potential token savings data."), width));
+			} else {
+				lines.push(...this.#renderPotentialTable(context.missed.potentialTokenSavings, contentWidth));
 			}
 		}
 
 		lines.push("");
-		lines.push(clean(this.#dim("Tab tab | Shift+Tab section | S scope | R refresh | Esc close"), width));
+		lines.push(clean(this.#dim("Tab | S switch scope | R refresh | Esc close"), width));
 		lines.push(clean(this.#dim(`Path: ${shortenPath(context.path)}`), width));
 		lines.push(this.#makeBorder(width));
 		return lines;

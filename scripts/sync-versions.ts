@@ -72,21 +72,19 @@ if (newVersion) {
 	const rootPkgPath = join(root, "package.json");
 	const rootPkg = (await Bun.file(rootPkgPath).json()) as {
 		catalog?: Record<string, string>;
-		workspaces?: { catalog?: Record<string, string> };
 	};
 	let catalogUpdates = 0;
-	for (const catalog of [rootPkg.catalog, rootPkg.workspaces?.catalog]) {
-		if (!catalog) continue;
-		for (const name of Object.keys(catalog)) {
-			if (versionMap[name] !== undefined && catalog[name] !== newVersion) {
-				catalog[name] = newVersion;
+	if (rootPkg.catalog) {
+		for (const name of Object.keys(rootPkg.catalog)) {
+			if (versionMap[name] !== undefined && rootPkg.catalog[name] !== newVersion) {
+				rootPkg.catalog[name] = newVersion;
 				catalogUpdates++;
 			}
 		}
-	}
-	if (catalogUpdates > 0) {
-		await Bun.write(rootPkgPath, JSON.stringify(rootPkg, null, "\t") + "\n");
-		console.log(`  root catalog: ${catalogUpdates} entr${catalogUpdates === 1 ? "y" : "ies"} updated`);
+		if (catalogUpdates > 0) {
+			await Bun.write(rootPkgPath, JSON.stringify(rootPkg, null, "\t") + "\n");
+			console.log(`  root catalog: ${catalogUpdates} entr${catalogUpdates === 1 ? "y" : "ies"} updated`);
+		}
 	}
 
 	// ── 2b. Update Rust sentinel in crates/pi-natives/src/lib.rs ─────────────

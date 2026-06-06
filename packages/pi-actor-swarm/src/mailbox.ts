@@ -4,8 +4,8 @@
 
 export interface SwarmMessage {
 	id: string;
-	from: string; // sender agent ID or "user"
-	to: string; // target agent ID or "*" for broadcast
+	from: string;       // sender agent ID or "user"
+	to: string;          // target agent ID or "*" for broadcast
 	subject: string;
 	body: string;
 	priority: "low" | "normal" | "high" | "urgent";

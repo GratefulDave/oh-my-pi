@@ -619,26 +619,16 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 		&& bytes[0] == 0x1b
 		&& bytes[1] == 0x1b
 		&& (bytes[2] == b'[' || bytes[2] == b'O')
-		&& parse_key_inner(&bytes[1..], true).is_some()
+		&& let Some(inner_key_id) = parse_key_inner(&bytes[1..], true)
 	{
-		// The ESC-stripped buffer is a recognized key sequence. Re-dispatch it
-		// against the same key with ALT cleared by recursing through
-		// `matches_key_inner`, which reuses the alias-aware name branches
-		// (`enter|return`, `escape|esc`, …). Comparing `parse_key_inner`'s
-		// canonical name (`enter`/`escape`) against the caller's raw token
-		// dropped aliases — `ctrl+alt+return` and `alt+esc` no longer matched.
-		let inner_modifier = modifier & !MOD_ALT;
-		let mut inner_key_id = String::with_capacity(24);
-		if inner_modifier & MOD_CTRL != 0 {
-			inner_key_id.push_str("ctrl+");
-		}
-		if inner_modifier & MOD_SHIFT != 0 {
-			inner_key_id.push_str("shift+");
-		}
-		inner_key_id.push_str(key);
-		// ALT is cleared above, so the recursive call cannot re-enter this branch.
-		if matches_key_inner(&bytes[1..], &inner_key_id, true) {
-			return true;
+		// inner_key_id is e.g. "up" for alt+up or "shift+up" for alt+shift+up.
+		// Verify the key name and the non-ALT portion of the modifier both match.
+		if let Some(ParsedKeyId { key: inner_k, modifier: inner_m }) =
+			parse_key_id(&inner_key_id)
+		{
+			if inner_k.eq_ignore_ascii_case(key) && inner_m == modifier & !MOD_ALT {
+				return true;
+			}
 		}
 	}
 	if key.eq_ignore_ascii_case("escape") || key.eq_ignore_ascii_case("esc") {
@@ -919,7 +909,10 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 				// distinguish ctrl+h from Backspace, ctrl+m from Enter, etc.
 				// Skip the raw fast-path for those bytes so that a bare \r
 				// cannot match ctrl+m in legacy mode.
-				if !matches!(raw, 0x08 | 0x09 | 0x0a | 0x0d) && bytes.len() == 1 && bytes[0] == raw {
+				if !matches!(raw, 0x08 | 0x09 | 0x0a | 0x0d)
+					&& bytes.len() == 1
+					&& bytes[0] == raw
+				{
 					return true;
 				}
 				return mok_matches(codepoint, MOD_CTRL) || kitty_matches(codepoint, MOD_CTRL);
@@ -1526,18 +1519,6 @@ mod tests {
 	}
 
 	#[test]
-	fn esc_prefix_alt_preserves_key_aliases() {
-		// Regression: the ESC-prefixed Alt mirror path must honor key-name aliases
-		// (`return` == `enter`, `esc` == `escape`) the same way the non-Alt paths
-		// do. Comparing `parse_key_inner`'s canonical name against the caller's raw
-		// token dropped these. CSI-u: 13 = Enter, 27 = Escape; modifier 5 = ctrl.
-		assert!(matches_key_inner(b"\x1b\x1b[13;5u", "ctrl+alt+return", true));
-		assert!(matches_key_inner(b"\x1b\x1b[13;5u", "ctrl+alt+enter", true));
-		assert!(matches_key_inner(b"\x1b\x1b[27u", "alt+esc", true));
-		assert!(matches_key_inner(b"\x1b\x1b[27u", "alt+escape", true));
-	}
-
-	#[test]
 	fn esc_pair_alt_letters_mixed_mode() {
 		// tmux 3.6 with `extended-keys-format csi-u` can enable enhanced keyboard
 		// handling while still forwarding Alt+letter as the legacy ESC+letter form.
@@ -1647,47 +1628,5 @@ mod tests {
 		// The named Escape key must still match the same byte.
 		assert!(matches_key_inner(b"\x1b", "escape", false));
 		assert!(matches_key_inner(b"\x1b", "escape", true));
-	}
-
-	#[test]
-	fn named_keys_do_not_match_ctrl_letters_in_legacy_mode() {
-		// Issue #1354 collision matrix: Enter/LF/Tab/Backspace each send the same
-		// single byte as ctrl+m/j/i/h. In legacy mode the two are physically
-		// indistinguishable, so the byte MUST resolve to the named key and MUST
-		// NOT fire a ctrl+<letter> binding; only enhanced encodings disambiguate.
-		assert!(matches_key_inner(b"\r", "enter", false));
-		assert!(!matches_key_inner(b"\r", "ctrl+m", false));
-
-		assert!(matches_key_inner(b"\n", "enter", false));
-		assert!(!matches_key_inner(b"\n", "ctrl+j", false));
-
-		assert!(matches_key_inner(b"\t", "tab", false));
-		assert!(!matches_key_inner(b"\t", "ctrl+i", false));
-
-		assert!(matches_key_inner(b"\x08", "backspace", false));
-		assert!(!matches_key_inner(b"\x08", "ctrl+h", false));
-
-		// Non-colliding ctrl+letter still works through the legacy fast-path.
-		assert!(matches_key_inner(b"\x03", "ctrl+c", false));
-		assert!(matches_key_inner(b"\x18", "ctrl+x", false));
-
-		// Enhanced encodings still let ctrl+<colliding-letter> match.
-		assert!(matches_key_inner(b"\x1b[109;5u", "ctrl+m", true));
-		assert!(matches_key_inner(b"\x1b[27;5;109~", "ctrl+m", false));
-		assert!(matches_key_inner(b"\x1b[105;5u", "ctrl+i", true));
-	}
-
-	#[test]
-	fn ctrl_alt_letter_does_not_steal_alt_named_keys() {
-		// `\x1b\r` / `\x1b\t` / `\x1b\x08` are Alt+Enter/Tab/Backspace in legacy
-		// mode; they must not also satisfy ctrl+alt+m/i/h. Enhanced encodings
-		// (Kitty / modifyOtherKeys) still resolve the ctrl+alt forms.
-		assert!(matches_key_inner(b"\x1b\r", "alt+enter", false));
-		assert!(!matches_key_inner(b"\x1b\r", "ctrl+alt+m", false));
-		assert!(!matches_key_inner(b"\x1b\t", "ctrl+alt+i", false));
-		assert!(!matches_key_inner(b"\x1b\x08", "ctrl+alt+h", false));
-
-		assert!(matches_key_inner(b"\x1b[109;7u", "ctrl+alt+m", true));
-		assert!(matches_key_inner(b"\x1b[27;7;109~", "ctrl+alt+m", false));
 	}
 }

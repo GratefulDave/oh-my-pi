@@ -4,14 +4,6 @@ use std::{collections::BTreeMap, path::Path};
 
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, config::OutlineLevel, primitives};
 
-/// Whether `ctx.command` contains a NUL-producing output flag that would
-/// defeat newline-split processing in the compact_* helpers.
-fn context_has_nul_output(command: &str) -> bool {
-	command
-		.split_whitespace()
-		.any(|tok| tok == "-print0" || tok == "-fprint0")
-}
-
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	let cleaned = primitives::strip_ansi(input);
 	let legacy = ctx.config.legacy_filters_active();
@@ -29,9 +21,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 			"ls" => compact_ls_output(&cleaned).unwrap_or_else(|| compact_listing_output(&cleaned)),
 			"tree" => compact_listing_output(&cleaned),
 			"find" => {
-				if context_has_nul_output(ctx.command) {
-					cleaned
-				} else if legacy {
+				if legacy {
 					compact_find_output_legacy(&cleaned)
 				} else {
 					compact_find_output(&cleaned)
@@ -196,11 +186,7 @@ fn center_truncate_match(text: &str, max_chars: usize) -> String {
 	// - If the line is effectively one long token, bias earlier so identifiers that
 	//   appear before a long suffix still remain visible.
 	// - Otherwise center in the middle of the full line.
-	// Count leading whitespace in CHARS, not bytes: this value is compared and
-	// combined with char-based quantities (`char_count`, `max_chars`) and used as
-	// a char-stepping floor below. `str::find` returns a byte offset, which would
-	// overstate the index for any multibyte leading whitespace (NBSP, U+3000).
-	let first_non_ws = text.chars().take_while(|c| c.is_whitespace()).count();
+	let first_non_ws = text.find(|c: char| !c.is_whitespace()).unwrap_or(0);
 	let has_whitespace = text.chars().any(char::is_whitespace);
 	let anchor = if first_non_ws > 0 && first_non_ws < char_count / 3 {
 		first_non_ws + max_chars / 4

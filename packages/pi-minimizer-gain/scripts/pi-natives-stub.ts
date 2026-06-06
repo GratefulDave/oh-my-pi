@@ -12,7 +12,7 @@ export const FileType = { File: 0, Dir: 1, Symlink: 2 } as const;
 export type SliceResult = { text: string; width: number };
 
 // Classes (minimal stubs for types used as values)
-export const Process = class {} as unknown as { new (...args: any[]): any };
+export const Process = class {} as unknown as { new(...args: any[]): any };
 
 // Functions
 export function fuzzyFind(_options: any): Promise<any> {
@@ -37,13 +37,7 @@ export function encodeSixel(_bytes: Uint8Array, _targetWidthPx: number, _targetH
 
 export function copyToClipboard(_text: string): void {}
 
-export function truncateToWidth(
-	text: string,
-	_maxWidth: number,
-	_ellipsisKind: any,
-	_pad: boolean,
-	_tabWidth: number,
-): string {
+export function truncateToWidth(text: string, _maxWidth: number, _ellipsisKind: any, _pad: boolean, _tabWidth: number): string {
 	return text;
 }
 

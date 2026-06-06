@@ -2,14 +2,19 @@
 // Swarm dashboard — live TUI overlay showing agent states and mailboxes.
 // ---------------------------------------------------------------------------
 
-import { getConfig, getPendingMessages, getQueueLength, type SwarmAgent } from "./mailbox";
+import {
+	getConfig,
+	getPendingMessages,
+	getQueueLength,
+	type SwarmAgent,
+} from "./mailbox";
 
 // ---------------------------------------------------------------------------
 // Minimal Theme interface
 // ---------------------------------------------------------------------------
 
 interface SwarmTheme {
-	fg(color: string, text: string): string;
+	fg(color: string): string;
 	bold(text: string): string;
 	dim(text: string): string;
 }

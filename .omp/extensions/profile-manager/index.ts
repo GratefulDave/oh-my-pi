@@ -4,10 +4,10 @@
  * Provides `/pm` (profile-manager) as a profile management slash command
  * that lives outside the OMP source tree and survives upstream pulls.
  *
- * Runs on stock OMP: profiles are persisted directly to `~/.omp/agent/config.yml`
+ * Runs on stock OMP: profiles are persisted directly to `.omp/settings.json`
  * (the `activeModelProfile` + `modelProfiles` schema) and the active model is
- * switched through the public ExtensionAPI (`setModel` / `setThinkingLevel` /
- * `overrideModelRoles`). No LEX fork binary or fork-only imports are required.
+ * switched through the public ExtensionAPI (`setModel` / `setThinkingLevel`).
+ * No LEX fork binary or fork-only imports are required.
  *
  * Subcommands:
  *   /pm              — interactive selector
@@ -19,14 +19,11 @@
  */
 
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
-import { YAML } from "bun";
 import type { Model } from "@oh-my-pi/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
-	ExtensionContext,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 
 // ── local types (inlined, no fork imports) ───────────────────────────────────
@@ -64,10 +61,6 @@ const PROFILE_KEYS = ["modelRoles", "defaultThinkingLevel", "enabledModels", "cy
 export default function profileManagerExtension(pi: ExtensionAPI): void {
 	pi.setLabel("Profile Manager");
 
-	pi.on("session_start", async (_event, ctx) => {
-		await applyActiveProfileOnStartup(pi, ctx);
-	});
-
 	pi.registerCommand("pm", {
 		description: "Manage named model profiles",
 		handler: async (args, ctx) => {
@@ -89,18 +82,17 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 	});
 }
 
-// ── settings store (~/.omp/agent/config.yml, YAML) ───────────────────────────
+// ── settings store (direct .omp/settings.json I/O) ────────────────────────────
 
-function settingsPath(): string {
-	const configDir = process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".omp", "agent");
-	return path.join(configDir, "config.yml");
+function settingsPath(ctx: ExtensionCommandContext): string {
+	return path.join(ctx.cwd, ".omp", "settings.json");
 }
 
-function readSettings(): OmpSettings {
-	const file = settingsPath();
+function readSettings(ctx: ExtensionCommandContext): OmpSettings {
+	const file = settingsPath(ctx);
 	try {
 		const raw = fs.readFileSync(file, "utf8");
-		const parsed = YAML.parse(raw);
+		const parsed = JSON.parse(raw);
 		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
 			return parsed as OmpSettings;
 		}
@@ -110,10 +102,10 @@ function readSettings(): OmpSettings {
 	return {};
 }
 
-function writeSettings(settings: OmpSettings): void {
-	const file = settingsPath();
+function writeSettings(ctx: ExtensionCommandContext, settings: OmpSettings): void {
+	const file = settingsPath(ctx);
 	fs.mkdirSync(path.dirname(file), { recursive: true });
-	fs.writeFileSync(file, YAML.stringify(settings, null, 2), "utf8");
+	fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
 }
 
 function getProfiles(settings: OmpSettings): Record<string, ModelProfile> {
@@ -148,7 +140,7 @@ function splitModelSelector(selector: string): { id: string; thinkingLevel?: str
 }
 
 /** Resolve a model selector ("provider/id" or canonical id) via the public registry. */
-function resolveModel(ctx: ExtensionContext, id: string): Model | undefined {
+function resolveModel(ctx: ExtensionCommandContext, id: string): Model | undefined {
 	const slashIdx = id.indexOf("/");
 	if (slashIdx > 0) {
 		const provider = id.slice(0, slashIdx);
@@ -163,23 +155,15 @@ function resolveModel(ctx: ExtensionContext, id: string): Model | undefined {
 }
 
 /**
- * Apply a profile's model configuration via the public ExtensionAPI.
- *
- * - Sets the `default` model live via `pi.setModel()`.
- * - Applies the thinking level.
- * - Calls `pi.overrideModelRoles()` with all roles from the profile so that
- *   sub-agents (task, smol, plan, commit, etc.) are dispatched to the correct
- *   models immediately without requiring a reload. This updates the in-memory
- *   Settings object; the roles were already persisted to disk by the caller.
- *
+ * Apply a profile's active model + thinking level via the public ExtensionAPI.
  * Returns a status string describing what was applied (or why it was skipped).
+ *
+ * NOTE: Only the `default` model role and thinking level can be applied live —
+ * the public ExtensionAPI exposes no setter for secondary model roles,
+ * cycleOrder, enabledModels, or modelProviderOrder. Those persist to
+ * settings.json for the binary to consume on load/reload.
  */
-async function applyProfile(pi: ExtensionAPI, ctx: ExtensionContext, profile: ModelProfile): Promise<string> {
-	// Apply all model roles to the live Settings so sub-agent dispatch picks them up.
-	if (profile.modelRoles && Object.keys(profile.modelRoles).length > 0) {
-		pi.overrideModelRoles(profile.modelRoles);
-	}
-
+async function applyProfile(pi: ExtensionAPI, ctx: ExtensionCommandContext, profile: ModelProfile): Promise<string> {
 	const selector = profile.modelRoles?.default;
 	if (!selector) return "No 'default' model role to apply live; persisted profile config.";
 
@@ -195,36 +179,6 @@ async function applyProfile(pi: ExtensionAPI, ctx: ExtensionContext, profile: Mo
 		pi.setThinkingLevel(level as Parameters<ExtensionAPI["setThinkingLevel"]>[0]);
 	}
 	return `Switched model to ${model.provider}/${model.id}${level ? ` (${level})` : ""}.`;
-}
-
-function persistProfileConfig(settings: OmpSettings, profile: ModelProfile): void {
-	if (profile.modelRoles !== undefined) settings.modelRoles = structuredClone(profile.modelRoles);
-	else delete settings.modelRoles;
-
-	if (profile.defaultThinkingLevel !== undefined) settings.defaultThinkingLevel = profile.defaultThinkingLevel;
-	else delete settings.defaultThinkingLevel;
-
-	if (profile.enabledModels !== undefined) settings.enabledModels = structuredClone(profile.enabledModels);
-	else delete settings.enabledModels;
-
-	if (profile.cycleOrder !== undefined) settings.cycleOrder = structuredClone(profile.cycleOrder);
-	else delete settings.cycleOrder;
-
-	if (profile.modelProviderOrder !== undefined) settings.modelProviderOrder = structuredClone(profile.modelProviderOrder);
-	else delete settings.modelProviderOrder;
-}
-
-async function applyActiveProfileOnStartup(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-	const settings = readSettings();
-	const active = settings.activeModelProfile;
-	if (!active || active === DEFAULT_PROFILE_NAME) return;
-
-	const profile = getProfiles(settings)[active];
-	if (!profile) return;
-
-	persistProfileConfig(settings, profile);
-	writeSettings(settings);
-	await applyProfile(pi, ctx, profile);
 }
 
 /** Snapshot the current model config (live model + top-level settings) into a profile. */
@@ -258,7 +212,7 @@ function profileNames(settings: OmpSettings): string[] {
 async function handleNoArg(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
 	if (!ctx.hasUI) return printList(pi, ctx);
 
-	const settings = readSettings();
+	const settings = readSettings(ctx);
 	const active = settings.activeModelProfile;
 	const names = profileNames(settings);
 	const choices = [DEFAULT_PROFILE_NAME, ...names.filter(n => n !== DEFAULT_PROFILE_NAME), "Create new profile..."];
@@ -271,11 +225,16 @@ async function handleNoArg(pi: ExtensionAPI, ctx: ExtensionCommandContext): Prom
 		return handleCreate(pi, ctx, [name]);
 	}
 
+	if (choice === DEFAULT_PROFILE_NAME) return handleUse(pi, ctx, DEFAULT_PROFILE_NAME);
+	if (active === choice) {
+		notify(pi, `Already on profile: ${choice}`);
+		return;
+	}
 	return handleUse(pi, ctx, choice);
 }
 
 function printList(pi: ExtensionAPI, ctx: ExtensionCommandContext): void {
-	const settings = readSettings();
+	const settings = readSettings(ctx);
 	const active = settings.activeModelProfile;
 	let out = "Model profiles:\n";
 	out += `  ${!active || active === DEFAULT_PROFILE_NAME ? "*" : " "} ${DEFAULT_PROFILE_NAME}\n`;
@@ -287,7 +246,7 @@ function printList(pi: ExtensionAPI, ctx: ExtensionCommandContext): void {
 }
 
 function handleShow(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName: string | undefined): void {
-	const settings = readSettings();
+	const settings = readSettings(ctx);
 	if (rawName) {
 		const name = normalizeProfileName(rawName);
 		const profile = getProfiles(settings)[name];
@@ -322,19 +281,18 @@ async function handleCreate(pi: ExtensionAPI, ctx: ExtensionCommandContext, args
 	const name = normalizeProfileName(args[0]);
 	const activate = !args.includes("--no-activate");
 
-	const settings = readSettings();
+	const settings = readSettings(ctx);
 	const profiles = { ...getProfiles(settings) };
 	profiles[name] = snapshotCurrent(pi, ctx, settings);
 	settings.modelProfiles = profiles;
 
 	if (activate) {
 		settings.activeModelProfile = name;
-		persistProfileConfig(settings, profiles[name]);
-		writeSettings(settings);
+		writeSettings(ctx, settings);
 		const status = await applyProfile(pi, ctx, profiles[name]);
 		notify(pi, `Created and switched to profile: ${name}. ${status}`);
 	} else {
-		writeSettings(settings);
+		writeSettings(ctx, settings);
 		notify(pi, `Created profile: ${name}`);
 	}
 }
@@ -344,11 +302,11 @@ async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName
 		notify(pi, "Usage: /pm use <name|default>");
 		return;
 	}
-	const settings = readSettings();
+	const settings = readSettings(ctx);
 
 	if (rawName === DEFAULT_PROFILE_NAME) {
 		delete settings.activeModelProfile;
-		writeSettings(settings);
+		writeSettings(ctx, settings);
 		notify(pi, `Active profile: ${DEFAULT_PROFILE_NAME}`);
 		return;
 	}
@@ -360,8 +318,7 @@ async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName
 		return;
 	}
 	settings.activeModelProfile = name;
-	persistProfileConfig(settings, profile);
-	writeSettings(settings);
+	writeSettings(ctx, settings);
 	const status = await applyProfile(pi, ctx, profile);
 	notify(pi, `Active profile: ${name}. ${status}`);
 }
@@ -372,7 +329,7 @@ async function handleDelete(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawN
 		return;
 	}
 	const name = normalizeProfileName(rawName);
-	const settings = readSettings();
+	const settings = readSettings(ctx);
 	const profiles = { ...getProfiles(settings) };
 	if (!profiles[name]) {
 		notify(pi, `Unknown profile: ${name}`);
@@ -381,6 +338,6 @@ async function handleDelete(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawN
 	delete profiles[name];
 	settings.modelProfiles = profiles;
 	if (settings.activeModelProfile === name) delete settings.activeModelProfile;
-	writeSettings(settings);
+	writeSettings(ctx, settings);
 	notify(pi, `Deleted profile: ${name}`);
 }

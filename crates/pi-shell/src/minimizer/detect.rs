@@ -360,45 +360,6 @@ fn detect_subcommand(program: &str, args: &[String]) -> Option<String> {
 		"aws" => skip_aws_global_options(args)
 			.and_then(|index| args.get(index))
 			.map(|arg| arg.to_lowercase()),
-		"uv" | "uvx" => first_non_global_arg(
-			args,
-			&[
-				"--directory",
-				"-C",
-				"--project",
-				"-p",
-				"--cache-dir",
-				"--config-file",
-				"--config-setting",
-				"--python",
-				"--python-preference",
-				"--exclude-newer",
-				"--color",
-				"--allow-insecure-host",
-				"--no-binary",
-				"--only-binary",
-			],
-			&[
-				"--offline",
-				"--no-cache",
-				"--no-cache-dir",
-				"--no-progress",
-				"--native-tls",
-				"--no-native-tls",
-				"--quiet",
-				"-q",
-				"--verbose",
-				"-v",
-				"--upgrade",
-				"--no-upgrade",
-				"--require-hashes",
-				"--verify-hashes",
-				"--no-verify-hashes",
-				"--no-build",
-				"--reinstall",
-			],
-			&[],
-		),
 		"jest" | "vitest" => first_non_global_arg(args, &[], &[], &[]),
 		_ => args
 			.iter()
@@ -651,6 +612,7 @@ mod tests {
 			assert_eq!(detected.subcommand.as_deref(), Some("lambda"), "{command}");
 		}
 	}
+
 }
 
 #[test]

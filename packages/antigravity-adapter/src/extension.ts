@@ -1,8 +1,10 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { AntigravityCLIOAuthPlugin } from "opencode-antigravity-auth";
 import {
+	fetchBridgeModels,
 	findUpstreamOAuthMethod,
 	loginWithUpstreamOAuth,
+	probeExistingToken,
 	refreshBridgeCredentials,
 	serializeBridgeCredentials,
 } from "./auth-adapter";
@@ -28,14 +30,15 @@ export default async function opencodeAntigravityBridge(pi: ExtensionAPI): Promi
 		models: OPENCODE_ANTIGRAVITY_MODELS,
 		oauth: {
 			name: "OpenCode Antigravity",
-			login: callbacks => loginWithUpstreamOAuth(oauthMethod, callbacks),
+			login: async callbacks => {
+				const probed = await probeExistingToken(client);
+				if (probed) return probed;
+				return loginWithUpstreamOAuth(oauthMethod, callbacks);
+			},
 			// Use plugin-compatible refresh so token semantics match the upstream plugin.
 			refreshToken: credentials => refreshBridgeCredentials(credentials, client),
 			getApiKey: serializeBridgeCredentials,
 		},
-		// NOTE: 15.8.3's ProviderConfig dropped the `fetchModels` dynamic-discovery
-		// hook that existed in 15.5.15. The static OPENCODE_ANTIGRAVITY_MODELS list
-		// above is the sole model source until/unless the host re-adds the hook.
-		// `fetchBridgeModels` in auth-adapter.ts remains exported + tested for that day.
+		fetchModels: fetchBridgeModels,
 	});
 }
