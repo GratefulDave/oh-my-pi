@@ -11,6 +11,12 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Opt-in AI-summary minimizer filter (DeepSeek). Off by default: an unmodified
+# build never links reqwest and never makes a network call. See
+# src/minimizer/filters/ai_smart.rs for the threat model.
+ai-smart = ["dep:reqwest"]
+
 [dependencies]
 anyhow.workspace = true
 bytes.workspace = true
@@ -20,6 +26,7 @@ brush-parser.workspace = true
 clap.workspace = true
 os_pipe.workspace = true
 regex.workspace = true
+reqwest = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
