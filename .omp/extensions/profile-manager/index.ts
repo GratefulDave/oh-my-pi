@@ -19,11 +19,13 @@
  */
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { Model } from "@oh-my-pi/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
+	ExtensionContext,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 
 // ── local types (inlined, no fork imports) ───────────────────────────────────
@@ -61,6 +63,21 @@ const PROFILE_KEYS = ["modelRoles", "defaultThinkingLevel", "enabledModels", "cy
 export default function profileManagerExtension(pi: ExtensionAPI): void {
 	pi.setLabel("Profile Manager");
 
+	// Auto-apply the active profile when a session starts so model roles
+	// (default + smol/plan/slow) take effect on launch in EVERY directory,
+	// not only after a manual `/pm use`. Best-effort: never block startup.
+	pi.on("session_start", async (_event, ctx) => {
+		try {
+			const settings = readSettings(ctx);
+			const active = settings.activeModelProfile;
+			if (!active || active === DEFAULT_PROFILE_NAME) return;
+			const profile = getProfiles(settings)[active];
+			if (profile) await applyProfile(pi, ctx, profile);
+		} catch {
+			// Profile application is best-effort; swallow to protect session start.
+		}
+	});
+
 	pi.registerCommand("pm", {
 		description: "Manage named model profiles",
 		handler: async (args, ctx) => {
@@ -82,14 +99,25 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 	});
 }
 
-// ── settings store (direct .omp/settings.json I/O) ────────────────────────────
+// ── settings store (.omp/settings.json I/O) ───────────────────────────────────
+//
+// Profiles are GLOBAL: stored at the user level (~/.omp/agent/settings.json) so
+// they persist across every project, not just the directory where they were
+// created. Reads merge user-level + project-level (project overrides on name
+// clash) so a repo can still pin its own profile; writes always go to the user
+// file and touch ONLY the profile keys, preserving extensions/disabledProviders
+// and anything else already in it. This mirrors the file the binary loads user
+// settings from (settings.ts -> #agentDir/settings.json).
 
-function settingsPath(ctx: ExtensionCommandContext): string {
+function userSettingsPath(): string {
+	return path.join(os.homedir(), ".omp", "agent", "settings.json");
+}
+
+function projectSettingsPath(ctx: ExtensionContext): string {
 	return path.join(ctx.cwd, ".omp", "settings.json");
 }
 
-function readSettings(ctx: ExtensionCommandContext): OmpSettings {
-	const file = settingsPath(ctx);
+function readSettingsFile(file: string): OmpSettings {
 	try {
 		const raw = fs.readFileSync(file, "utf8");
 		const parsed = JSON.parse(raw);
@@ -97,15 +125,38 @@ function readSettings(ctx: ExtensionCommandContext): OmpSettings {
 			return parsed as OmpSettings;
 		}
 	} catch {
-		// Missing or unreadable file → start from empty settings.
+		// Missing or unreadable file → treat as empty.
 	}
 	return {};
 }
 
-function writeSettings(ctx: ExtensionCommandContext, settings: OmpSettings): void {
-	const file = settingsPath(ctx);
+function readSettings(ctx: ExtensionContext): OmpSettings {
+	const user = readSettingsFile(userSettingsPath());
+	const project = readSettingsFile(projectSettingsPath(ctx));
+	return {
+		...user,
+		...project,
+		// Union the profile maps so user-global and project profiles both show;
+		// a project profile shadows a same-named user profile.
+		modelProfiles: { ...(user.modelProfiles ?? {}), ...(project.modelProfiles ?? {}) },
+		// Project active selection wins if present, else the user-level one.
+		activeModelProfile: project.activeModelProfile ?? user.activeModelProfile,
+	};
+}
+
+function writeSettings(_ctx: ExtensionContext, settings: OmpSettings): void {
+	// Persist only the profile keys to the user file; preserve everything else
+	// already there (extensions[], disabledProviders, …).
+	const file = userSettingsPath();
+	const existing = readSettingsFile(file);
+	existing.modelProfiles = settings.modelProfiles;
+	if (settings.activeModelProfile !== undefined) {
+		existing.activeModelProfile = settings.activeModelProfile;
+	} else {
+		delete existing.activeModelProfile;
+	}
 	fs.mkdirSync(path.dirname(file), { recursive: true });
-	fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+	fs.writeFileSync(file, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
 }
 
 function getProfiles(settings: OmpSettings): Record<string, ModelProfile> {
@@ -140,7 +191,7 @@ function splitModelSelector(selector: string): { id: string; thinkingLevel?: str
 }
 
 /** Resolve a model selector ("provider/id" or canonical id) via the public registry. */
-function resolveModel(ctx: ExtensionCommandContext, id: string): Model | undefined {
+function resolveModel(ctx: ExtensionContext, id: string): Model | undefined {
 	const slashIdx = id.indexOf("/");
 	if (slashIdx > 0) {
 		const provider = id.slice(0, slashIdx);
@@ -163,9 +214,15 @@ function resolveModel(ctx: ExtensionCommandContext, id: string): Model | undefin
  * cycleOrder, enabledModels, or modelProviderOrder. Those persist to
  * settings.json for the binary to consume on load/reload.
  */
-async function applyProfile(pi: ExtensionAPI, ctx: ExtensionCommandContext, profile: ModelProfile): Promise<string> {
+async function applyProfile(pi: ExtensionAPI, ctx: ExtensionContext, profile: ModelProfile): Promise<string> {
+	// Apply ALL roles (default + smol/plan/slow/…) live for sub-agent dispatch.
+	// overrideModelRoles is the fork's intended mechanism (in-memory, no disk).
+	if (profile.modelRoles && Object.keys(profile.modelRoles).length > 0) {
+		pi.overrideModelRoles(profile.modelRoles);
+	}
+
 	const selector = profile.modelRoles?.default;
-	if (!selector) return "No 'default' model role to apply live; persisted profile config.";
+	if (!selector) return "Applied model roles; no 'default' role to set as the active model.";
 
 	const { id, thinkingLevel } = splitModelSelector(selector);
 	const model = resolveModel(ctx, id);
@@ -182,7 +239,7 @@ async function applyProfile(pi: ExtensionAPI, ctx: ExtensionCommandContext, prof
 }
 
 /** Snapshot the current model config (live model + top-level settings) into a profile. */
-function snapshotCurrent(pi: ExtensionAPI, ctx: ExtensionCommandContext, settings: OmpSettings): ModelProfile {
+function snapshotCurrent(pi: ExtensionAPI, ctx: ExtensionContext, settings: OmpSettings): ModelProfile {
 	const profile: ModelProfile = {};
 	for (const key of PROFILE_KEYS) {
 		const value = settings[key];

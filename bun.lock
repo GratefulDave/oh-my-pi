@@ -44,7 +44,7 @@
     },
     "packages/antigravity-adapter": {
       "name": "@oh-my-pi/antigravity-adapter",
-      "version": "15.8.3",
+      "version": "15.9.67-lex",
       "dependencies": {
         "@oh-my-pi/pi-ai": "workspace:*",
         "@oh-my-pi/pi-utils": "workspace:*",
@@ -139,6 +139,64 @@
         "@types/bun": "catalog:",
       },
     },
+    "packages/pi-actor-swarm": {
+      "name": "pi-actor-swarm",
+      "version": "15.9.67-lex",
+      "dependencies": {
+        "@oh-my-pi/pi-utils": "^15.9.67-lex",
+      },
+      "peerDependencies": {
+        "@oh-my-pi/pi-coding-agent": "workspace:*",
+        "@oh-my-pi/pi-tui": "workspace:*",
+      },
+    },
+    "packages/pi-minimizer-gain": {
+      "name": "pi-minimizer-gain",
+      "version": "15.9.67-lex",
+      "dependencies": {
+        "@oh-my-pi/pi-utils": "^15.9.67-lex",
+      },
+      "peerDependencies": {
+        "@oh-my-pi/pi-coding-agent": "workspace:*",
+        "@oh-my-pi/pi-tui": "workspace:*",
+      },
+    },
+    "packages/pi-observer": {
+      "name": "pi-observer",
+      "version": "15.9.67-lex",
+      "dependencies": {
+        "@oh-my-pi/pi-utils": "^15.9.67-lex",
+      },
+      "peerDependencies": {
+        "@oh-my-pi/pi-coding-agent": "workspace:*",
+        "@oh-my-pi/pi-tui": "workspace:*",
+      },
+    },
+    "packages/pi-omnidelegate": {
+      "name": "pi-omnidelegate",
+      "version": "15.9.67-lex",
+      "dependencies": {
+        "@oh-my-pi/pi-utils": "^15.9.67-lex",
+      },
+      "peerDependencies": {
+        "@oh-my-pi/pi-coding-agent": "workspace:*",
+        "@oh-my-pi/pi-tui": "workspace:*",
+      },
+    },
+    "packages/pi-software-factory": {
+      "name": "pi-software-factory",
+      "version": "15.9.67-lex",
+      "bin": {
+        "factory-init": "./dist/bin/init.js",
+        "factory-doctor": "./dist/bin/doctor.js",
+      },
+      "dependencies": {
+        "@oh-my-pi/pi-utils": "^15.9.67-lex",
+      },
+      "peerDependencies": {
+        "@oh-my-pi/pi-coding-agent": "workspace:*",
+      },
+    },
     "packages/stats": {
       "name": "@oh-my-pi/omp-stats",
       "version": "15.10.0",
@@ -196,7 +254,7 @@
     },
     "packages/typescript-edit-benchmark": {
       "name": "@oh-my-pi/typescript-edit-benchmark",
-      "version": "0.0.1",
+      "version": "15.9.67-lex",
       "bin": {
         "typescript-edit-benchmark": "src/index.ts",
       },
@@ -1217,6 +1275,16 @@
     "path-expression-matcher": ["path-expression-matcher@1.5.0", "", {}, "sha512-cbrerZV+6rvdQrrD+iGMcZFEiiSrbv9Tfdkvnusy6y0x0GKBXREFg/Y65GhIfm0tnLntThhzCnfKwp1WRjeCyQ=="],
 
     "path-is-absolute": ["path-is-absolute@1.0.1", "", {}, "sha512-AVbw3UJ2e9bq64vSaS9Am0fje1Pa8pbGqTTsmXfaIiMpnr5DlDhfJOuLj9Sf95ZPVDAUerDfEk88MPmPe7UCQg=="],
+
+    "pi-actor-swarm": ["pi-actor-swarm@workspace:packages/pi-actor-swarm"],
+
+    "pi-minimizer-gain": ["pi-minimizer-gain@workspace:packages/pi-minimizer-gain"],
+
+    "pi-observer": ["pi-observer@workspace:packages/pi-observer"],
+
+    "pi-omnidelegate": ["pi-omnidelegate@workspace:packages/pi-omnidelegate"],
+
+    "pi-software-factory": ["pi-software-factory@workspace:packages/pi-software-factory"],
 
     "picocolors": ["picocolors@1.1.1", "", {}, "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="],
 

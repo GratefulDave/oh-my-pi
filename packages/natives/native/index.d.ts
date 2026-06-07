@@ -147,15 +147,7 @@ export declare function __piNativesV15_10_0(): void
  */
 export declare function applyBashFixups(command: string): BashFixupResult
 
-/**
- * Run the shell-output minimizer over an already-captured command result,
- * without spawning a shell. Resolves to a `MinimizerResult` only when the output
- * was actually rewritten, and `null` for disabled/omitted/passthrough cases.
- *
- * Async (returns a Promise): the AI overlay can make a blocking 5s HTTP request,
- * so the work runs on a blocking pool to avoid stalling the JS event loop.
- */
-export declare function applyShellMinimizer(options: ShellMinimizerApplyOptions): Promise<MinimizerResult | null>
+export declare function applyShellMinimizer(options: ShellMinimizerApplyOptions): MinimizerResult | null
 
 /**
  * Apply ast-grep rewrite rules to matching files; honors `dryRun` and returns
@@ -1060,15 +1052,23 @@ export interface MinimizerOptions {
    */
   maxCaptureBytes?: number
   /**
-   * Source-outline level for `cat <source-file>` minimization. Accepts
-   * `"default"` (current behavior) or `"aggressive"` (strip function bodies).
+   * Source-outline aggressiveness for `cat <source-file>` minimization.
+   * Accepts `"default"` (current behavior) or `"aggressive"` (strip
+   * function/method bodies for ts/tsx/js/jsx/py/rs/go).
    */
   sourceOutlineLevel?: string
   /**
-   * Kill-switch to fall back to the pre-PR (legacy) filter behavior for
-   * grep / find / pytest. When `true`, filters that opted into the
-   * always-shrink Tier 1 / Tier 2 behavior skip the new code path. When
-   * absent, defers to the `OMP_MINIMIZER_LEGACY_FILTERS` env var.
+   * Master switch for the AI-summary filter (W4 / rtk smart). Defaults
+   * to off; only effective when the host crate is built with the
+   * `ai-smart` Cargo feature.
+   */
+  aiSmartEnabled?: boolean
+  /** Provider key for the AI summarizer. Defaults to `"deepseek"`. */
+  aiSmartProvider?: string
+  /**
+   * Kill-switch to fall back to pre-PR legacy behavior for the
+   * always-shrink filters (grep, find, pytest). When unset, defers to
+   * the `OMP_MINIMIZER_LEGACY_FILTERS` env var; default `false`.
    */
   legacyFilters?: boolean
 }
@@ -1076,11 +1076,10 @@ export interface MinimizerOptions {
 /**
  * Telemetry for a single minimization.
  *
- * Surfaced when the minimizer actually rewrote the command's output. The
- * session layer is expected to persist `original_text` via its
- * `ArtifactManager`, splice the resulting `artifact://<id>` reference
- * into `text`, and replace any previously streamed raw output with the
- * minimized text.
+ * Surfaced when the minimizer rewrote output or emitted a reason-only
+ * miss label. The session layer should persist `original_text` only for
+ * actual rewrites; reason-only records keep `text` unchanged and must not
+ * trigger artifact persistence.
  */
 export interface MinimizerResult {
   /**
@@ -1273,7 +1272,6 @@ export interface ShellExecuteOptions {
   signal?: unknown
 }
 
-/** Inputs for `applyShellMinimizer`: captured text plus minimizer config. */
 export interface ShellMinimizerApplyOptions {
   command: string
   captured: string
