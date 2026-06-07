@@ -2097,6 +2097,7 @@ export class AcpAgent implements Agent {
 				setSessionName: async name => {
 					await record.session.sessionManager.setSessionName(name, "user");
 				},
+				overrideModelRoles: roles => record.session.settings.overrideModelRoles(roles),
 			},
 			{
 				getModel: () => record.session.model,

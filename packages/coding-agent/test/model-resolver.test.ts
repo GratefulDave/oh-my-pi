@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Effort, type Model } from "@oh-my-pi/pi-ai";
 import {
 	expandRoleAlias,
+	formatModelString,
 	parseModelPattern,
 	parseModelString,
 	resolveAgentModelPatterns,
@@ -43,6 +44,21 @@ const mockModels: Model<"anthropic-messages">[] = [
 		cost: { input: 5, output: 15, cacheRead: 0.5, cacheWrite: 5 },
 		contextWindow: 128000,
 		maxTokens: 4096,
+	},
+];
+
+const mockAntigravityModels: Model<"google-gemini-cli">[] = [
+	{
+		id: "gemini-3.5-flash-low",
+		name: "Gemini 3.5 Flash Low",
+		api: "google-gemini-cli",
+		provider: "google-antigravity",
+		baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+		reasoning: false,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1_048_576,
+		maxTokens: 65_535,
 	},
 ];
 
@@ -240,7 +256,13 @@ const canonicalRegistry = {
 	getAvailable: () => canonicalVariantModels,
 } as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
 
-const allModels = [...mockModels, ...mockOpenRouterModels, ...mockProviderOverlapModels, ...mockCodexOverlapModels];
+const allModels = [
+	...mockModels,
+	...mockOpenRouterModels,
+	...mockProviderOverlapModels,
+	...mockCodexOverlapModels,
+	...mockAntigravityModels,
+];
 
 describe("parseModelPattern", () => {
 	describe("simple patterns without colons", () => {
@@ -663,6 +685,45 @@ describe("resolveCliModel", () => {
 		expect(result.error).toBeUndefined();
 		expect(result.model?.provider).toBe("openai");
 		expect(result.model?.id).toBe("gpt-4o");
+	});
+
+	test("uses antigravity provider descriptor for Google Antigravity models", () => {
+		const registry = {
+			getAll: () => allModels,
+		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+
+		const result = resolveCliModel({
+			cliModel: "antigravity/gemini-3.5-flash-low",
+			modelRegistry: registry,
+		});
+
+		expect(result.error).toBeUndefined();
+		expect(result.model?.provider).toBe("google-antigravity");
+		expect(result.model?.id).toBe("gemini-3.5-flash-low");
+		expect(formatModelString(result.model!)).toBe("antigravity/gemini-3.5-flash-low");
+	});
+
+	test("resolves saved antigravity provider descriptors from model strings", () => {
+		const result = resolveModelFromString("antigravity/gemini-3.5-flash-low", allModels);
+
+		expect(result?.provider).toBe("google-antigravity");
+		expect(result?.id).toBe("gemini-3.5-flash-low");
+	});
+
+	test("accepts --provider antigravity as the Google Antigravity provider descriptor", () => {
+		const registry = {
+			getAll: () => allModels,
+		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+
+		const result = resolveCliModel({
+			cliProvider: "antigravity",
+			cliModel: "flash-low",
+			modelRegistry: registry,
+		});
+
+		expect(result.error).toBeUndefined();
+		expect(result.model?.provider).toBe("google-antigravity");
+		expect(result.model?.id).toBe("gemini-3.5-flash-low");
 	});
 
 	test("resolves fuzzy patterns within an explicit provider", () => {

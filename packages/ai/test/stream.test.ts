@@ -1563,8 +1563,8 @@ describe("Generate E2E Tests", () => {
 		);
 	});
 
-	describe("Google Antigravity Provider (gemini-3-pro-high)", () => {
-		const llm = getBundledModel("google-antigravity", "gemini-3-pro-high");
+	describe("Google Antigravity Provider (gemini-3.5-flash-low)", () => {
+		const llm = getBundledModel("google-antigravity", "gemini-3.5-flash-low");
 
 		it.skipIf(!antigravityToken)(
 			"should complete basic text generation",
@@ -1591,21 +1591,17 @@ describe("Generate E2E Tests", () => {
 		);
 
 		it.skipIf(!antigravityToken)(
-			"should handle thinking with thinkingLevel",
+			"should handle model-id-tied thinking",
 			async () => {
-				// gemini-3-pro only supports LOW/HIGH
-				await handleThinking(llm, {
-					apiKey: antigravityToken,
-					thinking: { enabled: true, level: "LOW" },
-				});
+				await handleThinking(llm, { apiKey: antigravityToken });
 			},
 			{ retry: 3 },
 		);
 
 		it.skipIf(!antigravityToken)(
-			"should handle multi-turn with thinking and tools",
+			"should handle multi-turn with model-id-tied thinking and tools",
 			async () => {
-				await multiTurn(llm, { apiKey: antigravityToken, thinking: { enabled: true, level: "HIGH" } });
+				await multiTurn(llm, { apiKey: antigravityToken });
 			},
 			{ retry: 3 },
 		);
@@ -1619,8 +1615,8 @@ describe("Generate E2E Tests", () => {
 		);
 	});
 
-	describe("Google Antigravity Provider (claude-sonnet-4-5)", () => {
-		const llm = getBundledModel("google-antigravity", "claude-sonnet-4-5");
+	describe("Google Antigravity Provider (claude-sonnet-4-6)", () => {
+		const llm = getBundledModel("google-antigravity", "claude-sonnet-4-6");
 
 		it.skipIf(!antigravityToken)(
 			"should complete basic text generation",
@@ -1647,26 +1643,19 @@ describe("Generate E2E Tests", () => {
 		);
 
 		it.skipIf(!antigravityToken)(
-			"should handle thinking",
+			"should handle model-id-tied thinking",
 			async () => {
-				// claude-sonnet-4-5 has reasoning: false, use claude-sonnet-4-5-thinking
-				const thinkingModel = getBundledModel("google-antigravity", "claude-sonnet-4-5-thinking");
-				await handleThinking(thinkingModel, {
-					apiKey: antigravityToken,
-					thinking: { enabled: true, budgetTokens: 4096 },
-				});
+				const thinkingModel = getBundledModel("google-antigravity", "claude-opus-4-6-thinking");
+				await handleThinking(thinkingModel, { apiKey: antigravityToken });
 			},
 			{ retry: 3 },
 		);
 
 		it.skipIf(!antigravityToken)(
-			"should handle multi-turn with thinking and tools",
+			"should handle multi-turn with model-id-tied thinking and tools",
 			async () => {
-				const thinkingModel = getBundledModel("google-antigravity", "claude-sonnet-4-5-thinking");
-				await multiTurn(thinkingModel, {
-					apiKey: antigravityToken,
-					thinking: { enabled: true, budgetTokens: 4096 },
-				});
+				const thinkingModel = getBundledModel("google-antigravity", "claude-opus-4-6-thinking");
+				await multiTurn(thinkingModel, { apiKey: antigravityToken });
 			},
 			{ retry: 3 },
 		);

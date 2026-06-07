@@ -160,6 +160,7 @@
 
 ## [15.9.0] - 2026-06-04
 
+
 ### Added
 
 - Added Kitty `CSI 22 J` screen-to-scrollback clears for non-destructive full paints, while keeping ED3 for destructive history/session rebuilds.
@@ -222,6 +223,12 @@
 ### Fixed
 
 - Deferred eager live scrollback rebuilds on VTE terminals so GNOME-style Linux terminals do not flash or erase readable scrollback during streaming ([#1719](https://github.com/can1357/oh-my-pi/issues/1719)).
+
+## [15.8.0] - 2026-06-02
+
+### Added
+
+- Added `CMUX_SURFACE_ID` environment variable support to `getTerminalId()`, so cmux terminal surfaces get a stable identifier alongside kitty, tmux, macOS Terminal.app, and Windows Terminal — enabling per-surface session breadcrumbs for `omp -c` in cmux.
 
 ## [15.8.0] - 2026-06-02
 

@@ -429,6 +429,23 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	) => Component;
 }
 
+/** Custom rendering for an existing tool without replacing its execution implementation. */
+export interface ToolRendererDefinition<TArgs = unknown, TDetails = unknown> {
+	/** Render without the default tool background box. */
+	inline?: boolean;
+	/** If true, hide renderCall once renderResult exists. */
+	mergeCallAndResult?: boolean;
+	/** Custom rendering for tool call display. */
+	renderCall?: (args: TArgs, options: ToolRenderResultOptions, theme: Theme) => Component;
+	/** Custom rendering for tool result display. */
+	renderResult?: (
+		result: AgentToolResult<TDetails>,
+		options: ToolRenderResultOptions,
+		theme: Theme,
+		args?: TArgs,
+	) => Component;
+}
+
 // ============================================================================
 // Resource Events
 // ============================================================================
@@ -947,13 +964,17 @@ export interface ExtensionAPI {
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
 	on(event: "user_python", handler: ExtensionHandler<UserPythonEvent, UserPythonEventResult>): void;
 
-	// =========================================================================
-	// Tool Registration
+	// Tool Registration / Rendering
 	// =========================================================================
 
 	/** Register a tool that the LLM can call. */
 	registerTool<TParams extends TSchema = TSchema, TDetails = unknown>(tool: ToolDefinition<TParams, TDetails>): void;
 
+	/** Register or override TUI rendering for an existing tool without replacing execution. */
+	registerToolRenderer<TArgs = unknown, TDetails = unknown>(
+		toolName: string,
+		renderer: ToolRendererDefinition<TArgs, TDetails>,
+	): void;
 	// =========================================================================
 	// Command, Shortcut, Flag Registration
 	// =========================================================================
@@ -1051,6 +1072,13 @@ export interface ExtensionAPI {
 
 	/** Set thinking level for the current session. */
 	setThinkingLevel(level: ThinkingLevel): void;
+
+	/**
+	 * Override model roles for the current session (live, in-memory only).
+	 * Affects role dispatch for sub-agents (task, smol, plan, etc.) without
+	 * writing to disk. Call this when applying a profile on session_start.
+	 */
+	overrideModelRoles(roles: Record<string, string>): void;
 
 	/** Get the current session name. */
 	getSessionName(): string | undefined;
@@ -1246,6 +1274,7 @@ export interface ExtensionActions {
 	setThinkingLevel: SetThinkingLevelHandler;
 	getSessionName: () => string | undefined;
 	setSessionName: (name: string) => Promise<void>;
+	overrideModelRoles: (roles: Record<string, string>) => void;
 }
 
 /** Actions for ExtensionContext (ctx.* in event handlers). */
@@ -1285,6 +1314,7 @@ export interface Extension {
 	label?: string;
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool<any, any>>;
+	toolRenderers: Map<string, ToolRendererDefinition>;
 	assistantThinkingRenderers: AssistantThinkingRenderer[];
 	messageRenderers: Map<string, MessageRenderer>;
 	commands: Map<string, RegisteredCommand>;

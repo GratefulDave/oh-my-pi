@@ -136,7 +136,14 @@ const STATIC_PROVIDER_TABS: ProviderTabState[] = [
 const MODEL_TAB_REFRESH_DEBOUNCE_MS = 120;
 
 function formatProviderTabLabel(providerId: string): string {
+	if (providerId === "google-antigravity") {
+		return "ANTIGRAVITY";
+	}
 	return providerId.replace(/[-_]+/g, " ").toUpperCase();
+}
+
+function formatProviderDescriptor(providerId: string): string {
+	return providerId === "google-antigravity" ? "antigravity" : providerId;
 }
 
 function createProviderTab(providerId: string): ProviderTabState {
@@ -446,7 +453,7 @@ export class ModelSelectorComponent extends Container {
 				provider: scoped.model.provider,
 				id: scoped.model.id,
 				model: scoped.model,
-				selector: `${scoped.model.provider}/${scoped.model.id}`,
+				selector: `${formatProviderDescriptor(scoped.model.provider)}/${scoped.model.id}`,
 			}));
 		} else {
 			const loadError = this.#modelRegistry.getError();
@@ -458,12 +465,22 @@ export class ModelSelectorComponent extends Container {
 
 			try {
 				const availableModels = this.#modelRegistry.getAvailable();
-				models = availableModels.map((model: Model) => ({
+				const selectableModels = [...availableModels];
+				const availableKeys = new Set(availableModels.map(model => `${model.provider}\u0000${model.id}`));
+				for (const model of this.#modelRegistry.getAll()) {
+					if (model.provider !== "google-antigravity") continue;
+					const key = `${model.provider}\u0000${model.id}`;
+					if (!availableKeys.has(key)) {
+						selectableModels.push(model);
+						availableKeys.add(key);
+					}
+				}
+				models = selectableModels.map((model: Model) => ({
 					kind: "provider",
 					provider: model.provider,
 					id: model.id,
 					model,
-					selector: `${model.provider}/${model.id}`,
+					selector: `${formatProviderDescriptor(model.provider)}/${model.id}`,
 				}));
 			} catch (error) {
 				this.#allModels = [];
@@ -885,7 +902,9 @@ export class ModelSelectorComponent extends Container {
 					(age ? `  Provider unavailable. Using cached model list from ${age}.` : "  Provider unavailable.")
 				);
 			case "unauthenticated":
-				return "  Provider requires authentication before models can be discovered.";
+				return activeProviderId === "google-antigravity"
+					? "  Provider requires Antigravity OAuth login before models can be discovered."
+					: "  Provider requires authentication before models can be discovered.";
 			case "idle":
 				return "  Provider has not been refreshed yet.";
 			case "empty":
@@ -944,10 +963,10 @@ export class ModelSelectorComponent extends Container {
 				const prefix = theme.fg("accent", `${theme.nav.cursor} `);
 				if (isCanonicalTab) {
 					const variants = theme.fg("dim", ` [${canonicalItem?.variantCount ?? 0}]`);
-					const backing = theme.fg("dim", ` -> ${item.model.provider}/${item.model.id}`);
+					const backing = theme.fg("dim", ` -> ${formatProviderDescriptor(item.model.provider)}/${item.model.id}`);
 					line = `${prefix}${theme.fg("accent", item.id)}${variants}${backing}${badgeText}${disabledSuffix}`;
 				} else if (showProvider) {
-					const providerPrefix = theme.fg("dim", `${providerItem?.provider ?? ""}/`);
+					const providerPrefix = theme.fg("dim", `${formatProviderDescriptor(providerItem?.provider ?? "")}/`);
 					line = `${prefix}${providerPrefix}${theme.fg("accent", providerItem?.id ?? item.id)}${badgeText}${disabledSuffix}`;
 				} else {
 					line = `${prefix}${theme.fg("accent", item.id)}${badgeText}${disabledSuffix}`;
@@ -956,10 +975,10 @@ export class ModelSelectorComponent extends Container {
 				const prefix = "  ";
 				if (isCanonicalTab) {
 					const variants = theme.fg("dim", ` [${canonicalItem?.variantCount ?? 0}]`);
-					const backing = theme.fg("dim", ` -> ${item.model.provider}/${item.model.id}`);
+					const backing = theme.fg("dim", ` -> ${formatProviderDescriptor(item.model.provider)}/${item.model.id}`);
 					line = `${prefix}${item.id}${variants}${backing}${badgeText}${disabledSuffix}`;
 				} else if (showProvider) {
-					const providerPrefix = theme.fg("dim", `${providerItem?.provider ?? ""}/`);
+					const providerPrefix = theme.fg("dim", `${formatProviderDescriptor(providerItem?.provider ?? "")}/`);
 					line = `${prefix}${providerPrefix}${providerItem?.id ?? item.id}${badgeText}${disabledSuffix}`;
 				} else {
 					line = `${prefix}${item.id}${badgeText}${disabledSuffix}`;

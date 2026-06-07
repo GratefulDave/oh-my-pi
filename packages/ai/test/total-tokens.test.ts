@@ -505,9 +505,9 @@ describe("totalTokens field", () => {
 		);
 
 		it.skipIf(!antigravityToken)(
-			"claude-sonnet-4-5 - should return totalTokens equal to sum of components",
+			"claude-sonnet-4-6 - should return totalTokens equal to sum of components",
 			async () => {
-				const llm = getBundledModel("google-antigravity", "claude-sonnet-4-5");
+				const llm = getBundledModel("google-antigravity", "claude-sonnet-4-6");
 
 				console.log(`\nGoogle Antigravity / ${llm.id}:`);
 				const { first, second } = await testTotalTokensWithCache(llm, { apiKey: antigravityToken });
@@ -522,9 +522,9 @@ describe("totalTokens field", () => {
 		);
 
 		it.skipIf(!antigravityToken)(
-			"gpt-oss-120b-medium - should return totalTokens equal to sum of components",
+			"claude-opus-4-6-thinking - should return totalTokens equal to sum of components",
 			async () => {
-				const llm = getBundledModel("google-antigravity", "gpt-oss-120b-medium");
+				const llm = getBundledModel("google-antigravity", "claude-opus-4-6-thinking");
 
 				console.log(`\nGoogle Antigravity / ${llm.id}:`);
 				const { first, second } = await testTotalTokensWithCache(llm, { apiKey: antigravityToken });

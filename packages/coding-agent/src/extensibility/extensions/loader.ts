@@ -34,6 +34,7 @@ import type {
 	ProviderConfig,
 	RegisteredCommand,
 	ToolDefinition,
+	ToolRendererDefinition,
 } from "./types";
 
 installLegacyPiSpecifierShim();
@@ -111,6 +112,10 @@ export class ExtensionRuntime implements IExtensionRuntime {
 	setSessionName(): Promise<void> {
 		throw new ExtensionRuntimeNotInitializedError();
 	}
+
+	overrideModelRoles(): void {
+		throw new ExtensionRuntimeNotInitializedError();
+	}
 }
 
 /**
@@ -148,6 +153,13 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 			definition: tool,
 			extensionPath: this.extension.path,
 		});
+	}
+
+	registerToolRenderer<TArgs = unknown, TDetails = unknown>(
+		toolName: string,
+		renderer: ToolRendererDefinition<TArgs, TDetails>,
+	): void {
+		this.extension.toolRenderers.set(toolName, renderer as ToolRendererDefinition);
 	}
 
 	registerCommand(
@@ -256,6 +268,10 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 		return this.runtime.setSessionName(name);
 	}
 
+	overrideModelRoles(roles: Record<string, string>): void {
+		this.runtime.overrideModelRoles(roles);
+	}
+
 	registerProvider(name: string, config: ProviderConfig): void {
 		this.runtime.pendingProviderRegistrations.push({ name, config, sourceId: this.extension.path });
 	}
@@ -270,6 +286,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		resolvedPath,
 		handlers: new Map(),
 		tools: new Map(),
+		toolRenderers: new Map(),
 		assistantThinkingRenderers: [],
 		messageRenderers: new Map(),
 		commands: new Map(),

@@ -183,6 +183,14 @@ export interface ToolSession {
 	authStorage?: import("../session/auth-storage").AuthStorage;
 	/** Model registry for passing to subagents (avoids re-discovery) */
 	modelRegistry?: import("../config/model-registry").ModelRegistry;
+	/**
+	 * Parent's already-loaded extensions (extensions + runtime) for passing to subagents.
+	 * Lets subagent sessions inherit provider registrations the parent resolved at load time —
+	 * including async ones registered after `await` in an extension's default function — instead
+	 * of re-running extension discovery (which would clear/replay those registrations on the
+	 * shared modelRegistry and re-run the extension's async setup). Avoids re-discovery.
+	 */
+	getPreloadedExtensions?: () => import("../extensibility/extensions").LoadExtensionsResult | undefined;
 	/** Agent output manager for unique agent:// IDs across task invocations */
 	agentOutputManager?: AgentOutputManager;
 	/**

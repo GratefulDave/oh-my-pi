@@ -179,8 +179,24 @@ async function runToken(flags: AuthBrokerCommandArgs["flags"]): Promise<void> {
 	}
 }
 
+function formatOAuthProviderId(provider: string): string {
+	return provider === "google-antigravity" ? "antigravity" : provider;
+}
+
+function formatOAuthProviderInfo(provider: OAuthProviderInfo): OAuthProviderInfo {
+	return provider.id === "google-antigravity" ? { ...provider, id: "antigravity", name: "Antigravity" } : provider;
+}
+
+function getDisplayOAuthProviders(): OAuthProviderInfo[] {
+	return getOAuthProviders().map(formatOAuthProviderInfo);
+}
+
+function normalizeOAuthProviderArg(provider: string): string {
+	return provider === "antigravity" ? "google-antigravity" : provider;
+}
+
 async function runLogin(flags: AuthBrokerCommandArgs["flags"]): Promise<void> {
-	const providers = getOAuthProviders();
+	const providers = getDisplayOAuthProviders();
 	let providerArg = flags.provider;
 	if (!providerArg) {
 		if (flags.via) {
@@ -198,18 +214,19 @@ async function runLogin(flags: AuthBrokerCommandArgs["flags"]): Promise<void> {
 				.join(", ")}`,
 		);
 	}
+	const resolvedProvider = normalizeOAuthProviderArg(providerArg);
 	if (flags.via) {
-		await runRemoteLogin(providerArg, flags.via, flags.dryRun ?? false);
+		await runRemoteLogin(resolvedProvider, flags.via, flags.dryRun ?? false);
 		return;
 	}
-	await runLocalLogin(providerArg as OAuthProvider);
+	await runLocalLogin(resolvedProvider as OAuthProvider);
 }
 
 async function runLocalLogin(provider: OAuthProvider): Promise<void> {
 	// Drive the per-provider OAuth dance in-process. Persists into the same
-	// SQLite store the broker uses.
 	const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 	const ask = (msg: string) => promptLine(rl, `${msg} `);
+	const canReadManualInput = process.stdin.isTTY;
 	const store = await SqliteAuthCredentialStore.open(getAgentDbPath());
 	const storage = new AuthStorage(store);
 	await storage.reload();
@@ -226,6 +243,9 @@ async function runLocalLogin(provider: OAuthProvider): Promise<void> {
 			onPrompt(p) {
 				return ask(`${p.message}${p.placeholder ? ` (${p.placeholder})` : ""}:`);
 			},
+			onManualCodeInput: canReadManualInput
+				? () => ask("Paste the final redirect URL or authorization code:")
+				: undefined,
 		});
 		process.stdout.write(`\nCredentials saved to ${getAgentDbPath()}\n`);
 	} finally {
@@ -357,8 +377,9 @@ async function runLogout(flags: AuthBrokerCommandArgs["flags"]): Promise<void> {
 			}
 			providerArg = await pickStoredProviderInteractively(stored);
 		}
-		store.deleteAuthCredentialsForProvider(providerArg, "logged out by user");
-		process.stdout.write(`Logged out of ${providerArg}\n`);
+		const resolvedProvider = normalizeOAuthProviderArg(providerArg);
+		store.deleteAuthCredentialsForProvider(resolvedProvider, "logged out by user");
+		process.stdout.write(`Logged out of ${formatOAuthProviderId(resolvedProvider)}\n`);
 	} finally {
 		store.close();
 	}
@@ -369,7 +390,7 @@ async function pickStoredProviderInteractively(providers: string[]): Promise<str
 	try {
 		process.stdout.write("Select a provider to logout:\n\n");
 		for (let i = 0; i < providers.length; i++) {
-			process.stdout.write(`  ${i + 1}. ${providers[i]}\n`);
+			process.stdout.write(`  ${i + 1}. ${formatOAuthProviderId(providers[i])}\n`);
 		}
 		process.stdout.write("\n");
 		const choice = await promptLine(rl, `Enter number (1-${providers.length}): `);
@@ -384,7 +405,7 @@ async function pickStoredProviderInteractively(providers: string[]): Promise<str
 }
 
 async function runList(flags: AuthBrokerCommandArgs["flags"]): Promise<void> {
-	const providers = getOAuthProviders();
+	const providers = getDisplayOAuthProviders();
 	if (flags.json) {
 		process.stdout.write(`${JSON.stringify(providers.map(p => ({ id: p.id, name: p.name })))}\n`);
 		return;

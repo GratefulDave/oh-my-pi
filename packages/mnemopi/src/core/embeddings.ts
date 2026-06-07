@@ -8,7 +8,7 @@ import {
 	logger,
 } from "@oh-my-pi/pi-utils";
 import type { EmbeddingModel } from "fastembed";
-import { LRUCache } from "lru-cache/raw";
+import { LRUCache } from "lru-cache";
 import packageJson from "../../package.json" with { type: "json" };
 import { type EmbeddingOutput, getMnemopiRuntimeOptions, resolveEmbeddingProvider } from "./runtime-options";
 

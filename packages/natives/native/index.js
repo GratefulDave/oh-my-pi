@@ -25,6 +25,7 @@ export const Shell = nativeBindings.Shell;
 // functions
 export const __piNativesV15_10_2 = nativeBindings.__piNativesV15_10_2;
 export const applyBashFixups = nativeBindings.applyBashFixups;
+export const applyShellMinimizer = nativeBindings.applyShellMinimizer;
 export const astEdit = nativeBindings.astEdit;
 export const astGrep = nativeBindings.astGrep;
 export const blockRangeAt = nativeBindings.blockRangeAt;
