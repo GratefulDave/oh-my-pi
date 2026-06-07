@@ -45,7 +45,7 @@
 	},
 	"omp": {
 		"extensions": [
-			"./dist/extension.bundle.js"
+			"./dist/antigravity.bundle.js"
 		]
 	},
 	"files": [
