@@ -45,6 +45,23 @@ function stateColor(state: SwarmAgent["state"]): string {
 	}
 }
 
+/**
+ * Match a lone Escape across the terminal input encodings the host may deliver
+ * to an overlay component's handleInput():
+ *   - legacy bare ESC:        "\x1b"
+ *   - Kitty CSI-u:            "\x1b[27u", "\x1b[27;1u" (active Kitty keyboard protocol)
+ *   - xterm modifyOtherKeys:  "\x1b[27;1;27~"
+ *   - host-normalized token:  "escape" / "esc"
+ *
+ * The native matchesKey() helper is stubbed to a no-op inside standalone
+ * extension bundles, so Escape must be detected directly. Mirrors
+ * isEscapeInput() in the pi-observer extension.
+ */
+function isEscapeInput(data: string): boolean {
+	if (data === "escape" || data === "esc" || data === "\x1b") return true;
+	return /^\x1b\[(?:27(?:;[0-9]+)*[u~]|27;[0-9;]*27~)$/.test(data);
+}
+
 // ---------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------
@@ -60,6 +77,16 @@ export class SwarmDashboard {
 		this.#refreshHandle = setInterval(() => {
 			requestRender();
 		}, REFRESH_INTERVAL_MS);
+	}
+
+	// Host overlays deliver raw key data here. Under the Kitty keyboard protocol
+	// a lone Escape arrives as "\x1b[27u" (not bare "\x1b"), so without this the
+	// dashboard could not be closed with Esc.
+	handleInput(data: string): void {
+		if (isEscapeInput(data)) {
+			this.destroy();
+			this.done();
+		}
 	}
 
 	act(key: string): boolean {
