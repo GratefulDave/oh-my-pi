@@ -278,6 +278,12 @@ export async function runEvalAgent(args: unknown, options: EvalAgentBridgeOption
 			onProgress: progress => emitProgressStatus(options.emitStatus, progress),
 			authStorage: options.session.authStorage,
 			modelRegistry: options.session.modelRegistry,
+			// Inherit the parent's resolved extensions so the subagent reuses provider
+			// registrations (incl. async-registered ones) on the shared modelRegistry instead of
+			// re-running extension discovery — which would clear/replay those registrations and
+			// re-run extensions' async setup, dropping providers and risking a re-login. Mirrors
+			// the task-tool spawn path (task/index.ts) that already forwards preloadedExtensions.
+			preloadedExtensions: options.session.getPreloadedExtensions?.(),
 			settings: options.session.settings,
 			// Eval `agent()` subagents are never wall-clock capped: the parent
 			// cell's idle watchdog is suspended for the whole bridge call

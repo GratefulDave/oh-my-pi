@@ -97,6 +97,8 @@
 
 ### Fixed
 
+- Fixed the extension API type surface to include `overrideModelRoles`, matching the runtime method already exposed to extensions.
+
 - Fixed eval `agent()` failures surfacing as an opaque `RuntimeError: bridge call '__agent__' failed` with no reason. When a subagent aborted, `runEvalAgent` built its failure message with `result.error ?? result.stderr ?? result.abortReason ?? …`, but `result.stderr` is the empty string on a clean abort (and `result.error` is gated on a non-empty `stderr`), so the nullish chain stopped at `""` and never reached `abortReason`. The empty string propagated through the loopback bridge and the Python prelude's `RuntimeError(msg or "bridge call … failed")`, discarding the real reason. The chain now uses `||` so an empty `stderr` falls through to `abortReason`.
 - Fixed subagent aborts being mislabeled as the generic "Cancelled by caller" when the abort originated inside the subagent's own turn (`stopReason: "aborted"` with no caller signal and no runtime-limit timer). `runSubprocess` now prefers the aborted assistant message's `errorMessage` (e.g. "Request was aborted" or a specific stream error) for that case, while a real caller signal or wall-clock abort still reports its precise reason.
 - Fixed a long streaming tool preview that alone overflows the viewport dropping its scrolled-off head on ED3-risk terminals (ghostty/kitty/iTerm2/…). When expanded with `Ctrl+O`, a streaming `write` (content streaming in) and a streaming `eval` (stdout streaming below its fixed code cell) render top-anchored and grow append-only, but the tool block never reported itself append-only to the transcript, so the renderer's commit-as-you-go boundary stopped at the block start and the earlier rows that scrolled above the viewport were committed nowhere — they vanished, leaving the preview looking like a viewport-tall circular buffer. `ToolExecutionComponent` now implements `isTranscriptBlockAppendOnly()` (gated on `isTranscriptBlockFinalized()`, so it also covers partial-result streams like `eval`), delegating to a renderer-declared `isStreamingPreviewAppendOnly` predicate so the expanded stream commits its head exactly like a streamed assistant reply. Collapsed previews (bounded sliding tail windows) and finalized/result previews (which can collapse to a capped view) stay deferred.
@@ -170,6 +172,12 @@
 ### Removed
 
 - Removed the `/copy last|code|all|cmd` subcommands; every copy target is now reachable by picking it in the `/copy` tree.
+
+### Fixed
+
+- Fixed Antigravity-backed web search and image generation Code Assist calls to reuse the captured agy endpoints and headers instead of sandbox/proxy-era defaults.
+- Fixed Antigravity model selection to expose an unauthenticated provider tab and display/select models as `antigravity/<model-id>`.
+- Fixed Antigravity OAuth provider listings across CLI/TUI/RPC surfaces to use the user-facing `antigravity` provider alias and keep Antigravity models visible in `--list-models antigravity`.
 
 ## [15.9.5] - 2026-06-05
 
@@ -256,6 +264,7 @@
 - Changed Perplexity API-key web search to return more comprehensive results: `web_search_options.search_context_size` is now `high` (was `medium`) for maximum retrieval grounding, the default `num_search_results` is `20` (was `10`) so twice as many sources are surfaced, and `return_related_questions` is enabled with the response's `related_questions` now parsed into `relatedQuestions` (previously dropped). On an identical query this lifted the result from 10 sources / ~410 output tokens to 20 sources / ~1900 output tokens with a structured, multi-section answer; latency tracks model output length, not context size, so the 60s hard timeout headroom is unchanged.
 
 ### Fixed
+- Fixed `/gain` staying stale after bash output minimization by appending minimizer telemetry records from the bash execution paths that already persist raw-output artifacts.
 
 - Fixed a streamed assistant message freezing at a partial prefix (e.g. only "Nat" of "Natives built, now…") on ED3-risk terminals (Ghostty/kitty/iTerm2/Alacritty), with the final text appearing only after a resize. `TranscriptContainer` freezes each non-live block by replaying its last live render, but render coalescing can finalize a block's content and append the next block within the same throttled frame — so the block was sealed at its stale mid-stream snapshot and never repainted until the next `thaw`. The block that was live on the previous render is now recomputed once on the live→frozen transition, sealing it at its final content.
 - Fixed ACP/RPC stdio startup so protocol frames are no longer consumed as one-shot piped prompt input before the JSON-RPC transport starts.
@@ -279,6 +288,7 @@
 - Fixed `omp update` leaving `@oh-my-pi/pi-natives` and the platform-specific `@oh-my-pi/pi-natives-<tag>` leaf at the previous version on `bun install -g` updates, so the next launch loaded a stale `.node` file and aborted at `validateLoadedBindings` with `The .node file on disk is from a different release than this loader`. `omp update` now pins the native addon core and the platform leaf to the same version it installs for `@oh-my-pi/pi-coding-agent` ([#1824](https://github.com/can1357/oh-my-pi/issues/1824)).
 
 ## [15.9.0] - 2026-06-04
+
 
 ### Breaking Changes
 
@@ -320,6 +330,16 @@
 - Fixed subagent slow-model priority falling through to older Claude Opus aliases when Opus 4.8 is available by adding Opus 4.8 and 4.7 aliases ahead of older Opus fallbacks ([#1753](https://github.com/can1357/oh-my-pi/issues/1753)).
 - Fixed the web-search provider selectors in TUI settings/setup to derive from the shared provider metadata, so newly added providers cannot be omitted from the preference list.
 
+### Added
+
+- Added env-driven OpenTelemetry trace export. When `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) is set, `omp` registers a global OTLP/proto trace exporter and switches on the agent loop's telemetry, so the `invoke_agent` / `chat` / `execute_tool` spans actually reach a collector instead of a no-op tracer. Honors the standard `OTEL_*` env contract (endpoint, headers, `OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED` and `OTEL_TRACES_EXPORTER=none` parsed case-insensitively) and the `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` capture toggle; it is a no-op when no endpoint is configured. Only the `http/protobuf` transport is supported — a `grpc` or `http/json` `OTEL_EXPORTER_OTLP*_PROTOCOL` declines rather than misrouting spans. This makes the existing telemetry usable from headless hosts that run `omp` as a spawned child process, where an in-process `TracerProvider` registered by the parent can't reach the child. Uses the `@opentelemetry/exporter-trace-otlp-proto` 2.x line, which exports cleanly under Bun.
+
+### Added
+
+- Added support for `disable-model-invocation: true` frontmatter field from the [Agent Skills standard](https://agentskills.io/specification). Skills using this field are now hidden from the system prompt listing, matching the behavior of `hide: true`.
+- Fixed subagent slow-model priority falling through to older Claude Opus aliases when Opus 4.8 is available by adding Opus 4.8 and 4.7 aliases ahead of older Opus fallbacks ([#1753](https://github.com/can1357/oh-my-pi/issues/1753)).
+- Fixed the web-search provider selectors in TUI settings/setup to derive from the shared provider metadata, so newly added providers cannot be omitted from the preference list.
+
 ## [15.8.3] - 2026-06-03
 
 ### Fixed
@@ -356,6 +376,10 @@
 - Fixed an unhandled `EPIPE` rejection when an MCP stdio server exits between returning the `initialize` response and the client's `notifications/initialized` send. `StdioTransport.notify()` and `#sendResponse()` now route stdin writes through a shared helper that catches synchronous sink failures: `notify()` tears the transport down (firing `onClose`) and surfaces a `Transport closed while sending notification` rejection so `connectToServer()` treats the handshake as a failed connection instead of returning a "connected" handle wrapping a dead transport; `#sendResponse()` stays silent because a dead subprocess has no use for the response. `StdioTransport.close()` is now the authoritative resource teardown — it no longer early-returns when `#handleClose()` has already flipped `#connected`, so the subprocess and read loop are always cleaned up (including in the `connectToServer()` failure path) ([#1710](https://github.com/can1357/oh-my-pi/issues/1710)).
 - Fixed startup model resolution ignoring cached discovery rows for special built-in providers (`google-antigravity`, `google-gemini-cli`, `openai-codex`) until the background refresh completed ([#1721](https://github.com/can1357/oh-my-pi/issues/1721)).
 - Fixed Windows clipboard-image paste keeping `Ctrl+V` unregistered by default. The TUI now registers `Ctrl+V` plus the Windows Terminal-safe `Alt+V` fallback, and the keybinding docs call out when to use the fallback ([#1708](https://github.com/can1357/oh-my-pi/issues/1708)).
+### Fixed
+
+- Fixed the status line session name (and the editor border / status-line gap fill) being nearly illegible on light themes. The per-session accent hashed the name to `hsl(hue, 0.9, 0.72)` — a fixed lightness tuned for dark backgrounds — so high-luminance hues (yellow/lime/cyan) dropped to ~1.3:1 contrast on a light background such as `light-catppuccin`, and `statusLine.sessionAccent` (#918) only gated the border/gap, not the segment text. A new `Theme.isLight` (derived from `userMessageBg` luminance) now drives `getSessionAccentHex`, which caps the accent's perceived luminance on light themes — keeping each session's distinct hue while staying readable ([#1715](https://github.com/can1357/oh-my-pi/pull/1715)).
+
 
 ## [15.8.0] - 2026-06-02
 

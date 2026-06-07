@@ -949,6 +949,13 @@ function mapOptionsForApi<TApi extends Api>(
 		}
 
 		case "google-gemini-cli": {
+			if (model.provider === "google-antigravity") {
+				return castApi<"google-gemini-cli">({
+					...base,
+					toolChoice: mapGoogleToolChoice(options?.toolChoice),
+				});
+			}
+
 			const reasoning = options?.reasoning;
 			if (!reasoning || !model.reasoning) {
 				return castApi<"google-gemini-cli">({

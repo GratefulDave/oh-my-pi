@@ -225,14 +225,15 @@ export abstract class OAuthCallbackFlow {
 				while (true) {
 					const result = await Promise.race([
 						callbackPromise,
-						requestManualInput()
+						Promise.resolve()
+							.then(() => requestManualInput())
 							.then((input): CallbackResult | null => {
 								const parsed = parseCallbackInput(input);
 								if (!parsed.code) return null;
 								if (expectedState && parsed.state && parsed.state !== expectedState) return null;
 								return { code: parsed.code, state: parsed.state ?? "" };
 							})
-							.catch((): CallbackResult | null => null),
+							.catch(() => callbackPromise),
 					]);
 					if (result) return result;
 				}

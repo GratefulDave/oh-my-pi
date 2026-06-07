@@ -377,6 +377,12 @@ function applyGeneratedModelPolicy(model: ApiModel<Api>): void {
 		model.maxTokens = copilotLimits.maxTokens;
 	}
 
+	if (model.provider === "google-antigravity") {
+		model.reasoning = false;
+		delete model.thinking;
+		return;
+	}
+
 	if (
 		model.api === "openai-completions" &&
 		(model.provider === "minimax-code" || model.provider === "minimax-code-cn")
