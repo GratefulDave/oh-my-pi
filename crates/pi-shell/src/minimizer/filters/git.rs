@@ -118,6 +118,17 @@ fn has_token(command: &str, token: &str) -> bool {
 	command.split_whitespace().any(|part| part == token)
 }
 
+/// Whether `command` carries `--flag` in either the space-separated
+/// (`--flag value`) or the inline (`--flag=value`) form. `has_token` only
+/// matches the bare token, so inline `=`-joined flags (e.g. `--format=%H`)
+/// would otherwise slip through guards that key off the flag name alone.
+fn has_flag(command: &str, flag: &str) -> bool {
+	let inline_prefix = format!("{flag}=");
+	command
+		.split_whitespace()
+		.any(|part| part == flag || part.starts_with(&inline_prefix))
+}
+
 fn is_status_machine_format(command: &str) -> bool {
 	command
 		.split_whitespace()
@@ -159,63 +170,6 @@ fn diff_listing_mode(command: &str) -> Option<DiffListingMode> {
 	} else {
 		None
 	}
-}
-pub(crate) fn diff_format_key(command: &str) -> u8 {
-	if is_stat_format(command) {
-		1
-	} else {
-		match diff_listing_mode(command) {
-			Some(DiffListingMode::NameOnly) => 2,
-			Some(DiffListingMode::NameStatus) => 3,
-			Some(DiffListingMode::Numstat) => 4,
-			None => {
-				if has_token(command, "--raw") {
-					5
-				} else if has_token(command, "--summary") {
-					6
-				} else if has_token(command, "--check") {
-					7
-				} else {
-					0
-				}
-			},
-		}
-	}
-}
-
-// Stash action key for chain-segmentation gating.  Each recognised stash
-// action gets a unique key so that only identical-action chains (e.g.
-// `git stash push && git stash push`) route through `condense_stash`;
-// mixed-action chains (`push && drop`) stay opaque.
-pub(crate) fn stash_action_key(command: &str) -> u8 {
-	if has_token(command, "list") {
-		return 1;
-	}
-	if has_token(command, "push") || has_token(command, "save") {
-		return 2;
-	}
-	if has_token(command, "pop") {
-		return 3;
-	}
-	if has_token(command, "apply") {
-		return 4;
-	}
-	if has_token(command, "drop") {
-		return 5;
-	}
-	if has_token(command, "clear") {
-		return 6;
-	}
-	if has_token(command, "create") {
-		return 7;
-	}
-	if has_token(command, "show") {
-		return 8;
-	}
-	if has_token(command, "branch") {
-		return 9;
-	}
-	0 // bare `git stash`
 }
 
 fn compact_diff_listing(input: &str, mode: DiffListingMode) -> String {
@@ -748,7 +702,13 @@ fn is_tag_non_listing(command: &str) -> bool {
 /// `condense_show` would corrupt (pre-diff content would be truncated/
 /// rewritten as commit summary).
 fn is_show_custom_format(command: &str) -> bool {
-	has_token(command, "--format")
+	// `--format`/`--pretty` accept both space-separated (`--format fuller`) and
+	// inline (`--format=%H`, `--pretty=fuller`) forms; both rewrite the commit
+	// prelude that `condense_show` would otherwise truncate, so treat either
+	// form as a custom format. `--diff-filter` likewise takes an inline value.
+	has_flag(command, "--format")
+		|| has_flag(command, "--pretty")
+		|| has_flag(command, "--diff-filter")
 		|| has_token(command, "--name-only")
 		|| has_token(command, "--name-status")
 		|| has_token(command, "--stat")
@@ -757,7 +717,6 @@ fn is_show_custom_format(command: &str) -> bool {
 		|| has_token(command, "--summary")
 		|| has_token(command, "--check")
 		|| has_token(command, "--dirstat")
-		|| has_token(command, "--diff-filter")
 }
 
 fn condense_branch(input: &str) -> String {
@@ -1586,6 +1545,27 @@ mod tests {
 		assert!(out.text.contains("--- Changes ---"));
 		assert!(out.text.contains("-old"));
 		assert!(out.text.contains("+new"));
+	}
+
+	#[test]
+	fn show_custom_format_passes_through_inline_and_space_forms() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		// `--format`/`--pretty` reshape the commit prelude `condense_show` would
+		// otherwise rewrite, in both `--flag value` and `--flag=value` forms.
+		let custom = [
+			"git show --format=fuller HEAD",
+			"git show --format=%H HEAD",
+			"git show --format fuller HEAD",
+			"git show --pretty=fuller HEAD",
+			"git show --pretty=%h%n%s HEAD",
+		];
+		let input = "abcdef1234567890\nfix: update thing\ndiff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b\n";
+		for command in custom {
+			let ctx = test_ctx(Some("show"), command, &cfg);
+			let out = filter(&ctx, input, 0);
+			assert!(!out.changed, "`{command}` must pass through custom-format show output");
+			assert_eq!(out.text, input, "`{command}` must preserve output verbatim");
+		}
 	}
 
 	#[test]
