@@ -399,13 +399,7 @@ export async function buildMinimizerGainDiagnostic(
 	const status = getMinimizerGainStatus();
 	const loadDurationMs = Date.now() - start;
 
-	let nativeBindingLoaded = false;
-	try {
-		const piNatives = await import("@oh-my-pi/pi-natives");
-		nativeBindingLoaded = typeof piNatives.applyShellMinimizer === "function";
-	} catch {
-		nativeBindingLoaded = false;
-	}
+	const nativeBindingLoaded = allRecords.some(isSavingsRecord);
 	const minimizerEnabled = nativeBindingLoaded;
 
 	return {
