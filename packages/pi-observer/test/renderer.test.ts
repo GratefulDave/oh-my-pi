@@ -217,13 +217,20 @@ describe("diagnostic renderers", () => {
 		const hierarchy = buildObserverHierarchy(stats, NOW);
 		const phase = hierarchy.rootNodes[0]!;
 		expect(phase.kind).toBe("phase");
-		expect(phase.children.map(node => node.label)).toEqual(["Agents", "Tasks", "Activity", "Intercom", "Metrics"]);
+		// Top level is Agents-rooted: Tasks/Activity are no longer flat siblings —
+		// they live nested under each agent (Agents → agent → Tasks → task → Activity).
+		expect(phase.children.map(node => node.label)).toEqual(["Agents", "Intercom", "Metrics"]);
 		const agents = hierarchy.getChildren("group:agents");
 		expect(agents.map(node => node.label)).toEqual(["Build dashboard"]);
 		const taskLabels = hierarchy.getChildren("agent:run-1:tasks").map(node => node.label);
 		expect(taskLabels).toContain("Review nested");
 		expect(taskLabels).toContain("edit");
 		expect(taskLabels).toContain("read");
+		// Activity drills one level below a task: Task → Activity N.
+		const nestedTask = hierarchy
+			.getChildren("agent:run-1:tasks")
+			.find(node => node.label === "Review nested");
+		expect(nestedTask?.children.every(child => child.kind === "activity")).toBe(true);
 	});
 	test("render keys suppress unchanged redraws", () => {
 		const renderer = new SubagentRenderer();

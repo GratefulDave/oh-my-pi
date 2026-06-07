@@ -95,10 +95,14 @@ export function buildObserverHierarchy(stats: ObserverStats, now: number): Obser
 	const totals = calculateTotals(agents);
 	const completed = agents.filter(agent => agent.status === "completed").length;
 	const failed = agents.filter(agent => agent.status === "failed" || agent.status === "aborted").length;
+	// Top-level structure is Agents-rooted: each agent owns its own Tasks and
+	// Activity sub-tree (see buildAgentNode), so the drill-down reads
+	//   Agents → <agent> → Tasks → <task> → Activity …
+	// Flat top-level "Tasks"/"Activity" groups would duplicate that nested data
+	// as a second, de-contextualized copy, so they are intentionally omitted.
+	// Intercom and Metrics remain as session-wide utility groups.
 	const phaseChildren = [
 		buildAgentsGroup(agents, stats.ircMessages, now),
-		buildTasksGroup(agents),
-		buildActivityGroup(agents),
 		buildIntercomGroup(stats.ircMessages),
 		buildMetricsGroup(stats),
 	];
@@ -180,46 +184,6 @@ function buildAgentsGroup(
 		metrics: { count: agents.length, activeCount: active },
 		children,
 		detail: ["Agents", `${agents.length} observed · ${active} active`, "Enter opens the selected agent list."],
-	};
-}
-
-function buildTasksGroup(agents: readonly SubagentActivity[]): ObserverNode {
-	const children = agents.flatMap(agent => buildAgentTaskNodes(agent, `group:tasks:${agent.id}`));
-	return {
-		id: "group:tasks",
-		kind: "group",
-		label: "Tasks",
-		status: children.some(child => child.status === "running") ? "active" : "idle",
-		summary: `${children.length} task nodes`,
-		metrics: { count: children.length },
-		children,
-		detail: ["Tasks", `${children.length} task/tool nodes derived from observed subagent activity.`],
-	};
-}
-
-function buildActivityGroup(agents: readonly SubagentActivity[]): ObserverNode {
-	const children = agents
-		.map(agent => ({ agent, line: latestActivity(agent)[0] }))
-		.map(({ agent, line }, index) => ({
-			id: `activity:${agent.id}:${index}`,
-			kind: "activity" as const,
-			label: agentLabel(agent),
-			status: agent.status,
-			summary: line,
-			metrics: { toolCount: agent.toolCount },
-			children: [],
-			agentId: agent.id,
-			detail: ["Activity", agentLabel(agent), ...latestActivity(agent).map(item => `  ${item}`)],
-		}));
-	return {
-		id: "group:activity",
-		kind: "group",
-		label: "Activity",
-		status: children.some(child => child.status === "running") ? "active" : "idle",
-		summary: `${children.length} recent entries`,
-		metrics: { count: children.length },
-		children,
-		detail: ["Activity", `${children.length} agent activity tails.`],
 	};
 }
 
@@ -481,22 +445,53 @@ function taskSnapshotNodes(
 			},
 		];
 	}
-	return items.map((item, index) => ({
-		id: `${prefix}:${item.id ?? index}`,
-		kind: "task" as const,
-		label: item.description ?? item.task ?? item.agent ?? item.id ?? `Task ${index + 1}`,
-		status: item.status ?? "completed",
-		summary: item.currentTool ?? item.recentOutput?.at(-1) ?? `${item.toolCount ?? 0} tools`,
-		metrics: { tokens: item.tokens, toolCount: item.toolCount, cost: item.cost, durationMs: item.durationMs },
+	return items.map((item, index) => {
+		const taskId = `${prefix}:${item.id ?? index}`;
+		const taskLabel = item.description ?? item.task ?? item.agent ?? item.id ?? `Task ${index + 1}`;
+		return {
+			id: taskId,
+			kind: "task" as const,
+			label: taskLabel,
+			status: item.status ?? "completed",
+			summary: item.currentTool ?? item.recentOutput?.at(-1) ?? `${item.toolCount ?? 0} tools`,
+			metrics: { tokens: item.tokens, toolCount: item.toolCount, cost: item.cost, durationMs: item.durationMs },
+			// Activity drills one level below the task: Task → Activity 1, Activity 2…
+			children: buildTaskActivityNodes(item, taskId, agentId),
+			agentId,
+			taskIndex: index,
+			detail: [
+				"Nested task",
+				taskLabel,
+				item.currentTool ? `Current tool: ${item.currentTool}` : `${item.toolCount ?? 0} tools`,
+				...(item.recentOutput ?? []).slice(-3).map(line => `  ${line}`),
+			],
+		};
+	});
+}
+
+/**
+ * Build the per-task Activity children so the Miller column can drill
+ * Task → Activity 1 → … The activity lines come from the task's own
+ * current tool plus its recent output tail.
+ */
+function buildTaskActivityNodes(item: NestedProgressLike, taskPrefix: string, agentId: string): ObserverNode[] {
+	const lines: string[] = [];
+	if (item.currentTool) {
+		lines.push(item.currentToolArgs ? `${item.currentTool} ${item.currentToolArgs}` : item.currentTool);
+	}
+	for (const line of item.recentOutput ?? []) {
+		const trimmed = line.trim();
+		if (trimmed.length > 0) lines.push(trimmed);
+	}
+	return lines.slice(-8).map((line, index) => ({
+		id: `${taskPrefix}:activity:${index}`,
+		kind: "activity" as const,
+		label: `Activity ${index + 1}`,
+		status: "idle" as const,
+		summary: line,
 		children: [],
 		agentId,
-		taskIndex: index,
-		detail: [
-			"Nested task",
-			item.description ?? item.task ?? item.agent ?? item.id ?? `Task ${index + 1}`,
-			item.currentTool ? `Current tool: ${item.currentTool}` : `${item.toolCount ?? 0} tools`,
-			...(item.recentOutput ?? []).slice(-3).map(line => `  ${line}`),
-		],
+		detail: ["Activity", line],
 	}));
 }
 

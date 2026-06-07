@@ -1362,6 +1362,10 @@ export class Theme {
 		return chalk.bold(text);
 	}
 
+	dim(text: string): string {
+		return this.fg("dim", text);
+	}
+
 	italic(text: string): string {
 		return chalk.italic(text);
 	}
