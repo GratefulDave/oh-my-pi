@@ -6,10 +6,20 @@ use crate::minimizer::{MinimizerCtx, MinimizerOutput, config::OutlineLevel, prim
 
 /// Whether `ctx.command` contains a NUL-producing output flag that would
 /// defeat newline-split processing in the compact_* helpers.
-fn context_has_nul_output(command: &str) -> bool {
-	command
-		.split_whitespace()
-		.any(|tok| tok == "-print0" || tok == "-fprint0")
+/// For `find`: `-print0` / `-fprint0`.
+/// For `grep`: `-z` / `--null-data`.
+/// For `rg`: `-0` / `--null`.
+fn context_has_nul_output(command: &str, program: &str) -> bool {
+	command.split_whitespace().any(|tok| match program {
+		// -z may be clustered with other short flags (e.g. -zHn); --null-data is long.
+		"grep" => {
+			tok == "--null-data"
+				|| (tok.starts_with('-') && !tok.starts_with("--") && tok.contains('z'))
+		},
+		// -0 is a standalone digit flag; --null is long.
+		"rg" => matches!(tok, "-0" | "--null"),
+		_ => matches!(tok, "-print0" | "-fprint0"),
+	})
 }
 
 fn find_outputs_paths_only(command: &str) -> bool {
@@ -35,7 +45,9 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 	} else {
 		match ctx.program {
 			"grep" | "rg" => {
-				if legacy {
+				if context_has_nul_output(ctx.command, ctx.program) {
+					cleaned
+				} else if legacy {
 					compact_grep_output_legacy(&cleaned)
 				} else {
 					compact_grep_output(&cleaned)
@@ -44,7 +56,9 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 			"ls" => compact_ls_output(&cleaned).unwrap_or_else(|| compact_listing_output(&cleaned)),
 			"tree" => compact_listing_output(&cleaned),
 			"find" => {
-				if context_has_nul_output(ctx.command) || !find_outputs_paths_only(ctx.command) {
+				if context_has_nul_output(ctx.command, ctx.program)
+					|| !find_outputs_paths_only(ctx.command)
+				{
 					cleaned
 				} else if legacy {
 					compact_find_output_legacy(&cleaned)
@@ -1669,6 +1683,33 @@ mod tests {
 			!out.text.starts_with("grep: 2 matches"),
 			"legacy path must NOT emit always-group header"
 		);
+	}
+
+	#[test]
+	fn grep_null_data_flag_bypasses_compaction() {
+		// grep -z / --null-data produces NUL-delimited records; the compactor
+		// splits on newlines and would corrupt the output. Passthrough instead.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let input = synthesize_grep(5, 2);
+		for cmd in &["grep -zHn pattern file", "grep --null-data pattern file"] {
+			let ctx = ctx_command("grep", cmd, &cfg);
+			let out = filter(&ctx, &input, 0);
+			assert!(!out.changed, "grep NUL-output flag must passthrough: {cmd}");
+			assert_eq!(out.text, input, "grep NUL-output flag must passthrough: {cmd}");
+		}
+	}
+
+	#[test]
+	fn rg_null_flag_bypasses_compaction() {
+		// rg -0 / --null appends a NUL after each path; same concern.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let input = synthesize_grep(5, 2);
+		for cmd in &["rg -0 pattern", "rg --null pattern"] {
+			let ctx = ctx_command("rg", cmd, &cfg);
+			let out = filter(&ctx, &input, 0);
+			assert!(!out.changed, "rg NUL-output flag must passthrough: {cmd}");
+			assert_eq!(out.text, input, "rg NUL-output flag must passthrough: {cmd}");
+		}
 	}
 
 	#[test]
