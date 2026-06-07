@@ -62,15 +62,9 @@
 - Fixed `git stash list` minimization discarding the `<branch>` from each entry; the branch is the primary thing users scan a stash list for and is now preserved compactly as `stash@{N}: [branch] <hash> <message>`.
 - Fixed a byte/char offset mix in the listing-filter center-truncation that could shift the truncation window off its intended anchor for lines with multibyte leading whitespace (NBSP, ideographic space).
 - Fixed the `too-large` capture-cap path emitting a `minimized` result with empty `text`/`original_text` when output exceeded `maxCaptureBytes` and was streamed raw. Both the whole-command and segmented-chain paths now leave `minimized` absent (matching every other passthrough and `applyShellMinimizer`), so consumers keying off `minimized` presence can no longer mistake an oversized command for an empty rewrite.
-- Fixed `applyShellMinimizer` / whole-buffer chain minimization corrupting output for all-git chains with differing subcommands or incompatible same-subcommand actions (e.g. `git commit --dry-run && git commit -m init`): combined captures now stay opaque unless the git subcommand has an explicit compatible renderer.
+- Fixed `applyShellMinimizer` / whole-buffer chain minimization corrupting output for command chains (e.g. `git -C a status && git -C b status`, `git commit --dry-run && git commit -m init`). The whole-buffer entry point sees only the chain's interleaved capture and cannot attribute lines back to each segment, so a single git renderer would synthesize one merged result that never existed (e.g. `condense_status` keeping only the last `On branch` and summing both repos' counts). Whole-buffer chain captures now always stay opaque and are preserved verbatim; per-segment minimization is handled separately by the segmented chain runner, which captures each segment in isolation.
 - Fixed per-call minimizer kill switches being weakened by settings files: `enabled: false` remains a hard off switch, and `legacyFilters` properly respects a caller's explicit `false` in addition to `true` when a settings file sets the opposite value.
 - Fixed conservative minimizer passthrough and preservation gaps for `find -printf`/action output, `aws s3 ls --summarize` footers, `git stash` empty-state output, `uv run python <script> ... pytest` wrapper routing, and gcc/clang diagnostic totals.
-
-## [15.10.1] - 2026-06-07
-
-### Fixed
-
-- Fixed `applyBashFixups` corrupting commands that contain multi-byte UTF-8 before a trailing `| head`/`| tail` (or `2>&1`). `brush-parser` reports source positions as Unicode-scalar (char) offsets, but `pi_shell::fixup` sliced the command `&str` by those numbers as if they were byte offsets, so each multi-byte char (e.g. `✓`/`×` in a `grep -E` pattern) shifted the cut earlier and left a mangled command — e.g. `… |✓|×|XCTAssert" | tail -80` became `… |✓|×-80`, orphaning the closing quote and making the shell reject the whole pipeline with `unterminated double quote`. Positions are now translated to byte offsets before slicing.
 
 ## [15.10.1] - 2026-06-07
 

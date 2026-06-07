@@ -117,97 +117,38 @@ pub fn apply(
 	apply_identity(&identity, command, captured, exit_code, config)
 }
 
-/// Apply the per-segment dispatch path for a `Chain { segments }` plan.
+/// Apply the whole-buffer dispatch path for a `Chain { segments }` plan.
 ///
 /// The FFI whole-buffer entry point sees the entire chain's captured stdout
-/// (interleaved across segments) — we cannot split it per-segment. Instead we
-/// recurse into a single filter chosen heuristically (Mode α resolution from
-/// T0-OBSERVATION):
+/// (interleaved across segments) — it cannot split it back into per-segment
+/// slices. That makes the whole-buffer path fundamentally unable to minimize a
+/// chain safely: every git renderer that condenses output (`condense_status`,
+/// `compact_diff_output`, `condense_stash`, …) parses the buffer and rebuilds a
+/// single synthetic result, so feeding it two segments' interleaved captures
+/// produces output that never existed for any one command.
 ///
-/// 1. If every segment program is `git`/`yadm`, treat the chain as one big git
-///    invocation and route through the git filter. Captures the dominant
-///    real-data pattern (`git A && git B && git C` chains).
-/// 2. Otherwise route through the first segment's filter when that filter is
-///    supported. This recovers bytes when the first segment dominates the
-///    captured output.
-/// 3. Kill-switch parity (M2): if `legacy_filters_active` is set, return
-///    passthrough.labeled("compound") regardless of segment shape so callers
-///    can rollback this change without recompile.
+/// Concretely, `git -C a status && git -C b status` would let `condense_status`
+/// overwrite `summary.branch` with the *last* repo and sum both repos'
+/// clean/dirty counts into one fabricated status. The same multi-capture merge
+/// corrupts same-subcommand `diff`/`stash`/`log`/… chains: none of these
+/// renderers is associative over concatenated captures, and the whole-buffer
+/// path has no way to attribute lines back to their originating segment.
+///
+/// Per-segment minimization (where each segment is captured in isolation and is
+/// safe to route through its own filter) is handled separately by the segmented
+/// chain runner. The whole-buffer path therefore stays opaque for every chain:
+/// it preserves the captured bytes verbatim and labels the result `compound`.
+///
+/// Kill-switch parity (M2): `legacy_filters_active` also returns the opaque
+/// passthrough so callers can rollback without recompile.
 fn apply_chain(
 	command: &str,
 	segments: &[plan::ChainSegment],
 	captured: &str,
-	exit_code: i32,
-	config: &MinimizerConfig,
+	_exit_code: i32,
+	_config: &MinimizerConfig,
 ) -> MinimizerOutput {
-	if config.legacy_filters_active() {
-		return MinimizerOutput::passthrough(captured).labeled("compound");
-	}
-
-	// (d) git-only chain: route the whole captured buffer through the git filter
-	// only for same-subcommand cases with an explicit compatibility key. Many git
-	// subcommands share one detected word while flags select incompatible output
-	// modes (`commit --dry-run` vs `commit -m`, mixed branch/tag actions, etc.).
-	// Unsupported/mixed variants stay opaque because this whole-buffer path cannot
-	// split captured stdout back into per-segment slices.
-	let all_git = !segments.is_empty()
-		&& segments
-			.iter()
-			.all(|seg| matches!(seg.program.as_str(), "git" | "yadm"));
-	if all_git && config.is_program_enabled("git") {
-		if let Some(identity) = detect::detect(&segments[0].command)
-			&& filters::supports(&identity.program, identity.subcommand.as_deref())
-			&& {
-				// Every segment must resolve to the same subcommand as the first.
-				let want = identity.subcommand.as_deref();
-				segments.iter().all(|seg| {
-					detect::detect(&seg.command)
-						.as_ref()
-						.and_then(|id| id.subcommand.as_deref())
-						== want
-				})
-			} && {
-			match identity.subcommand.as_deref() {
-				Some("status") => true,
-				Some("diff") => {
-					let want = filters::git::diff_format_key(&segments[0].command);
-					segments
-						.iter()
-						.all(|seg| filters::git::diff_format_key(&seg.command) == want)
-				},
-				Some("stash") => {
-					let want = filters::git::stash_action_key(&segments[0].command);
-					segments
-						.iter()
-						.all(|seg| filters::git::stash_action_key(&seg.command) == want)
-				},
-				_ => false,
-			}
-		} {
-			let subcommand = identity.subcommand.as_deref();
-			let ctx = MinimizerCtx { program: &identity.program, subcommand, command, config };
-			let out =
-				match catch_unwind(AssertUnwindSafe(|| filters::filter(&ctx, captured, exit_code))) {
-					Ok(out) => out,
-					Err(_) => MinimizerOutput::passthrough(captured),
-				};
-			return ensure_success_visible(out.labeled("chain-git"), exit_code)
-				.with_original(captured);
-		}
-		// All-git but mixed (or unsupported) subcommands: stay opaque rather than
-		// routing the whole buffer through one subcommand filter and dropping the
-		// other segments' output.
-		return MinimizerOutput::passthrough(captured).labeled("compound");
-	}
-
-	// (b) Mixed chain (different programs/subcommands): stay opaque. This is the
-	// whole-buffer entry point, so `captured` is the chain's combined, interleaved
-	// stdout. Routing it through the first segment's filter would run that filter
-	// over the *other* segments' output too — and filters that rebuild from their
-	// own parse (e.g. `git status`) silently drop unrecognized lines, so
-	// `git status ; echo IMPORTANT` would lose the `echo` output. Per-segment
-	// minimization is handled separately by the segmented chain runner, which
-	// captures each segment in isolation.
+	let _ = (command, segments);
 	MinimizerOutput::passthrough(captured).labeled("compound")
 }
 
@@ -736,13 +677,20 @@ strip_lines_matching = [".*"]
 	}
 
 	#[test]
-	fn git_only_chain_same_status_subcommand_routes_through_git_filter() {
-		// Same-subcommand status chains have one compatible renderer, so the
-		// whole-buffer FFI path may route them through git.
+	fn git_status_chain_stays_opaque() {
+		// `condense_status` rebuilds a single synthetic status from the whole
+		// buffer: it keeps only the last `On branch …` it sees and sums every
+		// segment's clean/dirty counts. For `git -C a status && git -C b status`
+		// that fabricates one status that never existed for either repo, so the
+		// whole-buffer path must stay opaque and preserve the captured bytes.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
-		let out = apply("git status && git status", "## main\n M file.rs\n", 0, &cfg);
-		assert!(out.changed, "same-subcommand git chain should route through the git filter");
-		assert_eq!(out.filter, "chain-git");
+		let input = "On branch feature-a\n M a.rs\nOn branch feature-b\n M b.rs\n";
+		let out = apply("git -C a status && git -C b status", input, 0, &cfg);
+		assert!(!out.changed, "same-subcommand status chain must stay passthrough");
+		assert_eq!(out.filter, "compound");
+		assert_eq!(out.text, input, "captured output must be preserved verbatim");
+		// Both repos' branch headers survive — no synthetic merged status.
+		assert!(out.text.contains("feature-a") && out.text.contains("feature-b"));
 	}
 
 	#[test]
@@ -787,14 +735,18 @@ strip_lines_matching = [".*"]
 	}
 
 	#[test]
-	fn git_diff_chain_same_format_routes_through_git_filter() {
-		// Same subcommand AND same diff format signature: safe to route the whole
-		// buffer through the one matching renderer.
+	fn git_diff_chain_same_format_stays_opaque() {
+		// Even same-format diff chains stay opaque on the whole-buffer path: the
+		// renderer parses the combined buffer and rebuilds one summary, with no
+		// way to attribute files back to each segment's repo/ref. `git -C a diff
+		// && git -C b diff` would merge both repos into one fabricated stat, so
+		// the captured bytes must be preserved verbatim.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let listing: String = (0..30).map(|i| format!("src/file{i}.rs\n")).collect();
 		let out = apply("git diff --name-only && git diff --name-only HEAD~1", &listing, 0, &cfg);
-		assert!(out.changed, "same-format diff chain should route through the git filter");
-		assert_eq!(out.filter, "chain-git");
+		assert!(!out.changed, "same-format diff chain must stay passthrough");
+		assert_eq!(out.filter, "compound");
+		assert_eq!(out.text, listing, "captured output must be preserved verbatim");
 	}
 
 	#[test]
@@ -831,19 +783,17 @@ strip_lines_matching = [".*"]
 	}
 
 	#[test]
-	fn git_diff_same_raw_format_routes_through_git_filter() {
-		// Same subcommand AND same raw format: safe to route through the git
-		// filter, even though compact_diff_output cannot rewrite raw-format diff.
-		// The critical check is chain-git vs compound — routing means the filter
-		// ran and returned unchanged output, not that the chain stayed opaque.
+	fn git_diff_same_raw_format_stays_opaque() {
+		// Same subcommand AND same raw format still stays opaque on the
+		// whole-buffer path: like every git chain here, the combined capture
+		// cannot be attributed back to each segment, so it is preserved verbatim.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let input = ":100644 100644 12345... abcde... M\tsrc/a.rs\n:100644 100644 67890... fghij... \
 		             M\tsrc/b.rs\n";
 		let out = apply("git diff --raw && git diff --raw HEAD~1", input, 0, &cfg);
-		assert_eq!(
-			out.filter, "chain-git",
-			"same-raw-format diff chain should route through the git filter"
-		);
+		assert!(!out.changed, "same-raw-format diff chain must stay passthrough");
+		assert_eq!(out.filter, "compound");
+		assert_eq!(out.text, input, "captured output must be preserved verbatim");
 	}
 	#[test]
 	fn mixed_chain_stays_opaque_in_whole_buffer_minimization() {
