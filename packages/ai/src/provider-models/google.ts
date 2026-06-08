@@ -45,15 +45,25 @@ export function googleAntigravityModelManagerOptions(
 	config?: GoogleAntigravityModelManagerConfig,
 ): ModelManagerOptions<"google-gemini-cli"> {
 	const token = config?.oauthToken;
+	const endpoint = config?.endpoint;
 	return {
 		providerId: "google-antigravity",
 		...(token
 			? {
-					fetchDynamicModels: () =>
-						fetchAntigravityDiscoveryModels({
+					fetchDynamicModels: async () => {
+						const models = await fetchAntigravityDiscoveryModels({
 							token,
-							endpoint: config?.endpoint,
-						}),
+							endpoint,
+						});
+						if (models === null) {
+							return null;
+						}
+						return models.map(m => ({
+							...m,
+							provider: "google-antigravity" as const,
+							...(endpoint ? { baseUrl: endpoint } : {}),
+						}));
+					},
 				}
 			: undefined),
 	};
