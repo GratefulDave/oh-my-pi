@@ -9,6 +9,7 @@ import type { Settings } from "../config/settings";
 import { EditTool } from "../edit";
 import { checkPythonKernelAvailability } from "../eval/py/kernel";
 import type { ToolPathWithSource } from "../extensibility/custom-tools";
+import type { LoadExtensionsResult } from "../extensibility/extensions";
 import type { Skill } from "../extensibility/skills";
 import type { GoalModeState, GoalRuntime } from "../goals";
 import { GoalTool } from "../goals/tools/goal-tool";
@@ -221,6 +222,13 @@ export interface ToolSession {
 	authStorage?: import("../session/auth-storage").AuthStorage;
 	/** Model registry for passing to subagents (avoids re-discovery) */
 	modelRegistry?: import("../config/model-registry").ModelRegistry;
+	/**
+	 * Parent's already-loaded extensions (extensions + runtime) for passing to subagents.
+	 * Lets subagent sessions inherit provider registrations the parent resolved at load time —
+	 * including async ones registered after `await` in an extension's default function — instead
+	 * of re-running extension discovery on the shared modelRegistry.
+	 */
+	getPreloadedExtensions?: () => LoadExtensionsResult | undefined;
 	/** Agent output manager for unique agent:// IDs across task invocations */
 	agentOutputManager?: AgentOutputManager;
 	/**
