@@ -78,6 +78,23 @@ type RunRpcMode = (
 	setToolUIContext?: (uiContext: ExtensionUIContext, hasUI: boolean) => void,
 ) => Promise<never>;
 
+export function shouldShowUpdateVersion(
+	latestVersion: string | undefined,
+	currentVersion: string,
+): latestVersion is string {
+	if (!latestVersion) return false;
+
+	const currentPrereleaseStart = currentVersion.indexOf("-");
+	if (currentPrereleaseStart !== -1) {
+		const currentBaseVersion = currentVersion.slice(0, currentPrereleaseStart);
+		if (Bun.semver.order(latestVersion, currentBaseVersion) <= 0) {
+			return false;
+		}
+	}
+
+	return Bun.semver.order(latestVersion, currentVersion) > 0;
+}
+
 async function checkForNewVersion(currentVersion: string): Promise<string | undefined> {
 	if (!settings.get("startup.checkUpdate")) {
 		return;
@@ -89,7 +106,7 @@ async function checkForNewVersion(currentVersion: string): Promise<string | unde
 		const data = (await response.json()) as { version?: string };
 		const latestVersion = data.version;
 
-		if (latestVersion && Bun.semver.order(latestVersion, currentVersion) > 0) {
+		if (shouldShowUpdateVersion(latestVersion, currentVersion)) {
 			return latestVersion;
 		}
 
