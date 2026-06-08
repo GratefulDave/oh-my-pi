@@ -7,9 +7,8 @@
 #
 set shell := ["bash", "-uc"]
 
-# Extensions that have a build step (bundle -> packages/<name>/dist/*.bundle.js).
-# swarm-extension is pre-bundled; profile-manager / semantic-search are not bundled.
-BUILDABLE_EXTS := "antigravity-adapter pi-minimizer-gain pi-distill pi-observer pi-actor-swarm pi-omnidelegate pi-software-factory"
+# Registered extensions are defined in .omp/settings.json. `scripts/rebuild-extensions.ts`
+# rebuilds every configured package/local extension plus pi-natives in one pass.
 
 # Show all recipes.
 default:
@@ -23,14 +22,10 @@ default:
 build-ext name:
     bun --cwd=packages/{{name}} run build
 
-# Build ALL buildable extension bundles.
+# Build every extension bundle referenced by .omp/settings.json (including
+# swarm-extension + profile-manager) and verify the native minimizer surface.
 build-exts:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    for ext in {{BUILDABLE_EXTS}}; do
-        echo "==> building $ext"
-        bun --cwd=packages/"$ext" run build
-    done
+    bun scripts/rebuild-extensions.ts
     echo "==> done. registered extensions:"
     just ext-list
 

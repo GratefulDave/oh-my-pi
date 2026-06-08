@@ -93,12 +93,8 @@ export function shouldShowUpdateVersion(
 ): latestVersion is string {
 	if (!latestVersion) return false;
 
-	const currentPrereleaseStart = currentVersion.indexOf("-");
-	if (currentPrereleaseStart !== -1) {
-		const currentBaseVersion = currentVersion.slice(0, currentPrereleaseStart);
-		if (Bun.semver.order(latestVersion, currentBaseVersion) <= 0) {
-			return false;
-		}
+	if (currentVersion.includes("-lex")) {
+		return false;
 	}
 
 	return Bun.semver.order(latestVersion, currentVersion) > 0;

@@ -864,7 +864,15 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 		// disambiguate.
 		if modifier == (MOD_CTRL | MOD_ALT) && is_letter {
 			let ctrl_char = raw_ctrl_char(ch);
-			if bytes.len() == 2 && bytes[0] == 0x1b && bytes[1] == ctrl_char {
+			// Skip if ctrl_char is also a named-key byte (Backspace=0x08,
+			// Tab=0x09, LF=0x0a, CR=0x0d) so that e.g. \x1b\r is not
+			// accepted as ctrl+alt+m – it is Alt+Enter; only enhanced
+			// encodings (Kitty/modifyOtherKeys) can disambiguate.
+			if !matches!(ctrl_char, 0x08 | 0x09 | 0x0a | 0x0d)
+				&& bytes.len() == 2
+				&& bytes[0] == 0x1b
+				&& bytes[1] == ctrl_char
+			{
 				return true;
 			}
 		}
@@ -891,14 +899,23 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 		if modifier == MOD_CTRL {
 			if is_letter {
 				let raw = raw_ctrl_char(ch);
-				if bytes.len() == 1 && bytes[0] == raw {
+				// Bytes 0x08/0x09/0x0a/0x0d are shared with named keys
+				// (Backspace/Tab/Enter) – only enhanced encodings can
+				// distinguish ctrl+h from Backspace, ctrl+m from Enter, etc.
+				// Skip the raw fast-path for those bytes so that a bare \r
+				// cannot match ctrl+m in legacy mode.
+				if !matches!(raw, 0x08 | 0x09 | 0x0a | 0x0d) && bytes.len() == 1 && bytes[0] == raw {
 					return true;
 				}
 				return mok_matches(codepoint, MOD_CTRL) || kitty_matches(codepoint, MOD_CTRL);
 			}
 
 			// ctrl+symbol legacy mapping (layout dependent)
+			// 0x1b (ctrl+[) is also the ESC byte – the named Escape key – so only
+			// enhanced encodings can distinguish the two; skip the legacy fast-path
+			// to prevent a plain Escape press from firing a ctrl+[ binding.
 			if let Some(legacy_ctrl) = ctrl_symbol_to_byte(ch)
+				&& legacy_ctrl != 0x1b
 				&& bytes == [legacy_ctrl]
 			{
 				return true;

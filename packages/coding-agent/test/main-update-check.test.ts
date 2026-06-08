@@ -6,8 +6,8 @@ describe("shouldShowUpdateVersion", () => {
 		expect(shouldShowUpdateVersion("15.10.3", "15.10.3-lex")).toBe(false);
 	});
 
-	it("still reports a later upstream release as newer than a lex fork build", () => {
-		expect(shouldShowUpdateVersion("15.10.4", "15.10.3-lex")).toBe(true);
+	it("suppresses later upstream release nags for lex fork builds", () => {
+		expect(shouldShowUpdateVersion("15.10.4", "15.10.3-lex")).toBe(false);
 	});
 
 	it("preserves normal stable version update checks", () => {

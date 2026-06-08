@@ -4,6 +4,7 @@ set -euo pipefail
 repo_dir="${0:A:h}"
 binary="$repo_dir/packages/coding-agent/dist/omp"
 link_dir="$HOME/.local/bin"
+bun_link_dir="$HOME/.bun/bin"
 zshrc="$HOME/.zshrc"
 path_line='export PATH="$HOME/.local/bin:$PATH"'
 
@@ -42,20 +43,17 @@ fi
 printf '  sentinel: %s\n' "$sentinel"
 
 bun install
-bun run build
+
+print_step "Building registered extensions and native support"
+bun scripts/rebuild-extensions.ts
+
+print_step "Building lex binary"
+bun --cwd=packages/coding-agent run build
 
 if [[ ! -x "$binary" ]]; then
 	printf 'error: expected executable was not created: %s\n' "$binary" >&2
 	exit 1
 fi
-
-# profile-manager lives in .omp/extensions (NOT a workspace package), so the
-# root `bun run build` skips it. Build its bundle here so edits to its source
-# actually ship instead of silently serving a stale dist.
-print_step "Building profile-manager extension"
-bun build .omp/extensions/profile-manager/index.ts \
-	--outfile .omp/extensions/profile-manager/dist/index.js \
-	--target node --format esm
 
 # Refresh the native cache the binary loads from. It is keyed by version
 # string only (~/.omp/natives/<version>/), so a freshly built .node never
@@ -75,10 +73,12 @@ for n in "${built_natives[@]}"; do
 	printf '  installed: %s\n' "$native_cache/${n:t}"
 done
 
-print_step "Linking fork binary into $link_dir"
-mkdir -p "$link_dir"
+print_step "Linking fork binary into $link_dir and $bun_link_dir"
+mkdir -p "$link_dir" "$bun_link_dir"
 ln -sf "$binary" "$link_dir/lex"
 ln -sf "$binary" "$link_dir/omp"
+ln -sf "$binary" "$bun_link_dir/lex"
+ln -sf "$binary" "$bun_link_dir/omp"
 
 # Sync the user-level (global) extension wiring so omp/lex behave the same in
 # EVERY directory, not just this repo. The agent reads extensions + model
@@ -109,6 +109,9 @@ print_step "Verification"
 printf 'lex path: '
 command -v lex
 lex --version
+printf 'omp path: '
+command -v omp
+omp --version
 
 # Smoke-test that the native actually loads. `lex --version` returns before the
 # native is needed, so it passes even when the addon is broken; `--help` forces
@@ -126,14 +129,27 @@ bun --cwd=packages/pi-minimizer-gain run smoke:bundle
 
 # Smoke-test the extension path that has broken repeatedly: the global
 # Antigravity adapter must be loaded by the rebuilt binary from outside the repo
-# and expose its extension provider models.
+# and expose its extension provider models for BOTH command names.
 print_step "Extension load smoke test"
-antigravity_out="$(cd /tmp && lex --list-models opencode-antigravity 2>&1 || true)"
-if ! grep -q "opencode-antigravity" <<<"$antigravity_out"; then
-	printf 'error: antigravity extension models are not visible after rebuild:\n%s\n' "$antigravity_out" >&2
+lex_models_out="$(cd /tmp && lex --list-models opencode-antigravity 2>&1 || true)"
+omp_models_out="$(cd /tmp && omp --list-models opencode-antigravity 2>&1 || true)"
+if [[ "$lex_models_out" == *"Failed to load extension"* ]]; then
+	printf 'error: lex still reports an extension load failure after rebuild:\n%s\n' "$lex_models_out" >&2
 	exit 1
 fi
-printf '  antigravity extension models visible\n'
+if [[ "$omp_models_out" == *"Failed to load extension"* ]]; then
+	printf 'error: omp still reports an extension load failure after rebuild:\n%s\n' "$omp_models_out" >&2
+	exit 1
+fi
+if [[ "$lex_models_out" != *"opencode-antigravity"* ]]; then
+	printf 'error: lex antigravity extension models are not visible after rebuild:\n%s\n' "$lex_models_out" >&2
+	exit 1
+fi
+if [[ "$omp_models_out" != *"opencode-antigravity"* ]]; then
+	printf 'error: omp antigravity extension models are not visible after rebuild:\n%s\n' "$omp_models_out" >&2
+	exit 1
+fi
+printf '  lex and omp both load antigravity models without extension failures\n'
 
 cat <<'EOF'
 
