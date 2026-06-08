@@ -6,6 +6,7 @@ import * as path from "node:path";
 const REPO = path.resolve(import.meta.dir, "..");
 const NATIVES_DIR = path.join(REPO, "packages", "natives");
 const SETTINGS_PATH = path.join(REPO, ".omp", "settings.json");
+const HOST_EXTERNALS = ["@oh-my-pi/pi-coding-agent"];
 
 interface RepoSettings {
 	extensions?: unknown;
@@ -15,11 +16,21 @@ interface PackageJson {
 	scripts?: Record<string, string>;
 }
 
-interface BuildTarget {
-	name: string;
-	packageDir: string;
-	outputs: string[];
-}
+type BuildTarget =
+	| {
+			kind: "package-script";
+			name: string;
+			cwd: string;
+			outputs: string[];
+	  }
+	| {
+			kind: "bundle";
+			name: string;
+			entrypoint: string;
+			output: string;
+			target: "bun" | "node";
+			external: string[];
+	  };
 
 async function readJson<T>(filePath: string): Promise<T | null> {
 	try {
@@ -34,6 +45,30 @@ function isEnoent(err: unknown): boolean {
 	return err instanceof Error && "code" in err && (err as { code?: string }).code === "ENOENT";
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+	try {
+		await fs.stat(filePath);
+		return true;
+	} catch (err) {
+		if (isEnoent(err)) return false;
+		throw err;
+	}
+}
+
+function normalizeRelative(filePath: string): string {
+	return path.relative(REPO, filePath).split(path.sep).join("/");
+}
+
+function extName(extensionPath: string): string {
+	const normalized = extensionPath.split(path.sep).join("/");
+	const parts = normalized.split("/");
+	const packagesIdx = parts.indexOf("packages");
+	if (packagesIdx >= 0 && parts[packagesIdx + 1]) return parts[packagesIdx + 1];
+	const extensionsIdx = parts.indexOf("extensions");
+	if (extensionsIdx >= 0 && parts[extensionsIdx + 1]) return parts[extensionsIdx + 1];
+	return path.basename(path.dirname(path.dirname(normalized)));
+}
+
 function getPackageDir(extensionPath: string): string | null {
 	const normalized = extensionPath.split(path.sep).join("/");
 	const parts = normalized.split("/");
@@ -46,37 +81,74 @@ async function hasBuildScript(packageDir: string): Promise<boolean> {
 	return typeof packageJson?.scripts?.build === "string";
 }
 
-async function pathExists(filePath: string): Promise<boolean> {
-	try {
-		await fs.stat(filePath);
-		return true;
-	} catch (err) {
-		if (isEnoent(err)) return false;
-		throw err;
-	}
-}
-
-function groupTargets(extensionPaths: string[]): BuildTarget[] {
-	const targets = new Map<string, BuildTarget>();
-	for (const extensionPath of extensionPaths) {
-		const packageDir = getPackageDir(extensionPath);
-		if (!packageDir) continue;
-		const existing = targets.get(packageDir);
-		const name = path.basename(packageDir);
-		const output = path.resolve(REPO, extensionPath);
-		if (existing) {
-			existing.outputs.push(output);
-		} else {
-			targets.set(packageDir, { name, packageDir, outputs: [output] });
+async function resolveBundleEntrypoint(output: string): Promise<{ entrypoint: string; target: "bun" | "node" } | null> {
+	const rel = normalizeRelative(output);
+	const packageDir = getPackageDir(rel);
+	if (packageDir) {
+		const packageEntrypoint = path.join(packageDir, "src", "extension.ts");
+		if (await pathExists(packageEntrypoint)) {
+			return { entrypoint: packageEntrypoint, target: "bun" };
 		}
 	}
-	return [...targets.values()].sort((a, b) => a.name.localeCompare(b.name));
+
+	const normalized = rel.split(path.sep).join("/");
+	if (normalized.startsWith(".omp/extensions/")) {
+		const localDir = path.dirname(path.dirname(output));
+		const localEntrypoint = path.join(localDir, "index.ts");
+		if (await pathExists(localEntrypoint)) {
+			return { entrypoint: localEntrypoint, target: "bun" };
+		}
+		const srcEntrypoint = path.join(localDir, "src", "extension.ts");
+		if (await pathExists(srcEntrypoint)) {
+			return { entrypoint: srcEntrypoint, target: "bun" };
+		}
+	}
+
+	return null;
 }
 
-async function runPackageBuild(name: string, packageDir: string): Promise<void> {
+async function collectTargets(extensionPaths: string[]): Promise<BuildTarget[]> {
+	const targets = new Map<string, BuildTarget>();
+	for (const extensionPath of extensionPaths) {
+		const output = path.resolve(REPO, extensionPath);
+		const packageDir = getPackageDir(extensionPath);
+		if (packageDir && (await hasBuildScript(packageDir))) {
+			const key = `package:${packageDir}`;
+			const existing = targets.get(key);
+			if (existing && existing.kind === "package-script") {
+				existing.outputs.push(output);
+				continue;
+			}
+			targets.set(key, {
+				kind: "package-script",
+				name: path.basename(packageDir),
+				cwd: packageDir,
+				outputs: [output],
+			});
+			continue;
+		}
+
+		const bundle = await resolveBundleEntrypoint(output);
+		if (!bundle) {
+			throw new Error(`No build strategy for ${extensionPath}`);
+		}
+		targets.set(`bundle:${output}`, {
+			kind: "bundle",
+			name: extName(extensionPath),
+			entrypoint: bundle.entrypoint,
+			output,
+			target: bundle.target,
+			external: HOST_EXTERNALS,
+		});
+	}
+
+	return [...targets.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+async function runPackageBuild(name: string, cwd: string): Promise<void> {
 	console.log(`\n==> ${name}`);
 	const proc = Bun.spawn(["bun", "run", "build"], {
-		cwd: packageDir,
+		cwd,
 		stdout: "inherit",
 		stderr: "inherit",
 	});
@@ -86,11 +158,31 @@ async function runPackageBuild(name: string, packageDir: string): Promise<void> 
 	}
 }
 
-async function runBuild(target: BuildTarget): Promise<void> {
-	await runPackageBuild(target.name, target.packageDir);
-	for (const output of target.outputs) {
-		if (!(await pathExists(output))) {
-			throw new Error(`${target.name} build did not create ${path.relative(REPO, output)}`);
+async function runBundleBuild(target: Extract<BuildTarget, { kind: "bundle" }>): Promise<void> {
+	console.log(`\n==> ${target.name}`);
+	await fs.mkdir(path.dirname(target.output), { recursive: true });
+	const result = await Bun.build({
+		entrypoints: [target.entrypoint],
+		outdir: path.dirname(target.output),
+		naming: path.basename(target.output),
+		target: target.target,
+		format: "esm",
+		external: target.external,
+	});
+	if (!result.success) {
+		const details = result.logs.map(log => `${log.level}: ${log.message}`).join("\n");
+		throw new Error(`${target.name} bundle failed\n${details}`);
+	}
+	console.log(`Built ${normalizeRelative(target.output)}`);
+}
+
+async function verifyTargetOutputs(targets: readonly BuildTarget[]): Promise<void> {
+	for (const target of targets) {
+		const outputs = target.kind === "package-script" ? target.outputs : [target.output];
+		for (const output of outputs) {
+			if (!(await pathExists(output))) {
+				throw new Error(`${target.name} build did not create ${normalizeRelative(output)}`);
+			}
 		}
 	}
 }
@@ -124,40 +216,26 @@ if (extensionPaths.length === 0) {
 	process.exit(1);
 }
 
-const allTargets = groupTargets(extensionPaths);
-const targets: BuildTarget[] = [];
-const skipped: string[] = [];
-
-for (const target of allTargets) {
-	if (await hasBuildScript(target.packageDir)) {
-		targets.push(target);
-	} else {
-		skipped.push(target.name);
-	}
-}
-
-if (targets.length === 0) {
-	console.error("No package extension build scripts found from .omp/settings.json#extensions");
-	process.exit(1);
-}
-
-console.log(
-	`Rebuilding native minimizer support and ${targets.length} extension package${targets.length === 1 ? "" : "s"} from .omp/settings.json`,
-);
-if (skipped.length > 0) {
-	console.log(`Skipping packages without build script: ${skipped.join(", ")}`);
-}
+const targets = await collectTargets(extensionPaths);
+console.log(`Rebuilding pi-natives and ${targets.length} extension target${targets.length === 1 ? "" : "s"} from .omp/settings.json`);
 
 await runPackageBuild("pi-natives", NATIVES_DIR);
 await verifyNativeMinimizer();
 
 for (const target of targets) {
-	await runBuild(target);
+	if (target.kind === "package-script") {
+		await runPackageBuild(target.name, target.cwd);
+	} else {
+		await runBundleBuild(target);
+	}
 }
+
+await verifyTargetOutputs(targets);
 
 console.log("\nExtension bundles rebuilt:");
 for (const target of targets) {
-	for (const output of target.outputs) {
-		console.log(`  ${path.relative(REPO, output)}`);
+	const outputs = target.kind === "package-script" ? target.outputs : [target.output];
+	for (const output of outputs) {
+		console.log(`  ${normalizeRelative(output)}`);
 	}
 }
