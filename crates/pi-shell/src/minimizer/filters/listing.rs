@@ -532,8 +532,11 @@ fn extract_single_path_arg(command: &str, program: &str) -> Option<String> {
 			}
 			continue;
 		}
-		if token.starts_with('-') {
+		if token == "--" {
 			continue;
+		}
+		if token.starts_with('-') {
+			return None;
 		}
 		if path.is_some() {
 			return None;
@@ -1519,6 +1522,16 @@ mod tests {
 		);
 		let out = filter(&ctx, body, 0);
 		assert!(!out.changed, "multi-file cat output must remain verbatim");
+		assert_eq!(out.text, body);
+	}
+
+	#[test]
+	fn aggressive_cat_with_behavior_flags_preserves_output() {
+		let cfg = aggressive_cfg();
+		let ctx = ctx_command("cat", "cat -n src/foo.rs", &cfg);
+		let body = "     1\tpub fn foo() -> i32 {\n     2\t    1\n     3\t}\n";
+		let out = filter(&ctx, body, 0);
+		assert!(!out.changed, "cat flags that alter output must remain verbatim");
 		assert_eq!(out.text, body);
 	}
 

@@ -26,7 +26,7 @@ pub const fn reduced(cap: usize, by: usize) -> usize {
 	if reduced == 0 && cap > 0 { 1 } else { reduced }
 }
 
-/// Remove ANSI CSI escape sequences and carriage-return progress frames.
+/// Remove ANSI CSI escape sequences while preserving line endings verbatim.
 pub fn strip_ansi(input: &str) -> String {
 	let mut out = String::with_capacity(input.len());
 	let mut chars = input.chars().peekable();
@@ -38,10 +38,6 @@ pub fn strip_ansi(input: &str) -> String {
 					break;
 				}
 			}
-			continue;
-		}
-		if ch == '\r' {
-			out.push('\n');
 			continue;
 		}
 		out.push(ch);
@@ -317,6 +313,11 @@ mod tests {
 	#[test]
 	fn strips_ansi_sequences() {
 		assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
+	}
+
+	#[test]
+	fn strip_ansi_preserves_carriage_returns() {
+		assert_eq!(strip_ansi("a\r\nb\rc"), "a\r\nb\rc");
 	}
 
 	#[test]
