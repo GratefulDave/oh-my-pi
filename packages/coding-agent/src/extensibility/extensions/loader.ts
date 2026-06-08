@@ -104,6 +104,10 @@ export class ExtensionRuntime implements IExtensionRuntime {
 		throw new ExtensionRuntimeNotInitializedError();
 	}
 
+	overrideModelRoles(): void {
+		throw new ExtensionRuntimeNotInitializedError();
+	}
+
 	getSessionName(): string | undefined {
 		throw new ExtensionRuntimeNotInitializedError();
 	}
@@ -246,6 +250,10 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 
 	setThinkingLevel(level: ThinkingLevel, persist?: boolean): void {
 		this.runtime.setThinkingLevel(level, persist);
+	}
+
+	overrideModelRoles(roles: Record<string, string>): void {
+		this.runtime.overrideModelRoles(roles);
 	}
 
 	getSessionName(): string | undefined {
