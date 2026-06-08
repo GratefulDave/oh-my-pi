@@ -143,13 +143,26 @@ function readSettings(ctx: ExtensionContext): OmpSettings {
 		activeModelProfile: project.activeModelProfile ?? user.activeModelProfile,
 	};
 }
+function copyProfileKeys(target: OmpSettings, source: OmpSettings): void {
+	if (source.modelRoles !== undefined) target.modelRoles = { ...source.modelRoles };
+	if (source.defaultThinkingLevel !== undefined) target.defaultThinkingLevel = source.defaultThinkingLevel;
+	if (source.enabledModels !== undefined) target.enabledModels = [...source.enabledModels];
+	if (source.cycleOrder !== undefined) target.cycleOrder = [...source.cycleOrder];
+	if (source.modelProviderOrder !== undefined) target.modelProviderOrder = [...source.modelProviderOrder];
+}
 
-function writeSettings(_ctx: ExtensionContext, settings: OmpSettings): void {
+function applyProfileToSettings(settings: OmpSettings, profile: ModelProfile): void {
+	copyProfileKeys(settings, profile);
+}
+
+
+function writeSettings(ctx: ExtensionContext, settings: OmpSettings): void {
 	// Persist only the profile keys to the user file; preserve everything else
 	// already there (extensions[], disabledProviders, …).
 	const file = userSettingsPath();
 	const existing = readSettingsFile(file);
 	existing.modelProfiles = settings.modelProfiles;
+	copyProfileKeys(existing, settings);
 	if (settings.activeModelProfile !== undefined) {
 		existing.activeModelProfile = settings.activeModelProfile;
 	} else {
@@ -157,6 +170,21 @@ function writeSettings(_ctx: ExtensionContext, settings: OmpSettings): void {
 	}
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	fs.writeFileSync(file, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
+
+	// A project-level activeModelProfile shadows the user-level choice. If this
+	// project already has one, keep it and its live top-level profile keys in
+	// sync so `/pm use X` survives restart instead of snapping back later.
+	const projectFile = projectSettingsPath(ctx);
+	const project = readSettingsFile(projectFile);
+	if ("activeModelProfile" in project) {
+		copyProfileKeys(project, settings);
+		if (settings.activeModelProfile !== undefined) {
+			project.activeModelProfile = settings.activeModelProfile;
+		} else {
+			delete project.activeModelProfile;
+		}
+		fs.writeFileSync(projectFile, `${JSON.stringify(project, null, 2)}\n`, "utf8");
+	}
 }
 
 function getProfiles(settings: OmpSettings): Record<string, ModelProfile> {
@@ -345,6 +373,7 @@ async function handleCreate(pi: ExtensionAPI, ctx: ExtensionCommandContext, args
 
 	if (activate) {
 		settings.activeModelProfile = name;
+		applyProfileToSettings(settings, profiles[name]);
 		writeSettings(ctx, settings);
 		const status = await applyProfile(pi, ctx, profiles[name]);
 		notify(pi, `Created and switched to profile: ${name}. ${status}`);
@@ -375,6 +404,7 @@ async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName
 		return;
 	}
 	settings.activeModelProfile = name;
+	applyProfileToSettings(settings, profile);
 	writeSettings(ctx, settings);
 	const status = await applyProfile(pi, ctx, profile);
 	notify(pi, `Active profile: ${name}. ${status}`);
