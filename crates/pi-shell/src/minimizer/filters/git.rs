@@ -213,6 +213,7 @@ fn is_diff_listing_line(mode: DiffListingMode, line: &str) -> bool {
 #[derive(Default)]
 struct StatusSummary {
 	branch:    Option<String>,
+	stash:     Option<String>,
 	clean:     bool,
 	staged:    usize,
 	unstaged:  usize,
@@ -246,6 +247,10 @@ fn condense_status(input: &str) -> String {
 		}
 		if let Some(branch) = trimmed.strip_prefix("On branch ") {
 			summary.branch = Some(branch.to_string());
+			continue;
+		}
+		if trimmed.starts_with("Your stash currently has ") {
+			summary.stash = Some(trimmed.to_string());
 			continue;
 		}
 		if trimmed.starts_with("nothing to commit") || trimmed == "working tree clean" {
@@ -417,6 +422,7 @@ fn push_status_path(summary: &mut StatusSummary, label: &str, path: &str) {
 
 const fn status_has_no_signal(summary: &StatusSummary) -> bool {
 	summary.branch.is_none()
+		&& summary.stash.is_none()
 		&& !summary.clean
 		&& summary.staged == 0
 		&& summary.unstaged == 0
@@ -429,6 +435,10 @@ fn format_status_summary(summary: &StatusSummary) -> String {
 	if let Some(branch) = &summary.branch {
 		out.push_str("branch ");
 		out.push_str(branch);
+		out.push('\n');
+	}
+	if let Some(stash) = &summary.stash {
+		out.push_str(stash);
 		out.push('\n');
 	}
 	if summary.clean && summary.paths.is_empty() {
@@ -1493,6 +1503,18 @@ mod tests {
 
 		assert!(out.changed);
 		assert_eq!(out.text, "branch main\nclean\n");
+	}
+
+	#[test]
+	fn long_status_show_stash_preserves_requested_stash_info() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status --show-stash", &cfg);
+		let input = "On branch main\nYour branch is up to date with 'origin/main'.\n\nYour stash \
+		             currently has 2 entries\n\nnothing to commit, working tree clean\n";
+		let out = filter(&ctx, input, 0);
+
+		assert!(out.changed);
+		assert_eq!(out.text, "branch main\nYour stash currently has 2 entries\nclean\n");
 	}
 
 	#[test]
