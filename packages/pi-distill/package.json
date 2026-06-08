@@ -1,0 +1,36 @@
+{
+	"name": "pi-distill",
+	"version": "0.1.0",
+	"description": "Pi/OMP extension that structurally compresses large JSON/YAML MCP tool output before it enters the context window, spilling the full original to a recoverable session artifact.",
+	"type": "module",
+	"license": "MIT",
+	"keywords": [
+		"pi",
+		"oh-my-pi",
+		"omp",
+		"extension",
+		"mcp",
+		"context-window",
+		"compression",
+		"json",
+		"yaml",
+		"tokens"
+	],
+	"scripts": {
+		"build": "bun build src/index.ts --target bun --format esm --outfile dist/distill.bundle.js --external \"@oh-my-pi/*\" --external yaml --external bun",
+		"test": "bun test",
+		"install:local": "bun run build && ln -sf \"$PWD/dist/distill.bundle.js\" \"$HOME/.omp/agent/extensions/distill.bundle.js\""
+	},
+	"omp": {
+		"extensions": [
+			"./src/index.ts"
+		]
+	},
+	"peerDependencies": {
+		"@oh-my-pi/pi-coding-agent": "*",
+		"@oh-my-pi/pi-ai": "*"
+	},
+	"optionalDependencies": {
+		"yaml": "^2.5.0"
+	}
+}
