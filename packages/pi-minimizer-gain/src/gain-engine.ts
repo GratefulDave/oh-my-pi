@@ -126,12 +126,13 @@ export async function loadMinimizerGainContext(input: {
 	agentDir?: string;
 }): Promise<MinimizerGainContext> {
 	const days = input.days ?? 30;
-	const cwd = input.all ? undefined : await resolveMinimizerGainCwd(input.cwd);
+	const scope = input.all ? undefined : await resolveMinimizerGainScope(input.cwd);
+	const cwd = scope?.cwd;
 	const recordsFilePath = getMinimizerGainPath(input.agentDir);
 	if (cwd !== undefined) {
 		await migrateLegacySessionCwds({ agentDir: input.agentDir, recordsFilePath, scopeCwd: cwd });
 	}
-	const records = await readMinimizerGain({ sinceDays: days, cwd, agentDir: input.agentDir });
+	const records = await readMinimizerGain({ sinceDays: days, scope, agentDir: input.agentDir });
 	return {
 		path: getMinimizerGainPath(input.agentDir),
 		days,
@@ -170,9 +171,15 @@ export interface MinimizerMissedSummary {
 	potentialTokenSavings: MinimizerMissedItem[];
 }
 
+interface MinimizerGainScope {
+	cwd: string;
+	aliases: readonly string[];
+}
+
 export interface ReadMinimizerGainOptions {
 	sinceDays?: number;
 	cwd?: string;
+	scope?: MinimizerGainScope;
 	agentDir?: string;
 }
 
@@ -225,16 +232,33 @@ export async function resolveMinimizerGainCwd(cwd: string | undefined): Promise<
 	}
 }
 
+async function resolveMinimizerGainScope(cwd: string | undefined): Promise<MinimizerGainScope | undefined> {
+	const resolved = await resolveMinimizerGainCwd(cwd);
+	if (resolved === undefined) return undefined;
+	const aliases = await resolveMinimizerGainCwdAliases(resolved);
+	return { cwd: resolved, aliases };
+}
+
+async function resolveMinimizerGainCwdAliases(cwd: string): Promise<readonly string[]> {
+	const aliases = [cwd];
+	const upstreamCloneMatch = /^(.*)-upstream-(?:v?\d[\w.-]*)$/.exec(path.basename(cwd));
+	if (!upstreamCloneMatch) return aliases;
+	const sibling = await resolveMinimizerGainCwd(path.join(path.dirname(cwd), upstreamCloneMatch[1]));
+	if (sibling && !aliases.includes(sibling)) aliases.push(sibling);
+	return aliases;
+}
+
 export async function readMinimizerGain(options: ReadMinimizerGainOptions = {}): Promise<MinimizerGainRecord[]> {
 	try {
 		const content = await fs.readFile(getMinimizerGainPath(options.agentDir), "utf-8");
 		const cutoff = resolveCutoff(options.sinceDays);
+		const scope = options.scope ?? (options.cwd ? await resolveMinimizerGainScope(options.cwd) : undefined);
 		return content
 			.split("\n")
 			.map((line, idx) => parseMinimizerGainRecord(line, idx + 1))
 			.filter(
 				(record): record is MinimizerGainRecord =>
-					record !== null && matchesGainFilters(record, options.cwd, cutoff),
+					record !== null && matchesGainFilters(record, scope, cutoff),
 			);
 	} catch (err) {
 		if (!(err instanceof Error && "code" in err && (err as { code?: string }).code === "ENOENT")) {
@@ -375,7 +399,8 @@ export async function buildMinimizerGainDiagnostic(
 		}
 	}
 
-	const scopeCwd = await resolveMinimizerGainCwd(input.cwd);
+	const scope = await resolveMinimizerGainScope(input.cwd);
+	const scopeCwd = scope?.cwd;
 	if (exists && scopeCwd !== undefined) {
 		await migrateLegacySessionCwds({ agentDir: input.agentDir, recordsFilePath, scopeCwd });
 	}
@@ -384,21 +409,22 @@ export async function buildMinimizerGainDiagnostic(
 	const recordCount = allRecords.length;
 	const scopedRecords = await readMinimizerGain({
 		agentDir: input.agentDir,
-		cwd: scopeCwd,
+		scope,
 		sinceDays: input.days,
 	});
 	const recordCountInScope = scopedRecords.length;
-	const commandCwdRecordCountInScope = scopeCwd === undefined ? 0 : allRecords.filter(r => r.cwd === scopeCwd).length;
+	const commandCwdRecordCountInScope =
+		scope === undefined ? 0 : allRecords.filter(r => matchesScopePath(r.cwd, scope)).length;
 	const sessionCwdRecordCountInScope =
-		scopeCwd === undefined ? 0 : allRecords.filter(r => r.sessionCwd === scopeCwd).length;
+		scope === undefined ? 0 : allRecords.filter(r => matchesScopePath(r.sessionCwd, scope)).length;
 	const sessionScopedRecordCount = allRecords.filter(r => r.sessionCwd !== undefined).length;
 	const legacyUnscopedRecordCount = allRecords.filter(r => r.cwd === undefined && r.sessionCwd === undefined).length;
 	const recordsWithSessionCwd = sessionScopedRecordCount;
 	const recordsWithoutSessionCwd = recordCount - recordsWithSessionCwd;
 	const currentSessionRecordCount =
-		scopeCwd === undefined
+		scope === undefined
 			? 0
-			: allRecords.filter(r => matchesCwd(r, scopeCwd) && timestampAtOrAfter(r.timestamp, MODULE_STARTED_AT)).length;
+			: allRecords.filter(r => matchesCwd(r, scope) && timestampAtOrAfter(r.timestamp, MODULE_STARTED_AT)).length;
 
 	let savedCount = 0;
 	let missedCount = 0;
@@ -842,13 +868,19 @@ function resolveCutoff(sinceDays: number | undefined): number | null {
 	return typeof sinceDays === "number" ? Date.now() - sinceDays * DAY_MS : null;
 }
 
-function matchesCwd(record: MinimizerGainRecord, cwd: string | undefined): boolean {
-	if (cwd === undefined) return true;
-	return record.cwd === cwd || record.sessionCwd === cwd;
+function matchesScopePath(candidate: string | undefined, scope: MinimizerGainScope | undefined): boolean {
+	if (scope === undefined) return true;
+	if (!candidate) return false;
+	return scope.aliases.some(alias => candidate === alias || candidate.startsWith(`${alias}${path.sep}`));
 }
 
-function matchesGainFilters(record: MinimizerGainRecord, cwd: string | undefined, cutoff: number | null): boolean {
-	return matchesCwd(record, cwd) && matchesCutoff(record, cutoff);
+function matchesCwd(record: MinimizerGainRecord, scope: MinimizerGainScope | undefined): boolean {
+	if (scope === undefined) return true;
+	return matchesScopePath(record.cwd, scope) || matchesScopePath(record.sessionCwd, scope);
+}
+
+function matchesGainFilters(record: MinimizerGainRecord, scope: MinimizerGainScope | undefined, cutoff: number | null): boolean {
+	return matchesCwd(record, scope) && matchesCutoff(record, cutoff);
 }
 
 function matchesCutoff(record: MinimizerGainRecord, cutoff: number | null): boolean {
