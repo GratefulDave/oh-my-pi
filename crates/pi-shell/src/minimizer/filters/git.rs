@@ -330,6 +330,9 @@ fn parse_short_status_line(line: &str, summary: &mut StatusSummary) -> bool {
 	if status == "  " {
 		return false;
 	}
+	if status == "!!" {
+		return true;
+	}
 	if status == "??" {
 		summary.untracked += 1;
 	} else if status.contains('U') {
@@ -1407,6 +1410,26 @@ mod tests {
 			"staged 1, unstaged 1, untracked 1, conflicts 1\nM src/main.rs\nM Cargo.toml\n?? \
 			 scratch.txt\nUU conflicted.rs\n"
 		);
+	}
+
+	#[test]
+	fn short_status_ignored_only_preserves_output() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status --short --ignored", &cfg);
+		let input = "!! ignored.log\n!! target/\n";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn short_status_ignored_rows_do_not_count_dirty() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status --short --ignored", &cfg);
+		let input = " M src/main.rs\n!! ignored.log\n";
+		let out = filter(&ctx, input, 0);
+		assert!(out.changed);
+		assert_eq!(out.text, "staged 0, unstaged 1, untracked 0\nM src/main.rs\n");
 	}
 
 	#[test]
