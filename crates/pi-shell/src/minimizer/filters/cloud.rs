@@ -36,7 +36,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 	let cleaned = primitives::strip_ansi(input);
 	let text = match ctx.program {
 		"aws" => filter_aws(ctx, &cleaned, exit_code),
-		"curl" | "wget" => filter_http_transfer(&cleaned, exit_code),
+		"curl" | "wget" => filter_http_transfer(ctx, &cleaned, exit_code),
 		"psql" => filter_psql(&cleaned, exit_code),
 		_ => head_tail_dedup(&cleaned, 80, 40),
 	};
@@ -827,8 +827,29 @@ fn push_json_scalar(out: &mut String, value: &Value) {
 	}
 }
 
-fn filter_http_transfer(input: &str, _exit_code: i32) -> String {
-	strip_transfer_progress(input)
+fn filter_http_transfer(ctx: &MinimizerCtx<'_>, input: &str, _exit_code: i32) -> String {
+	if http_transfer_suppresses_progress(ctx) {
+		input.to_string()
+	} else {
+		strip_transfer_progress(input)
+	}
+}
+
+fn http_transfer_suppresses_progress(ctx: &MinimizerCtx<'_>) -> bool {
+	ctx.command
+		.split_whitespace()
+		.any(|token| match ctx.program {
+			"curl" => {
+				token == "--silent"
+					|| token == "--no-progress-meter"
+					|| token.starts_with('-') && !token.starts_with("--") && token.contains('s')
+			},
+			"wget" => {
+				token == "--quiet"
+					|| token.starts_with('-') && !token.starts_with("--") && token.contains('q')
+			},
+			_ => false,
+		})
 }
 
 fn filter_psql(input: &str, exit_code: i32) -> String {
@@ -1200,6 +1221,14 @@ mod tests {
 		MinimizerCtx { program, subcommand: None, command: program, config: cfg }
 	}
 
+	fn ctx_command<'a>(
+		program: &'a str,
+		command: &'a str,
+		cfg: &'a MinimizerConfig,
+	) -> MinimizerCtx<'a> {
+		MinimizerCtx { program, subcommand: None, command, config: cfg }
+	}
+
 	fn aws_ctx<'a>(
 		subcommand: &'a str,
 		command: &'a str,
@@ -1241,6 +1270,26 @@ mod tests {
 		let expected = "100% real body\n[{\"id\":1}]\n";
 		let out = filter(&ctx, input, 0);
 		assert_eq!(out.text, expected);
+	}
+
+	#[test]
+	fn curl_silent_preserves_body_lines_that_look_like_progress() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx_command("curl", "curl -s https://example.test/body", &cfg);
+		let input = "% Total legitimate response header\n100%[body]\n";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn wget_quiet_preserves_body_lines_that_look_like_progress() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx_command("wget", "wget -qO- https://example.test/body", &cfg);
+		let input = "--body marker with https://example.test\n100%[body]\n";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
 	}
 
 	#[test]
