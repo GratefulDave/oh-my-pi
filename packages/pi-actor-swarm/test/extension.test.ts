@@ -1,6 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import actorSwarm from "../src/extension";
 
+interface CustomComponent {
+	render(width: number, height: number): string[];
+	destroy(): void;
+}
+
+type CustomFactory<T> = (
+	tui: { requestRender(): void },
+	theme: { fg(color: string, text: string): string; bold(text: string): string },
+	keybindings: unknown,
+	done: (result: T) => void,
+) => CustomComponent;
+
 interface RegisteredCommand {
 	description: string;
 	handler: (args: string, ctx: CommandContext) => Promise<void>;
@@ -9,7 +21,7 @@ interface RegisteredCommand {
 interface CommandContext {
 	ui: {
 		setEditorText: (text: string) => void;
-		custom: <T>(renderer: unknown, options: { overlay: boolean }) => Promise<T>;
+		custom: <T>(renderer: CustomFactory<T>, options: { overlay: boolean }) => Promise<T>;
 	};
 }
 
@@ -30,7 +42,18 @@ function createHarness() {
 			setEditorText(text: string) {
 				editorTexts.push(text);
 			},
-			async custom<T>() {
+			async custom<T>(renderer: CustomFactory<T>) {
+				const component = renderer(
+					{ requestRender() {} },
+					{ fg: (color, text) => `<${color}>${text}</${color}>`, bold: text => `<b>${text}</b>` },
+					undefined,
+					() => {},
+				);
+				try {
+					component.render(80, 24);
+				} finally {
+					component.destroy();
+				}
 				return undefined as T;
 			},
 		},
@@ -56,6 +79,14 @@ describe("actor swarm extension", () => {
 
 		expect(harness.editorTexts.at(-1)).toContain('Swarm "alpha" initialized');
 		expect(harness.editorTexts.at(-1)).toContain("broadcast routing");
+	});
+
+	test("renders status with host themes that do not expose dim", async () => {
+		const harness = createHarness();
+		await harness.commands.get("swarm-init")?.handler("alpha", harness.ctx);
+		await harness.commands.get("swarm-status")?.handler("", harness.ctx);
+
+		expect(harness.editorTexts.at(-1)).toBe("");
 	});
 
 	test("reports missing swarm before send", async () => {

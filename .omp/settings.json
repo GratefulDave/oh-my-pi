@@ -4,7 +4,6 @@
     "packages/pi-minimizer-gain/dist/gaing.bundle.js",
     "packages/pi-observer/dist/observer.bundle.js",
     "packages/pi-distill/dist/distill.bundle.js",
-    "packages/pi-actor-swarm/dist/swarm.bundle.js",
     "packages/pi-omnidelegate/dist/omnidelegate.bundle.js",
     "packages/pi-software-factory/dist/factory.bundle.js",
     "packages/swarm-extension/dist/extension.bundle.js",
