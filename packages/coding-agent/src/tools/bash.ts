@@ -6,11 +6,13 @@ import type {
 	AgentToolUpdateCallback,
 	ToolApprovalDecision,
 } from "@oh-my-pi/pi-agent-core";
+import { applyShellMinimizer } from "@oh-my-pi/pi-natives";
 import type { Component } from "@oh-my-pi/pi-tui";
 import { ImageProtocol, TERMINAL } from "@oh-my-pi/pi-tui";
 import { getProjectDir, isEnoent, logger, prompt } from "@oh-my-pi/pi-utils";
 import * as z from "zod/v4";
-import { type BashResult, executeBash } from "../exec/bash-executor";
+import { Settings } from "../config/settings";
+import { type BashResult, buildMinimizerOptions, executeBash } from "../exec/bash-executor";
 import type { RenderResultOptions } from "../extensibility/custom-tools/types";
 import { InternalUrlRouter } from "../internal-urls";
 import { truncateToVisualLines } from "../modes/components/visual-truncate";
@@ -121,6 +123,42 @@ async function appendBashMinimizerGain(
 	} catch (error) {
 		logger.warn("Failed to append bash minimizer gain record", { error });
 	}
+}
+
+async function applyCapturedShellMinimizer(
+	session: ToolSession,
+	command: string,
+	result: BashResult | BashInteractiveResult,
+): Promise<BashResult | BashInteractiveResult> {
+	if (result.cancelled || result.exitCode === undefined || result.truncated) return result;
+	if (isInteractiveResult(result) && result.timedOut) return result;
+	const settings = await Settings.init();
+	const minimizer = await buildMinimizerOptions(settings.getGroup("shellMinimizer"));
+	if (!minimizer) return result;
+	const minimized = await applyShellMinimizer({
+		command,
+		captured: result.output,
+		exitCode: result.exitCode,
+		minimizer,
+	});
+	if (!minimized || minimized.text === minimized.originalText) return result;
+	let output = minimized.text;
+	const artifactId = await saveBashOriginalArtifact(session, minimized.originalText);
+	if (artifactId) {
+		const sep = output.endsWith("\n") ? "" : "\n";
+		output = `${output}${sep}[raw output: artifact://${artifactId}]\n`;
+	}
+	const outputLines = output.length > 0 ? output.split("\n").length : 0;
+	const outputBytes = output.length;
+	return {
+		...result,
+		output,
+		truncated: false,
+		totalLines: outputLines,
+		totalBytes: outputBytes,
+		outputLines,
+		outputBytes,
+	};
 }
 
 const bashSchemaBase = z.object({
@@ -1009,7 +1047,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 				const outputByteLen = outputText.length;
 				const outputLineCount = outputText.length > 0 ? outputText.split("\n").length : 0;
 
-				const bridgeResult: BashResult = {
+				const rawBridgeResult: BashResult = {
 					output: outputText,
 					exitCode,
 					cancelled: false,
@@ -1019,6 +1057,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					outputLines: outputLineCount,
 					outputBytes: outputByteLen,
 				};
+				const bridgeResult = await applyCapturedShellMinimizer(this.session, command, rawBridgeResult);
 
 				const bridgeNotices: string[] = [];
 				if (finalOutput.truncated) bridgeNotices.push("(output truncated)");
@@ -1050,7 +1089,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 			pendingNotices.push("pty requested but unavailable in this environment; ran without a terminal");
 		}
 		const wallTimeStart = performance.now();
-		const result: BashResult | BashInteractiveResult = interactiveUi
+		const rawResult: BashResult | BashInteractiveResult = interactiveUi
 			? await runInteractiveBashPty(interactiveUi, {
 					command,
 					cwd: commandCwd,
@@ -1071,6 +1110,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					onChunk: streamTailUpdates(tailBuffer, onUpdate),
 					onMinimizedSave: originalText => saveBashOriginalArtifact(this.session, originalText),
 				});
+		const result = interactiveUi ? await applyCapturedShellMinimizer(this.session, command, rawResult) : rawResult;
 		if (!isInteractiveResult(result)) {
 			await appendBashMinimizerGain(this.session, command, commandCwd, result);
 		}
