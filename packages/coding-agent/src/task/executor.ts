@@ -1428,6 +1428,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 						setModel: model => runExtensionSetModel(session, model),
 						getThinkingLevel: () => session.thinkingLevel,
 						setThinkingLevel: level => session.setThinkingLevel(level),
+						overrideModelRoles: roles => session.settings.overrideModelRoles(roles),
 						getSessionName: () => session.sessionManager.getSessionName(),
 						setSessionName: async name => {
 							await session.sessionManager.setSessionName(name, "user");

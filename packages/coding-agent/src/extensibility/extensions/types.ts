@@ -1053,6 +1053,9 @@ export interface ExtensionAPI {
 	/** Set thinking level for the current session. */
 	setThinkingLevel(level: ThinkingLevel): void;
 
+	/** Override model role selectors for the current session without persisting to disk. */
+	overrideModelRoles(roles: Record<string, string>): void;
+
 	/** Get the current session name. */
 	getSessionName(): string | undefined;
 
@@ -1252,6 +1255,7 @@ export interface ExtensionActions {
 	setModel: SetModelHandler;
 	getThinkingLevel: GetThinkingLevelHandler;
 	setThinkingLevel: SetThinkingLevelHandler;
+	overrideModelRoles: (roles: Record<string, string>) => void;
 	getSessionName: () => string | undefined;
 	setSessionName: (name: string) => Promise<void>;
 }
