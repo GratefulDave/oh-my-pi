@@ -55,6 +55,9 @@
 
 - Added minimizer options `sourceOutlineLevel` and `legacyFilters` to the `MinimizerOptions` native surface. The minimizer is fully deterministic — no network calls and no extra dependencies are linked into the addon.
 - Added the `applyShellMinimizer` native API (plus the `ShellMinimizerApplyOptions` type) to run the shell-output minimizer over an already-captured command result without spawning a shell. It is **async** (returns `Promise<MinimizerResult | null>`): minimization can run over a multi-megabyte capture, so the pass runs on a blocking pool to keep it off the JS event loop. Resolves to a `MinimizerResult` only when the output was actually rewritten, and `null` for disabled/omitted/passthrough cases, matching the inline `executeShell` minimizer contract.
+- Added minimizer coverage for `bun check` as a first-class subcommand: `supports()` now admits it, the dispatch routes directly to the typecheck/lint filter instead of falling through to the package-manager filter, and the `bun check` subcommand is excluded from `is_non_exec_package_subcommand` so package-manager stripping is not applied to checker output.
+- Added minimizer builtin filters for `apt`, `apt-get`, `yum`, `dnf`, and `apk` package managers: strips `Get:`/`Hit:`/`Ign:` download lines, `Fetched`/`Preparing`/`Unpacking`/`Setting up`/`Processing`/`Reading`/`Building` progress noise, and `(Reading database …` lines; 60-line cap, `on_empty = ok`.
+- Added minimizer builtin filter for `conda`: strips `## …` plan-header lines, `Downloading`/`Extracting`/`Preparing|Verifying|Executing transaction` lines, and `###`/`===` progress bars; 50-line cap, `on_empty = ok`.
 
 ### Fixed
 

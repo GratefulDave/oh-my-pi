@@ -5,7 +5,7 @@ use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
 
 const BUN_PACKAGE_SUBCOMMANDS: &[&str] = &[
 	"install", "i", "add", "update", "up", "upgrade", "remove", "rm", "outdated", "pm", "audit",
-	"run", "exec",
+	"run", "exec", "check",
 ];
 const BUN_TEST_SUBCOMMANDS: &[&str] = &["test"];
 const BUN_BUILD_SUBCOMMANDS: &[&str] = &["build"];
@@ -52,6 +52,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		return js_tools::filter(ctx, input, exit_code);
 	}
 	match (ctx.program, subcommand) {
+		("bun", Some("check")) => filter_bun_check(ctx, input, exit_code),
 		("bun", Some(subcommand)) if BUN_PACKAGE_SUBCOMMANDS.contains(&subcommand) => {
 			pkg::filter(ctx, input, exit_code)
 		},
@@ -61,7 +62,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 }
 
 fn is_non_exec_package_subcommand(subcommand: &str) -> bool {
-	BUN_PACKAGE_SUBCOMMANDS.contains(&subcommand) && !matches!(subcommand, "run" | "exec")
+	BUN_PACKAGE_SUBCOMMANDS.contains(&subcommand) && !matches!(subcommand, "run" | "exec" | "check")
 }
 
 fn is_test_invocation(program: &str, subcommand: Option<&str>, command: &str) -> bool {
@@ -352,12 +353,29 @@ mod tests {
 
 	#[test]
 	fn supports_bun_package_test_and_tool_subcommands() {
-		for subcommand in ["install", "add", "run", "test", "build", "tsc", "next", "ctest"] {
+		for subcommand in ["install", "add", "run", "test", "build", "tsc", "next", "ctest", "check"]
+		{
 			assert!(supports("bun", Some(subcommand)), "{subcommand} should be supported");
 		}
 		assert!(supports("bunx", Some("vitest")));
 		assert!(supports("bunx", Some("cmake")));
 		assert!(!supports("bun", Some("unknown")));
+	}
+
+	#[test]
+	fn bun_check_direct_subcommand_is_supported_and_routes_to_check_filter() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		// supports() must admit "check" as a subcommand
+		assert!(supports("bun", Some("check")), "bun check should be supported");
+		// filter() must route directly to filter_bun_check
+		let ctx = ctx("bun", Some("check"), "bun check", &cfg);
+		let biome_output = "packages/coding-agent/src/foo.ts:1:1 lint/suspicious/noExplicitAny \
+		                    ━━━━━━━━━\n\n  ✖ Unexpected any.\n\nChecked 127 files in 234ms. 1 error \
+		                    found.\n";
+		let out = filter(&ctx, biome_output, 1);
+		assert!(out.changed, "bun check output should be changed/compressed");
+		// should not route to pkg::filter (which would strip the error details)
+		assert!(out.text.contains("error"), "check filter must preserve error output");
 	}
 
 	#[test]
