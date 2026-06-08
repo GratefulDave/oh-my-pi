@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Symlink the repo's compiled extension bundles into ~/.omp/agent/extensions/
-// and register them in ~/.omp/agent/settings.json (USER scope) so omp loads
-// them from ANY working directory — independent of this repo.
+// and register them in ~/.omp/agent/config.yml + settings.json (USER scope) so
+// omp loads them from ANY working directory — independent of this repo.
 //
 //   bun scripts/install-user-extensions.ts            # install (build first!)
 //   bun scripts/install-user-extensions.ts --dry-run  # show what would happen
@@ -10,14 +10,26 @@
 // Paths registered use ~ so they stay portable; the loader expands ~ and keeps
 // absolute paths as-is (resolveAgainst in omp-extension-roots.ts).
 
+import { YAML } from "bun";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
+
+interface RepoSettings {
+	extensions?: string[];
+}
+
+interface PackageJson {
+	omp?: {
+		extensions?: unknown;
+	};
+}
 
 const REPO = path.resolve(import.meta.dir, "..");
 const HOME = homedir();
 const USER_DIR = path.join(HOME, ".omp", "agent");
 const EXT_DIR = path.join(USER_DIR, "extensions");
+const USER_CONFIG = path.join(USER_DIR, "config.yml");
 const USER_SETTINGS = path.join(USER_DIR, "settings.json");
 const DRY = process.argv.includes("--dry-run");
 
@@ -40,6 +52,71 @@ async function readJson<T>(p: string): Promise<T | null> {
 		return null;
 	}
 }
+async function readYaml(p: string): Promise<Record<string, unknown> | null> {
+	try {
+		const parsed = YAML.parse(await fs.readFile(p, "utf8"));
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+	} catch {
+		return null;
+	}
+}
+
+function isManagedExtensionPath(value: string, managedNames: Set<string>): boolean {
+	return (
+		managedNames.has(extName(value)) ||
+		value.startsWith("~/.omp/agent/extensions/") ||
+		path.resolve(value).startsWith(`${EXT_DIR}${path.sep}`)
+	);
+}
+
+function mergeExtensionList(previous: unknown, managedNames: Set<string>): string[] {
+	const existing = Array.isArray(previous) ? previous.filter((value): value is string => typeof value === "string") : [];
+	const unmanaged = existing.filter(value => !isManagedExtensionPath(value, managedNames));
+	return Array.from(new Set([...unmanaged, ...registered]));
+}
+
+function normalizeAntigravityConfig(value: unknown, key = ""): unknown {
+	if (typeof value === "string") {
+		return value.startsWith("antigravity/") ? `google-antigravity/${value.slice("antigravity/".length)}` : value;
+	}
+	if (Array.isArray(value)) {
+		const normalized = value.map(item => normalizeAntigravityConfig(item, key));
+		if (key === "disabledProviders") {
+			return normalized.filter(item => item !== "google-antigravity");
+		}
+		return normalized.filter(item => item !== "antigravity" && item !== "antigravity/*");
+	}
+	if (value && typeof value === "object") {
+		const normalized: Record<string, unknown> = {};
+		for (const [childKey, childValue] of Object.entries(value)) {
+			normalized[childKey] = normalizeAntigravityConfig(childValue, childKey);
+		}
+		return normalized;
+	}
+	return value;
+}
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function applyActiveProfile(settings: Record<string, unknown>): void {
+	const active = settings.activeModelProfile;
+	const profiles = settings.modelProfiles;
+	if (typeof active !== "string" || !isRecord(profiles) || !isRecord(profiles[active])) return;
+	const profile = profiles[active];
+	for (const key of ["modelRoles", "defaultThinkingLevel", "enabledModels", "cycleOrder", "modelProviderOrder"]) {
+		const value = profile[key];
+		if (Array.isArray(value)) {
+			settings[key] = [...value];
+		} else if (isRecord(value)) {
+			settings[key] = { ...value };
+		} else if (typeof value === "string") {
+			settings[key] = value;
+		}
+	}
+}
+
+
 
 async function pathExists(p: string): Promise<boolean> {
 	return fs.stat(p).then(
@@ -59,11 +136,36 @@ async function verifyLink(dest: string, src: string): Promise<string | null> {
 	return null;
 }
 
+async function discoverPackageExtensionSources(): Promise<string[]> {
+	const packagesDir = path.join(REPO, "packages");
+	const entries = await fs.readdir(packagesDir, { withFileTypes: true }).catch(() => []);
+	const sources: string[] = [];
+	for (const entry of entries) {
+		if (!entry.isDirectory()) continue;
+		const packageDir = path.join(packagesDir, entry.name);
+		const manifest = await readJson<PackageJson>(path.join(packageDir, "package.json"));
+		const extensions = manifest?.omp?.extensions;
+		if (!Array.isArray(extensions)) continue;
+		for (const extension of extensions) {
+			if (typeof extension !== "string") continue;
+			const rel = path.relative(REPO, path.resolve(packageDir, extension)).split(path.sep).join("/");
+			sources.push(rel);
+		}
+	}
+	return sources;
+}
 
-const repoSettings = await readJson<{ extensions?: string[] }>(path.join(REPO, ".omp", "settings.json"));
-const sources = repoSettings?.extensions ?? [];
+const repoSettings = await readJson<RepoSettings>(path.join(REPO, ".omp", "settings.json"));
+const configuredSources = repoSettings?.extensions ?? [];
+const configuredNames = new Set(configuredSources.map(extName));
+const manifestSources = await discoverPackageExtensionSources();
+const sources = [...configuredSources];
+for (const rel of manifestSources) {
+	if (configuredNames.has(extName(rel))) continue;
+	sources.push(rel);
+}
 if (sources.length === 0) {
-	console.error("No extensions found in repo .omp/settings.json#extensions");
+	console.error("No extensions found in repo .omp/settings.json#extensions or package manifests");
 	process.exit(1);
 }
 
@@ -93,19 +195,34 @@ for (const rel of sources) {
 	registered.push(tildePath);
 }
 
-// Merge into user settings, preserving any existing keys/extensions.
-const existing = (await readJson<Record<string, unknown>>(USER_SETTINGS)) ?? {};
-const prev = Array.isArray(existing.extensions) ? (existing.extensions as string[]) : [];
-const merged = Array.from(new Set([...prev, ...registered]));
-const next = { ...existing, extensions: merged };
+// Merge into user config stores, preserving external extension paths but making
+// every repo-managed extension authoritative. This repairs stale copies and old
+// checkout paths on every rebuild instead of letting them shadow fresh bundles.
+const managedNames = new Set(registered.map(extName));
+const settingsJson = normalizeAntigravityConfig((await readJson<Record<string, unknown>>(USER_SETTINGS)) ?? {}) as Record<
+	string,
+	unknown
+>;
+const settingsJsonExtensions = mergeExtensionList(settingsJson.extensions, managedNames);
+applyActiveProfile(settingsJson);
+settingsJson.extensions = settingsJsonExtensions;
 
+const configYaml = normalizeAntigravityConfig((await readYaml(USER_CONFIG)) ?? {}) as Record<string, unknown>;
+const configYamlExtensions = mergeExtensionList(configYaml.extensions, managedNames);
+configYaml.extensions = configYamlExtensions;
+
+applyActiveProfile(configYaml);
 console.log(`\n${DRY ? "[dry] " : ""}write ${USER_SETTINGS}`);
-console.log(`  extensions (${merged.length}):`);
-for (const e of merged) console.log(`    ${e}`);
+console.log(`  extensions (${settingsJsonExtensions.length}):`);
+for (const e of settingsJsonExtensions) console.log(`    ${e}`);
+console.log(`${DRY ? "[dry] " : ""}write ${USER_CONFIG}`);
+console.log(`  extensions (${configYamlExtensions.length}):`);
+for (const e of configYamlExtensions) console.log(`    ${e}`);
 
 if (!DRY) {
 	await fs.mkdir(USER_DIR, { recursive: true });
-	await fs.writeFile(USER_SETTINGS, `${JSON.stringify(next, null, 2)}\n`);
+	await fs.writeFile(USER_SETTINGS, `${JSON.stringify(settingsJson, null, 2)}\n`);
+	await fs.writeFile(USER_CONFIG, YAML.stringify(configYaml, null, 2));
 }
 
 const verifyErrors: string[] = [];
