@@ -11,12 +11,20 @@
 // absolute paths as-is (resolveAgainst in omp-extension-roots.ts).
 
 import { YAML } from "bun";
+import * as fs from "node:fs/promises";
 import { homedir } from "node:os";
 import * as path from "node:path";
-import * as fs from "node:fs/promises";
 
 interface RepoSettings {
 	extensions?: string[];
+	activeModelProfile?: unknown;
+	cycleOrder?: unknown;
+	defaultThinkingLevel?: unknown;
+	disabledProviders?: unknown;
+	enabledModels?: unknown;
+	modelProfiles?: unknown;
+	modelProviderOrder?: unknown;
+	modelRoles?: unknown;
 }
 
 interface PackageJson {
@@ -24,6 +32,8 @@ interface PackageJson {
 		extensions?: unknown;
 	};
 }
+
+const PROFILE_KEYS = ["modelRoles", "defaultThinkingLevel", "enabledModels", "cycleOrder", "modelProviderOrder"] as const;
 
 const REPO = path.resolve(import.meta.dir, "..");
 const HOME = homedir();
@@ -33,46 +43,44 @@ const USER_CONFIG = path.join(USER_DIR, "config.yml");
 const USER_SETTINGS = path.join(USER_DIR, "settings.json");
 const DRY = process.argv.includes("--dry-run");
 
-// Derive a stable folder name from a source bundle path.
-//   packages/pi-observer/dist/observer.bundle.js   -> pi-observer
-//   .omp/extensions/profile-manager/dist/index.js  -> profile-manager
 function extName(rel: string): string {
 	const parts = rel.split("/");
-	const pkgsIdx = parts.indexOf("packages");
-	if (pkgsIdx >= 0 && parts[pkgsIdx + 1]) return parts[pkgsIdx + 1];
-	const ompIdx = parts.indexOf("extensions");
-	if (ompIdx >= 0 && parts[ompIdx + 1]) return parts[ompIdx + 1];
-	return path.basename(path.dirname(path.dirname(rel))); // fallback: parent of dist/
+	const packagesIdx = parts.indexOf("packages");
+	if (packagesIdx >= 0 && parts[packagesIdx + 1]) return parts[packagesIdx + 1];
+	const extensionsIdx = parts.indexOf("extensions");
+	if (extensionsIdx >= 0 && parts[extensionsIdx + 1]) return parts[extensionsIdx + 1];
+	return path.basename(path.dirname(path.dirname(rel)));
 }
 
-async function readJson<T>(p: string): Promise<T | null> {
+async function readJson<T>(filePath: string): Promise<T | null> {
 	try {
-		return JSON.parse(await fs.readFile(p, "utf8")) as T;
+		return JSON.parse(await fs.readFile(filePath, "utf8")) as T;
 	} catch {
 		return null;
 	}
 }
-async function readYaml(p: string): Promise<Record<string, unknown> | null> {
+
+async function readYaml(filePath: string): Promise<Record<string, unknown> | null> {
 	try {
-		const parsed = YAML.parse(await fs.readFile(p, "utf8"));
+		const parsed = YAML.parse(await fs.readFile(filePath, "utf8"));
 		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
 	} catch {
 		return null;
 	}
 }
 
-function isManagedExtensionPath(value: string, managedNames: Set<string>): boolean {
-	return (
-		managedNames.has(extName(value)) ||
-		value.startsWith("~/.omp/agent/extensions/") ||
-		path.resolve(value).startsWith(`${EXT_DIR}${path.sep}`)
-	);
-}
-
-function mergeExtensionList(previous: unknown, managedNames: Set<string>): string[] {
-	const existing = Array.isArray(previous) ? previous.filter((value): value is string => typeof value === "string") : [];
-	const unmanaged = existing.filter(value => !isManagedExtensionPath(value, managedNames));
-	return Array.from(new Set([...unmanaged, ...registered]));
+function cloneValue<T>(value: T): T {
+	if (Array.isArray(value)) {
+		return value.map(item => cloneValue(item)) as T;
+	}
+	if (value && typeof value === "object") {
+		const cloned: Record<string, unknown> = {};
+		for (const [key, child] of Object.entries(value)) {
+			cloned[key] = cloneValue(child);
+		}
+		return cloned as T;
+	}
+	return value;
 }
 
 function normalizeAntigravityConfig(value: unknown, key = ""): unknown {
@@ -95,6 +103,7 @@ function normalizeAntigravityConfig(value: unknown, key = ""): unknown {
 	}
 	return value;
 }
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -104,7 +113,7 @@ function applyActiveProfile(settings: Record<string, unknown>): void {
 	const profiles = settings.modelProfiles;
 	if (typeof active !== "string" || !isRecord(profiles) || !isRecord(profiles[active])) return;
 	const profile = profiles[active];
-	for (const key of ["modelRoles", "defaultThinkingLevel", "enabledModels", "cycleOrder", "modelProviderOrder"]) {
+	for (const key of PROFILE_KEYS) {
 		const value = profile[key];
 		if (Array.isArray(value)) {
 			settings[key] = [...value];
@@ -116,10 +125,61 @@ function applyActiveProfile(settings: Record<string, unknown>): void {
 	}
 }
 
+function buildActiveProfileSnapshot(repoSettings: Record<string, unknown>): Record<string, unknown> {
+	const snapshot: Record<string, unknown> = {};
+	for (const key of PROFILE_KEYS) {
+		const value = repoSettings[key];
+		if (value !== undefined) {
+			snapshot[key] = cloneValue(value);
+		}
+	}
+	return snapshot;
+}
 
+function syncManagedSettings(target: Record<string, unknown>, repoSettings: Record<string, unknown>): void {
+	const activeProfile = repoSettings.activeModelProfile;
+	if (typeof activeProfile === "string") {
+		target.activeModelProfile = activeProfile;
+	}
+	if (repoSettings.disabledProviders !== undefined) {
+		target.disabledProviders = cloneValue(repoSettings.disabledProviders);
+	}
+	for (const key of PROFILE_KEYS) {
+		const value = repoSettings[key];
+		if (value !== undefined) {
+			target[key] = cloneValue(value);
+		}
+	}
 
-async function pathExists(p: string): Promise<boolean> {
-	return fs.stat(p).then(
+	const nextProfiles: Record<string, unknown> = isRecord(target.modelProfiles)
+		? { ...target.modelProfiles }
+		: {};
+	if (isRecord(repoSettings.modelProfiles)) {
+		for (const [name, value] of Object.entries(repoSettings.modelProfiles)) {
+			nextProfiles[name] = cloneValue(value);
+		}
+	}
+	if (typeof activeProfile === "string") {
+		nextProfiles[activeProfile] = {
+			...(isRecord(nextProfiles[activeProfile]) ? nextProfiles[activeProfile] : {}),
+			...buildActiveProfileSnapshot(repoSettings),
+		};
+	}
+	if (Object.keys(nextProfiles).length > 0) {
+		target.modelProfiles = nextProfiles;
+	}
+}
+
+function isManagedExtensionPath(value: string, managedNames: Set<string>): boolean {
+	return (
+		managedNames.has(extName(value)) ||
+		value.startsWith("~/.omp/agent/extensions/") ||
+		path.resolve(value).startsWith(`${EXT_DIR}${path.sep}`)
+	);
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+	return fs.stat(filePath).then(
 		stat => stat.isFile(),
 		() => false,
 	);
@@ -155,8 +215,12 @@ async function discoverPackageExtensionSources(): Promise<string[]> {
 	return sources;
 }
 
-const repoSettings = await readJson<RepoSettings>(path.join(REPO, ".omp", "settings.json"));
-const configuredSources = repoSettings?.extensions ?? [];
+const repoSettings = normalizeAntigravityConfig(
+	(await readJson<RepoSettings>(path.join(REPO, ".omp", "settings.json"))) ?? {},
+) as Record<string, unknown>;
+const configuredSources = Array.isArray(repoSettings.extensions)
+	? repoSettings.extensions.filter((value): value is string => typeof value === "string")
+	: [];
 const configuredNames = new Set(configuredSources.map(extName));
 const manifestSources = await discoverPackageExtensionSources();
 const sources = [...configuredSources];
@@ -171,7 +235,6 @@ if (sources.length === 0) {
 
 const registered: string[] = [];
 const missing: string[] = [];
-
 for (const rel of sources) {
 	const src = path.resolve(REPO, rel);
 	const name = extName(rel);
@@ -182,7 +245,7 @@ for (const rel of sources) {
 
 	if (!(await pathExists(src))) {
 		missing.push(rel);
-		console.warn(`SKIP  ${name}: bundle not built -> ${rel}  (run: just build-exts)`);
+		console.warn(`SKIP  ${name}: bundle not built -> ${rel}  (run: bun scripts/rebuild-extensions.ts)`);
 		continue;
 	}
 
@@ -195,29 +258,34 @@ for (const rel of sources) {
 	registered.push(tildePath);
 }
 
-// Merge into user config stores, preserving external extension paths but making
-// every repo-managed extension authoritative. This repairs stale copies and old
-// checkout paths on every rebuild instead of letting them shadow fresh bundles.
 const managedNames = new Set(registered.map(extName));
+function mergeExtensionList(previous: unknown): string[] {
+	const existing = Array.isArray(previous) ? previous.filter((value): value is string => typeof value === "string") : [];
+	const unmanaged = existing.filter(value => !isManagedExtensionPath(value, managedNames));
+	return Array.from(new Set([...unmanaged, ...registered]));
+}
+
 const settingsJson = normalizeAntigravityConfig((await readJson<Record<string, unknown>>(USER_SETTINGS)) ?? {}) as Record<
 	string,
 	unknown
 >;
-const settingsJsonExtensions = mergeExtensionList(settingsJson.extensions, managedNames);
+syncManagedSettings(settingsJson, repoSettings);
+settingsJson.extensions = mergeExtensionList(settingsJson.extensions);
 applyActiveProfile(settingsJson);
-settingsJson.extensions = settingsJsonExtensions;
 
 const configYaml = normalizeAntigravityConfig((await readYaml(USER_CONFIG)) ?? {}) as Record<string, unknown>;
-const configYamlExtensions = mergeExtensionList(configYaml.extensions, managedNames);
-configYaml.extensions = configYamlExtensions;
-
+syncManagedSettings(configYaml, repoSettings);
+configYaml.extensions = mergeExtensionList(configYaml.extensions);
 applyActiveProfile(configYaml);
+
 console.log(`\n${DRY ? "[dry] " : ""}write ${USER_SETTINGS}`);
-console.log(`  extensions (${settingsJsonExtensions.length}):`);
-for (const e of settingsJsonExtensions) console.log(`    ${e}`);
+console.log(`  activeModelProfile: ${String(settingsJson.activeModelProfile ?? "(unset)")}`);
+console.log(`  extensions (${(settingsJson.extensions as string[]).length}):`);
+for (const extension of settingsJson.extensions as string[]) console.log(`    ${extension}`);
 console.log(`${DRY ? "[dry] " : ""}write ${USER_CONFIG}`);
-console.log(`  extensions (${configYamlExtensions.length}):`);
-for (const e of configYamlExtensions) console.log(`    ${e}`);
+console.log(`  activeModelProfile: ${String(configYaml.activeModelProfile ?? "(unset)")}`);
+console.log(`  extensions (${(configYaml.extensions as string[]).length}):`);
+for (const extension of configYaml.extensions as string[]) console.log(`    ${extension}`);
 
 if (!DRY) {
 	await fs.mkdir(USER_DIR, { recursive: true });
@@ -242,7 +310,7 @@ if (missing.length > 0) {
 	console.error(`\n${missing.length} required extension bundle(s) not built:`);
 	for (const rel of missing) console.error(`  ${rel}`);
 	console.error("Build failed bundles, then re-run:");
-	console.error("  just build-exts && just install-user");
+	console.error("  bun scripts/rebuild-extensions.ts && bun scripts/install-user-extensions.ts");
 	process.exit(1);
 }
 
@@ -252,4 +320,4 @@ if (verifyErrors.length > 0) {
 	process.exit(1);
 }
 
-console.log(`\nDone. omp now loads these from any cwd. Verified ${registered.length} extension symlink(s).`);
+console.log(`\nDone. omp and lex now load the same ${registered.length} managed extension(s) from any cwd.`);
