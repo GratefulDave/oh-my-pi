@@ -93,6 +93,34 @@ describe("minimizer gain records", () => {
 		});
 	});
 
+	test("upstream clone scope falls back to the sibling base repo path", async () => {
+		const agentDir = path.join(tempDir, "agent");
+		const baseRepo = path.join(tempDir, "lex");
+		const upstreamClone = path.join(tempDir, "lex-upstream-15.10.6");
+		const nestedCommandCwd = path.join(baseRepo, "packages", "coding-agent");
+		fs.mkdirSync(nestedCommandCwd, { recursive: true });
+		fs.mkdirSync(upstreamClone, { recursive: true });
+		const sessionCwd = fs.realpathSync(upstreamClone);
+		await appendBashMinimizerGainRecord({
+			agentDir,
+			command: "bun --cwd=packages/coding-agent test subagent-provider-inheritance",
+			cwd: nestedCommandCwd,
+			sessionCwd: fs.realpathSync(baseRepo),
+			filter: "bun-test",
+			inputBytes: 1600,
+			outputBytes: 400,
+			exitCode: 0,
+		});
+
+		const records = await readMinimizerGain({ agentDir, cwd: sessionCwd });
+		expect(records).toHaveLength(1);
+		expect(records[0]).toMatchObject({
+			cwd: fs.realpathSync(nestedCommandCwd),
+			sessionCwd: fs.realpathSync(baseRepo),
+			savedBytes: 1200,
+		});
+	});
+
 	test("migrates legacy sibling cwd records from session transcripts", async () => {
 		const agentDir = path.join(tempDir, "agent");
 		const siblingPath = path.join(tempDir, "sibling");
