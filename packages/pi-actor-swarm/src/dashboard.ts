@@ -62,7 +62,7 @@ function isEscapeInput(data: string): boolean {
 // ---------------------------------------------------------------------------
 
 export class SwarmDashboard {
-	#refreshHandle: ReturnType<typeof setInterval> | undefined;
+	#refreshHandle: NodeJS.Timeout | undefined;
 
 	constructor(
 		private readonly theme: SwarmTheme,
