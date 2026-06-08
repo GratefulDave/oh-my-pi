@@ -1040,7 +1040,7 @@ fn condense_commit(input: &str, exit_code: i32) -> String {
 	}
 
 	if input.contains("nothing to commit") {
-		return "ok (nothing to commit)\n".to_string();
+		return format!("nothing to commit (exit {exit_code})\n");
 	}
 
 	condense_noisy_output(input)
@@ -1888,7 +1888,7 @@ mod tests {
 		let input = "On branch main\nnothing to commit, working tree clean\n";
 		let out = filter(&ctx, input, 1);
 
-		assert_eq!(out.text, "ok (nothing to commit)\n");
+		assert_eq!(out.text, "nothing to commit (exit 1)\n");
 	}
 
 	#[test]

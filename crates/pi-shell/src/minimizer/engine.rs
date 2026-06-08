@@ -182,31 +182,51 @@ fn chain_mutates_shell_fds(segments: &[plan::ChainSegment]) -> bool {
 	segments.iter().any(is_shell_fd_mutating_segment)
 }
 
-/// True when a segment's effective command is the `exec` builtin, which (with
-/// redirections and no command word) permanently rewires the shell's own file
-/// descriptors. Running it in an isolated capture context silently drops that
-/// effect, so any chain containing it must stay opaque.
+/// True when a segment's effective command can mutate the shell parse/runtime
+/// environment in a way that segmented execution cannot preserve.
 ///
-/// Resolves through leading environment assignments and the `command` /
-/// `builtin` wrappers (and their option flags), since `command exec >out` and
-/// `builtin exec >out` invoke the same builtin as a bare `exec`.
+/// `exec` rewires fds; `eval` / `source` / `.` can introduce that opaquely;
+/// `alias` / `unalias` change how later words in separate `run_string` calls
+/// are expanded. Resolves the simple direct case from the parsed program word
+/// first so quoted assignments such as `FOO="a b" exec >out` cannot fool the
+/// fallback whitespace scan.
 fn is_shell_fd_mutating_segment(segment: &plan::ChainSegment) -> bool {
+	if is_shell_state_mutating_program(&segment.program) {
+		return true;
+	}
+	if matches!(segment.program.as_str(), "command" | "builtin")
+		&& command_wrapper_invokes_mutator(segment)
+	{
+		return true;
+	}
+	false
+}
+
+fn is_shell_state_mutating_program(program: &str) -> bool {
+	matches!(program, "exec" | "eval" | "source" | "." | "alias" | "unalias")
+}
+
+fn command_wrapper_invokes_mutator(segment: &plan::ChainSegment) -> bool {
 	for word in segment.command.split_whitespace() {
-		// `exec` rewires fds directly. `eval`/`source`/`.` can introduce an `exec`
-		// opaquely (e.g. `eval "exec >out"`), which `split_whitespace` cannot see
-		// inside the quoted string — treat them as fd-mutating too so the chain
-		// stays opaque rather than silently swallowing the redirection.
-		if matches!(word, "exec" | "eval" | "source" | ".") {
+		if is_shell_state_mutating_program(word) {
+			return true;
+		}
+		// A split quoted assignment means we are no longer looking at real shell
+		// words. Stay opaque rather than proving safety from corrupted tokens.
+		if is_ambiguous_assignment_fragment(word) {
 			return true;
 		}
 		if word == "command" || word == "builtin" || word.starts_with('-') || is_env_assignment(word)
 		{
 			continue;
 		}
-		// First real command word is something other than `exec`.
 		return false;
 	}
 	false
+}
+
+fn is_ambiguous_assignment_fragment(word: &str) -> bool {
+	is_env_assignment(word) && (word.contains('"') || word.contains('\''))
 }
 
 /// True for a leading `KEY=value` environment assignment (a prefix that does
@@ -284,13 +304,22 @@ fn apply_identity(
 
 	if filters::supports(&identity.program, subcommand) {
 		let ctx = MinimizerCtx { program: &identity.program, subcommand, command, config };
-		let rust_output =
-			match catch_unwind(AssertUnwindSafe(|| filters::filter(&ctx, captured, exit_code))) {
-				Ok(out) => out,
-				Err(_) => MinimizerOutput::passthrough(captured),
-			};
+		let Ok(rust_output) =
+			catch_unwind(AssertUnwindSafe(|| filters::filter(&ctx, captured, exit_code)))
+		else {
+			return MinimizerOutput::passthrough(captured)
+				.labeled(program_label(&identity.program))
+				.with_original(captured);
+		};
 		let label = program_label(&identity.program);
-		let overlaid = apply_pipeline_overlay(config, &identity.program, rust_output, label);
+		let overlaid = apply_pipeline_overlay(
+			config,
+			&identity.program,
+			subcommand,
+			exit_code,
+			rust_output,
+			label,
+		);
 		return ensure_success_visible(overlaid, exit_code).with_original(captured);
 	}
 
@@ -400,12 +429,17 @@ fn program_label(program: &str) -> &'static str {
 fn apply_pipeline_overlay(
 	config: &MinimizerConfig,
 	program: &str,
+	subcommand: Option<&str>,
+	exit_code: i32,
 	inner: MinimizerOutput,
 	primary_label: &'static str,
 ) -> MinimizerOutput {
-	let Some(pipeline) = resolve_pipeline(config, program, None) else {
+	let Some(pipeline) = resolve_pipeline(config, program, subcommand) else {
 		return inner.labeled(primary_label);
 	};
+	if pipeline.skipped_by_exit(exit_code) {
+		return inner.labeled(primary_label);
+	}
 	let text = catch_unwind(AssertUnwindSafe(|| pipeline.apply(&inner.text).into_owned()))
 		.unwrap_or_else(|_| inner.text.clone());
 	if text == inner.text {
@@ -480,13 +514,19 @@ pub fn verify_builtin_filters() -> Vec<pipeline::TestOutcome> {
 
 #[cfg(test)]
 mod tests {
-	use std::fs;
+	use std::{
+		fs,
+		sync::atomic::{AtomicUsize, Ordering},
+	};
+
+	static CONFIG_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 	use super::*;
 	use crate::minimizer::MinimizerOptions;
 	fn config_from_settings(contents: &str) -> MinimizerConfig {
+		let nonce = CONFIG_COUNTER.fetch_add(1, Ordering::Relaxed);
 		let path = std::env::temp_dir()
-			.join(format!("pi-shell-minimizer-engine-{}.toml", std::process::id()));
+			.join(format!("pi-shell-minimizer-engine-{}-{nonce}.toml", std::process::id()));
 		fs::write(&path, contents).expect("write minimizer settings");
 		let cfg = MinimizerConfig::from_options(&MinimizerOptions {
 			enabled: Some(true),
@@ -517,7 +557,7 @@ mod tests {
 
 		let except_git = MinimizerConfig {
 			enabled: true,
-			except: ["git".to_string()].into_iter().collect(),
+			except: std::iter::once("git".to_string()).collect(),
 			..Default::default()
 		};
 		assert!(!should_minimize("git diff", &except_git));
@@ -527,6 +567,32 @@ mod tests {
 		assert_eq!(out.filter, "disabled");
 	}
 
+	#[test]
+	fn pipeline_overlay_honors_subcommand_and_exit_gates() {
+		let cfg = config_from_settings(
+			r#"
+schema_version = 1
+[filters.git_diff_overlay]
+match_command = "^git$"
+match_subcommand = "^diff$"
+strip_lines_matching = [".*"]
+on_empty = "OVERLAY"
+only_on_exit = [0]
+"#,
+		);
+		let diff_input = "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n";
+		let diff = apply("git diff", diff_input, 0, &cfg);
+		assert_eq!(diff.filter, "pipeline+builtin");
+		assert_eq!(diff.text, "OVERLAY");
+
+		let status = apply("git status", "## main\n M file.rs\n", 0, &cfg);
+		assert_ne!(status.filter, "pipeline+builtin");
+		assert!(status.text.contains("unstaged 1"));
+
+		let failed = apply("git diff", diff_input, 1, &cfg);
+		assert_ne!(failed.filter, "pipeline+builtin");
+		assert!(failed.text.contains("file changed"));
+	}
 	#[test]
 	fn enabled_known_filter_minimizes() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
@@ -742,7 +808,11 @@ strip_lines_matching = [".*"]
 		// && git -C b diff` would merge both repos into one fabricated stat, so
 		// the captured bytes must be preserved verbatim.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
-		let listing: String = (0..30).map(|i| format!("src/file{i}.rs\n")).collect();
+		let mut listing = String::new();
+		for i in 0..30 {
+			use std::fmt::Write as _;
+			let _ = writeln!(listing, "src/file{i}.rs");
+		}
 		let out = apply("git diff --name-only && git diff --name-only HEAD~1", &listing, 0, &cfg);
 		assert!(!out.changed, "same-format diff chain must stay passthrough");
 		assert_eq!(out.filter, "compound");
@@ -824,9 +894,8 @@ strip_lines_matching = [".*"]
 	fn chain_legacy_filters_active_passes_through() {
 		// Phase 7 kill-switch parity (M2): legacy_filters_active=true returns
 		// passthrough.labeled("compound") regardless of segment shape.
-		let mut cfg = MinimizerConfig::default();
-		cfg.enabled = true;
-		cfg.legacy_filters_active = true;
+		let cfg =
+			MinimizerConfig { enabled: true, legacy_filters_active: true, ..Default::default() };
 		let input = "## main\n M file.rs\n";
 		let out = apply("git status && git log -1", input, 0, &cfg);
 		assert!(!out.changed);
@@ -868,6 +937,12 @@ strip_lines_matching = [".*"]
 		assert_eq!(mode_for("command exec >out ; echo hi", &cfg), MinimizerMode::None);
 		assert_eq!(mode_for("builtin exec >out ; echo hi", &cfg), MinimizerMode::None);
 		assert_eq!(mode_for("git diff ; command -p exec 2>err", &cfg), MinimizerMode::None);
+		assert_eq!(mode_for("FOO=\"a b\" exec >out ; echo hi", &cfg), MinimizerMode::None);
+		assert_eq!(mode_for("FOO=\"a b\" command exec >out ; echo hi", &cfg), MinimizerMode::None);
+		// Alias mutations affect later words when segments are parsed in separate
+		// calls, so they must stay on the original single-parse path too.
+		assert_eq!(mode_for("alias cat='printf hacked' ; cat file", &cfg), MinimizerMode::None);
+		assert_eq!(mode_for("unalias cat ; cat file", &cfg), MinimizerMode::None);
 		// A real command merely named with `exec` as an argument is not the
 		// builtin and must NOT block segmentation.
 		assert_eq!(mode_for("echo exec ; printf done", &cfg), MinimizerMode::SegmentedChain);
