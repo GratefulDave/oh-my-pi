@@ -38,6 +38,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 	let text = match ctx.subcommand {
 		Some("status") if is_status_machine_format(ctx.command) => cleaned,
 		Some("status") => condense_status(&cleaned),
+		Some("diff") if has_token(ctx.command, "--summary") => cleaned,
 		Some("diff") if is_stat_format(ctx.command) => condense_diff_stat(&cleaned),
 		Some("diff") => {
 			if exit_code == 0 {
@@ -52,6 +53,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		},
 		Some("show") if is_show_custom_format(ctx.command) => cleaned,
 		Some("show") => condense_show(&cleaned),
+		Some("log") if is_log_custom_format(ctx.command) => cleaned,
 		Some("log") => condense_log(&cleaned, 32, 16),
 		// Non-listing branch formats produce single values or one-liner
 		// confirmations (e.g. `--show-current` → `main`, `--delete` →
@@ -130,9 +132,11 @@ fn has_flag(command: &str, flag: &str) -> bool {
 }
 
 fn is_status_machine_format(command: &str) -> bool {
-	command
-		.split_whitespace()
-		.any(|part| matches!(part, "--porcelain" | "--porcelain=v1" | "--porcelain=v2"))
+	command.split_whitespace().any(|part| {
+		matches!(part, "--porcelain" | "--porcelain=v1" | "--porcelain=v2" | "--null")
+			|| part == "-z"
+			|| part.starts_with('-') && !part.starts_with("--") && part.contains('z')
+	})
 }
 
 fn is_stat_format(command: &str) -> bool {
@@ -231,6 +235,10 @@ fn condense_status(input: &str) -> String {
 		let line = line.trim_end();
 		let trimmed = line.trim();
 		if trimmed.is_empty() {
+			continue;
+		}
+		if let Some(branch) = line.strip_prefix("## ") {
+			summary.branch = Some(branch.to_string());
 			continue;
 		}
 		if parse_short_status_line(line, &mut summary) {
@@ -720,6 +728,10 @@ fn is_show_custom_format(command: &str) -> bool {
 		|| has_token(command, "--summary")
 		|| has_token(command, "--check")
 		|| has_token(command, "--dirstat")
+}
+
+fn is_log_custom_format(command: &str) -> bool {
+	has_flag(command, "--format") || has_flag(command, "--pretty")
 }
 
 fn condense_branch(input: &str) -> String {
@@ -1413,6 +1425,29 @@ mod tests {
 	}
 
 	#[test]
+	fn short_status_with_branch_preserves_branch_summary() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status -sb", &cfg);
+		let input = "## main...origin/main [ahead 2]\n M src/main.rs\n";
+		let out = filter(&ctx, input, 0);
+		assert!(out.changed);
+		assert_eq!(
+			out.text,
+			"branch main...origin/main [ahead 2]\nstaged 0, unstaged 1, untracked 0\nM src/main.rs\n",
+		);
+	}
+
+	#[test]
+	fn status_null_output_is_passthrough() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status -sz", &cfg);
+		let input = " M src/main.rs\0?? scratch.txt\0";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
 	fn short_status_ignored_only_preserves_output() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("status"), "git status --short --ignored", &cfg);
@@ -1757,6 +1792,29 @@ mod tests {
 		assert!(out.text.contains("M\tpath-1.rs\n"));
 		assert!(!out.text.contains("path-20.rs\n"));
 		assert!(out.text.contains("… 4 files omitted …"));
+	}
+
+	#[test]
+	fn diff_stat_summary_preserves_extended_summary_lines() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("diff"), "git diff --stat --summary", &cfg);
+		let input = " foo | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 foo\n";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn log_custom_format_preserves_machine_readable_hashes() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("log"), "git log --format=%H -n 100", &cfg);
+		let mut input = String::new();
+		for idx in 0..80 {
+			let _ = writeln!(input, "{idx:040x}");
+		}
+		let out = filter(&ctx, &input, 0);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
 	}
 
 	#[test]

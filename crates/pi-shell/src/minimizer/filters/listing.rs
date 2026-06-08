@@ -4,20 +4,20 @@ use std::{collections::BTreeMap, path::Path};
 
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, config::OutlineLevel, primitives};
 
-/// Whether `ctx.command` contains a NUL-producing output flag that would
-/// defeat newline-split processing in the compact_* helpers.
-/// For `find`: `-print0` / `-fprint0`.
-/// For `grep`: `-z` / `--null-data`.
-/// For `rg`: `-0` / `--null`.
+/// For `grep`: `-z` / `--null-data` (NUL line terminators) and `-Z` /
+/// `--null` (NUL after file names).
+/// For `rg`: `-0` / `--null` and `--null-data`.
 fn context_has_nul_output(command: &str, program: &str) -> bool {
 	command.split_whitespace().any(|tok| match program {
 		// -z may be clustered with other short flags (e.g. -zHn); --null-data is long.
 		"grep" => {
 			tok == "--null-data"
-				|| (tok.starts_with('-') && !tok.starts_with("--") && tok.contains('z'))
+				|| tok == "--null"
+				|| (tok.starts_with('-')
+					&& !tok.starts_with("--")
+					&& tok.chars().skip(1).any(|ch| matches!(ch, 'z' | 'Z')))
 		},
-		// -0 is a standalone digit flag; --null is long.
-		"rg" => matches!(tok, "-0" | "--null"),
+		"rg" => matches!(tok, "-0" | "--null" | "--null-data"),
 		_ => matches!(tok, "-print0" | "-fprint0"),
 	})
 }
@@ -1649,6 +1649,26 @@ mod tests {
 		assert!(out.text.starts_with("grep: 100 matches in 10 files"));
 		let r = ratio(&input, &out.text);
 		assert!(r >= 0.50, "savedRatio={r}");
+	}
+
+	#[test]
+	fn grep_null_filename_output_is_passthrough() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx_command("grep", "grep -ZHn pattern src/*.rs", &cfg);
+		let input = concat!("src/a.rs\0", "10:pattern\nsrc/b.rs\0", "20:pattern\n");
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn rg_null_data_output_is_passthrough() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx_command("rg", "rg --null-data pattern src", &cfg);
+		let input = "src/a.rs:10:pattern\0src/b.rs:20:pattern\0";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
 	}
 
 	#[test]

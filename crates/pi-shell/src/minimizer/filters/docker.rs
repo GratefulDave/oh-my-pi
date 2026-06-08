@@ -483,12 +483,7 @@ fn filter_logs(input: &str) -> String {
 fn filter_docker_logs(input: &str) -> String {
 	let without_empty_runs = drop_repeated_blank_lines(input);
 	let deduped = dedup_consecutive_log_lines(&without_empty_runs);
-	let priority = collect_priority_log_lines(&deduped);
-	if priority.is_empty() {
-		primitives::head_tail_lines(&deduped, 120, 80)
-	} else {
-		primitives::head_tail_lines(&priority, 120, 80)
-	}
+	primitives::head_tail_lines(&deduped, 120, 80)
 }
 
 fn dedup_consecutive_log_lines(input: &str) -> String {
@@ -542,22 +537,6 @@ fn is_compose_log_service(value: &str) -> bool {
 		&& value.bytes().all(|byte| {
 			byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_' | b'.')
 		})
-}
-
-fn collect_priority_log_lines(input: &str) -> String {
-	let mut out = String::new();
-	for line in input.lines() {
-		if is_priority_log_line(line) {
-			out.push_str(line);
-			out.push('\n');
-		}
-	}
-	out
-}
-
-fn is_priority_log_line(line: &str) -> bool {
-	let line = line.to_ascii_lowercase();
-	line.contains("error") || line.contains("fail") || line.contains("warn")
 }
 
 fn compact_table(input: &str, visible_rows: usize) -> String {
@@ -683,6 +662,13 @@ mod tests {
 	}
 
 	#[test]
+	fn docker_logs_preserves_short_context_around_warning() {
+		let input = "starting\nWARN retrying\nready\n";
+		let out = filter_docker_logs(input);
+		assert_eq!(out, input);
+	}
+
+	#[test]
 	fn docker_compose_ps_uses_table_filter() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let compose_ctx = MinimizerCtx {
@@ -735,7 +721,7 @@ mod tests {
 	}
 
 	#[test]
-	fn prioritizes_error_lines_for_large_log_windows() {
+	fn truncates_large_logs_without_dropping_all_context() {
 		let mut input = String::new();
 		for i in 0..260 {
 			input.push_str("api-1  | request ");
@@ -746,9 +732,10 @@ mod tests {
 		input.push_str("worker | failed to process job\n");
 
 		let out = filter_docker_logs(&input);
+		assert!(out.contains("api-1  | request 0 complete"));
 		assert!(out.contains("api-1  | WARN cache miss"));
 		assert!(out.contains("worker | failed to process job"));
-		assert!(!out.contains("api-1  | request 0 complete"));
+		assert!(out.contains("omitted"));
 	}
 
 	#[test]
