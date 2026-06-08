@@ -49,8 +49,12 @@ fn filter_docker(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String 
 	if exit_code != 0 {
 		return input.to_string();
 	}
-	if is_table_command(ctx) {
-		return compact_table(input, 12);
+	if is_docker_listing_command(ctx) {
+		return if is_table_command(ctx) {
+			compact_table(input, 12)
+		} else {
+			input.to_string()
+		};
 	}
 	compact_build_or_progress(input)
 }
@@ -425,15 +429,49 @@ fn is_log_command(ctx: &MinimizerCtx<'_>) -> bool {
 fn is_table_command(ctx: &MinimizerCtx<'_>) -> bool {
 	// Match `docker ps`, `docker images` (subcommand is argv[1])
 	// or `docker compose ps`, `docker compose images` (subcommand is "compose",
-	// action is argv[2])
-	match ctx.subcommand {
-		Some("ps" | "images") => true,
-		Some("compose") => {
-			ctx.command.split_whitespace().nth(2) == Some("ps")
-				|| ctx.command.split_whitespace().nth(2) == Some("images")
-		},
-		_ => false,
+	// action is argv[2]). Machine-readable listing modes (`-q`/`--quiet`, or
+	// `--format` without Docker's `table` directive) must stay opaque: callers
+	// commonly pipe these IDs/templates into other commands, and `compact_table`
+	// would treat the first ID as a header and drop middle rows.
+	if !is_docker_listing_command(ctx) {
+		return false;
 	}
+	docker_listing_requests_table(ctx.command)
+}
+fn is_docker_listing_command(ctx: &MinimizerCtx<'_>) -> bool {
+	matches!(ctx.subcommand, Some("ps" | "images"))
+		|| ctx.subcommand == Some("compose") && is_compose_listing_action(ctx.command)
+}
+
+fn is_compose_listing_action(command: &str) -> bool {
+	let mut tokens = command
+		.split_whitespace()
+		.skip_while(|token| *token != "compose");
+	if tokens.next() != Some("compose") {
+		return false;
+	}
+	tokens.any(|token| matches!(token, "ps" | "images"))
+}
+
+fn docker_listing_requests_table(command: &str) -> bool {
+	let mut tokens = command.split_whitespace();
+	while let Some(token) = tokens.next() {
+		if matches!(token, "-q" | "--quiet") {
+			return false;
+		}
+		if token == "--format" {
+			return tokens.next().is_some_and(docker_format_requests_table);
+		}
+		if let Some(format) = token.strip_prefix("--format=") {
+			return docker_format_requests_table(format);
+		}
+	}
+	true
+}
+
+fn docker_format_requests_table(format: &str) -> bool {
+	let format = format.trim_matches(|c| matches!(c, '"' | '\''));
+	format == "table" || format.starts_with("table ")
 }
 
 fn filter_logs(input: &str) -> String {
@@ -731,6 +769,90 @@ mod tests {
 		cfg: &'a MinimizerConfig,
 	) -> MinimizerCtx<'a> {
 		MinimizerCtx { program, subcommand, command: program, config: cfg }
+	}
+
+	#[test]
+	fn docker_ps_quiet_preserves_id_listing_verbatim() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "docker",
+			subcommand: Some("ps"),
+			command:    "docker ps -q",
+			config:     &cfg,
+		};
+		let mut input = String::new();
+		for idx in 0..220 {
+			let _ = writeln!(input, "{idx:012x}");
+		}
+
+		let out = filter(&ctx, &input, 0).text;
+
+		assert_eq!(out, input, "docker ps -q output is machine-readable and must not be compacted");
+	}
+
+	#[test]
+	fn docker_ps_format_without_table_preserves_template_output_verbatim() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "docker",
+			subcommand: Some("ps"),
+			command:    "docker ps --format '{{.ID}}'",
+			config:     &cfg,
+		};
+		let mut input = String::new();
+		for idx in 0..220 {
+			let _ = writeln!(input, "{idx:012x}");
+		}
+
+		let out = filter(&ctx, &input, 0).text;
+
+		assert_eq!(
+			out, input,
+			"docker --format without the table directive is exact template output and must not be \
+			 compacted",
+		);
+	}
+
+	#[test]
+	fn docker_images_format_table_still_compacts() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "docker",
+			subcommand: Some("images"),
+			command:    "docker images --format 'table {{.ID}} {{.Repository}}'",
+			config:     &cfg,
+		};
+		let mut input = String::from("ID REPOSITORY\n");
+		for idx in 0..25 {
+			let _ = writeln!(input, "{idx:012x} repo-{idx}");
+		}
+
+		let out = filter(&ctx, &input, 0).text;
+
+		assert!(out.contains("25 rows"), "docker --format table output should still compact: {out}");
+		assert!(
+			out.contains("… 13 more rows"),
+			"docker --format table should keep table omission: {out}"
+		);
+	}
+
+	#[test]
+	fn docker_compose_ps_format_without_table_preserves_template_output_verbatim() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "docker",
+			subcommand: Some("compose"),
+			command:    "docker compose ps --format '{{.ID}}'",
+			config:     &cfg,
+		};
+		let mut input = String::new();
+		for idx in 0..220 {
+			let _ = writeln!(input, "{idx:012x}");
+		}
+
+		let out = filter(&ctx, &input, 0).text;
+
+		assert_eq!(out, input, "docker compose ps formatted output must not be compacted");
 	}
 
 	#[test]
