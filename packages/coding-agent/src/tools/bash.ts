@@ -26,7 +26,7 @@ import { truncateForPrompt } from "./approval";
 import { applyBashFixups } from "./bash-command-fixup";
 import { type BashInteractiveResult, runInteractiveBashPty } from "./bash-interactive";
 import { checkBashInterception } from "./bash-interceptor";
-import { appendBashMinimizerGainRecord } from "./bash-minimizer-gain";
+import { appendBashMinimizerGainRecord, inferBashMinimizerMissedFilter } from "./bash-minimizer-gain";
 import { canUseInteractiveBashPty } from "./bash-pty-selection";
 import { expandInternalUrls, type InternalUrlExpansionOptions } from "./bash-skill-urls";
 import { invalidateGithubCacheForBashCommand } from "./gh-cache-invalidation";
@@ -101,14 +101,18 @@ async function saveBashOriginalArtifact(session: ToolSession, originalText: stri
 	}
 }
 
-async function saveBashMinimizedArtifactAndGain(
+async function appendBashMinimizerGain(
 	session: ToolSession,
 	command: string,
 	cwd: string,
-	originalText: string,
-	info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
-): Promise<string | undefined> {
-	const artifactId = await saveBashOriginalArtifact(session, originalText);
+	info: {
+		filter: string;
+		inputBytes: number;
+		outputBytes: number;
+		exitCode: number | null;
+		kind?: "saved" | "missed";
+	},
+): Promise<void> {
 	try {
 		await appendBashMinimizerGainRecord({
 			command,
@@ -118,11 +122,23 @@ async function saveBashMinimizedArtifactAndGain(
 			inputBytes: info.inputBytes,
 			outputBytes: info.outputBytes,
 			exitCode: info.exitCode,
+			kind: info.kind,
 			agentDir: session.settings.getAgentDir(),
 		});
 	} catch (error) {
 		logger.warn("Failed to append bash minimizer gain record", { error });
 	}
+}
+
+async function saveBashMinimizedArtifactAndGain(
+	session: ToolSession,
+	command: string,
+	cwd: string,
+	originalText: string,
+	info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
+): Promise<string | undefined> {
+	const artifactId = await saveBashOriginalArtifact(session, originalText);
+	await appendBashMinimizerGain(session, command, cwd, info);
 	return artifactId;
 }
 
@@ -582,6 +598,14 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 								originalText,
 								info,
 							),
+						onUnminimizedOutput: info =>
+							appendBashMinimizerGain(this.session, options.command, options.commandCwd, {
+								filter: inferBashMinimizerMissedFilter(options.command),
+								inputBytes: info.outputBytes,
+								outputBytes: info.outputBytes,
+								exitCode: info.exitCode,
+								kind: "missed",
+							}),
 					});
 					const wallTimeMs = performance.now() - wallTimeStart;
 					const finalResult = this.#buildCompletedResult(result, options.timeoutSec, {
@@ -1048,6 +1072,14 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					onChunk: streamTailUpdates(tailBuffer, onUpdate),
 					onMinimizedSave: (originalText, info) =>
 						saveBashMinimizedArtifactAndGain(this.session, command, commandCwd, originalText, info),
+					onUnminimizedOutput: info =>
+						appendBashMinimizerGain(this.session, command, commandCwd, {
+							filter: inferBashMinimizerMissedFilter(command),
+							inputBytes: info.outputBytes,
+							outputBytes: info.outputBytes,
+							exitCode: info.exitCode,
+							kind: "missed",
+						}),
 				});
 		const wallTimeMs = performance.now() - wallTimeStart;
 		if (result.cancelled) {

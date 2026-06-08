@@ -36,6 +36,7 @@ export interface BashExecutorOptions {
 		originalText: string,
 		info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
 	) => Promise<string | undefined>;
+	onUnminimizedOutput?: (info: { outputBytes: number; exitCode: number | null }) => Promise<void>;
 }
 
 export interface BashResult {
@@ -299,11 +300,24 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 			}
 		}
 
+		const result = await sink.dump();
+		if (
+			minimizer &&
+			options?.onUnminimizedOutput &&
+			(!minimized || minimized.text === minimized.originalText) &&
+			result.totalBytes > 0
+		) {
+			await options.onUnminimizedOutput({
+				outputBytes: result.totalBytes,
+				exitCode: winner.result.exitCode ?? null,
+			});
+		}
+
 		// Normal completion
 		return {
 			exitCode: winner.result.exitCode,
 			cancelled: false,
-			...(await sink.dump()),
+			...result,
 		};
 	} catch (err) {
 		resetSession = true;

@@ -623,6 +623,32 @@ describe("executeBash", () => {
 		expect(fs.existsSync(marker)).toBe(false);
 	});
 
+	it("reports unminimized output through the missed-gain callback", async () => {
+		const onUnminimizedOutput = vi.fn(async () => undefined);
+		vi.spyOn(piNatives.Shell.prototype, "run").mockImplementation(async (_options, onChunk) => {
+			onChunk?.(null, "plain output\n");
+			return {
+				exitCode: 0,
+				cancelled: false,
+				timedOut: false,
+			};
+		});
+
+		const result = await executeBash("printf 'plain output\\n'", {
+			cwd: tempDir,
+			timeout: 5000,
+			sessionKey: "missed-gain",
+			onUnminimizedOutput,
+		});
+
+		expect(result.output).toBe("plain output\n");
+		expect(onUnminimizedOutput).toHaveBeenCalledTimes(1);
+		expect(onUnminimizedOutput).toHaveBeenCalledWith({
+			outputBytes: Buffer.byteLength("plain output\n"),
+			exitCode: 0,
+		});
+	});
+
 	it("kills spawned process on abort (not just orphans it)", async () => {
 		if (process.platform === "win32") return;
 
