@@ -522,6 +522,7 @@ fn compact_cat_output(ctx: &MinimizerCtx<'_>, input: &str) -> String {
 
 fn extract_single_path_arg(command: &str, program: &str) -> Option<String> {
 	let mut saw_program = false;
+	let mut path: Option<String> = None;
 	for raw in command.split_whitespace() {
 		let token = raw.trim_matches(|ch| ch == '\'' || ch == '"');
 		let normalized = token.rsplit('/').next().unwrap_or(token);
@@ -534,9 +535,12 @@ fn extract_single_path_arg(command: &str, program: &str) -> Option<String> {
 		if token.starts_with('-') {
 			continue;
 		}
-		return Some(token.to_string());
+		if path.is_some() {
+			return None;
+		}
+		path = Some(token.to_string());
 	}
-	None
+	path
 }
 
 fn summarize_manifest(path: &str, input: &str) -> Option<String> {
@@ -1499,6 +1503,23 @@ mod tests {
 		assert!(out.text.contains("use std::io;"));
 		assert!(out.text.contains("pub fn foo(x: i32) -> i32 { ... }"));
 		assert!(!out.text.contains("y * 2"));
+	}
+
+	#[test]
+	fn aggressive_multi_file_cat_preserves_combined_output() {
+		let cfg = aggressive_cfg();
+		let ctx = ctx_command("cat", "cat src/a.rs src/b.rs", &cfg);
+		let body = concat!(
+			"pub fn a() -> i32 {\n",
+			"    1\n",
+			"}\n",
+			"pub fn b() -> i32 {\n",
+			"    2\n",
+			"}\n",
+		);
+		let out = filter(&ctx, body, 0);
+		assert!(!out.changed, "multi-file cat output must remain verbatim");
+		assert_eq!(out.text, body);
 	}
 
 	#[test]
