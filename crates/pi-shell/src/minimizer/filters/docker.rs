@@ -424,11 +424,14 @@ fn is_log_command(ctx: &MinimizerCtx<'_>) -> bool {
 
 fn is_table_command(ctx: &MinimizerCtx<'_>) -> bool {
 	// Match `docker ps`, `docker images` (subcommand is argv[1])
-	// or `docker compose ps`, `docker compose images` (subcommand is "compose", action is argv[2])
+	// or `docker compose ps`, `docker compose images` (subcommand is "compose",
+	// action is argv[2])
 	match ctx.subcommand {
 		Some("ps" | "images") => true,
-		Some("compose") => ctx.command.split_whitespace().nth(2) == Some("ps")
-			|| ctx.command.split_whitespace().nth(2) == Some("images"),
+		Some("compose") => {
+			ctx.command.split_whitespace().nth(2) == Some("ps")
+				|| ctx.command.split_whitespace().nth(2) == Some("images")
+		},
 		_ => false,
 	}
 }
