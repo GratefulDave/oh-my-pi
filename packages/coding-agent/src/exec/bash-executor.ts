@@ -36,6 +36,7 @@ export interface BashExecutorOptions {
 		originalText: string,
 		info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
 	) => Promise<string | undefined>;
+	onUnminimizedOutput?: (info: { outputBytes: number; exitCode: number | null }) => Promise<void>;
 }
 export interface BashMinimizerSummary {
 	filter: string;
@@ -307,6 +308,19 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 					sink.push(`${sep}[raw output: artifact://${artifactId}]\n`);
 				}
 			}
+		}
+
+		const result = await sink.dump();
+		if (
+			minimizer &&
+			options?.onUnminimizedOutput &&
+			(!minimized || minimized.text === minimized.originalText) &&
+			result.totalBytes > 0
+		) {
+			await options.onUnminimizedOutput({
+				outputBytes: result.totalBytes,
+				exitCode: winner.result.exitCode ?? null,
+			});
 		}
 
 		// Normal completion

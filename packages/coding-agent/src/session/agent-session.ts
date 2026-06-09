@@ -206,7 +206,7 @@ import {
 	selectDiscoverableToolNamesByServer,
 } from "../tool-discovery/tool-index";
 import { assertEditableFile } from "../tools/auto-generated-guard";
-import { appendBashMinimizerGainRecord } from "../tools/bash-minimizer-gain";
+import { appendBashMinimizerGainRecord, inferBashMinimizerMissedFilter } from "../tools/bash-minimizer-gain";
 import type { CheckpointState } from "../tools/checkpoint";
 import { outputMeta } from "../tools/output-meta";
 import { normalizeLocalScheme, resolveToCwd } from "../tools/path-utils";
@@ -8545,13 +8545,17 @@ export class AgentSession {
 		}
 	}
 
-	async #saveBashMinimizedArtifactAndGain(
+	async #appendBashMinimizerGain(
 		command: string,
 		cwd: string,
-		originalText: string,
-		info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
-	): Promise<string | undefined> {
-		const artifactId = await this.#saveBashOriginalArtifact(originalText);
+		info: {
+			filter: string;
+			inputBytes: number;
+			outputBytes: number;
+			exitCode: number | null;
+			kind?: "saved" | "missed";
+		},
+	): Promise<void> {
 		try {
 			await appendBashMinimizerGainRecord({
 				command,
@@ -8561,11 +8565,22 @@ export class AgentSession {
 				inputBytes: info.inputBytes,
 				outputBytes: info.outputBytes,
 				exitCode: info.exitCode,
+				kind: info.kind,
 				agentDir: this.settings.getAgentDir(),
 			});
 		} catch (error) {
 			logger.warn("Failed to append bash minimizer gain record", { error });
 		}
+	}
+
+	async #saveBashMinimizedArtifactAndGain(
+		command: string,
+		cwd: string,
+		originalText: string,
+		info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
+	): Promise<string | undefined> {
+		const artifactId = await this.#saveBashOriginalArtifact(originalText);
+		await this.#appendBashMinimizerGain(command, cwd, info);
 		return artifactId;
 	}
 
@@ -8609,6 +8624,14 @@ export class AgentSession {
 				timeout: clampTimeout("bash") * 1000,
 				onMinimizedSave: (originalText, info) =>
 					this.#saveBashMinimizedArtifactAndGain(command, cwd, originalText, info),
+				onUnminimizedOutput: info =>
+					this.#appendBashMinimizerGain(command, cwd, {
+						filter: inferBashMinimizerMissedFilter(command),
+						inputBytes: info.outputBytes,
+						outputBytes: info.outputBytes,
+						exitCode: info.exitCode,
+						kind: "missed",
+					}),
 			});
 
 			await this.#appendBashMinimizerGain(command, cwd, result);
