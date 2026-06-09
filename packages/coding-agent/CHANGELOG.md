@@ -161,9 +161,20 @@
 - Fixed MCP OAuth fallback rendering to show a short terminal hyperlink and keep the raw authorization URL on one unwrapped copy line ([#2121](https://github.com/can1357/oh-my-pi/issues/2121)).
 - Fixed `omp` startup blocking 25–30 s on a single unresponsive MCP server when no cached tools were available for it. `MCPManager.connectServers` used to fall through to an unbounded `Promise.allSettled` over every still-pending server without a cached tool list, so one server stuck waiting on the per-request MCP timeout (`OMP_MCP_TIMEOUT_MS`, default 30 000 ms) gated the entire UI ready signal. Pending-without-cache servers are now left in flight: their tools surface via the existing background `#onToolsChanged` → `refreshMCPTools` path the moment the connect completes, and failures continue to log through the background catch handler ([#2100](https://github.com/can1357/oh-my-pi/issues/2100)).
 
+### Added
+
+- Added a `bash.enabled` setting to disable the model-facing bash tool while leaving user-initiated bang/RPC bash commands available.
+
 ### Fixed
 
 - Fixed bash minimizer gain recording so minimized command output appends fresh `minimizer-gain.jsonl` records again, restoring live `/gain` overlay updates.
+
+## [15.10.7] - 2026-06-08
+
+### Fixed
+
+- Fixed MCP OAuth fallback rendering to show a short terminal hyperlink and keep the raw authorization URL on one unwrapped copy line ([#2121](https://github.com/can1357/oh-my-pi/issues/2121)).
+- Fixed `omp` startup blocking 25–30 s on a single unresponsive MCP server when no cached tools were available for it. `MCPManager.connectServers` used to fall through to an unbounded `Promise.allSettled` over every still-pending server without a cached tool list, so one server stuck waiting on the per-request MCP timeout (`OMP_MCP_TIMEOUT_MS`, default 30 000 ms) gated the entire UI ready signal. Pending-without-cache servers are now left in flight: their tools surface via the existing background `#onToolsChanged` → `refreshMCPTools` path the moment the connect completes, and failures continue to log through the background catch handler ([#2100](https://github.com/can1357/oh-my-pi/issues/2100)).
 
 ## [15.10.6] - 2026-06-08
 
