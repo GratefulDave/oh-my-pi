@@ -444,13 +444,20 @@ fn is_docker_listing_command(ctx: &MinimizerCtx<'_>) -> bool {
 }
 
 fn is_compose_listing_action(command: &str) -> bool {
+	// Advance past the `compose` token, then find the first non-option token
+	// (the action).  Only that token decides whether this is a listing command.
+	// Scanning further tokens would misclassify service names: for example,
+	// `docker compose up ps` has action `up` and service name `ps`, and must
+	// NOT be routed through compact_table.
 	let mut tokens = command
 		.split_whitespace()
 		.skip_while(|token| *token != "compose");
 	if tokens.next() != Some("compose") {
 		return false;
 	}
-	tokens.any(|token| matches!(token, "ps" | "images"))
+	// Skip flags (anything starting with `-`) to find the compose action.
+	let action = tokens.find(|token| !token.starts_with('-'));
+	matches!(action, Some("ps" | "images"))
 }
 
 fn docker_listing_requests_table(command: &str) -> bool {
@@ -685,6 +692,26 @@ mod tests {
 		assert!(out.contains("20 rows"));
 		assert!(out.contains("svc-0"));
 		assert!(out.contains("… 8 more rows"));
+	}
+
+	#[test]
+	fn compose_up_with_service_named_ps_is_not_table_command() {
+		// `docker compose up ps` — action is `up`, `ps` is a service name.
+		// Must NOT be routed through compact_table.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		for cmd in &[
+			"docker compose up ps",
+			"docker compose up images",
+			"docker compose restart ps",
+		] {
+			let ctx = MinimizerCtx {
+				program:    "docker",
+				subcommand: Some("compose"),
+				command:    cmd,
+				config:     &cfg,
+			};
+			assert!(!is_table_command(&ctx), "`{cmd}` must not be classified as a table command");
+		}
 	}
 
 	#[test]
