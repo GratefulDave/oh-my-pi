@@ -1080,8 +1080,21 @@ fn is_remote_progress(line: &str) -> bool {
 }
 
 fn extract_pushed_ref(line: &str) -> Option<&str> {
-	let (_before, after_arrow) = line.split_once(" -> ")?;
-	after_arrow.split_whitespace().next()
+	if let Some((_before, after_arrow)) = line.split_once(" -> ") {
+		return after_arrow.split_whitespace().next();
+	}
+	let deleted = line.split_once("[deleted]")?.1.trim();
+	deleted.split_whitespace().next()
+}
+
+fn is_fetch_ref_update(line: &str) -> bool {
+	let Some((_before, after_arrow)) = line.split_once(" -> ") else {
+		return false;
+	};
+	after_arrow
+		.split_whitespace()
+		.next()
+		.is_some_and(|dest| dest != "FETCH_HEAD")
 }
 
 fn condense_push(input: &str, exit_code: i32) -> String {
@@ -1112,9 +1125,10 @@ fn condense_push(input: &str, exit_code: i32) -> String {
 				out.push('\n');
 				continue;
 			}
-			// Keep ref update lines: "* [new ...]", branch setup, or "hash..hash ref ->
-			// ref"
+			// Keep ref update lines: "* [new ...]", "- [deleted] ...", branch setup,
+			// or "hash..hash ref -> ref"
 			if trimmed.starts_with("* [new")
+				|| trimmed.starts_with("- [deleted]")
 				|| trimmed.starts_with("Branch ")
 				|| trimmed.contains(" -> ")
 			{
@@ -1248,17 +1262,17 @@ fn condense_fetch(input: &str, exit_code: i32) -> String {
 				kept.push(trimmed.to_string());
 				continue;
 			}
-			// Branch fetch lines: " * branch       name -> FETCH_HEAD" or "   hash..hash
-			// name -> name"
+			// Branch fetch lines: " * branch       name -> FETCH_HEAD", " * [new branch]
+			// name -> origin/name", or "   hash..hash name -> name"
 			if trimmed.starts_with('*') || trimmed.starts_with(" *") {
-				if trimmed.contains("..") {
+				if is_fetch_ref_update(trimmed) {
 					updates += 1;
 				}
 				kept.push(trimmed.to_string());
 				continue;
 			}
 			if trimmed.contains(" -> ") && (trimmed.starts_with('-') || trimmed.contains("..")) {
-				if trimmed.contains("..") {
+				if is_fetch_ref_update(trimmed) {
 					updates += 1;
 				}
 				kept.push(trimmed.to_string());
@@ -1320,13 +1334,15 @@ fn condense_stash(command: &str, input: &str, exit_code: i32) -> String {
 		if sub == "push" || sub == "save" {
 			return "ok stashed\n".to_string();
 		}
-		if sub == "apply"
-			|| sub == "pop"
-			|| sub == "drop"
-			|| sub == "branch"
-			|| sub == "clear"
-			|| sub == "create"
-		{
+		if sub == "apply" || sub == "pop" || sub == "branch" {
+			let compacted = condense_status(input);
+			return if compacted == input {
+				input.to_string()
+			} else {
+				compacted
+			};
+		}
+		if sub == "drop" || sub == "clear" || sub == "create" {
 			return format!("ok stash {sub}\n");
 		}
 		// Default: compact listing fallback
@@ -1571,6 +1587,51 @@ mod tests {
 			1,
 		);
 		assert_eq!(out.text, "remote: Counting objects: 1 (×2)\nerror: failed\n");
+	}
+
+	#[test]
+	fn fetch_output_counts_new_refs_as_updates() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("fetch"), "git fetch origin", &cfg);
+		let out = filter(
+			&ctx,
+			"From github.com:can1357/oh-my-pi\n * [new branch]      feature -> origin/feature\n",
+			0,
+		);
+		assert!(out.changed);
+		assert!(
+			out.text
+				.contains("* [new branch]      feature -> origin/feature")
+		);
+		assert!(out.text.contains("ok fetched, 1 update"));
+		assert!(!out.text.contains("up-to-date"));
+	}
+
+	#[test]
+	fn push_output_keeps_deleted_refs() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("push"), "git push origin --delete old-branch", &cfg);
+		let out =
+			filter(&ctx, "To github.com:can1357/oh-my-pi.git\n - [deleted]         old-branch\n", 0);
+		assert!(out.changed);
+		assert!(out.text.contains("- [deleted]         old-branch"));
+		assert!(out.text.contains("ok old-branch"));
+	}
+
+	#[test]
+	fn stash_apply_preserves_changed_paths() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("stash"), "git stash apply", &cfg);
+		let out = filter(
+			&ctx,
+			"On branch main\nChanges not staged for commit:\n  modified:   src/main.rs\n\nno changes \
+			 added to commit\n",
+			0,
+		);
+		assert!(out.changed);
+		assert!(out.text.contains("branch main"));
+		assert!(out.text.contains("M src/main.rs"));
+		assert!(!out.text.contains("ok stash apply"));
 	}
 
 	#[test]
@@ -2226,7 +2287,7 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		let ctx = test_ctx(Some("stash"), "git stash apply", &cfg);
 		let input = "On branch main\nnothing to commit, working tree clean\n";
 		let out = filter(&ctx, input, 0);
-		assert_eq!(out.text, "ok stash apply\n");
+		assert_eq!(out.text, "branch main\nclean\n");
 	}
 
 	#[test]
@@ -2235,7 +2296,7 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		let ctx = test_ctx(Some("stash"), "git stash pop", &cfg);
 		let input = "Dropped refs/stash@{0} (abc1234...)\n";
 		let out = filter(&ctx, input, 0);
-		assert_eq!(out.text, "ok stash pop\n");
+		assert_eq!(out.text, input);
 	}
 
 	#[test]
@@ -2253,7 +2314,7 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		let ctx = test_ctx(Some("stash"), "git stash branch new-branch", &cfg);
 		let input = "Switched to a new branch 'new-branch'\nDropped refs/stash@{0}\n";
 		let out = filter(&ctx, input, 0);
-		assert_eq!(out.text, "ok stash branch\n");
+		assert_eq!(out.text, input);
 	}
 
 	#[test]
