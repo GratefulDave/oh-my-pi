@@ -2398,7 +2398,8 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		// silently swallow the error into a zero-entry commit listing.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("log"), "git log --oneline badref", &cfg);
-		let input = "fatal: ambiguous argument 'badref': unknown revision or path not in the working tree.\nfatal: bad default revision 'HEAD'\n";
+		let input = "fatal: ambiguous argument 'badref': unknown revision or path not in the \
+		             working tree.\nfatal: bad default revision 'HEAD'\n";
 
 		let out = filter(&ctx, input, 128);
 
@@ -2415,9 +2416,9 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("log"), "git log -5", &cfg);
 		let input = "\
-commit abcdef1234567890\nAuthor: A <a@x.com>\nDate: today\n    feat: first\n\
-commit 1111111111111111\nAuthor: A <a@x.com>\nDate: today\n    fix: second\n\
-commit 2222222222222222\nAuthor: A <a@x.com>\nDate: today\n    chore: third\n";
+commit abcdef1234567890\nAuthor: A <a@x.com>\nDate: today\n    feat: first\ncommit \
+		             1111111111111111\nAuthor: A <a@x.com>\nDate: today\n    fix: second\ncommit \
+		             2222222222222222\nAuthor: A <a@x.com>\nDate: today\n    chore: third\n";
 
 		let out = filter(&ctx, input, 0);
 
@@ -2438,9 +2439,8 @@ commit 2222222222222222\nAuthor: A <a@x.com>\nDate: today\n    chore: third\n";
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("merge"), "git merge feat/x", &cfg);
 		let input = "\
-Auto-merging src/lib.rs\n\
-CONFLICT (content): Merge conflict in src/lib.rs\n\
-Automatic merge failed; fix conflicts and then commit the result.\n";
+Auto-merging src/lib.rs\nCONFLICT (content): Merge conflict in src/lib.rs\nAutomatic merge failed; \
+		             fix conflicts and then commit the result.\n";
 
 		let out = filter(&ctx, input, 1);
 
@@ -2454,10 +2454,9 @@ Automatic merge failed; fix conflicts and then commit the result.\n";
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("rebase"), "git rebase main", &cfg);
 		let input = "\
-error: could not apply abc1234... fix: something\n\
-hint: Resolve all conflicts manually, mark them as resolved with\n\
-hint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\".\n\
-CONFLICT (content): Merge conflict in src/config.rs\n";
+error: could not apply abc1234... fix: something\nhint: Resolve all conflicts manually, mark them \
+		             as resolved with\nhint: \"git add/rm <conflicted_files>\", then run \"git \
+		             rebase --continue\".\nCONFLICT (content): Merge conflict in src/config.rs\n";
 
 		let out = filter(&ctx, input, 1);
 
@@ -2474,7 +2473,8 @@ CONFLICT (content): Merge conflict in src/config.rs\n";
 		// sequence; the minimizer must not touch it.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("push"), "git push --porcelain origin main", &cfg);
-		let input = "To github.com:user/repo.git\n=\trefs/heads/main:refs/heads/main\t[up to date]\nDone\n";
+		let input =
+			"To github.com:user/repo.git\n=\trefs/heads/main:refs/heads/main\t[up to date]\nDone\n";
 
 		let out = filter(&ctx, input, 0);
 

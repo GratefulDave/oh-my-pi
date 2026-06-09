@@ -37,7 +37,13 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 	let text = match ctx.program {
 		"aws" => filter_aws(ctx, &cleaned, exit_code),
 		"curl" | "wget" => filter_http_transfer(ctx, &cleaned, exit_code),
-		"psql" => filter_psql(&cleaned, exit_code),
+		"psql" => {
+			if is_psql_machine_readable(ctx.command) {
+				cleaned
+			} else {
+				filter_psql(&cleaned, exit_code)
+			}
+		},
 		_ => head_tail_dedup(&cleaned, 80, 40),
 	};
 
@@ -850,6 +856,14 @@ fn http_transfer_suppresses_progress(ctx: &MinimizerCtx<'_>) -> bool {
 			},
 			_ => false,
 		})
+}
+
+/// Returns `true` when the psql invocation requests machine-readable
+/// (unaligned, tuples-only, or CSV) output that must not be truncated.
+fn is_psql_machine_readable(command: &str) -> bool {
+	command
+		.split_whitespace()
+		.any(|t| matches!(t, "-A" | "--no-align" | "-t" | "--tuples-only" | "--csv"))
 }
 
 fn filter_psql(input: &str, exit_code: i32) -> String {

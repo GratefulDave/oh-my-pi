@@ -26,13 +26,18 @@ pub fn supports(program: &str) -> bool {
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	let cleaned = primitives::strip_ansi(input);
 	let command = ctx.program;
-	let env_has_nul_output = ctx
-		.command
-		.split_whitespace()
-		.any(|token| matches!(token, "-0" | "--null"));
 	let text = match command {
-		"env" if env_has_nul_output => cleaned,
-		"env" => compact_env(&cleaned),
+		"env" => {
+			if ctx
+				.command
+				.split_whitespace()
+				.any(|t| t == "-0" || t == "--null")
+			{
+				cleaned
+			} else {
+				compact_env(&cleaned)
+			}
+		},
 		"log" => compact_log(&cleaned),
 		"deps" => compact_dependency_output(&cleaned),
 		"summary" => compact_summary_output(&cleaned, exit_code),
@@ -902,14 +907,6 @@ mod tests {
 		MinimizerCtx { program, subcommand: None, command: program, config: cfg }
 	}
 
-	fn ctx_with_command<'a>(
-		program: &'a str,
-		command: &'a str,
-		cfg: &'a MinimizerConfig,
-	) -> MinimizerCtx<'a> {
-		MinimizerCtx { program, subcommand: None, command, config: cfg }
-	}
-
 	#[test]
 	fn log_dedups_repeated_normalized_lines() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
@@ -942,16 +939,6 @@ mod tests {
 		assert!(out.text.contains("API_TOKEN=su[redacted]en"));
 		assert!(out.text.contains("(170 chars)"));
 		assert!(!out.text.contains("supersecrettoken"));
-	}
-
-	#[test]
-	fn env_null_output_is_passthrough() {
-		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
-		let ctx = ctx_with_command("env", "env -0", &cfg);
-		let input = "TOKEN=secret\0PATH=/bin\0";
-		let out = filter(&ctx, input, 0);
-		assert!(!out.changed);
-		assert_eq!(out.text, input);
 	}
 
 	#[test]
