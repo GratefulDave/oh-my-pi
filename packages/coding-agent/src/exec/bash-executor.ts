@@ -4,8 +4,6 @@
  * Uses brush-core via native bindings for shell execution.
  */
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
-import * as path from "node:path";
 import { ExponentialYield } from "@oh-my-pi/pi-agent-core/utils/yield";
 import { executeShell, type MinimizerOptions, Shell, type ShellRunResult } from "@oh-my-pi/pi-natives";
 import { Settings, type ShellMinimizerSettings } from "../config/settings";
@@ -36,7 +34,7 @@ export interface BashExecutorOptions {
 	 */
 	onMinimizedSave?: (
 		originalText: string,
-		info: { filter: string; inputBytes: number; outputBytes: number },
+		info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
 	) => Promise<string | undefined>;
 }
 export interface BashMinimizerSummary {
@@ -95,29 +93,15 @@ async function resolveShellCwd(cwd: string | undefined): Promise<string | undefi
 }
 
 /** Translate `ShellMinimizerSettings` into native `MinimizerOptions`, or `undefined` when disabled. */
-export async function buildMinimizerOptions(group: ShellMinimizerSettings): Promise<MinimizerOptions | undefined> {
+export function buildMinimizerOptions(group: ShellMinimizerSettings): MinimizerOptions | undefined {
 	if (!group.enabled) return undefined;
-	const settingsPath = group.settingsPath || undefined;
 	return {
 		enabled: true,
-		settingsPath,
-		settingsHash: settingsPath ? await hashMinimizerSettings(settingsPath) : undefined,
+		settingsPath: group.settingsPath || undefined,
 		only: group.only.length > 0 ? group.only : undefined,
 		except: group.except.length > 0 ? group.except : undefined,
 		maxCaptureBytes: group.maxCaptureBytes,
-		sourceOutlineLevel: group.sourceOutlineLevel || undefined,
-		legacyFilters: group.legacyFilters,
 	};
-}
-
-async function hashMinimizerSettings(settingsPath: string): Promise<string | undefined> {
-	try {
-		const expanded = settingsPath.startsWith("~/") ? path.join(os.homedir(), settingsPath.slice(2)) : settingsPath;
-		const bytes = await Bun.file(expanded).bytes();
-		return Bun.hash.xxHash64(bytes, 0n).toString(16).padStart(16, "0");
-	} catch {
-		return undefined;
-	}
 }
 
 export async function executeBash(command: string, options?: BashExecutorOptions): Promise<BashResult> {
@@ -125,7 +109,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 	const { shell, env: shellEnv, prefix } = settings.getShellConfig();
 	const snapshotPath = shell.includes("bash") ? await getOrCreateSnapshot(shell, shellEnv) : null;
 
-	const minimizer = await buildMinimizerOptions(settings.getGroup("shellMinimizer"));
+	const minimizer = buildMinimizerOptions(settings.getGroup("shellMinimizer"));
 
 	const commandCwd = await resolveShellCwd(options?.cwd);
 	const commandEnv = options?.env ? { ...NON_INTERACTIVE_ENV, ...options.env } : NON_INTERACTIVE_ENV;
@@ -311,6 +295,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 						filter: minimized.filter,
 						inputBytes: minimized.inputBytes,
 						outputBytes: minimized.outputBytes,
+						exitCode: winner.result.exitCode ?? null,
 					}
 				: undefined;
 		if (minimizedSummary && minimized) {
