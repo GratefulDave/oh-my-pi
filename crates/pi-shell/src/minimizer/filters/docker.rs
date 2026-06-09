@@ -411,15 +411,17 @@ fn is_log_command(ctx: &MinimizerCtx<'_>) -> bool {
 		return true;
 	}
 	// `docker compose logs <service>` — the action is `logs` but subcommand
-	// resolves to `compose`.  Walk from the `compose` token to find the
-	// sub-sub-command rather than scanning the whole command (which would
-	// catch `docker build -t logs .`).
+	// resolves to `compose`.  Find the first non-option token after `compose`
+	// (the action) and check only that.  Scanning further tokens would
+	// misclassify service names or command args: for example,
+	// `docker compose exec logs cat file` has action `exec` and service name
+	// `logs`, and must NOT be routed through log dedup/truncation.
 	if ctx.subcommand == Some("compose") {
 		let mut tokens = ctx.command.split_whitespace();
 		while let Some(tok) = tokens.next() {
 			if tok == "compose" {
-				return tokens.by_ref().find(|t| !t.starts_with('-')) == Some("logs")
-					|| tokens.by_ref().any(|t| t == "logs");
+				let action = tokens.by_ref().find(|t| !t.starts_with('-'));
+				return action == Some("logs");
 			}
 		}
 	}
@@ -666,6 +668,26 @@ mod tests {
 		let input = "api-1  | ready\napi-2  | ready\napi | ready\n";
 		let out = filter(&compose_ctx, input, 0).text;
 		assert!(out.contains("api-1  | ready (×3)"));
+	}
+
+	#[test]
+	fn compose_exec_with_service_named_logs_is_not_log_command() {
+		// `docker compose exec logs cat file` — action is `exec`, `logs` is a
+		// service name.  Must NOT be routed through log dedup/truncation.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		for cmd in &[
+			"docker compose exec logs cat /etc/hosts",
+			"docker compose run logs bash",
+			"docker compose restart logs",
+		] {
+			let ctx = MinimizerCtx {
+				program:    "docker",
+				subcommand: Some("compose"),
+				command:    cmd,
+				config:     &cfg,
+			};
+			assert!(!is_log_command(&ctx), "`{cmd}` must not be classified as a log command");
+		}
 	}
 
 	#[test]
