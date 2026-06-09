@@ -733,7 +733,11 @@ mod tests {
 		let out = filter(&ctx, input, 101);
 
 		// Failure evidence must survive.
-		assert!(out.text.contains("thread 'bad_parse' panicked"), "panic line must survive: {:?}", out.text);
+		assert!(
+			out.text.contains("thread 'bad_parse' panicked"),
+			"panic line must survive: {:?}",
+			out.text
+		);
 		assert!(out.text.contains("failures:\n"), "failures block must survive: {:?}", out.text);
 		assert!(out.text.contains("bad_parse"), "failing test name must survive: {:?}", out.text);
 		assert!(out.text.contains("test result: FAILED"), "result line must survive: {:?}", out.text);
@@ -802,7 +806,12 @@ mod tests {
 
 		let out = filter(&ctx, input, 1);
 
-		// Must not emit a clean "cargo test: N passed" summary because exit was non-zero.
-		assert!(!out.text.starts_with("cargo test:"), "must not fabricate a pass summary on non-zero exit: {:?}", out.text);
+		// Must not emit a clean "cargo test: N passed" summary because exit was
+		// non-zero.
+		assert!(
+			!out.text.starts_with("cargo test:"),
+			"must not fabricate a pass summary on non-zero exit: {:?}",
+			out.text
+		);
 	}
 }

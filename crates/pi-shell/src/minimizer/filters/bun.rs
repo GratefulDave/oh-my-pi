@@ -608,9 +608,17 @@ mod tests {
 
 		let out = filter(&bun_ctx, input, 1);
 
-		assert!(!out.text.contains("✓ auth.test.ts > login"), "passing lines must be stripped: {:?}", out.text);
+		assert!(
+			!out.text.contains("✓ auth.test.ts > login"),
+			"passing lines must be stripped: {:?}",
+			out.text
+		);
 		assert!(out.text.contains("FAIL auth.test.ts"), "FAIL line must survive: {:?}", out.text);
-		assert!(out.text.contains("Error: expected status 409"), "error body must survive: {:?}", out.text);
+		assert!(
+			out.text.contains("Error: expected status 409"),
+			"error body must survive: {:?}",
+			out.text
+		);
 		assert!(out.text.contains("Tests 1 failed"), "summary line must survive: {:?}", out.text);
 		assert!(out.text.contains("2 passed"), "passed count must survive: {:?}", out.text);
 	}
@@ -628,10 +636,21 @@ mod tests {
 
 		let out = filter(&bun_ctx, input, 0);
 
-		assert!(!out.text.contains("✓ foo.test.ts"), "passing lines must be stripped: {:?}", out.text);
-		assert!(!out.text.contains("✓ bar.test.ts"), "passing lines must be stripped: {:?}", out.text);
+		assert!(
+			!out.text.contains("✓ foo.test.ts"),
+			"passing lines must be stripped: {:?}",
+			out.text
+		);
+		assert!(
+			!out.text.contains("✓ bar.test.ts"),
+			"passing lines must be stripped: {:?}",
+			out.text
+		);
 		// Summary or some indication of passing must survive.
-		assert!(out.text.contains("passed") || !out.changed, "summary must survive or output unchanged");
+		assert!(
+			out.text.contains("passed") || !out.changed,
+			"summary must survive or output unchanged"
+		);
 	}
 
 	// --- bun check failure — diagnostic lines survive, noise stripped ---
@@ -649,7 +668,8 @@ mod tests {
 			"@oh-my-pi/pi-utils check: $ tsgo -p tsconfig.json --noEmit\n",
 			"@oh-my-pi/pi-utils check: Exited with code 0\n",
 			"@oh-my-pi/pi-coding-agent check: $ tsgo -p tsconfig.json --noEmit\n",
-			"src/tools/bash.ts(42,7): error TS2322: Type 'string' is not assignable to type 'number'.\n",
+			"src/tools/bash.ts(42,7): error TS2322: Type 'string' is not assignable to type \
+			 'number'.\n",
 			"@oh-my-pi/pi-coding-agent check: Exited with code 1\n",
 		);
 
@@ -657,10 +677,22 @@ mod tests {
 
 		assert!(out.text.contains("failed"), "failed verdict must appear: {:?}", out.text);
 		assert!(out.text.contains("error TS2322"), "diagnostic must survive: {:?}", out.text);
-		assert!(!out.text.contains("tsgo -p"), "internal command lines must be stripped: {:?}", out.text);
+		assert!(
+			!out.text.contains("tsgo -p"),
+			"internal command lines must be stripped: {:?}",
+			out.text
+		);
 		// Nonzero exit lines are preserved as evidence (code 0 exits are stripped).
-		assert!(out.text.contains("Exited with code 1"), "nonzero exit line must survive as evidence: {:?}", out.text);
-		assert!(!out.text.contains("Exited with code 0"), "zero exit noise must be stripped: {:?}", out.text);
+		assert!(
+			out.text.contains("Exited with code 1"),
+			"nonzero exit line must survive as evidence: {:?}",
+			out.text
+		);
+		assert!(
+			!out.text.contains("Exited with code 0"),
+			"zero exit noise must be stripped: {:?}",
+			out.text
+		);
 	}
 
 	#[test]
@@ -684,8 +716,20 @@ mod tests {
 
 		assert!(out.changed, "clean check must be compacted");
 		assert!(out.text.contains("passed"), "passed verdict must appear: {:?}", out.text);
-		assert!(!out.text.contains("No fixes applied"), "biome noise must be stripped: {:?}", out.text);
-		assert!(!out.text.contains("tsgo -p"), "internal command lines must be stripped: {:?}", out.text);
-		assert!(!out.text.contains("Exited with code"), "exit noise must be stripped: {:?}", out.text);
+		assert!(
+			!out.text.contains("No fixes applied"),
+			"biome noise must be stripped: {:?}",
+			out.text
+		);
+		assert!(
+			!out.text.contains("tsgo -p"),
+			"internal command lines must be stripped: {:?}",
+			out.text
+		);
+		assert!(
+			!out.text.contains("Exited with code"),
+			"exit noise must be stripped: {:?}",
+			out.text
+		);
 	}
 }
