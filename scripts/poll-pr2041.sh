@@ -40,7 +40,7 @@ if ! command -v gh &>/dev/null; then
 fi
 
 # Ensure we're authenticated
-gh auth status &>/dev/null || { echo "ERROR: not authenticated with gh. Run: gh auth login" >&2; exit 1; }
+gh api user &>/dev/null || { echo "ERROR: not authenticated with gh. Run: gh auth login" >&2; exit 1; }
 
 log "=== PR #$PR_NUMBER poller starting (interval=${INTERVAL}s) ==="
 log "Repo: $REPO_DIR | Branch: $PR_BRANCH | Log: $LOG_FILE"
