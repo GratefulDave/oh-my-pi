@@ -146,6 +146,10 @@
 
 - Fixed a turn-ending provider error (e.g. a 502 whose body is the proxy's full HTML page) flooding the transcript: `AnthropicApiError` folds the entire response body into `errorMessage`, and the inline transcript render reprinted it verbatim — every embedded blank line included — leaving a tall mostly-empty block ending in `</html>`. The inline error now drops blank lines, clamps to 8 lines, and width-truncates each line via `getPreviewLines`, matching the pinned error banner.
 
+### Fixed
+
+- Fixed native bash minimizer gain tracking so minimized shell runs once again append live `minimizer-gain.jsonl` records with command, cwd, exit code, and byte savings. The `/gain` overlay in `pi-minimizer-gain` now updates in real time again because its 1 s poll loop has fresh records to read.
+
 ## [15.10.7] - 2026-06-08
 
 ### Fixed

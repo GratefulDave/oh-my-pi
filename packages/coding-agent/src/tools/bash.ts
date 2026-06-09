@@ -26,6 +26,7 @@ import { truncateForPrompt } from "./approval";
 import { applyBashFixups } from "./bash-command-fixup";
 import { type BashInteractiveResult, runInteractiveBashPty } from "./bash-interactive";
 import { checkBashInterception } from "./bash-interceptor";
+import { appendBashMinimizerGainRecord } from "./bash-minimizer-gain";
 import { canUseInteractiveBashPty } from "./bash-pty-selection";
 import { expandInternalUrls, type InternalUrlExpansionOptions } from "./bash-skill-urls";
 import { invalidateGithubCacheForBashCommand } from "./gh-cache-invalidation";
@@ -97,6 +98,28 @@ async function saveBashOriginalArtifact(session: ToolSession, originalText: stri
 		return alloc.id;
 	} catch {
 		return undefined;
+	}
+}
+async function appendBashMinimizerGain(
+	session: ToolSession,
+	command: string,
+	cwd: string,
+	result: BashResult,
+): Promise<void> {
+	if (!result.minimized) return;
+	try {
+		await appendBashMinimizerGainRecord({
+			command,
+			cwd,
+			sessionCwd: session.cwd,
+			filter: result.minimized.filter,
+			inputBytes: result.minimized.inputBytes,
+			outputBytes: result.minimized.outputBytes,
+			exitCode: result.exitCode ?? null,
+			agentDir: session.settings.getAgentDir(),
+		});
+	} catch (error) {
+		logger.warn("Failed to append bash minimizer gain record", { error });
 	}
 }
 
@@ -559,6 +582,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 						},
 						onMinimizedSave: originalText => saveBashOriginalArtifact(this.session, originalText),
 					});
+					await appendBashMinimizerGain(this.session, options.command, options.commandCwd, result);
 					const wallTimeMs = performance.now() - wallTimeStart;
 					const finalResult = this.#buildCompletedResult(result, options.timeoutSec, {
 						requestedTimeoutSec: options.requestedTimeoutSec,
@@ -1047,6 +1071,9 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					onChunk: streamTailUpdates(tailBuffer, onUpdate),
 					onMinimizedSave: originalText => saveBashOriginalArtifact(this.session, originalText),
 				});
+		if (!isInteractiveResult(result)) {
+			await appendBashMinimizerGain(this.session, command, commandCwd, result);
+		}
 		const wallTimeMs = performance.now() - wallTimeStart;
 		if (result.cancelled) {
 			const out = normalizeResultOutput(result);
