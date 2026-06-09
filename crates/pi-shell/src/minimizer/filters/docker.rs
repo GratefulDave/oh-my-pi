@@ -406,6 +406,24 @@ fn filter_helm(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
 	}
 }
 
+/// Returns `true` when `tok` is a known docker-compose option that consumes
+/// the next token as its value (i.e. is space-separated, not `--flag=value`).
+fn compose_option_consumes_next(tok: &str) -> bool {
+	matches!(
+		tok,
+		"--ansi"
+			| "--env-file"
+			| "--file"
+			| "-f" | "--parallel"
+			| "--profile"
+			| "--progress"
+			| "--project-directory"
+			| "--project-name"
+			| "--workdir"
+			| "-w"
+	)
+}
+
 fn is_log_command(ctx: &MinimizerCtx<'_>) -> bool {
 	if ctx.subcommand == Some("logs") {
 		return true;
@@ -420,8 +438,20 @@ fn is_log_command(ctx: &MinimizerCtx<'_>) -> bool {
 		let mut tokens = ctx.command.split_whitespace();
 		while let Some(tok) = tokens.next() {
 			if tok == "compose" {
-				let action = tokens.by_ref().find(|t| !t.starts_with('-'));
-				return action == Some("logs");
+				loop {
+					match tokens.next() {
+						None => return false,
+						Some(tok)
+							if tok.starts_with('-')
+								&& !tok.contains('=')
+								&& compose_option_consumes_next(tok) =>
+						{
+							tokens.next(); // skip value
+						},
+						Some(tok) if tok.starts_with('-') => {}, // skip boolean flag
+						Some(tok) => return tok == "logs",
+					}
+				}
 			}
 		}
 	}
@@ -457,9 +487,18 @@ fn is_compose_listing_action(command: &str) -> bool {
 	if tokens.next() != Some("compose") {
 		return false;
 	}
-	// Skip flags (anything starting with `-`) to find the compose action.
-	let action = tokens.find(|token| !token.starts_with('-'));
-	matches!(action, Some("ps" | "images"))
+	loop {
+		match tokens.next() {
+			None => return false,
+			Some(tok)
+				if tok.starts_with('-') && !tok.contains('=') && compose_option_consumes_next(tok) =>
+			{
+				tokens.next(); // skip value
+			},
+			Some(tok) if tok.starts_with('-') => {}, // skip boolean flag
+			Some(tok) => return matches!(tok, "ps" | "images"),
+		}
+	}
 }
 
 fn docker_listing_requests_table(command: &str) -> bool {
@@ -671,6 +710,18 @@ mod tests {
 	}
 
 	#[test]
+	fn docker_compose_logs_skips_option_values() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "docker",
+			subcommand: Some("compose"),
+			command:    "docker compose --profile ps logs api",
+			config:     &cfg,
+		};
+		assert!(is_log_command(&ctx));
+	}
+
+	#[test]
 	fn compose_exec_with_service_named_logs_is_not_log_command() {
 		// `docker compose exec logs cat file` — action is `exec`, `logs` is a
 		// service name.  Must NOT be routed through log dedup/truncation.
@@ -714,6 +765,18 @@ mod tests {
 		assert!(out.contains("20 rows"));
 		assert!(out.contains("svc-0"));
 		assert!(out.contains("… 8 more rows"));
+	}
+
+	#[test]
+	fn docker_compose_ps_skips_option_values() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "docker",
+			subcommand: Some("compose"),
+			command:    "docker compose --profile logs ps",
+			config:     &cfg,
+		};
+		assert!(is_table_command(&ctx));
 	}
 
 	#[test]

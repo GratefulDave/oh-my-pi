@@ -74,7 +74,23 @@ fn is_s3_ls(command: &str) -> bool {
 	false
 }
 
+/// Returns `true` when an AWS CLI invocation streams object content to
+/// stdout (`-` as the destination), e.g. `aws s3 cp s3://bucket/key -`.
+/// In that mode the captured text is the object body, not CLI progress,
+/// so `strip_transfer_progress` must not run.
+fn is_aws_stdout_pipe(command: &str) -> bool {
+	command
+		.split_whitespace()
+		.filter(|token| *token == "-" || !token.starts_with('-'))
+		.last()
+		.is_some_and(|token| token == "-")
+}
+
 fn filter_aws(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
+	if is_aws_stdout_pipe(ctx.command) {
+		return input.to_string();
+	}
+
 	let without_progress = strip_transfer_progress(input);
 	// Only the `ls` listing form should be reshaped into a bucket/date table;
 	// `aws s3 cp`/`sync`/`rm` emit progress/result lines (`upload: ... to
@@ -1350,6 +1366,15 @@ mod tests {
 		}
 		let out = filter(&ctx, &input, 0);
 		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn aws_s3_cp_to_stdout_preserves_body() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 cp s3://bucket/file.json -", &cfg);
+		let input = "{\"key\": \"value\", \"% Total\": 100}\n";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed, "stdout pipe body must not be rewritten: {:?}", out.text);
 	}
 
 	#[test]
