@@ -40,6 +40,15 @@ pub fn supports(subcommand: Option<&str>) -> bool {
 }
 
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
+	if exit_code == 0
+		&& (command_contains_any(ctx.command, &["--json"])
+			|| ctx.program == "uv"
+				&& matches!(ctx.subcommand, Some("pip"))
+				&& command_contains_any(ctx.command, &["freeze"]))
+	{
+		return MinimizerOutput::passthrough(input);
+	}
+
 	let cleaned = primitives::strip_ansi(input);
 	let text = if exit_code == 0 && is_package_lock_command(ctx) {
 		compact_package_lock_output(ctx, &cleaned)
@@ -48,7 +57,10 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		let deduped = primitives::dedup_consecutive_lines(&stripped);
 		if contains_audit_or_security_summary(&deduped) {
 			deduped
-		} else if exit_code == 0 && (is_package_tree_command(ctx) || is_package_export_command(ctx)) {
+		} else if exit_code == 0
+			&& (is_package_tree_command(ctx) || is_package_export_command(ctx))
+			&& !command_contains_any(ctx.command, &["--json"])
+		{
 			compact_package_tree_output(&deduped)
 		} else {
 			let cap = if exit_code == 0 {
@@ -103,7 +115,7 @@ fn is_package_tree_command(ctx: &MinimizerCtx<'_>) -> bool {
 		"uv" => {
 			matches!(ctx.subcommand, Some("list" | "ls" | "tree"))
 				|| matches!(ctx.subcommand, Some("pip"))
-					&& command_contains_any(ctx.command, &["list", "ls", "tree", "freeze"])
+					&& command_contains_any(ctx.command, &["list", "ls", "tree"])
 		},
 		"poetry" => {
 			matches!(ctx.subcommand, Some("tree"))
@@ -551,52 +563,45 @@ mod tests {
 	}
 
 	#[test]
-	fn compacts_npm_json_dependency_tree() {
+	fn passes_through_npm_json_dependency_tree() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("npm", Some("ls"), "npm ls --json", &cfg);
 		let input = r#"{"name":"app","version":"1.0.0","dependencies":{"react":{"version":"19.0.0","dependencies":{"scheduler":{"version":"0.25.0"}}},"zod":{"version":"4.0.0"}}}"#;
 		let out = filter(&context, input, 0);
-		assert!(out.text.starts_with("package tree/list: 4 entries\n"));
-		assert!(out.text.contains("app 1.0.0"));
-		assert!(out.text.contains("react 19.0.0"));
-		assert!(out.text.contains("scheduler 0.25.0"));
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
 	}
 
 	#[test]
-	fn compacts_pnpm_why_json_output() {
+	fn passes_through_pnpm_why_json_output() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("pnpm", Some("why"), "pnpm why react --json", &cfg);
 		let input = r#"[{"name":"react","version":"19.0.0","dependents":[{"name":"app","version":"1.0.0"},{"name":"docs","version":"1.0.0"}]}]"#;
 		let out = filter(&context, input, 0);
-		assert!(out.text.starts_with("package tree/list: 3 entries\n"));
-		assert!(out.text.contains("react 19.0.0"));
-		assert!(out.text.contains("app 1.0.0"));
-		assert!(out.text.contains("docs 1.0.0"));
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
 	}
 
 	#[test]
-	fn compacts_yarn_why_ndjson_output() {
+	fn passes_through_yarn_why_ndjson_output() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("yarn", Some("why"), "yarn why react --json", &cfg);
 		let input = "{\"type\":\"info\",\"data\":\"=> Found \
 		             \\\"react@npm:19.0.0\\\"\"}\n{\"type\":\"tree\",\"data\":\"react@npm:19.0.0\\\
 		             n└─ app@workspace:.\"}\n";
 		let out = filter(&context, input, 0);
-		assert!(out.text.starts_with("package tree/list: 3 entries\n"));
-		assert!(out.text.contains("=> Found \"react@npm:19.0.0\""));
-		assert!(out.text.contains("react@npm:19.0.0"));
-		assert!(out.text.contains("└─ app@workspace:."));
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
 	}
 
 	#[test]
-	fn compacts_npm_explain_json_output() {
+	fn passes_through_npm_explain_json_output() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("npm", Some("explain"), "npm explain react --json", &cfg);
 		let input = r#"{"name":"react","version":"19.0.0","dependents":[{"name":"app","version":"1.0.0","location":"."}]}"#;
 		let out = filter(&context, input, 0);
-		assert!(out.text.starts_with("package tree/list: 2 entries\n"));
-		assert!(out.text.contains("react 19.0.0"));
-		assert!(out.text.contains("app 1.0.0"));
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
 	}
 
 	#[test]
@@ -653,7 +658,7 @@ mod tests {
 	}
 
 	#[test]
-	fn compacts_uv_pip_freeze_output() {
+	fn passes_through_uv_pip_freeze_output() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("uv", Some("pip"), "uv pip freeze", &cfg);
 		let mut input = String::new();
@@ -662,9 +667,10 @@ mod tests {
 		}
 
 		let out = filter(&context, &input, 0);
-		assert!(out.text.starts_with("package tree/list: 90 entries\n"));
-		assert!(out.text.contains("pkg000==1.0.0"));
-		assert!(out.text.contains("… 10 package entries omitted …"));
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+		assert!(out.text.contains("pkg089==1.0.89"));
+		assert!(!out.text.starts_with("package tree/list:"));
 	}
 
 	#[test]
