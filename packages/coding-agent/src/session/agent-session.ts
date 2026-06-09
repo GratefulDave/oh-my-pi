@@ -8545,6 +8545,30 @@ export class AgentSession {
 		}
 	}
 
+	async #saveBashMinimizedArtifactAndGain(
+		command: string,
+		cwd: string,
+		originalText: string,
+		info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
+	): Promise<string | undefined> {
+		const artifactId = await this.#saveBashOriginalArtifact(originalText);
+		try {
+			await appendBashMinimizerGainRecord({
+				command,
+				cwd,
+				sessionCwd: this.sessionManager.getCwd(),
+				filter: info.filter,
+				inputBytes: info.inputBytes,
+				outputBytes: info.outputBytes,
+				exitCode: info.exitCode,
+				agentDir: this.settings.getAgentDir(),
+			});
+		} catch (error) {
+			logger.warn("Failed to append bash minimizer gain record", { error });
+		}
+		return artifactId;
+	}
+
 	/**
 	 * Execute a bash command.
 	 * Adds result to agent context and session.
@@ -8583,7 +8607,8 @@ export class AgentSession {
 				signal: abortController.signal,
 				sessionKey: this.sessionId,
 				timeout: clampTimeout("bash") * 1000,
-				onMinimizedSave: originalText => this.#saveBashOriginalArtifact(originalText),
+				onMinimizedSave: (originalText, info) =>
+					this.#saveBashMinimizedArtifactAndGain(command, cwd, originalText, info),
 			});
 
 			await this.#appendBashMinimizerGain(command, cwd, result);

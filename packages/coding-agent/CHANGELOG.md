@@ -183,6 +183,10 @@
 - Removed unreachable standalone Exa tool-suite exports and stale tool-count barrel exposure while keeping the live Exa `web_search` provider helpers ([#2093](https://github.com/can1357/oh-my-pi/issues/2093)).
 - Fixed `omp commit` split plans accepting hunk selectors that resolve to no parsed hunks, which crashed the apply step after the index reset and left the working tree fully unstaged ([#2098](https://github.com/can1357/oh-my-pi/issues/2098)).
 
+### Fixed
+
+- Fixed bash minimizer gain recording so minimized command output appends fresh `minimizer-gain.jsonl` records again, restoring live `/gain` overlay updates.
+
 ## [15.10.5] - 2026-06-08
 
 ### Added
