@@ -205,6 +205,7 @@ import {
 	selectDiscoverableToolNamesByServer,
 } from "../tool-discovery/tool-index";
 import { assertEditableFile } from "../tools/auto-generated-guard";
+import { appendBashMinimizerGainRecord } from "../tools/bash-minimizer-gain";
 import type { CheckpointState } from "../tools/checkpoint";
 import { outputMeta } from "../tools/output-meta";
 import { normalizeLocalScheme, resolveToCwd } from "../tools/path-utils";
@@ -8492,6 +8493,23 @@ export class AgentSession {
 			return undefined;
 		}
 	}
+	async #appendBashMinimizerGain(command: string, cwd: string, result: BashResult): Promise<void> {
+		if (!result.minimized) return;
+		try {
+			await appendBashMinimizerGainRecord({
+				command,
+				cwd,
+				sessionCwd: this.sessionManager.getCwd(),
+				filter: result.minimized.filter,
+				inputBytes: result.minimized.inputBytes,
+				outputBytes: result.minimized.outputBytes,
+				exitCode: result.exitCode ?? null,
+				agentDir: this.settings.getAgentDir(),
+			});
+		} catch (error) {
+			logger.warn("Failed to append bash minimizer gain record", { error });
+		}
+	}
 
 	/**
 	 * Execute a bash command.
@@ -8516,6 +8534,7 @@ export class AgentSession {
 				cwd,
 			});
 			if (hookResult?.result) {
+				await this.#appendBashMinimizerGain(command, cwd, hookResult.result);
 				this.recordBashResult(command, hookResult.result, options);
 				return hookResult.result;
 			}
@@ -8533,6 +8552,7 @@ export class AgentSession {
 				onMinimizedSave: originalText => this.#saveBashOriginalArtifact(originalText),
 			});
 
+			await this.#appendBashMinimizerGain(command, cwd, result);
 			this.recordBashResult(command, result, options);
 			return result;
 		} finally {

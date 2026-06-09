@@ -1,6 +1,8 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, vi } from "bun:test";
+import * as bashExecutor from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { BashTool } from "@oh-my-pi/pi-coding-agent/tools/bash";
+import * as bashMinimizerGain from "@oh-my-pi/pi-coding-agent/tools/bash-minimizer-gain";
 
 function makeSession(): ToolSession {
 	return {
@@ -21,6 +23,9 @@ function makeSession(): ToolSession {
 				if (key === "find.enabled") return false;
 				return undefined;
 			},
+			getAgentDir() {
+				return "/tmp/agent";
+			},
 			getBashInterceptorRules() {
 				return [];
 			},
@@ -28,6 +33,10 @@ function makeSession(): ToolSession {
 		getClientBridge: () => undefined,
 	} as unknown as ToolSession;
 }
+
+afterEach(() => {
+	vi.restoreAllMocks();
+});
 
 describe("BashTool non-zero exit", () => {
 	it("resolves with an error result carrying execution details instead of throwing", async () => {
@@ -55,5 +64,38 @@ describe("BashTool non-zero exit", () => {
 		const text = result.content.find(c => c.type === "text")?.text ?? "";
 		expect(text).toContain("hi");
 		expect(text).not.toContain("Command exited with code");
+	});
+
+	it("records minimizer gain after a minimized command completes", async () => {
+		vi.spyOn(bashExecutor, "executeBash").mockResolvedValue({
+			output: "filtered output",
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+			totalLines: 1,
+			totalBytes: 15,
+			outputLines: 1,
+			outputBytes: 15,
+			minimized: {
+				filter: "bun-test",
+				inputBytes: 4_000,
+				outputBytes: 1_000,
+			},
+		});
+		const appendSpy = vi.spyOn(bashMinimizerGain, "appendBashMinimizerGainRecord").mockResolvedValue();
+
+		const tool = new BashTool(makeSession());
+		await tool.execute("call-minimized", { command: "bun test noisy.test.ts", cwd: "/tmp" });
+
+		expect(appendSpy).toHaveBeenCalledWith({
+			command: "bun test noisy.test.ts",
+			cwd: "/tmp",
+			sessionCwd: "/tmp",
+			filter: "bun-test",
+			inputBytes: 4_000,
+			outputBytes: 1_000,
+			exitCode: 0,
+			agentDir: "/tmp/agent",
+		});
 	});
 });

@@ -37,6 +37,11 @@ export interface BashExecutorOptions {
 		info: { filter: string; inputBytes: number; outputBytes: number },
 	) => Promise<string | undefined>;
 }
+export interface BashMinimizerSummary {
+	filter: string;
+	inputBytes: number;
+	outputBytes: number;
+}
 
 export interface BashResult {
 	output: string;
@@ -48,6 +53,7 @@ export interface BashResult {
 	outputLines: number;
 	outputBytes: number;
 	artifactId?: string;
+	minimized?: BashMinimizerSummary;
 }
 
 const shellSessions = new Map<string, Shell>();
@@ -283,14 +289,18 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		// artifact, and splice an `artifact://<id>` footer into the visible text so
 		// the agent can retrieve the raw bytes losslessly.
 		const minimized = winner.result.minimized;
-		if (minimized && minimized.text !== minimized.originalText) {
+		const minimizedSummary =
+			minimized && minimized.text !== minimized.originalText
+				? {
+						filter: minimized.filter,
+						inputBytes: minimized.inputBytes,
+						outputBytes: minimized.outputBytes,
+					}
+				: undefined;
+		if (minimizedSummary && minimized) {
 			sink.replace(minimized.text);
 			if (options?.onMinimizedSave) {
-				const artifactId = await options.onMinimizedSave(minimized.originalText, {
-					filter: minimized.filter,
-					inputBytes: minimized.inputBytes,
-					outputBytes: minimized.outputBytes,
-				});
+				const artifactId = await options.onMinimizedSave(minimized.originalText, minimizedSummary);
 				if (artifactId) {
 					const sep = minimized.text.endsWith("\n") ? "" : "\n";
 					sink.push(`${sep}[raw output: artifact://${artifactId}]\n`);
@@ -303,6 +313,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 			exitCode: winner.result.exitCode,
 			cancelled: false,
 			...(await sink.dump()),
+			...(minimizedSummary ? { minimized: minimizedSummary } : {}),
 		};
 	} catch (err) {
 		resetSession = true;
