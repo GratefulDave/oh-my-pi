@@ -699,11 +699,8 @@ mod tests {
 		// `docker compose up ps` — action is `up`, `ps` is a service name.
 		// Must NOT be routed through compact_table.
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
-		for cmd in &[
-			"docker compose up ps",
-			"docker compose up images",
-			"docker compose restart ps",
-		] {
+		for cmd in &["docker compose up ps", "docker compose up images", "docker compose restart ps"]
+		{
 			let ctx = MinimizerCtx {
 				program:    "docker",
 				subcommand: Some("compose"),
