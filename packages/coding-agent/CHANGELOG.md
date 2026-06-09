@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed native bash minimizer gain tracking so minimized shell runs once again append live `minimizer-gain.jsonl` records with command, cwd, exit code, and byte savings. The `/gain` overlay in `pi-minimizer-gain` now updates in real time again because its 1 s poll loop has fresh records to read.
+
 ## [15.10.7] - 2026-06-08
 
 ### Fixed
