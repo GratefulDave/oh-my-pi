@@ -929,8 +929,9 @@ fn strip_brace_bodies(input: &str) -> String {
 fn brace_delta(line: &str) -> i32 {
 	let mut delta: i32 = 0;
 	let mut in_str: Option<char> = None;
+	let mut chars = line.chars().peekable();
 	let mut prev = '\0';
-	for ch in line.chars() {
+	while let Some(ch) = chars.next() {
 		match in_str {
 			Some(q) => {
 				if ch == q && prev != '\\' {
@@ -938,6 +939,7 @@ fn brace_delta(line: &str) -> i32 {
 				}
 			},
 			None => match ch {
+				'/' if chars.peek() == Some(&'/') => break,
 				'"' | '\'' | '`' => in_str = Some(ch),
 				'{' => delta += 1,
 				'}' => delta -= 1,
@@ -1506,6 +1508,27 @@ mod tests {
 		assert!(out.text.contains("use std::io;"));
 		assert!(out.text.contains("pub fn foo(x: i32) -> i32 { ... }"));
 		assert!(!out.text.contains("y * 2"));
+	}
+
+	#[test]
+	fn brace_in_line_comment_not_counted() {
+		let cfg = aggressive_cfg();
+		let ctx = ctx_command("cat", "cat src/lib.rs", &cfg);
+		let input = concat!(
+			"fn outer() {\n",
+			"    // This comment has { braces } in it\n",
+			"    let x = 1;\n",
+			"}\n",
+			"fn preserved() {\n",
+			"    let y = 2;\n",
+			"}\n",
+		);
+		let out = filter(&ctx, input, 0);
+		assert!(
+			out.text.contains("fn preserved()"),
+			"fn after comment-brace must survive: {:?}",
+			out.text
+		);
 	}
 
 	#[test]
