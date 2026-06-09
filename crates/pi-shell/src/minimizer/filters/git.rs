@@ -185,7 +185,7 @@ fn compact_diff_listing(input: &str, mode: DiffListingMode) -> String {
 		if !is_diff_listing_line(mode, line) {
 			return input.to_string();
 		}
-		entries.push(primitives::truncate_line(line, 160));
+		entries.push(line.to_string());
 	}
 
 	if entries.len() <= DIFF_LISTING_LIMIT {
@@ -212,14 +212,15 @@ fn is_diff_listing_line(mode: DiffListingMode, line: &str) -> bool {
 
 #[derive(Default)]
 struct StatusSummary {
-	branch:    Option<String>,
-	stash:     Option<String>,
-	clean:     bool,
-	staged:    usize,
-	unstaged:  usize,
-	untracked: usize,
-	conflicts: usize,
-	paths:     Vec<String>,
+	branch:     Option<String>,
+	stash:      Option<String>,
+	divergence: Option<String>,
+	clean:      bool,
+	staged:     usize,
+	unstaged:   usize,
+	untracked:  usize,
+	conflicts:  usize,
+	paths:      Vec<String>,
 }
 
 fn condense_status(input: &str) -> String {
@@ -247,6 +248,14 @@ fn condense_status(input: &str) -> String {
 		}
 		if let Some(branch) = trimmed.strip_prefix("On branch ") {
 			summary.branch = Some(branch.to_string());
+			continue;
+		}
+		if trimmed.starts_with("Your branch is ahead")
+			|| trimmed.starts_with("Your branch is behind")
+			|| trimmed.starts_with("Your branch and")
+			|| trimmed.starts_with("HEAD detached")
+		{
+			summary.divergence = Some(trimmed.to_string());
 			continue;
 		}
 		if trimmed.starts_with("Your stash currently has ") {
@@ -423,6 +432,7 @@ fn push_status_path(summary: &mut StatusSummary, label: &str, path: &str) {
 const fn status_has_no_signal(summary: &StatusSummary) -> bool {
 	summary.branch.is_none()
 		&& summary.stash.is_none()
+		&& summary.divergence.is_none()
 		&& !summary.clean
 		&& summary.staged == 0
 		&& summary.unstaged == 0
@@ -435,6 +445,10 @@ fn format_status_summary(summary: &StatusSummary) -> String {
 	if let Some(branch) = &summary.branch {
 		out.push_str("branch ");
 		out.push_str(branch);
+		out.push('\n');
+	}
+	if let Some(div) = &summary.divergence {
+		out.push_str(div);
 		out.push('\n');
 	}
 	if let Some(stash) = &summary.stash {
@@ -741,7 +755,7 @@ fn is_show_custom_format(command: &str) -> bool {
 }
 
 fn is_log_custom_format(command: &str) -> bool {
-	has_flag(command, "--format") || has_flag(command, "--pretty")
+	has_flag(command, "--format") || has_flag(command, "--pretty") || has_token(command, "--oneline")
 }
 
 fn condense_branch(input: &str) -> String {
@@ -1352,7 +1366,10 @@ fn condense_stash(command: &str, input: &str, exit_code: i32) -> String {
 				compacted
 			};
 		}
-		if sub == "drop" || sub == "clear" || sub == "create" {
+		if sub == "create" {
+			return input.to_string();
+		}
+		if sub == "drop" || sub == "clear" {
 			return format!("ok stash {sub}\n");
 		}
 		// Default: compact listing fallback
