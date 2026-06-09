@@ -100,7 +100,7 @@ async function saveBashOriginalArtifact(session: ToolSession, originalText: stri
 		return undefined;
 	}
 }
-async function appendBashMinimizerGain(
+async function appendBashMinimizerGainFromResult(
 	session: ToolSession,
 	command: string,
 	cwd: string,
@@ -638,7 +638,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 								kind: "missed",
 							}),
 					});
-					await appendBashMinimizerGain(this.session, options.command, options.commandCwd, result);
+					await appendBashMinimizerGainFromResult(this.session, options.command, options.commandCwd, result);
 					const wallTimeMs = performance.now() - wallTimeStart;
 					const finalResult = this.#buildCompletedResult(result, options.timeoutSec, {
 						requestedTimeoutSec: options.requestedTimeoutSec,
@@ -1137,7 +1137,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 						}),
 				});
 		if (!isInteractiveResult(result)) {
-			await appendBashMinimizerGain(this.session, command, commandCwd, result);
+			await appendBashMinimizerGainFromResult(this.session, command, commandCwd, result);
 		}
 		const wallTimeMs = performance.now() - wallTimeStart;
 		if (result.cancelled) {
