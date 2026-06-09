@@ -65,6 +65,13 @@
 - Fixed per-call minimizer kill switches being weakened by settings files: `enabled: false` remains a hard off switch, and `legacyFilters` properly respects a caller's explicit `false` in addition to `true` when a settings file sets the opposite value.
 - Fixed conservative minimizer passthrough and preservation gaps for `find -printf`/action output, `aws s3 ls --summarize` footers, `git stash` empty-state output, `uv run python <script> ... pytest` wrapper routing, and gcc/clang diagnostic totals.
 
+## [15.10.5] - 2026-06-08
+
+### Added
+
+- Added the `enclosingBlockBoundaries` native API (with `EnclosingBoundaryOptions` and `LineRange` types) that returns, for a set of visible line ranges, the off-window boundary lines of every multi-line tree-sitter node whose span crosses the window — the closer when an opener is shown and the opener when a closer is shown. Covers brace and indentation languages (Python) via real syntactic spans; returns `null` for unrecognized languages or sources with syntax errors so callers can fall back to a lexical scan.
+- Added a `nohup` shell builtin to the embedded `pi_shell`, shadowing the external `/usr/bin/nohup`. It runs its operand command and propagates that command's exit status (and reports `missing operand` / exit 125 with no operand), but deliberately does **not** mask `SIGHUP` or detach the child into a new session the way real `nohup` does. Agents reach for `nohup … &` assuming the shell is one-shot; in this persistent embedded shell that assumption is wrong and the only effect of real `nohup` was to leak background processes that outlived the host. The builtin keeps such commands as ordinary descendants so they are reaped with the host instead of surviving as orphans.
+
 ## [15.10.1] - 2026-06-07
 
 ### Fixed
