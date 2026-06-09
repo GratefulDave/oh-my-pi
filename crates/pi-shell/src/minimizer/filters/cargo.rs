@@ -697,4 +697,112 @@ mod tests {
 		assert_eq!(out.text, input);
 		assert!(!out.changed);
 	}
+
+	// --- cargo test failure — failure block and panic line survive ---
+
+	#[test]
+	fn cargo_test_failure_keeps_thread_panic_and_failures_block() {
+		// `cargo test` with exit 101 must surface the thread panic message,
+		// the `failures:` block listing the failing test names, and the
+		// `test result: FAILED` summary line.  Passing test lines and
+		// `Compiling` noise must not appear.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "cargo",
+			subcommand: Some("test"),
+			command:    "cargo test",
+			config:     &cfg,
+		};
+		let input = concat!(
+			"   Compiling pi-shell v0.1.0\n",
+			"running 3 tests\n",
+			"test ok_one ... ok\n",
+			"test ok_two ... ok\n",
+			"test bad_parse ... FAILED\n",
+			"\n",
+			"---- bad_parse stdout ----\n",
+			"thread 'bad_parse' panicked at 'assertion failed: result.is_ok()', src/lib.rs:42:5\n",
+			"note: run with RUST_BACKTRACE=1 for a backtrace.\n",
+			"\n",
+			"failures:\n",
+			"    bad_parse\n",
+			"\n",
+			"test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured\n",
+		);
+
+		let out = filter(&ctx, input, 101);
+
+		// Failure evidence must survive.
+		assert!(out.text.contains("thread 'bad_parse' panicked"), "panic line must survive: {:?}", out.text);
+		assert!(out.text.contains("failures:\n"), "failures block must survive: {:?}", out.text);
+		assert!(out.text.contains("bad_parse"), "failing test name must survive: {:?}", out.text);
+		assert!(out.text.contains("test result: FAILED"), "result line must survive: {:?}", out.text);
+		// Noise must be stripped.
+		assert!(!out.text.contains("Compiling"), "Compiling noise must be stripped");
+		assert!(!out.text.contains("test ok_one"), "passing test lines must be stripped");
+		assert!(!out.text.contains("test ok_two"), "passing test lines must be stripped");
+	}
+
+	#[test]
+	fn cargo_test_success_via_filter_produces_one_line_summary() {
+		// The token-savings contract: a full passing run must collapse to a
+		// single `cargo test: N passed (M suite[s])` line through filter(),
+		// not through the helper directly.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "cargo",
+			subcommand: Some("test"),
+			command:    "cargo test --workspace",
+			config:     &cfg,
+		};
+		let input = concat!(
+			"   Compiling pi-shell v0.1.0\n",
+			"running 42 tests\n",
+			"test a ... ok\n",
+			"test b ... ok\n",
+			"test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+			"running 18 tests\n",
+			"test c ... ok\n",
+			"test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+			"warning: `pi-shell` (test \"integration\") generated 2 warnings\n",
+		);
+
+		let out = filter(&ctx, input, 0);
+
+		assert!(out.changed, "successful run must be compacted");
+		// One-line summary: total passed, suite count, warnings.
+		assert!(out.text.contains("60 passed"), "total across suites must be summed: {:?}", out.text);
+		assert!(out.text.contains("2 suites"), "suite count must appear: {:?}", out.text);
+		assert!(out.text.contains("2 warnings"), "warning count must appear: {:?}", out.text);
+		// No per-test lines.
+		assert!(!out.text.contains("test a"), "individual test lines must be stripped");
+		assert!(!out.text.contains("Compiling"), "Compiling noise must be stripped");
+	}
+
+	#[test]
+	fn cargo_test_failure_exit_code_non_zero_is_not_summarized() {
+		// A run that reports `test result: ok` but then exits non-zero
+		// (e.g. a post-test hook failing) must not be falsely summarized
+		// as a clean pass — failures_only should fall through to condense_build
+		// rather than fabricating a `cargo test: N passed` line.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = MinimizerCtx {
+			program:    "cargo",
+			subcommand: Some("test"),
+			command:    "cargo test",
+			config:     &cfg,
+		};
+		// The test suite itself says ok, but a subsequent build step failed.
+		let input = concat!(
+			"running 1 tests\n",
+			"test it_works ... ok\n",
+			"test result: ok. 1 passed; 0 failed\n",
+			"error: could not compile `pi-shell` due to 1 previous error\n",
+		);
+
+		let out = filter(&ctx, input, 1);
+
+		// Must not emit a clean "cargo test: N passed" summary because exit was non-zero.
+		assert!(!out.text.starts_with("cargo test:"), "must not fabricate a pass summary on non-zero exit: {:?}", out.text);
+	}
 }
