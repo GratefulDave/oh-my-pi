@@ -2389,4 +2389,96 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		let out = filter(&ctx, "", 0);
 		assert!(!out.changed);
 	}
+
+	// --- Log failure passthrough ---
+
+	#[test]
+	fn log_failure_keeps_diagnostics() {
+		// `git log` on a bad rev fails with exit 128.  The filter must not
+		// silently swallow the error into a zero-entry commit listing.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("log"), "git log --oneline badref", &cfg);
+		let input = "fatal: ambiguous argument 'badref': unknown revision or path not in the working tree.\nfatal: bad default revision 'HEAD'\n";
+
+		let out = filter(&ctx, input, 128);
+
+		assert!(out.text.contains("fatal:"), "error header must survive: {:?}", out.text);
+		assert!(out.text.contains("badref"), "offending ref must survive: {:?}", out.text);
+		assert!(!out.text.contains("commits omitted"), "must not fabricate commit listing on error");
+	}
+
+	#[test]
+	fn log_oneline_short_run_emits_all_entries() {
+		// A short log that fits within head+tail should emit all entries
+		// without any "omitted" line, and each entry should carry the
+		// 7-char short hash followed by the subject.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("log"), "git log -5", &cfg);
+		let input = "\
+commit abcdef1234567890\nAuthor: A <a@x.com>\nDate: today\n    feat: first\n\
+commit 1111111111111111\nAuthor: A <a@x.com>\nDate: today\n    fix: second\n\
+commit 2222222222222222\nAuthor: A <a@x.com>\nDate: today\n    chore: third\n";
+
+		let out = filter(&ctx, input, 0);
+
+		assert!(!out.text.contains("commits omitted"));
+		assert!(out.text.contains("abcdef1 feat: first"), "{:?}", out.text);
+		assert!(out.text.contains("1111111 fix: second"), "{:?}", out.text);
+		assert!(out.text.contains("2222222 chore: third"), "{:?}", out.text);
+		assert!(!out.text.contains("Author:"), "author noise must be stripped");
+		assert!(!out.text.contains("Date:"), "date noise must be stripped");
+	}
+
+	// --- Merge/rebase error preservation ---
+
+	#[test]
+	fn merge_conflict_failure_keeps_diagnostics() {
+		// `git merge` that ends in conflicts must surface the conflict
+		// paths, not be silently compacted into an empty success message.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("merge"), "git merge feat/x", &cfg);
+		let input = "\
+Auto-merging src/lib.rs\n\
+CONFLICT (content): Merge conflict in src/lib.rs\n\
+Automatic merge failed; fix conflicts and then commit the result.\n";
+
+		let out = filter(&ctx, input, 1);
+
+		assert!(out.text.contains("CONFLICT"), "conflict marker must survive: {:?}", out.text);
+		assert!(out.text.contains("src/lib.rs"), "conflict path must survive: {:?}", out.text);
+		assert!(!out.text.contains("ok"), "must not emit an ok summary on failure");
+	}
+
+	#[test]
+	fn rebase_conflict_failure_keeps_diagnostics() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("rebase"), "git rebase main", &cfg);
+		let input = "\
+error: could not apply abc1234... fix: something\n\
+hint: Resolve all conflicts manually, mark them as resolved with\n\
+hint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\".\n\
+CONFLICT (content): Merge conflict in src/config.rs\n";
+
+		let out = filter(&ctx, input, 1);
+
+		assert!(out.text.contains("CONFLICT"), "conflict marker must survive: {:?}", out.text);
+		assert!(out.text.contains("error:"), "error line must survive: {:?}", out.text);
+		assert!(out.text.contains("src/config.rs"), "conflict path must survive: {:?}", out.text);
+	}
+
+	// --- Push porcelain passthrough ---
+
+	#[test]
+	fn push_porcelain_output_is_passthrough() {
+		// Scripts that parse `git push --porcelain` rely on the exact byte
+		// sequence; the minimizer must not touch it.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("push"), "git push --porcelain origin main", &cfg);
+		let input = "To github.com:user/repo.git\n=\trefs/heads/main:refs/heads/main\t[up to date]\nDone\n";
+
+		let out = filter(&ctx, input, 0);
+
+		assert!(!out.changed, "porcelain output must not be rewritten");
+		assert_eq!(out.text, input);
+	}
 }
