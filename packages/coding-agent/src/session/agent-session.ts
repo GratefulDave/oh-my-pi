@@ -205,7 +205,6 @@ import {
 	selectDiscoverableToolNamesByServer,
 } from "../tool-discovery/tool-index";
 import { assertEditableFile } from "../tools/auto-generated-guard";
-import { appendBashMinimizerGainRecord, inferBashMinimizerMissedFilter } from "../tools/bash-minimizer-gain";
 import type { CheckpointState } from "../tools/checkpoint";
 import { outputMeta } from "../tools/output-meta";
 import { normalizeLocalScheme, resolveToCwd } from "../tools/path-utils";
@@ -8493,62 +8492,6 @@ export class AgentSession {
 			return undefined;
 		}
 	}
-	async #appendBashMinimizerGain(command: string, cwd: string, result: BashResult): Promise<void> {
-		if (!result.minimized) return;
-		try {
-			await appendBashMinimizerGainRecord({
-				command,
-				cwd,
-				sessionCwd: this.sessionManager.getCwd(),
-				filter: result.minimized.filter,
-				inputBytes: result.minimized.inputBytes,
-				outputBytes: result.minimized.outputBytes,
-				exitCode: result.exitCode ?? null,
-				agentDir: this.settings.getAgentDir(),
-			});
-		} catch (error) {
-			logger.warn("Failed to append bash minimizer gain record", { error });
-		}
-	}
-
-	async #appendBashMinimizerGain(
-		command: string,
-		cwd: string,
-		info: {
-			filter: string;
-			inputBytes: number;
-			outputBytes: number;
-			exitCode: number | null;
-			kind?: "saved" | "missed";
-		},
-	): Promise<void> {
-		try {
-			await appendBashMinimizerGainRecord({
-				command,
-				cwd,
-				sessionCwd: this.sessionManager.getCwd(),
-				filter: info.filter,
-				inputBytes: info.inputBytes,
-				outputBytes: info.outputBytes,
-				exitCode: info.exitCode,
-				kind: info.kind,
-				agentDir: this.settings.getAgentDir(),
-			});
-		} catch (error) {
-			logger.warn("Failed to append bash minimizer gain record", { error });
-		}
-	}
-
-	async #saveBashMinimizedArtifactAndGain(
-		command: string,
-		cwd: string,
-		originalText: string,
-		info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
-	): Promise<string | undefined> {
-		const artifactId = await this.#saveBashOriginalArtifact(originalText);
-		await this.#appendBashMinimizerGain(command, cwd, info);
-		return artifactId;
-	}
 
 	/**
 	 * Execute a bash command.
@@ -8573,7 +8516,6 @@ export class AgentSession {
 				cwd,
 			});
 			if (hookResult?.result) {
-				await this.#appendBashMinimizerGain(command, cwd, hookResult.result);
 				this.recordBashResult(command, hookResult.result, options);
 				return hookResult.result;
 			}
@@ -8588,19 +8530,9 @@ export class AgentSession {
 				signal: abortController.signal,
 				sessionKey: this.sessionId,
 				timeout: clampTimeout("bash") * 1000,
-				onMinimizedSave: (originalText, info) =>
-					this.#saveBashMinimizedArtifactAndGain(command, cwd, originalText, info),
-				onUnminimizedOutput: info =>
-					this.#appendBashMinimizerGain(command, cwd, {
-						filter: inferBashMinimizerMissedFilter(command),
-						inputBytes: info.outputBytes,
-						outputBytes: info.outputBytes,
-						exitCode: info.exitCode,
-						kind: "missed",
-					}),
+				onMinimizedSave: originalText => this.#saveBashOriginalArtifact(originalText),
 			});
 
-			await this.#appendBashMinimizerGain(command, cwd, result);
 			this.recordBashResult(command, result, options);
 			return result;
 		} finally {

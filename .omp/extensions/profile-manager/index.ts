@@ -298,7 +298,6 @@ async function handleNoArg(pi: ExtensionAPI, ctx: ExtensionCommandContext): Prom
 	if (!ctx.hasUI) return printList(pi, ctx);
 
 	const settings = readSettings(ctx);
-	const active = settings.activeModelProfile;
 	const names = profileNames(settings);
 	const choices = [DEFAULT_PROFILE_NAME, ...names.filter(n => n !== DEFAULT_PROFILE_NAME), "Create new profile..."];
 	const choice = await ctx.ui.select("Model profiles", choices);
@@ -311,10 +310,6 @@ async function handleNoArg(pi: ExtensionAPI, ctx: ExtensionCommandContext): Prom
 	}
 
 	if (choice === DEFAULT_PROFILE_NAME) return handleUse(pi, ctx, DEFAULT_PROFILE_NAME);
-	if (active === choice) {
-		notify(pi, `Already on profile: ${choice}`);
-		return;
-	}
 	return handleUse(pi, ctx, choice);
 }
 

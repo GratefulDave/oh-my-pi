@@ -2064,8 +2064,9 @@ export const SETTINGS_SCHEMA = {
 		default: 4 * 1024 * 1024,
 	},
 	"shellMinimizer.sourceOutlineLevel": {
-		type: "string",
-		default: undefined,
+		type: "enum",
+		values: ["default", "aggressive"] as const,
+		default: "default",
 		ui: {
 			tab: "editing",
 			label: "Shell Minimizer Source Outline",
@@ -3475,7 +3476,7 @@ export interface ShellMinimizerSettings {
 	only: string[];
 	except: string[];
 	maxCaptureBytes: number;
-	sourceOutlineLevel: string | undefined;
+	sourceOutlineLevel: "default" | "aggressive";
 	legacyFilters: boolean | undefined;
 }
 

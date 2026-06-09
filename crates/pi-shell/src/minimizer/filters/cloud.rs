@@ -81,8 +81,7 @@ fn is_s3_ls(command: &str) -> bool {
 fn is_aws_stdout_pipe(command: &str) -> bool {
 	command
 		.split_whitespace()
-		.filter(|token| *token == "-" || !token.starts_with('-'))
-		.last()
+		.rfind(|token| *token == "-" || !token.starts_with('-'))
 		.is_some_and(|token| token == "-")
 }
 

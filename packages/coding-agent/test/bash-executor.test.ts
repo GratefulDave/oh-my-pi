@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { executeBash } from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
+import { resetSettingsForTest, Settings, type ShellMinimizerSettings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import { buildMinimizerOptions, executeBash } from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
 import { DEFAULT_MAX_BYTES } from "@oh-my-pi/pi-coding-agent/session/streaming-output";
 import * as shellSnapshot from "@oh-my-pi/pi-coding-agent/utils/shell-snapshot";
 import type { Shell } from "@oh-my-pi/pi-natives";
@@ -52,6 +52,39 @@ describe("executeBash", () => {
 		}
 	});
 
+	it("omits minimizer options when the feature is disabled", () => {
+		const group: ShellMinimizerSettings = {
+			enabled: false,
+			settingsPath: undefined,
+			only: [],
+			except: [],
+			maxCaptureBytes: 4096,
+			sourceOutlineLevel: "default",
+			legacyFilters: undefined,
+		};
+		expect(buildMinimizerOptions(group)).toBeUndefined();
+	});
+
+	it("forwards source outline and legacy filter settings to native minimizer options", () => {
+		const group: ShellMinimizerSettings = {
+			enabled: true,
+			settingsPath: "minimizer.toml",
+			only: ["git"],
+			except: ["docker"],
+			maxCaptureBytes: 1234,
+			sourceOutlineLevel: "aggressive",
+			legacyFilters: true,
+		};
+		expect(buildMinimizerOptions(group)).toEqual({
+			enabled: true,
+			settingsPath: "minimizer.toml",
+			only: ["git"],
+			except: ["docker"],
+			maxCaptureBytes: 1234,
+			sourceOutlineLevel: "aggressive",
+			legacyFilters: true,
+		});
+	});
 	it("returns non-zero exit codes without cancellation", async () => {
 		const result = await executeBash("exit 7", { cwd: tempDir, timeout: 5000 });
 		expect(result.exitCode).toBe(7);
@@ -621,32 +654,6 @@ describe("executeBash", () => {
 		fs.writeFileSync(release, "");
 		await Bun.sleep(200);
 		expect(fs.existsSync(marker)).toBe(false);
-	});
-
-	it("reports unminimized output through the missed-gain callback", async () => {
-		const onUnminimizedOutput = vi.fn(async () => undefined);
-		vi.spyOn(piNatives.Shell.prototype, "run").mockImplementation(async (_options, onChunk) => {
-			onChunk?.(null, "plain output\n");
-			return {
-				exitCode: 0,
-				cancelled: false,
-				timedOut: false,
-			};
-		});
-
-		const result = await executeBash("printf 'plain output\\n'", {
-			cwd: tempDir,
-			timeout: 5000,
-			sessionKey: "missed-gain",
-			onUnminimizedOutput,
-		});
-
-		expect(result.output).toBe("plain output\n");
-		expect(onUnminimizedOutput).toHaveBeenCalledTimes(1);
-		expect(onUnminimizedOutput).toHaveBeenCalledWith({
-			outputBytes: Buffer.byteLength("plain output\n"),
-			exitCode: 0,
-		});
 	});
 
 	it("kills spawned process on abort (not just orphans it)", async () => {

@@ -34,14 +34,8 @@ export interface BashExecutorOptions {
 	 */
 	onMinimizedSave?: (
 		originalText: string,
-		info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
+		info: { filter: string; inputBytes: number; outputBytes: number },
 	) => Promise<string | undefined>;
-	onUnminimizedOutput?: (info: { outputBytes: number; exitCode: number | null }) => Promise<void>;
-}
-export interface BashMinimizerSummary {
-	filter: string;
-	inputBytes: number;
-	outputBytes: number;
 }
 
 export interface BashResult {
@@ -54,7 +48,6 @@ export interface BashResult {
 	outputLines: number;
 	outputBytes: number;
 	artifactId?: string;
-	minimized?: BashMinimizerSummary;
 }
 
 const shellSessions = new Map<string, Shell>();
@@ -102,7 +95,7 @@ export function buildMinimizerOptions(group: ShellMinimizerSettings): MinimizerO
 		only: group.only.length > 0 ? group.only : undefined,
 		except: group.except.length > 0 ? group.except : undefined,
 		maxCaptureBytes: group.maxCaptureBytes,
-		sourceOutlineLevel: group.sourceOutlineLevel || undefined,
+		sourceOutlineLevel: group.sourceOutlineLevel === "default" ? undefined : group.sourceOutlineLevel,
 		legacyFilters: group.legacyFilters,
 	};
 }
@@ -292,19 +285,14 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		// artifact, and splice an `artifact://<id>` footer into the visible text so
 		// the agent can retrieve the raw bytes losslessly.
 		const minimized = winner.result.minimized;
-		const minimizedSummary =
-			minimized && minimized.text !== minimized.originalText
-				? {
-						filter: minimized.filter,
-						inputBytes: minimized.inputBytes,
-						outputBytes: minimized.outputBytes,
-						exitCode: winner.result.exitCode ?? null,
-					}
-				: undefined;
-		if (minimizedSummary && minimized) {
+		if (minimized && minimized.text !== minimized.originalText) {
 			sink.replace(minimized.text);
 			if (options?.onMinimizedSave) {
-				const artifactId = await options.onMinimizedSave(minimized.originalText, minimizedSummary);
+				const artifactId = await options.onMinimizedSave(minimized.originalText, {
+					filter: minimized.filter,
+					inputBytes: minimized.inputBytes,
+					outputBytes: minimized.outputBytes,
+				});
 				if (artifactId) {
 					const sep = minimized.text.endsWith("\n") ? "" : "\n";
 					sink.push(`${sep}[raw output: artifact://${artifactId}]\n`);
@@ -312,25 +300,11 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 			}
 		}
 
-		const result = await sink.dump();
-		if (
-			minimizer &&
-			options?.onUnminimizedOutput &&
-			(!minimized || minimized.text === minimized.originalText) &&
-			result.totalBytes > 0
-		) {
-			await options.onUnminimizedOutput({
-				outputBytes: result.totalBytes,
-				exitCode: winner.result.exitCode ?? null,
-			});
-		}
-
 		// Normal completion
 		return {
 			exitCode: winner.result.exitCode,
 			cancelled: false,
 			...(await sink.dump()),
-			...(minimizedSummary ? { minimized: minimizedSummary } : {}),
 		};
 	} catch (err) {
 		resetSession = true;
