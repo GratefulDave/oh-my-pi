@@ -2,9 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a `bash.enabled` setting to disable the model-facing bash tool while leaving user-initiated bang/RPC bash commands available.
+
 ### Fixed
 
-- Fixed native bash minimizer gain tracking so minimized shell runs once again append live `minimizer-gain.jsonl` records with command, cwd, exit code, and byte savings. The `/gain` overlay in `pi-minimizer-gain` now updates in real time again because its 1 s poll loop has fresh records to read.
+- Fixed bash minimizer gain recording so minimized command output appends fresh `minimizer-gain.jsonl` records again, restoring live `/gain` overlay updates.
 
 ## [15.10.7] - 2026-06-08
 
