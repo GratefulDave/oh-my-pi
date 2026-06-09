@@ -10,6 +10,7 @@ import type { ExtensionRunner } from "@oh-my-pi/pi-coding-agent/extensibility/ex
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import * as bashMinimizerGain from "@oh-my-pi/pi-coding-agent/tools/bash-minimizer-gain";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
 describe("AgentSession user shortcut hooks", () => {
@@ -177,6 +178,40 @@ describe("AgentSession user shortcut hooks", () => {
 		expect(
 			session.messages.some(message => message.role === "pythonExecution" && message.excludeFromContext === false),
 		).toBe(true);
+	});
+
+	it("records minimizer gain for session bash executions", async () => {
+		vi.spyOn(bashExecutor, "executeBash").mockResolvedValue({
+			output: "filtered output",
+			exitCode: 7,
+			cancelled: false,
+			truncated: false,
+			totalLines: 1,
+			totalBytes: 15,
+			outputLines: 1,
+			outputBytes: 15,
+			minimized: {
+				filter: "cargo-test",
+				inputBytes: 8_000,
+				outputBytes: 2_000,
+			},
+		});
+		const appendSpy = vi.spyOn(bashMinimizerGain, "appendBashMinimizerGainRecord").mockResolvedValue();
+
+		createSession();
+		const result = await session.executeBash("cargo test -p coding-agent");
+
+		expect(result.exitCode).toBe(7);
+		expect(appendSpy).toHaveBeenCalledWith({
+			command: "cargo test -p coding-agent",
+			cwd: tempDir.path(),
+			sessionCwd: tempDir.path(),
+			filter: "cargo-test",
+			inputBytes: 8_000,
+			outputBytes: 2_000,
+			exitCode: 7,
+			agentDir: expect.any(String),
+		});
 	});
 
 	it("shares Python state between eval and user shortcut execution", async () => {
