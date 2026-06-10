@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed compiled `resolveModelThinking` control flow so models without a thinking control surface do not crash model listing.
+
 ## [15.10.11] - 2026-06-10
 
 ### Added
