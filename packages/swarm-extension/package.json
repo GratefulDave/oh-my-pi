@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/swarm-extension",
-	"version": "15.10.11",
+	"version": "15.10.11-lex",
 	"description": "Swarm orchestration extension for omp",
 	"homepage": "https://omp.sh",
 	"author": "Derek Rynd",
@@ -31,7 +31,7 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-utils": "workspace:*"
+		"@oh-my-pi/pi-utils": "^15.10.11-lex"
 	},
 	"devDependencies": {
 		"@types/bun": "^1.3.14"
