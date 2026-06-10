@@ -67,7 +67,7 @@ import {
 import type { AgentSession } from "./session/agent-session";
 import type { AuthStorage } from "./session/auth-storage";
 import { resolveResumableSession, type SessionInfo, SessionManager } from "./session/session-manager";
-import { resolvePromptInput } from "./system-prompt";
+import { discoverTitleSystemPromptFile, resolvePromptInput } from "./system-prompt";
 import { initTelemetryExport, isTelemetryExportEnabled } from "./telemetry-export";
 import { AUTO_THINKING } from "./thinking";
 import { discoverStartupLspServers, type LspStartupServerInfo } from "./tools";
@@ -85,6 +85,7 @@ type RunPrintMode = (session: AgentSession, options: PrintModeOptions) => Promis
 type RunRpcMode = (
 	session: AgentSession,
 	setToolUIContext?: (uiContext: ExtensionUIContext, hasUI: boolean) => void,
+	eventBus?: EventBus,
 ) => Promise<never>;
 
 export function shouldShowUpdateVersion(
@@ -382,6 +383,7 @@ async function runInteractiveMode(
 	eventBus?: EventBus,
 	initialMessage?: string,
 	initialImages?: ImageContent[],
+	titleSystemPrompt?: string,
 ): Promise<void> {
 	const mode = new InteractiveMode(
 		session,
@@ -391,6 +393,7 @@ async function runInteractiveMode(
 		lspServers,
 		mcpManager,
 		eventBus,
+		titleSystemPrompt,
 	);
 
 	// Cold-launch gate: the full setup wizard (every scene + the overlay and
@@ -736,7 +739,7 @@ async function buildSessionOptions(
 	sessionManager: SessionManager | undefined,
 	modelRegistry: ModelRegistry,
 	activeSettings: Settings,
-): Promise<{ options: CreateAgentSessionOptions }> {
+): Promise<{ options: CreateAgentSessionOptions; titleSystemPrompt?: string }> {
 	const options: CreateAgentSessionOptions = {
 		cwd: parsed.cwd ?? getProjectDir(),
 		autoApprove: parsed.autoApprove ?? false,
@@ -747,6 +750,8 @@ async function buildSessionOptions(
 	const resolvedSystemPrompt = await resolvePromptInput(systemPromptSource, "system prompt");
 	const appendPromptSource = parsed.appendSystemPrompt ?? discoverAppendSystemPromptFile();
 	const resolvedAppendPrompt = await resolvePromptInput(appendPromptSource, "append system prompt");
+	const titleSystemPromptSource = discoverTitleSystemPromptFile();
+	const titleSystemPrompt = await resolvePromptInput(titleSystemPromptSource, "title system prompt");
 
 	if (sessionManager) {
 		options.sessionManager = sessionManager;
@@ -892,7 +897,7 @@ async function buildSessionOptions(
 		options.additionalExtensionPaths = [];
 	}
 
-	return { options };
+	return { options, titleSystemPrompt };
 }
 
 interface RunRootCommandDependencies {
@@ -932,6 +937,7 @@ export async function runRootCommand(
 	if (parsedArgs.listModels !== undefined) {
 		const settingsInstance = await logger.time("settings:init:list-models", Settings.init, {
 			cwd: getProjectDir(),
+			configFiles: parsedArgs.config,
 		});
 		await modelRegistry.refresh("online");
 		const cliExtensionPaths = parsedArgs.noExtensions
@@ -995,11 +1001,16 @@ export async function runRootCommand(
 	}
 
 	let cwd = getProjectDir();
-	const settingsInstance = deps.settings ?? (await logger.time("settings:init", Settings.init, { cwd }));
+	const settingsInstance =
+		deps.settings ?? (await logger.time("settings:init", Settings.init, { cwd, configFiles: parsedArgs.config }));
 	if (parsedArgs.approvalMode) {
 		// Runtime override (not persisted): every settings.get("tools.approvalMode") downstream
 		// sees this value. The wrapper still honours --auto-approve / --yolo on top of it.
 		settingsInstance.override("tools.approvalMode", parsedArgs.approvalMode);
+	} else if (parsedArgs.autoApprove) {
+		// --auto-approve / --yolo without an explicit --approval-mode: reflect in settings so
+		// setup-time checks (e.g. #wrapToolForAcpPermission) also see the yolo intent.
+		settingsInstance.override("tools.approvalMode", "yolo");
 	}
 	if (parsedArgs.mode === "rpc" || parsedArgs.mode === "rpc-ui") {
 		applyRpcDefaultSettingOverrides(settingsInstance);
@@ -1145,7 +1156,7 @@ export async function runRootCommand(
 		clearPluginRootsCache: clearPluginRootsAndCaches,
 	});
 
-	const { options: sessionOptions } = await logger.time(
+	const { options: sessionOptions, titleSystemPrompt } = await logger.time(
 		"buildSessionOptions",
 		buildSessionOptions,
 		parsedArgs,
@@ -1310,7 +1321,7 @@ export async function runRootCommand(
 			// Branch-only protocol runner: keep RPC host code out of normal interactive startup.
 			const runRpcMode: RunRpcMode = (await import("./modes/rpc/rpc-mode")).runRpcMode;
 			stopStartupWatchdog();
-			await runRpcMode(session, mode === "rpc-ui" ? setToolUIContext : undefined);
+			await runRpcMode(session, mode === "rpc-ui" ? setToolUIContext : undefined, eventBus);
 		} else if (isInteractive) {
 			const versionCheckPromise = checkForNewVersion(VERSION).catch(() => undefined);
 			const changelogMarkdown = await logger.time("main:getChangelogForDisplay", getChangelogForDisplay, parsedArgs);
@@ -1350,6 +1361,7 @@ export async function runRootCommand(
 				eventBus,
 				initialMessage,
 				initialImages,
+				titleSystemPrompt,
 			);
 		} else {
 			// Branch-only single-shot runner: keep print-mode code out of normal interactive startup.

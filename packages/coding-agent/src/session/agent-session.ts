@@ -108,6 +108,7 @@ import { shouldEnableAppendOnlyContext } from "../config/append-only-context-mod
 import type { ModelRegistry } from "../config/model-registry";
 import {
 	extractExplicitThinkingSelector,
+	filterAvailableModelsByEnabledPatterns,
 	formatModelSelectorValue,
 	formatModelString,
 	getModelMatchPreferences,
@@ -184,7 +185,12 @@ import planModeToolDecisionReminderPrompt from "../prompts/system/plan-mode-tool
 import ttsrInterruptTemplate from "../prompts/system/ttsr-interrupt.md" with { type: "text" };
 import ttsrToolReminderTemplate from "../prompts/system/ttsr-tool-reminder.md" with { type: "text" };
 import { type AgentRegistry, MAIN_AGENT_ID } from "../registry/agent-registry";
-import { deobfuscateSessionContext, type SecretObfuscator } from "../secrets/obfuscator";
+import {
+	deobfuscateSessionContext,
+	obfuscateProviderContext,
+	obfuscateProviderTools,
+	type SecretObfuscator,
+} from "../secrets/obfuscator";
 import { invalidateHostMetadata } from "../ssh/connection-manager";
 import {
 	AUTO_THINKING,
@@ -192,6 +198,7 @@ import {
 	clampAutoThinkingEffort,
 	resolveProvisionalAutoLevel,
 	resolveThinkingLevelForModel,
+	shouldDisableReasoning,
 	toReasoningEffort,
 } from "../thinking";
 import { shutdownTinyTitleClient } from "../tiny/title-client";
@@ -325,6 +332,8 @@ export interface AgentSessionConfig {
 	agent: Agent;
 	sessionManager: SessionManager;
 	settings: Settings;
+	/** Whether the caller explicitly requested yolo/auto-approve behavior for this session. */
+	autoApprove?: boolean;
 	/** Models to cycle through with Ctrl+P (from --models flag) */
 	scopedModels?: Array<{ model: Model; thinkingLevel?: ThinkingLevel }>;
 	/** Initial session thinking selector. */
@@ -840,6 +849,7 @@ export class AgentSession {
 	readonly settings: Settings;
 	readonly yieldQueue: YieldQueue;
 	fileSnapshotStore?: InMemorySnapshotStore;
+	#autoApprove: boolean;
 
 	#powerAssertion: MacOSPowerAssertion | undefined;
 
@@ -1119,6 +1129,7 @@ export class AgentSession {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settings = config.settings;
+		this.#autoApprove = config.autoApprove === true;
 		// Power assertions are taken per turn (see #beginInFlight); nothing acquired here.
 		this.#evalKernelOwnerId = config.evalKernelOwnerId ?? `agent-session:${Snowflake.next()}`;
 		this.#parentEvalSessionId = config.parentEvalSessionId;
@@ -1134,6 +1145,7 @@ export class AgentSession {
 		} else {
 			this.#thinkingLevel = config.thinkingLevel;
 		}
+		this.#applyThinkingLevelToAgent(this.#thinkingLevel);
 		this.#promptTemplates = config.promptTemplates ?? [];
 		this.#slashCommands = config.slashCommands ?? [];
 		this.#extensionRunner = config.extensionRunner;
@@ -3530,12 +3542,26 @@ export class AgentSession {
 	 * Wrap a tool with a permission-gate proxy when an ACP client is connected.
 	 * Only wraps tools whose name is in PERMISSION_REQUIRED_TOOLS and only when
 	 * the bridge exposes `requestPermission`. No-ops for all other cases.
+	 *
+	 * When the user has explicitly opted into `yolo` / auto-approve behavior (via
+	 * the SDK/CLI `autoApprove` flag or a configured `tools.approvalMode: yolo`),
+	 * skips the gate unless the per-tool policy explicitly requires a prompt or
+	 * deny. The schema default is also `yolo`, so an explicit configuration or
+	 * explicit session flag is required: default-config ACP sessions keep the
+	 * client-side permission gate.
 	 */
 	#wrapToolForAcpPermission<T extends AgentTool>(tool: T): T {
 		const bridge = this.#clientBridge;
 		// Match the capability+method gating pattern used by read/write/bash.
 		if (!bridge?.capabilities.requestPermission || !bridge.requestPermission) return tool;
 		if (!PERMISSION_REQUIRED_TOOLS.has(tool.name)) return tool;
+		// Skip the gate only on explicit yolo opt-in; honour per-tool policies
+		// that require a prompt or deny (matching the normal approval wrapper).
+		if (this.#isExplicitAutoApproveMode()) {
+			const userPolicies = (this.settings.get("tools.approval") ?? {}) as Record<string, unknown>;
+			const toolPolicy = userPolicies[tool.name];
+			if (!toolPolicy || toolPolicy === "allow") return tool;
+		}
 		return new Proxy(tool, {
 			get: (target, prop) => {
 				if (prop !== "execute") return Reflect.get(target, prop, target);
@@ -3621,6 +3647,13 @@ export class AgentSession {
 				};
 			},
 		}) as T;
+	}
+
+	#isExplicitAutoApproveMode(): boolean {
+		return (
+			this.#autoApprove ||
+			(this.settings.isConfigured("tools.approvalMode") && this.settings.get("tools.approvalMode") === "yolo")
+		);
 	}
 
 	async #applyActiveToolsByName(
@@ -3998,6 +4031,47 @@ export class AgentSession {
 
 	buildDisplaySessionContext(): SessionContext {
 		return deobfuscateSessionContext(this.sessionManager.buildSessionContext(), this.#obfuscator);
+	}
+
+	#obfuscateForProvider<T>(value: T): T {
+		if (!this.#obfuscator?.hasSecrets()) return value;
+		return this.#obfuscator.obfuscateObject(value);
+	}
+
+	#obfuscateTextForProvider(text: string | undefined): string | undefined {
+		if (!text || !this.#obfuscator?.hasSecrets()) return text;
+		return this.#obfuscator.obfuscate(text);
+	}
+
+	#obfuscatePreparationForProvider(preparation: CompactionPreparation): CompactionPreparation {
+		if (!this.#obfuscator?.hasSecrets()) return preparation;
+		if (!preparation.previousSummary && !preparation.previousPreserveData) return preparation;
+		return {
+			...preparation,
+			previousSummary: preparation.previousSummary
+				? this.#obfuscator.obfuscate(preparation.previousSummary)
+				: preparation.previousSummary,
+			previousPreserveData: preparation.previousPreserveData
+				? this.#obfuscator.obfuscateObject(preparation.previousPreserveData)
+				: preparation.previousPreserveData,
+		};
+	}
+
+	#deobfuscateFromProvider(text: string): string {
+		if (!this.#obfuscator?.hasSecrets()) return text;
+		return this.#obfuscator.deobfuscate(text);
+	}
+
+	#deobfuscatedProviderTextReadyForDelta(text: string): string {
+		const deobfuscated = this.#deobfuscateFromProvider(text);
+		if (!this.#obfuscator?.hasSecrets()) return deobfuscated;
+		const pendingPlaceholderStart = deobfuscated.match(/#[A-Z0-9]{0,4}$/);
+		if (pendingPlaceholderStart?.index === undefined) return deobfuscated;
+		return deobfuscated.slice(0, pendingPlaceholderStart.index);
+	}
+
+	#convertToLlmForSideRequest(messages: AgentMessage[]): Message[] {
+		return this.#obfuscateForProvider(convertToLlm(messages));
 	}
 
 	/** Convert session messages using the same pre-LLM pipeline as the active session. */
@@ -4399,21 +4473,28 @@ export class AgentSession {
 	 * @throws Error if streaming and no streamingBehavior specified
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
-	async prompt(text: string, options?: PromptOptions): Promise<void> {
+	/**
+	 * Returns `false` when the command was fully handled locally (extension or
+	 * custom-TS command consumed without calling the LLM). Returns `true` when
+	 * the prompt was forwarded to the agent — either directly or queued as a
+	 * steer/follow-up. Callers that render a UI or manage turn lifecycle (e.g.
+	 * the ACP agent) use this to know whether to expect an `agent_end` event.
+	 */
+	async prompt(text: string, options?: PromptOptions): Promise<boolean> {
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 
 		// Handle extension commands first (execute immediately, even during streaming)
 		if (expandPromptTemplates && text.startsWith("/")) {
 			const handled = await this.#tryExecuteExtensionCommand(text);
 			if (handled) {
-				return;
+				return false;
 			}
 
 			// Try custom commands (TypeScript slash commands)
 			const customResult = await this.#tryExecuteCustomCommand(text);
 			if (customResult !== null) {
 				if (customResult === "") {
-					return;
+					return false;
 				}
 				text = customResult;
 			}
@@ -4447,7 +4528,7 @@ export class AgentSession {
 			for (const notice of keywordNotices) {
 				await this.sendCustomMessage(notice, { deliverAs: options.streamingBehavior });
 			}
-			return;
+			return true;
 		}
 
 		// Skip eager todo prelude when the user has already queued a directive
@@ -4487,6 +4568,7 @@ export class AgentSession {
 		if (!options?.synthetic) {
 			await this.#enforcePlanModeToolDecision();
 		}
+		return true;
 	}
 
 	async promptCustomMessage<T = unknown>(
@@ -5695,15 +5777,24 @@ export class AgentSession {
 	}
 
 	/**
-	 * Get all available models with valid API keys.
+	 * Get all available models with valid API keys, filtered by `enabledModels` when configured.
+	 * See {@link filterAvailableModelsByEnabledPatterns} for supported pattern forms and limitations.
 	 */
 	getAvailableModels(): Model[] {
-		return this.#modelRegistry.getAvailable();
+		const all = this.#modelRegistry.getAvailable();
+		const patterns = this.settings.get("enabledModels");
+		if (!patterns || patterns.length === 0) return all;
+		return filterAvailableModelsByEnabledPatterns(all, patterns, this.#modelRegistry);
 	}
 
 	// =========================================================================
 	// Thinking Level Management
 	// =========================================================================
+
+	#applyThinkingLevelToAgent(level: ThinkingLevel | undefined): void {
+		this.agent.setThinkingLevel(toReasoningEffort(level));
+		this.agent.setDisableReasoning(shouldDisableReasoning(level));
+	}
 
 	/**
 	 * Set the thinking level. `auto` enables per-turn classification; the selector
@@ -5718,7 +5809,7 @@ export class AgentSession {
 			this.#autoThinking = true;
 			this.#autoResolvedLevel = undefined;
 			this.#thinkingLevel = provisional;
-			this.agent.setThinkingLevel(toReasoningEffort(provisional));
+			this.#applyThinkingLevelToAgent(provisional);
 			if (persist) {
 				this.settings.set("defaultThinkingLevel", AUTO_THINKING);
 			}
@@ -5734,7 +5825,7 @@ export class AgentSession {
 		const isChanging = effectiveLevel !== this.#thinkingLevel;
 
 		this.#thinkingLevel = effectiveLevel;
-		this.agent.setThinkingLevel(toReasoningEffort(effectiveLevel));
+		this.#applyThinkingLevelToAgent(effectiveLevel);
 
 		if (isChanging) {
 			this.sessionManager.appendThinkingLevelChange(effectiveLevel);
@@ -5824,7 +5915,7 @@ export class AgentSession {
 		const shouldPersistResolution = this.#autoResolvedLevel !== effort;
 		this.#autoResolvedLevel = effort;
 		this.#thinkingLevel = effort;
-		this.agent.setThinkingLevel(toReasoningEffort(effort));
+		this.#applyThinkingLevelToAgent(effort);
 		if (shouldPersistResolution) {
 			this.sessionManager.appendThinkingLevelChange(effort);
 		}
@@ -6178,10 +6269,10 @@ export class AgentSession {
 						customInstructions,
 						compactionAbortController.signal,
 						{
-							promptOverride: compactionPrep.hookPrompt,
-							extraContext: compactionPrep.hookContext,
-							remoteInstructions: this.#baseSystemPrompt.join("\n\n"),
-							convertToLlm,
+							promptOverride: this.#obfuscateTextForProvider(compactionPrep.hookPrompt),
+							extraContext: this.#obfuscateForProvider(compactionPrep.hookContext),
+							remoteInstructions: this.#obfuscateForProvider(this.#baseSystemPrompt.join("\n\n")),
+							convertToLlm: messages => this.#convertToLlmForSideRequest(messages),
 						},
 					);
 					summary = result.summary;
@@ -6364,15 +6455,15 @@ export class AgentSession {
 				throw new Error(`No API key for ${model.provider}`);
 			}
 
-			const handoffText = await generateHandoff(
+			const rawHandoffText = await generateHandoff(
 				this.agent.state.messages,
 				model,
 				apiKey,
 				{
-					systemPrompt: this.#baseSystemPrompt,
-					tools: this.agent.state.tools,
-					customInstructions,
-					convertToLlm,
+					systemPrompt: this.#obfuscateForProvider(this.#baseSystemPrompt),
+					tools: obfuscateProviderTools(this.#obfuscator, this.agent.state.tools),
+					customInstructions: this.#obfuscateTextForProvider(customInstructions),
+					convertToLlm: messages => this.#convertToLlmForSideRequest(messages),
 					initiatorOverride: "agent",
 					metadata: this.agent.metadataForProvider(model.provider),
 					telemetry: resolveTelemetry(this.agent.telemetry, this.sessionId),
@@ -6384,6 +6475,7 @@ export class AgentSession {
 				},
 				handoffSignal,
 			);
+			const handoffText = this.#deobfuscateFromProvider(rawHandoffText);
 
 			if (handoffSignal.aborted) {
 				throw new Error("Handoff cancelled");
@@ -7345,17 +7437,24 @@ export class AgentSession {
 			if (!apiKey) continue;
 
 			try {
-				return await compact(preparation, candidate, apiKey, customInstructions, signal, {
-					...options,
-					metadata: this.agent.metadataForProvider(candidate.provider),
-					convertToLlm,
-					telemetry,
-					// Honor the user's /model thinking selection (incl. `off`) on
-					// the manual `/compact` path. Clamped per-model inside compact()
-					// via resolveCompactionEffort so unsupported-effort models
-					// (xai-oauth/grok-build) don't trip requireSupportedEffort.
-					thinkingLevel: this.thinkingLevel,
-				});
+				return await compact(
+					this.#obfuscatePreparationForProvider(preparation),
+					candidate,
+					apiKey,
+					this.#obfuscateTextForProvider(customInstructions),
+					signal,
+					{
+						...options,
+						metadata: this.agent.metadataForProvider(candidate.provider),
+						convertToLlm: messages => this.#convertToLlmForSideRequest(messages),
+						telemetry,
+						// Honor the user's /model thinking selection (incl. `off`) on
+						// the manual `/compact` path. Clamped per-model inside compact()
+						// via resolveCompactionEffort so unsupported-effort models
+						// (xai-oauth/grok-build) don't trip requireSupportedEffort.
+						thinkingLevel: this.thinkingLevel,
+					},
+				);
 			} catch (error) {
 				if (!this.#isCompactionAuthFailure(error)) {
 					throw error;
@@ -7635,20 +7734,27 @@ export class AgentSession {
 					let attempt = 0;
 					while (true) {
 						try {
-							compactResult = await compact(preparation, candidate, apiKey, undefined, autoCompactionSignal, {
-								promptOverride: compactionPrep.hookPrompt,
-								extraContext: compactionPrep.hookContext,
-								remoteInstructions: this.#baseSystemPrompt.join("\n\n"),
-								metadata: this.agent.metadataForProvider(candidate.provider),
-								initiatorOverride: "agent",
-								convertToLlm,
-								telemetry,
-								// Honor the user's /model thinking selection on the
-								// auto-compaction path — the most-fired compaction
-								// site. Clamped per-model inside compact() via
-								// resolveCompactionEffort.
-								thinkingLevel: this.thinkingLevel,
-							});
+							compactResult = await compact(
+								this.#obfuscatePreparationForProvider(preparation),
+								candidate,
+								apiKey,
+								undefined,
+								autoCompactionSignal,
+								{
+									promptOverride: this.#obfuscateTextForProvider(compactionPrep.hookPrompt),
+									extraContext: this.#obfuscateForProvider(compactionPrep.hookContext),
+									remoteInstructions: this.#obfuscateForProvider(this.#baseSystemPrompt.join("\n\n")),
+									metadata: this.agent.metadataForProvider(candidate.provider),
+									initiatorOverride: "agent",
+									convertToLlm: messages => this.#convertToLlmForSideRequest(messages),
+									telemetry,
+									// Honor the user's /model thinking selection on the
+									// auto-compaction path — the most-fired compaction
+									// site. Clamped per-model inside compact() via
+									// resolveCompactionEffort.
+									thinkingLevel: this.thinkingLevel,
+								},
+							);
 							break;
 						} catch (error) {
 							if (autoCompactionSignal.aborted) {
@@ -8338,6 +8444,7 @@ export class AgentSession {
 				{
 					retryAfterMs,
 					baseUrl: this.model.baseUrl,
+					modelId: this.model.id,
 				},
 			);
 			if (outcome.switched) {
@@ -8590,11 +8697,12 @@ export class AgentSession {
 	 * @param command The bash command to execute
 	 * @param onChunk Optional streaming callback for output
 	 * @param options.excludeFromContext If true, command output won't be sent to LLM (!! prefix)
+	 * @param options.useUserShell If true, allow caller to request configured user-shell routing
 	 */
 	async executeBash(
 		command: string,
 		onChunk?: (chunk: string) => void,
-		options?: { excludeFromContext?: boolean },
+		options?: { excludeFromContext?: boolean; useUserShell?: boolean },
 	): Promise<BashResult> {
 		const excludeFromContext = options?.excludeFromContext === true;
 		const cwd = this.sessionManager.getCwd();
@@ -8632,6 +8740,7 @@ export class AgentSession {
 						exitCode: info.exitCode,
 						kind: "missed",
 					}),
+				useUserShell: options?.useUserShell,
 			});
 
 			await this.#appendBashMinimizerGainFromResult(command, cwd, result);
@@ -8758,6 +8867,7 @@ export class AgentSession {
 				sessionId: namespacePythonSessionId(sessionId),
 				kernelOwnerId: this.#evalKernelOwnerId,
 				kernelMode: this.settings.get("python.kernelMode"),
+				interpreter: this.settings.get("python.interpreter")?.trim() || undefined,
 				onChunk,
 				signal: abortController.signal,
 			});
@@ -9050,6 +9160,7 @@ export class AgentSession {
 				promptCacheKey: cacheSessionId,
 				preferWebsockets: false,
 				reasoning: toReasoningEffort(this.thinkingLevel),
+				disableReasoning: shouldDisableReasoning(this.thinkingLevel),
 				hideThinkingSummary: this.agent.hideThinkingSummary,
 				serviceTier: this.serviceTier,
 				signal: args.signal,
@@ -9058,17 +9169,27 @@ export class AgentSession {
 			model.provider,
 		);
 
-		let replyText = "";
+		let providerReplyText = "";
+		let emittedReplyText = "";
 		let assistantMessage: AssistantMessage | undefined;
-		const stream = streamSimple(model, context, options);
+		const stream = streamSimple(model, obfuscateProviderContext(this.#obfuscator, context), options);
 		for await (const event of stream) {
 			if (event.type === "text_delta") {
-				replyText += event.delta;
-				if (args.onTextDelta) args.onTextDelta(event.delta);
+				providerReplyText += event.delta;
+				if (args.onTextDelta) {
+					const readyText = this.#deobfuscatedProviderTextReadyForDelta(providerReplyText);
+					if (readyText.length > emittedReplyText.length) {
+						const delta = readyText.slice(emittedReplyText.length);
+						emittedReplyText = readyText;
+						args.onTextDelta(delta);
+					}
+				}
 				continue;
 			}
 			if (event.type === "done") {
-				assistantMessage = event.message;
+				assistantMessage = this.#obfuscator?.hasSecrets()
+					? { ...event.message, content: this.#obfuscator.deobfuscateObject(event.message.content) }
+					: event.message;
 				break;
 			}
 			if (event.type === "error") {
@@ -9078,6 +9199,10 @@ export class AgentSession {
 
 		if (!assistantMessage) {
 			throw new Error("Ephemeral turn ended without a final message");
+		}
+		const replyText = this.#deobfuscateFromProvider(providerReplyText);
+		if (args.onTextDelta && replyText.length > emittedReplyText.length) {
+			args.onTextDelta(replyText.slice(emittedReplyText.length));
 		}
 		return {
 			replyText: args.dedupeReply === false ? replyText.trim() : dedupeIrcReply(replyText.trim()),
@@ -9338,7 +9463,7 @@ export class AgentSession {
 				this.#autoResolvedLevel = undefined;
 				this.#thinkingLevel = resolveThinkingLevelForModel(this.model, restoredThinkingLevel);
 			}
-			this.agent.setThinkingLevel(toReasoningEffort(this.#thinkingLevel));
+			this.#applyThinkingLevelToAgent(this.#thinkingLevel);
 			this.agent.serviceTier = hasServiceTierEntry
 				? sessionContext.serviceTier
 				: configuredServiceTier === "none"
@@ -9395,7 +9520,7 @@ export class AgentSession {
 			this.#thinkingLevel = previousThinkingLevel;
 			this.#autoThinking = previousAutoThinking;
 			this.#autoResolvedLevel = previousAutoResolvedLevel;
-			this.agent.setThinkingLevel(toReasoningEffort(previousThinkingLevel));
+			this.#applyThinkingLevelToAgent(previousThinkingLevel);
 			this.agent.serviceTier = previousServiceTier;
 			this.#syncTodoPhasesFromBranch();
 			this.#reconnectToAgent();
@@ -9579,10 +9704,10 @@ export class AgentSession {
 				model,
 				apiKey,
 				signal: this.#branchSummaryAbortController.signal,
-				customInstructions: options.customInstructions,
+				customInstructions: this.#obfuscateTextForProvider(options.customInstructions),
 				reserveTokens: branchSummarySettings.reserveTokens,
 				metadata: this.agent.metadataForProvider(model.provider),
-				convertToLlm,
+				convertToLlm: messages => this.#convertToLlmForSideRequest(messages),
 				telemetry: resolveTelemetry(this.agent.telemetry, this.sessionId),
 			});
 			this.#branchSummaryAbortController = undefined;

@@ -163,6 +163,7 @@ export interface ExecutorOptions {
 	description?: string;
 	index: number;
 	id: string;
+	parentToolCallId?: string;
 	modelOverride?: string | string[];
 	/**
 	 * Active model selector of the parent session, used as an auth-aware fallback
@@ -842,6 +843,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				agent: agent.name,
 				agentSource: agent.source,
 				task,
+				parentToolCallId: options.parentToolCallId,
 				assignment,
 				progress: { ...progress },
 				sessionFile: subtaskSessionFile,
@@ -924,20 +926,16 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		progress.recentOutput = [];
 	};
 
+	const emitSubagentEvent = (event: AgentSessionEvent) => {
+		if (!options.eventBus) return;
+		options.eventBus.emit(TASK_SUBAGENT_EVENT_CHANNEL, {
+			id,
+			event,
+		});
+	};
+
 	const processEvent = (event: AgentEvent) => {
 		if (resolved) return;
-
-		if (options.eventBus) {
-			options.eventBus.emit(TASK_SUBAGENT_EVENT_CHANNEL, {
-				index,
-				agent: agent.name,
-				agentSource: agent.source,
-				task,
-				assignment,
-				event,
-			});
-		}
-
 		const now = Date.now();
 		let flushProgress = false;
 
@@ -1357,6 +1355,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				options.eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
 					id,
 					agent: agent.name,
+					parentToolCallId: options.parentToolCallId,
 					agentSource: agent.source,
 					description: options.description,
 					status: "started",
@@ -1456,6 +1455,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 
 			const MAX_YIELD_RETRIES = 3;
 			unsubscribe = session.subscribe(event => {
+				emitSubagentEvent(event);
 				if (event.type === "auto_retry_start") {
 					progress.retryState = {
 						attempt: event.attempt,
@@ -1708,6 +1708,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		options.eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
 			id,
 			agent: agent.name,
+			parentToolCallId: options.parentToolCallId,
 			agentSource: agent.source,
 			description: options.description,
 			status: progress.status as "completed" | "failed" | "aborted",

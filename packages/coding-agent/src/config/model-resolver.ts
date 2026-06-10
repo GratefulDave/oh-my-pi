@@ -1058,6 +1058,66 @@ export async function resolveAllowedModels(
 	return available.filter(model => allowed.has(`${model.provider}/${model.id}`));
 }
 
+/**
+ * Synchronous subset of {@link resolveAllowedModels} for contexts where async is unavailable
+ * (e.g. `getAvailableModels()` which is called from the ACP model-list advertisement, RPC
+ * `get_available_models`, and the `/model` slash command). Uses the same effective
+ * `enabledModels` scope semantics as startup resolution:
+ *
+ * - Glob selectors match `provider/modelId` and bare model id
+ * - Exact canonical ids expand to all available concrete variants
+ * - Exact `provider/modelId`, bare ids, provider-scoped fuzzy, and substring selectors
+ *   resolve through the shared model-pattern matcher
+ * - Optional `:thinkingLevel` suffixes are stripped only when valid
+ *
+ * When no pattern resolves to any model (misconfiguration / typo) an empty list is returned,
+ * consistent with the empty-list contract of {@link resolveAllowedModels}. Callers that render
+ * a UI picker should treat an empty list as "hide the picker entry", matching how the SDK
+ * surfaces the same misconfiguration during session initialization.
+ */
+export function filterAvailableModelsByEnabledPatterns(
+	available: Model<Api>[],
+	patterns: readonly string[],
+	registry: Pick<ModelRegistry, "getCanonicalVariants">,
+): Model<Api>[] {
+	if (patterns.length === 0) return available;
+
+	const context = buildPreferenceContext(available, undefined);
+	const allowed = new Set<string>();
+	const addAllowed = (model: Model<Api>) => {
+		allowed.add(`${model.provider}/${model.id}`);
+	};
+
+	for (const pattern of patterns) {
+		if (pattern.includes("*") || pattern.includes("?") || pattern.includes("[")) {
+			const { base: globPattern } = splitThinkingSuffix(pattern);
+			const glob = new Bun.Glob(globPattern.toLowerCase());
+			for (const model of available) {
+				const fullId = `${model.provider}/${model.id}`.toLowerCase();
+				if (glob.match(fullId) || glob.match(model.id.toLowerCase())) {
+					addAllowed(model);
+				}
+			}
+			continue;
+		}
+
+		const exactCanonical = resolveExactCanonicalScopePattern(pattern, registry, available);
+		if (exactCanonical) {
+			for (const model of exactCanonical.models) {
+				addAllowed(model);
+			}
+			continue;
+		}
+
+		const { model } = parseModelPatternWithContext(pattern, available, context, { modelRegistry: registry });
+		if (model) {
+			addAllowed(model);
+		}
+	}
+
+	return allowed.size === 0 ? [] : available.filter(model => allowed.has(`${model.provider}/${model.id}`));
+}
+
 export interface ResolveCliModelResult {
 	model: Model<Api> | undefined;
 	selector?: string;

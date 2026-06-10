@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/pi-agent-core",
-	"version": "15.10.11-lex",
+	"version": "15.10.12-lex",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"homepage": "https://omp.sh",
 	"author": "Can Boluk",
@@ -35,10 +35,10 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-ai": "^15.10.11-lex",
-		"@oh-my-pi/pi-catalog": "^15.10.11-lex",
-		"@oh-my-pi/pi-natives": "^15.10.11-lex",
-		"@oh-my-pi/pi-utils": "^15.10.11-lex",
+		"@oh-my-pi/pi-ai": "^15.10.12-lex",
+		"@oh-my-pi/pi-catalog": "^15.10.12-lex",
+		"@oh-my-pi/pi-natives": "^15.10.12-lex",
+		"@oh-my-pi/pi-utils": "^15.10.12-lex",
 		"@opentelemetry/api": "catalog:"
 	},
 	"devDependencies": {

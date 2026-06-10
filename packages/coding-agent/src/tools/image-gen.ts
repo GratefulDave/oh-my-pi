@@ -472,8 +472,13 @@ function parseAntigravityCredentials(raw: string): ParsedAntigravityCredentials 
 	return null;
 }
 
-async function findAntigravityCredentials(modelRegistry: ModelRegistry): Promise<ImageApiKey | null> {
-	const apiKey = await modelRegistry.getApiKeyForProvider("google-antigravity");
+async function findAntigravityCredentials(
+	modelRegistry: ModelRegistry,
+	sessionId?: string,
+): Promise<ImageApiKey | null> {
+	const apiKey = await modelRegistry.getApiKeyForProvider("google-antigravity", sessionId, {
+		modelId: DEFAULT_ANTIGRAVITY_MODEL,
+	});
 	if (!apiKey) return null;
 
 	const parsed = parseAntigravityCredentials(apiKey);
@@ -523,7 +528,7 @@ async function findImageApiKey(
 		if (openAI) return openAI;
 		// Fall through to auto-detect if preferred provider key not found.
 	} else if (preferredImageProvider === "antigravity" && modelRegistry) {
-		const antigravity = await findAntigravityCredentials(modelRegistry);
+		const antigravity = await findAntigravityCredentials(modelRegistry, sessionId);
 		if (antigravity) return antigravity;
 		// Fall through to auto-detect if preferred provider key not found.
 	} else if (preferredImageProvider === "gemini") {
@@ -547,7 +552,7 @@ async function findImageApiKey(
 	if (openAI) return openAI;
 
 	if (modelRegistry) {
-		const antigravity = await findAntigravityCredentials(modelRegistry);
+		const antigravity = await findAntigravityCredentials(modelRegistry, sessionId);
 		if (antigravity) return antigravity;
 	}
 
@@ -1052,6 +1057,7 @@ export const imageGenTool: CustomTool<typeof imageGenSchema, ImageGenToolDetails
 				const hostedKey: ApiKey = ctx.modelRegistry.resolver(hostedModel.provider, {
 					sessionId,
 					baseUrl: hostedModel.baseUrl,
+					modelId: hostedModel.id,
 				});
 
 				const parsed = await withAuth(
@@ -1113,6 +1119,7 @@ export const imageGenTool: CustomTool<typeof imageGenSchema, ImageGenToolDetails
 				const prompt = assemblePrompt(params);
 				const antigravityKey: ApiKey = ctx.modelRegistry.resolver("google-antigravity", {
 					sessionId,
+					modelId: DEFAULT_ANTIGRAVITY_MODEL,
 				});
 
 				const response = await withAuth(

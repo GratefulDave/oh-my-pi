@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import * as path from "node:path";
 import { registerCustomApi, unregisterCustomApis } from "@oh-my-pi/pi-ai/api-registry";
 import type { Api, Context, Model, ModelSpec, SimpleStreamOptions, ThinkingConfig } from "@oh-my-pi/pi-ai/types";
@@ -226,14 +227,50 @@ interface CustomModelsResult {
 	found: boolean;
 }
 
+const commandValueCache = new Map<string, string>();
+
+function isCommandConfigValue(valueConfig: string | undefined): valueConfig is string {
+	return valueConfig?.startsWith("!") === true;
+}
+
+function resolveCommandConfig(command: string): string | undefined {
+	const cached = commandValueCache.get(command);
+	if (cached !== undefined) return cached;
+	try {
+		const stdout = execSync(command, { encoding: "utf8", timeout: 10_000, windowsHide: true });
+		const trimmed = stdout.trim();
+		if (trimmed.length === 0) return undefined;
+		commandValueCache.set(command, trimmed);
+		return trimmed;
+	} catch {
+		return undefined;
+	}
+}
+
+interface CommandApiKeyResolution {
+	configured: boolean;
+	value?: string;
+}
 /**
- * Resolve an API key config value to an actual key.
- * Checks environment variable first, then treats as literal.
+ * Resolve a models.yml secret/config value to an actual value.
+ * `!cmd` runs a shell command and returns trimmed stdout, otherwise env vars are
+ * checked first and the input falls back to a literal value.
  */
-function resolveApiKeyConfig(keyConfig: string): string | undefined {
-	const envValue = Bun.env[keyConfig];
+function resolveConfigValue(valueConfig: string): string | undefined {
+	if (valueConfig.startsWith("!")) return resolveCommandConfig(valueConfig.slice(1).trim());
+	const envValue = Bun.env[valueConfig];
 	if (envValue) return envValue;
-	return keyConfig;
+	return valueConfig;
+}
+
+function resolveConfigHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+	if (!headers) return undefined;
+	const resolved: Record<string, string> = {};
+	for (const [key, value] of Object.entries(headers)) {
+		const next = resolveConfigValue(value);
+		if (next) resolved[key] = next;
+	}
+	return Object.keys(resolved).length > 0 ? resolved : undefined;
 }
 
 function extractGoogleOAuthToken(value: string | undefined): string | undefined {
@@ -394,7 +431,8 @@ function mergeCustomModelHeaders(
 	authHeader: boolean | undefined,
 	apiKeyConfig: string | undefined,
 ): Record<string, string> | undefined {
-	return mergeAuthHeader({ ...providerHeaders, ...modelHeaders }, authHeader, apiKeyConfig);
+	const resolvedModelHeaders = resolveConfigHeaders(modelHeaders);
+	return mergeAuthHeader({ ...providerHeaders, ...resolvedModelHeaders }, authHeader, apiKeyConfig);
 }
 
 function mergeAuthHeader(
@@ -406,7 +444,7 @@ function mergeAuthHeader(
 	if (!authHeader || !apiKeyConfig) {
 		return nextHeaders;
 	}
-	const resolvedKey = resolveApiKeyConfig(apiKeyConfig);
+	const resolvedKey = resolveConfigValue(apiKeyConfig);
 	return resolvedKey ? { ...nextHeaders, Authorization: `Bearer ${resolvedKey}` } : nextHeaders;
 }
 
@@ -559,6 +597,28 @@ export class ModelRegistry {
 	#rebuildSuspended: number = 0;
 	#fetch: FetchImpl;
 
+	#resolveCommandBackedApiKey(provider: string): CommandApiKeyResolution {
+		const keyConfig = this.#customProviderApiKeys.get(provider);
+		if (!isCommandConfigValue(keyConfig)) return { configured: false };
+		const value = resolveConfigValue(keyConfig);
+		if (value) {
+			this.authStorage.setConfigApiKey(provider, value);
+			return { configured: true, value };
+		}
+		this.authStorage.removeConfigApiKey(provider);
+		return { configured: true };
+	}
+
+	#installProviderApiKey(provider: string, keyConfig: string): void {
+		this.#customProviderApiKeys.set(provider, keyConfig);
+		const resolved = resolveConfigValue(keyConfig);
+		if (resolved) {
+			this.authStorage.setConfigApiKey(provider, resolved);
+		} else if (isCommandConfigValue(keyConfig)) {
+			this.authStorage.removeConfigApiKey(provider);
+		}
+	}
+
 	/**
 	 * @param authStorage - Auth storage for API key resolution
 	 *
@@ -579,10 +639,8 @@ export class ModelRegistry {
 		// Set up fallback resolver for custom provider API keys
 		this.authStorage.setFallbackResolver(provider => {
 			const keyConfig = this.#customProviderApiKeys.get(provider);
-			if (keyConfig) {
-				return resolveApiKeyConfig(keyConfig);
-			}
-			return undefined;
+			if (!keyConfig) return undefined;
+			return resolveConfigValue(keyConfig);
 		});
 		// Load models synchronously in constructor.
 		this.#loadModels();
@@ -673,7 +731,7 @@ export class ModelRegistry {
 		// Restore runtime API keys before #loadModels — survives because
 		// #loadModels only calls .set() on #customProviderApiKeys, never reassigns it.
 		for (const [k, v] of this.#runtimeProviderApiKeys) {
-			this.#customProviderApiKeys.set(k, v);
+			this.#installProviderApiKey(k, v);
 		}
 		this.#providerOverrides.clear();
 		this.#modelOverrides.clear();
@@ -975,10 +1033,11 @@ export class ModelRegistry {
 		const configuredProviders = new Set(Object.keys(value.providers ?? {}));
 
 		for (const [providerName, providerConfig] of providerEntries) {
+			const resolvedProviderHeaders = resolveConfigHeaders(providerConfig.headers);
 			// Always set overrides when baseUrl/headers/apiKey/authHeader/compat/disableStrictTools/transport are present
 			if (
 				providerConfig.baseUrl ||
-				providerConfig.headers ||
+				resolvedProviderHeaders ||
 				providerConfig.apiKey ||
 				providerConfig.authHeader !== undefined ||
 				providerConfig.compat ||
@@ -988,7 +1047,7 @@ export class ModelRegistry {
 				const disableStrictCompat = providerConfig.disableStrictTools ? { disableStrictTools: true } : undefined;
 				overrides.set(providerName, {
 					baseUrl: providerConfig.baseUrl,
-					headers: providerConfig.headers,
+					headers: resolvedProviderHeaders,
 					apiKey: providerConfig.apiKey,
 					authHeader: providerConfig.authHeader,
 					compat: mergeCompat(providerConfig.compat, disableStrictCompat),
@@ -1010,7 +1069,7 @@ export class ModelRegistry {
 					// fallback for entries that don't advertise one.
 					api: (providerConfig.api ?? "openai-completions") as Api,
 					baseUrl: providerConfig.baseUrl,
-					headers: providerConfig.headers,
+					headers: resolvedProviderHeaders,
 					compat: mergeCompat(providerConfig.compat, disableStrictCompat),
 					discovery: providerConfig.discovery,
 					optional: false,
@@ -1022,16 +1081,17 @@ export class ModelRegistry {
 			// bearer in models.yml (e.g. for an auth-gateway baseUrl), that bearer
 			// must authenticate the outbound request.
 			if (providerConfig.apiKey) {
-				this.#customProviderApiKeys.set(providerName, providerConfig.apiKey);
-				const resolved = resolveApiKeyConfig(providerConfig.apiKey);
-				if (resolved) this.authStorage.setConfigApiKey(providerName, resolved);
+				this.#installProviderApiKey(providerName, providerConfig.apiKey);
 			}
 
 			// Parse per-model overrides
 			if (providerConfig.modelOverrides) {
 				const perModel = new Map<string, ModelOverride>();
 				for (const [modelId, override] of Object.entries(providerConfig.modelOverrides)) {
-					perModel.set(modelId, override);
+					perModel.set(
+						modelId,
+						override.headers ? { ...override, headers: resolveConfigHeaders(override.headers) } : override,
+					);
 				}
 				allModelOverrides.set(providerName, perModel);
 			}
@@ -1179,7 +1239,7 @@ export class ModelRegistry {
 		return {
 			fetch: this.#fetch,
 			getBearerApiKey: async provider => {
-				const apiKey = await this.authStorage.getApiKey(provider);
+				const apiKey = await this.getApiKeyForProvider(provider);
 				return apiKey && apiKey !== DEFAULT_LOCAL_TOKEN && apiKey !== kNoAuth ? apiKey : undefined;
 			},
 		};
@@ -1443,10 +1503,9 @@ export class ModelRegistry {
 		for (const [providerName, providerConfig] of Object.entries(config.providers ?? {})) {
 			const modelDefs = providerConfig.models ?? [];
 			if (modelDefs.length === 0) continue; // Override-only, no custom models
+			const resolvedProviderHeaders = resolveConfigHeaders(providerConfig.headers);
 			if (providerConfig.apiKey) {
-				this.#customProviderApiKeys.set(providerName, providerConfig.apiKey);
-				const resolved = resolveApiKeyConfig(providerConfig.apiKey);
-				if (resolved) this.authStorage.setConfigApiKey(providerName, resolved);
+				this.#installProviderApiKey(providerName, providerConfig.apiKey);
 			}
 			for (const modelDef of modelDefs) {
 				const providerCompat = providerConfig.disableStrictTools
@@ -1456,7 +1515,7 @@ export class ModelRegistry {
 					providerName,
 					providerConfig.baseUrl!,
 					providerConfig.api as Api | undefined,
-					providerConfig.headers,
+					resolvedProviderHeaders,
 					providerConfig.apiKey,
 					providerConfig.authHeader,
 					providerCompat,
@@ -1626,7 +1685,10 @@ export class ModelRegistry {
 	 * as providers with stored credentials. See issue #993.
 	 */
 	hasConfiguredAuth(model: Model<Api>): boolean {
-		return this.#keylessProviders.has(model.provider) || this.authStorage.hasAuth(model.provider);
+		const commandKey = this.#resolveCommandBackedApiKey(model.provider);
+		return (
+			commandKey.configured || this.#keylessProviders.has(model.provider) || this.authStorage.hasAuth(model.provider)
+		);
 	}
 
 	getDiscoverableProviders(): string[] {
@@ -1658,6 +1720,8 @@ export class ModelRegistry {
 	 * Get API key for a model.
 	 */
 	async getApiKey(model: Model<Api>, sessionId?: string): Promise<string | undefined> {
+		const commandKey = this.#resolveCommandBackedApiKey(model.provider);
+		if (commandKey.configured) return commandKey.value;
 		if (this.#keylessProviders.has(model.provider) && !this.authStorage.hasAuth(model.provider)) {
 			return kNoAuth;
 		}
@@ -1674,13 +1738,16 @@ export class ModelRegistry {
 	async getApiKeyForProvider(
 		provider: string,
 		sessionId?: string,
-		options?: { baseUrl?: string; forceRefresh?: boolean; signal?: AbortSignal },
+		options?: { baseUrl?: string; modelId?: string; forceRefresh?: boolean; signal?: AbortSignal },
 	): Promise<string | undefined> {
+		const commandKey = this.#resolveCommandBackedApiKey(provider);
+		if (commandKey.configured) return commandKey.value;
 		if (this.#keylessProviders.has(provider) && !this.authStorage.hasAuth(provider)) {
 			return kNoAuth;
 		}
 		return this.authStorage.getApiKey(provider, sessionId, {
 			baseUrl: options?.baseUrl,
+			modelId: options?.modelId,
 			forceRefresh: options?.forceRefresh,
 			signal: options?.signal,
 		});
@@ -1696,6 +1763,8 @@ export class ModelRegistry {
 	}
 
 	async #peekApiKeyForProvider(provider: string): Promise<string | undefined> {
+		const commandKey = this.#resolveCommandBackedApiKey(provider);
+		if (commandKey.configured) return commandKey.value;
 		if (this.#keylessProviders.has(provider) && !this.authStorage.hasAuth(provider)) {
 			return kNoAuth;
 		}
@@ -1819,11 +1888,9 @@ export class ModelRegistry {
 		}
 
 		if (config.apiKey) {
-			this.#customProviderApiKeys.set(providerName, config.apiKey);
+			this.#installProviderApiKey(providerName, config.apiKey);
 			// Persist runtime API keys so they survive #reloadStaticModels() cycles
 			this.#runtimeProviderApiKeys.set(providerName, config.apiKey);
-			const resolved = resolveApiKeyConfig(config.apiKey);
-			if (resolved) this.authStorage.setConfigApiKey(providerName, resolved);
 		}
 
 		if (config.models && config.models.length > 0) {
@@ -1892,7 +1959,7 @@ export class ModelRegistry {
 				cacheTtlMs: 24 * 60 * 60 * 1000,
 				dynamicModelsAuthoritative: true,
 				fetchDynamicModels: async () => {
-					const apiKey = await this.authStorage.peekApiKey(providerName);
+					const apiKey = await this.#peekApiKeyForProvider(providerName);
 					const resolvedKey = isAuthenticated(apiKey) ? apiKey : undefined;
 					const modelDefs = await fetcher(resolvedKey);
 					const results: Model<Api>[] = [];
