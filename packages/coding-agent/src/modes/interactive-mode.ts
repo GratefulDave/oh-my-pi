@@ -101,6 +101,7 @@ import type { HookInputComponent } from "./components/hook-input";
 import type { HookSelectorComponent, HookSelectorSlider } from "./components/hook-selector";
 import { PlanReviewOverlay } from "./components/plan-review-overlay";
 import { StatusLineComponent } from "./components/status-line";
+import { SubagentStatusWidget } from "./components/subagent-status-widget";
 import type { ToolExecutionHandle } from "./components/tool-execution";
 import { TranscriptContainer } from "./components/transcript-container";
 import { WelcomeComponent, type LspServerInfo as WelcomeLspServerInfo } from "./components/welcome";
@@ -279,6 +280,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	hookWidgetContainerAbove: Container;
 	hookWidgetContainerBelow: Container;
 	statusLine: StatusLineComponent;
+	subagentStatusWidget: SubagentStatusWidget;
 
 	isInitialized = false;
 	isBashMode = false;
@@ -327,7 +329,6 @@ export class InteractiveMode implements InteractiveModeContext {
 	#pendingSubmissionDispose: (() => void) | undefined;
 	lastSigintTime = 0;
 	lastEscapeTime = 0;
-	lastLeftTapTime = 0;
 	shutdownRequested = false;
 	#isShuttingDown = false;
 	hookSelector: HookSelectorComponent | undefined = undefined;
@@ -375,6 +376,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	#voicePreviousUseTerminalCursor: boolean | null = null;
 	#resizeHandler?: () => void;
 	#observerRegistry: SessionObserverRegistry;
+	#subagentStatusTimer: NodeJS.Timeout | undefined;
 	#eventBus?: EventBus;
 	#eventBusUnsubscribers: Array<() => void> = [];
 	#welcomeComponent?: WelcomeComponent;
@@ -389,7 +391,6 @@ export class InteractiveMode implements InteractiveModeContext {
 		mcpManager?: MCPManager,
 		eventBus?: EventBus,
 		titleSystemPrompt?: string,
-		startupEditor?: CustomEditor,
 	) {
 		this.session = session;
 		this.sessionManager = session.sessionManager;
@@ -424,9 +425,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.btwContainer = new Container();
 		this.omfgContainer = new Container();
 		this.errorBannerContainer = new Container();
-		// Adopt the pre-TUI startup editor when provided: typed text, cursor,
-		// paste buffers, and undo history carry over from the splash phase.
-		this.editor = startupEditor ?? new CustomEditor(getEditorTheme());
+		this.editor = new CustomEditor(getEditorTheme());
 		this.editor.setUseTerminalCursor(this.ui.getShowHardwareCursor());
 		this.editor.setAutocompleteMaxVisible(settings.get("autocompleteMaxVisible"));
 		this.editor.onAutocompleteCancel = () => {
@@ -496,6 +495,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#selectorController = new SelectorController(this);
 		this.#inputController = new InputController(this);
 		this.#observerRegistry = new SessionObserverRegistry();
+		this.subagentStatusWidget = new SubagentStatusWidget(this.#observerRegistry, session);
 	}
 
 	playWelcomeIntro(): void {
@@ -589,6 +589,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.ui.addChild(this.omfgContainer);
 		this.ui.addChild(this.errorBannerContainer);
 		this.ui.addChild(this.statusLine); // Only renders hook statuses (main status in editor border)
+		this.ui.addChild(this.subagentStatusWidget);
 		this.ui.addChild(this.hookWidgetContainerAbove);
 		this.ui.addChild(this.editorContainer);
 		this.ui.addChild(this.hookWidgetContainerBelow);
@@ -604,6 +605,11 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#observerRegistry.setMainSession(this.sessionManager.getSessionFile() ?? undefined);
 		this.#observerRegistry.onChange(() => {
 			this.statusLine.setSubagentCount(this.#observerRegistry.getActiveSubagentCount());
+			if (this.subagentStatusWidget.hasVisibleRows()) {
+				this.#startSubagentStatusTimer();
+			} else {
+				this.#stopSubagentStatusTimer();
+			}
 			// Auto-checkmark todos whose matching subagent just succeeded, then
 			// re-render so the running override (the static "live" glyph when a
 			// subagent is doing the work for a still-pending todo) updates as
@@ -1092,9 +1098,7 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	rebuildChatFromMessages(): void {
 		this.chatContainer.clear();
-		// Full-history transcript: compactions render as inline dividers instead
-		// of restarting the visible conversation (the LLM context still resets).
-		const context = this.session.buildTranscriptSessionContext();
+		const context = this.session.buildDisplaySessionContext();
 		this.renderSessionContext(context);
 	}
 
@@ -2495,6 +2499,20 @@ export class InteractiveMode implements InteractiveModeContext {
 		return choice === "Yes";
 	}
 
+	#startSubagentStatusTimer(): void {
+		if (this.#subagentStatusTimer) return;
+		this.#subagentStatusTimer = setInterval(() => {
+			this.ui.requestRender();
+			this.updateEditorTopBorder();
+		}, 80);
+	}
+
+	#stopSubagentStatusTimer(): void {
+		if (!this.#subagentStatusTimer) return;
+		clearInterval(this.#subagentStatusTimer);
+		this.#subagentStatusTimer = undefined;
+	}
+
 	stop(): void {
 		if (this.loadingAnimation) {
 			this.#stopLoadingAnimation(false);
@@ -2512,6 +2530,7 @@ export class InteractiveMode implements InteractiveModeContext {
 			unsubscribe();
 		}
 		this.#eventBusUnsubscribers = [];
+		this.#stopSubagentStatusTimer();
 		this.#observerRegistry.dispose();
 		this.#eventController.dispose();
 		this.statusLine.dispose();
@@ -2886,8 +2905,11 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#uiHelpers.renderSessionContext(sessionContext, options);
 	}
 
-	renderInitialMessages(options?: { preserveExistingChat?: boolean; clearTerminalHistory?: boolean }): void {
-		this.#uiHelpers.renderInitialMessages(options);
+	renderInitialMessages(
+		prebuiltContext?: SessionContext,
+		options?: { preserveExistingChat?: boolean; clearTerminalHistory?: boolean },
+	): void {
+		this.#uiHelpers.renderInitialMessages(prebuiltContext, options);
 	}
 
 	getUserMessageText(message: Message): string {
@@ -3071,8 +3093,13 @@ export class InteractiveMode implements InteractiveModeContext {
 		await this.#selectorController.showDebugSelector();
 	}
 
-	showAgentHub(): void {
-		this.#selectorController.showAgentHub(this.#observerRegistry);
+	showSessionObserver(): void {
+		const sessions = this.#observerRegistry.getSessions();
+		if (sessions.length <= 1) {
+			this.showStatus("No active subagent sessions");
+			return;
+		}
+		this.#selectorController.showSessionObserver(this.#observerRegistry);
 	}
 
 	resetObserverRegistry(): void {
@@ -3135,6 +3162,10 @@ export class InteractiveMode implements InteractiveModeContext {
 	}
 
 	showAgentsDashboard(): void {
+		if (this.#observerRegistry.getSessions().some(session => session.kind === "subagent")) {
+			this.showSessionObserver();
+			return;
+		}
 		void this.#selectorController.showAgentsDashboard();
 	}
 

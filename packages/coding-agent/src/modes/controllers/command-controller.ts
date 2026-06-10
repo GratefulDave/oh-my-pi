@@ -1181,7 +1181,8 @@ const BAR_WIDTH_MIN = 4;
 function renderJobLine(job: AsyncJobSnapshotItem, now: number): string {
 	const duration = formatDuration(Math.max(0, now - job.startTime));
 	const status = formatJobStatus(job.status);
-	return `${theme.fg("dim", job.id)} ${theme.fg("dim", `[${job.type}]`)} ${status} ${theme.fg("dim", `(${duration})`)}`;
+	const queued = job.queued ? ` ${theme.fg("dim", "queued")}` : "";
+	return `${theme.fg("dim", job.id)} ${theme.fg("dim", `[${job.type}]`)} ${status}${queued} ${theme.fg("dim", `(${duration})`)}`;
 }
 
 function formatJobStatus(status: AsyncJobSnapshotItem["status"]): string {

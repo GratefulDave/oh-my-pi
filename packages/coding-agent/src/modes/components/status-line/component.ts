@@ -736,11 +736,23 @@ export class StatusLineComponent implements Component {
 			}
 		}
 
-		const runningBackgroundJobs = this.session.getAsyncJobSnapshot()?.running.length ?? 0;
-		if (runningBackgroundJobs > 0) {
+		const runningJobs = this.session.getAsyncJobSnapshot()?.running ?? [];
+		const taskJobs = runningJobs.filter(job => job.type === "task");
+		const queuedTaskJobs = taskJobs.filter(job => job.queued).length;
+		const runningTaskJobs = taskJobs.length - queuedTaskJobs;
+		const nonTaskJobs = runningJobs.length - taskJobs.length;
+		if (taskJobs.length > 0) {
 			const icon = theme.icon.agents ? `${theme.icon.agents} ` : "";
-			const label = `${formatCount("job", runningBackgroundJobs)} running`;
+			const label =
+				runningTaskJobs > 0 && queuedTaskJobs > 0
+					? `${runningTaskJobs} running, ${queuedTaskJobs} queued agents`
+					: runningTaskJobs > 0
+						? `${runningTaskJobs} running ${runningTaskJobs === 1 ? "agent" : "agents"}`
+						: `${queuedTaskJobs} queued ${queuedTaskJobs === 1 ? "agent" : "agents"}`;
 			rightParts.push(theme.fg("statusLineSubagents", `${icon}${label}`));
+		}
+		if (nonTaskJobs > 0) {
+			rightParts.push(theme.fg("statusLineSubagents", `${formatCount("job", nonTaskJobs)} running`));
 		}
 		const topFillWidth = Math.max(0, width);
 		const left = [...leftParts];
