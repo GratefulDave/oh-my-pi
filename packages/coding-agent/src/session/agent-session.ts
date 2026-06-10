@@ -8527,7 +8527,7 @@ export class AgentSession {
 			return undefined;
 		}
 	}
-	async #appendBashMinimizerGain(command: string, cwd: string, result: BashResult): Promise<void> {
+	async #appendBashMinimizerGainFromResult(command: string, cwd: string, result: BashResult): Promise<void> {
 		if (!result.minimized) return;
 		try {
 			await appendBashMinimizerGainRecord({
@@ -8607,7 +8607,7 @@ export class AgentSession {
 				cwd,
 			});
 			if (hookResult?.result) {
-				await this.#appendBashMinimizerGain(command, cwd, hookResult.result);
+				await this.#appendBashMinimizerGainFromResult(command, cwd, hookResult.result);
 				this.recordBashResult(command, hookResult.result, options);
 				return hookResult.result;
 			}
@@ -8634,7 +8634,7 @@ export class AgentSession {
 					}),
 			});
 
-			await this.#appendBashMinimizerGain(command, cwd, result);
+			await this.#appendBashMinimizerGainFromResult(command, cwd, result);
 			this.recordBashResult(command, result, options);
 			return result;
 		} finally {
