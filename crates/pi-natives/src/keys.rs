@@ -617,14 +617,31 @@ fn matches_key_inner(bytes: &[u8], key_id: &str, kitty_protocol_active: bool) ->
 	// sequences (for example `\x1b\x1b[A` for Alt+Up) even while Kitty protocol
 	// reporting is active. `parse_key_inner` recognizes these as `alt+...`; mirror
 	// that behavior here so `matches_key("alt+up")` agrees with `parse_key()`.
-	if modifier == MOD_ALT
+	// Must also handle composite modifiers like `alt+shift+tab` (modifier & MOD_ALT).
+	if modifier & MOD_ALT != 0
 		&& bytes.len() > 2
 		&& bytes[0] == 0x1b
 		&& bytes[1] == 0x1b
 		&& (bytes[2] == b'[' || bytes[2] == b'O')
 		&& let Some(inner_key) = parse_key_inner(&bytes[1..], true)
 	{
-		return inner_key.eq_ignore_ascii_case(key);
+		// Build the expected key string without the alt modifier so it can be
+		// compared against the result of parse_key_inner on the inner bytes.
+		let inner_modifier = modifier & !MOD_ALT;
+		let expected: std::borrow::Cow<'_, str> = if inner_modifier == 0 {
+			key.into()
+		} else {
+			let mut s = String::with_capacity(16);
+			if inner_modifier & MOD_SHIFT != 0 {
+				s.push_str("shift+");
+			}
+			if inner_modifier & MOD_CTRL != 0 {
+				s.push_str("ctrl+");
+			}
+			s.push_str(key);
+			s.into()
+		};
+		return inner_key.eq_ignore_ascii_case(&expected);
 	}
 	if key.eq_ignore_ascii_case("escape") || key.eq_ignore_ascii_case("esc") {
 		if modifier != 0 {
