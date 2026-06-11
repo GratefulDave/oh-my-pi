@@ -293,7 +293,7 @@ export type AgentSessionEvent =
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
-export type AsyncJobSnapshotItem = Pick<AsyncJob, "id" | "type" | "status" | "label" | "startTime">;
+export type AsyncJobSnapshotItem = Pick<AsyncJob, "id" | "type" | "status" | "label" | "startTime" | "queued">;
 
 const EMPTY_STOP_MAX_RETRIES = 3;
 const RETRY_BACKOFF_MAX_DELAY_MS = 8_000;
@@ -1448,6 +1448,7 @@ export class AgentSession {
 			status: job.status,
 			label: job.label,
 			startTime: job.startTime,
+			queued: job.queued,
 		}));
 		const recent = manager.getRecentJobs(options?.recentLimit ?? 5, ownerFilter).map(job => ({
 			id: job.id,
@@ -1455,6 +1456,7 @@ export class AgentSession {
 			status: job.status,
 			label: job.label,
 			startTime: job.startTime,
+			queued: job.queued,
 		}));
 		const delivery = manager.getDeliveryState(ownerFilter);
 		return { running, recent, delivery };
@@ -8724,14 +8726,17 @@ export class AgentSession {
 		const abortController = new AbortController();
 		this.#bashAbortControllers.add(abortController);
 
+		let savedGainRecorded = false;
 		try {
 			const result = await executeBashCommand(command, {
 				onChunk,
 				signal: abortController.signal,
 				sessionKey: this.sessionId,
 				timeout: clampTimeout("bash") * 1000,
-				onMinimizedSave: (originalText, info) =>
-					this.#saveBashMinimizedArtifactAndGain(command, cwd, originalText, info),
+				onMinimizedSave: async (originalText, info) => {
+					savedGainRecorded = true;
+					return await this.#saveBashMinimizedArtifactAndGain(command, cwd, originalText, info);
+				},
 				onUnminimizedOutput: info =>
 					this.#appendBashMinimizerGain(command, cwd, {
 						filter: inferBashMinimizerMissedFilter(command),
@@ -8743,7 +8748,9 @@ export class AgentSession {
 				useUserShell: options?.useUserShell,
 			});
 
-			await this.#appendBashMinimizerGainFromResult(command, cwd, result);
+			if (!savedGainRecorded) {
+				await this.#appendBashMinimizerGainFromResult(command, cwd, result);
+			}
 			this.recordBashResult(command, result, options);
 			return result;
 		} finally {

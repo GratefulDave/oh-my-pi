@@ -157,6 +157,16 @@ function formatTaskId(id: string): string {
 	return segments.length < 2 ? id : segments.join(">");
 }
 
+function formatAgentDisplayName(name: string | undefined): string {
+	const trimmed = name?.trim();
+	if (!trimmed || trimmed === "task") return "Agent";
+	return trimmed
+		.split(/[-_]+/)
+		.filter(segment => segment.length > 0)
+		.map(segment => `${segment.charAt(0).toUpperCase()}${segment.slice(1)}`)
+		.join(" ");
+}
+
 const MISSING_YIELD_WARNING_PREFIX = "SYSTEM WARNING: Subagent exited without calling yield tool";
 
 function extractMissingYieldWarning(output: string): { warning?: string; rest: string } {
@@ -575,7 +585,17 @@ export function renderCall(
 	theme: Theme,
 ): Component {
 	const showIsolated = "isolated" in args && args.isolated === true;
-	const header = renderStatusLine({ icon: "pending", title: "Task", description: args.agent }, theme);
+	const firstTaskDescription = args.tasks[0]?.description?.trim();
+	const siblingCount = Math.max(0, args.tasks.length - 1);
+	const header = renderStatusLine(
+		{
+			iconOverride: theme.fg("accent", "▸"),
+			title: formatAgentDisplayName(args.agent),
+			description: truncateToWidth(replaceTabs(firstTaskDescription || args.agent), 80),
+			meta: siblingCount > 0 ? [`+${siblingCount}`] : undefined,
+		},
+		theme,
+	);
 	const contextSectionRenderer = createContextSectionRenderer(args, theme);
 	return framedBlock(theme, width => {
 		const sections: Array<{ label?: string; lines: readonly string[]; separator?: boolean }> = [];
@@ -625,24 +645,22 @@ function renderAgentProgress(
 				? "error"
 				: "accent";
 
-	// Main status line: id: description [status] · stats · ⟨agent⟩
 	const description = progress.description?.trim();
 	const displayId = formatTaskId(progress.id);
-	const titlePart = description ? `${theme.bold(displayId)}: ${description}` : displayId;
+	const agentLabel = formatAgentDisplayName(progress.agent);
 	const indent = prefix ? `${prefix} ` : "";
-	let statusLine: string;
-	if (progress.status === "running") {
-		const bullet = theme.styledSymbol("status.done", "text");
-		const name = theme.fg("accent", description ? theme.bold(displayId) : displayId);
-		statusLine = `${indent}${bullet} ${name}`;
-		if (description) {
-			const desc = shimmerEnabled() ? shimmerText(description, theme) : theme.fg("accent", description);
-			statusLine += `${theme.fg("accent", ":")} ${desc}`;
-		}
-	} else {
-		const glyph =
-			progress.status === "completed" ? theme.styledSymbol("status.done", "accent") : theme.fg(iconColor, icon);
-		statusLine = `${indent}${glyph} ${theme.fg("accent", titlePart)}`;
+	const glyph =
+		progress.status === "completed" ? theme.styledSymbol("status.done", "accent") : theme.fg(iconColor, icon);
+	let statusLine = `${indent}${glyph} ${theme.fg("accent", agentLabel)}`;
+	if (description) {
+		const desc =
+			shimmerEnabled() && progress.status === "running"
+				? shimmerText(description, theme)
+				: theme.fg("accent", replaceTabs(description));
+		statusLine += `  ${desc}`;
+	} else if (progress.status === "running") {
+		const taskPreview = truncateToWidth(replaceTabs(progress.assignment ?? progress.task), 40);
+		statusLine += `  ${theme.fg("muted", taskPreview)}`;
 	}
 
 	// Show retry-blocked badge so the parent immediately sees that a child
@@ -659,17 +677,15 @@ function renderAgentProgress(
 	}
 
 	const showBadge = settings.get("task.showResolvedModelBadge");
-	if (progress.status === "running") {
-		if (!description) {
-			const taskPreview = truncateToWidth(progress.assignment ?? progress.task, 40);
-			statusLine += ` ${theme.fg("muted", taskPreview)}`;
-		}
-		statusLine = appendAgentStats(statusLine, { ...progress, showResolvedModelBadge: showBadge }, theme);
-	} else if (progress.status === "completed") {
+	if (progress.status === "running" || progress.status === "completed") {
 		statusLine = appendAgentStats(statusLine, { ...progress, showResolvedModelBadge: showBadge }, theme);
 	}
-
+	statusLine += `${theme.sep.dot}${theme.fg("dim", formatDuration(progress.durationMs))}`;
 	lines.push(statusLine);
+
+	if (expanded) {
+		lines.push(`${continuePrefix}${theme.tree.hook} ${theme.fg("dim", `id: ${displayId}`)}`);
+	}
 
 	lines.push(...renderTaskSection(progress.assignment ?? progress.task, continuePrefix, expanded, theme));
 
@@ -931,15 +947,14 @@ function renderAgentResult(
 					? "merge failed"
 					: "failed";
 
-	// Main status line: id: description [status] · stats · ⟨agent⟩
 	const description = result.description?.trim();
 	const displayId = formatTaskId(result.id);
-	const titlePart = description ? `${theme.bold(displayId)}: ${description}` : displayId;
-	let statusLine = `${prefix ? `${prefix} ` : ""}${theme.fg(iconColor, icon)} ${theme.fg("accent", titlePart)} ${formatBadge(
-		statusText,
-		iconColor,
-		theme,
-	)}`;
+	const agentLabel = formatAgentDisplayName(result.agent);
+	let statusLine = `${prefix ? `${prefix} ` : ""}${theme.fg(iconColor, icon)} ${theme.fg("accent", agentLabel)}`;
+	if (description) {
+		statusLine += `  ${theme.fg("accent", replaceTabs(description))}`;
+	}
+	statusLine += ` ${formatBadge(statusText, iconColor, theme)}`;
 	const showBadge = settings.get("task.showResolvedModelBadge");
 	statusLine = appendAgentStats(
 		statusLine,
@@ -960,6 +975,9 @@ function renderAgentResult(
 	}
 
 	lines.push(statusLine);
+	if (expanded) {
+		lines.push(`${continuePrefix}${theme.tree.hook} ${theme.fg("dim", `id: ${displayId}`)}`);
+	}
 
 	lines.push(...renderTaskSection(result.assignment ?? result.task, continuePrefix, expanded, theme));
 
@@ -1102,13 +1120,13 @@ export function renderResult(
 	if (!details) {
 		const text = result.content.find(c => c.type === "text")?.text || "";
 		const errored = result.isError === true;
+		const title = formatAgentDisplayName(args?.agent);
 		const header = errored
-			? renderStatusLine({ icon: "error", title: "Task", description: args?.agent }, theme)
+			? renderStatusLine({ icon: "error", title }, theme)
 			: renderStatusLine(
 					{
 						iconOverride: theme.styledSymbol("status.done", "accent"),
-						title: "Task",
-						description: args?.agent,
+						title,
 					},
 					theme,
 				);
@@ -1131,18 +1149,14 @@ export function renderResult(
 	const isError = aborted || failed;
 	const agentCount = hasResults ? details.results.length : (details.progress?.length ?? 0);
 	const icon: ToolUIStatus = options.isPartial ? "running" : isError ? "error" : mergeFailed ? "warning" : "success";
-	// Surface the dispatched agent type (e.g. `Reviewer`) alongside the count so
-	// the header reads `Task 16 agents: Reviewer`. All tasks in one call share a
-	// single `agent` type (top-level param), so one label covers the whole batch.
 	const agentName = args?.agent?.trim();
 	const countLabel = agentCount > 0 ? `${agentCount} ${agentCount === 1 ? "agent" : "agents"}` : undefined;
-	const metaLabel = countLabel ? (agentName ? `${countLabel}: ${agentName}` : countLabel) : agentName;
 	const header = renderStatusLine(
 		{
 			icon: icon === "success" ? undefined : icon,
 			iconOverride: icon === "success" ? theme.styledSymbol("status.done", "accent") : undefined,
-			title: "Task",
-			meta: metaLabel ? [metaLabel] : undefined,
+			title: formatAgentDisplayName(agentName),
+			meta: countLabel ? [countLabel] : undefined,
 		},
 		theme,
 	);

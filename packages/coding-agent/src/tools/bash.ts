@@ -607,6 +607,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 				const { path: artifactPath, id: artifactId } = (await this.session.allocateOutputArtifact?.("bash")) ?? {};
 				const tailBuffer = new TailBuffer(DEFAULT_MAX_BYTES);
 				const wallTimeStart = performance.now();
+				let savedGainRecorded = false;
 				try {
 					const result = await executeBash(options.command, {
 						cwd: options.commandCwd,
@@ -621,14 +622,16 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 							latestText = tailBuffer.text();
 							void reportProgress(latestText, { async: { state: "running", jobId, type: "bash" } });
 						},
-						onMinimizedSave: (originalText, info) =>
-							saveBashMinimizedArtifactAndGain(
+						onMinimizedSave: async (originalText, info) => {
+							savedGainRecorded = true;
+							return await saveBashMinimizedArtifactAndGain(
 								this.session,
 								options.command,
 								options.commandCwd,
 								originalText,
 								info,
-							),
+							);
+						},
 						onUnminimizedOutput: info =>
 							appendBashMinimizerGain(this.session, options.command, options.commandCwd, {
 								filter: inferBashMinimizerMissedFilter(options.command),
@@ -638,7 +641,9 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 								kind: "missed",
 							}),
 					});
-					await appendBashMinimizerGainFromResult(this.session, options.command, options.commandCwd, result);
+					if (!savedGainRecorded) {
+						await appendBashMinimizerGainFromResult(this.session, options.command, options.commandCwd, result);
+					}
 					const wallTimeMs = performance.now() - wallTimeStart;
 					const finalResult = this.#buildCompletedResult(result, options.timeoutSec, {
 						requestedTimeoutSec: options.requestedTimeoutSec,
@@ -1106,6 +1111,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 			pendingNotices.push("pty requested but unavailable in this environment; ran without a terminal");
 		}
 		const wallTimeStart = performance.now();
+		let savedGainRecorded = false;
 		const result: BashResult | BashInteractiveResult = interactiveUi
 			? await runInteractiveBashPty(interactiveUi, {
 					command,
@@ -1125,8 +1131,10 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					artifactPath,
 					artifactId,
 					onChunk: streamTailUpdates(tailBuffer, onUpdate),
-					onMinimizedSave: (originalText, info) =>
-						saveBashMinimizedArtifactAndGain(this.session, command, commandCwd, originalText, info),
+					onMinimizedSave: async (originalText, info) => {
+						savedGainRecorded = true;
+						return await saveBashMinimizedArtifactAndGain(this.session, command, commandCwd, originalText, info);
+					},
 					onUnminimizedOutput: info =>
 						appendBashMinimizerGain(this.session, command, commandCwd, {
 							filter: inferBashMinimizerMissedFilter(command),
@@ -1136,7 +1144,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 							kind: "missed",
 						}),
 				});
-		if (!isInteractiveResult(result)) {
+		if (!isInteractiveResult(result) && !savedGainRecorded) {
 			await appendBashMinimizerGainFromResult(this.session, command, commandCwd, result);
 		}
 		const wallTimeMs = performance.now() - wallTimeStart;

@@ -98,4 +98,36 @@ describe("BashTool non-zero exit", () => {
 			agentDir: "/tmp/agent",
 		});
 	});
+
+	it("does not duplicate gain records when minimized artifact save records them", async () => {
+		vi.spyOn(bashExecutor, "executeBash").mockImplementation(async (_command, options) => {
+			await options?.onMinimizedSave?.("raw output", {
+				filter: "bun-test",
+				inputBytes: 4_000,
+				outputBytes: 1_000,
+				exitCode: 0,
+			});
+			return {
+				output: "filtered output",
+				exitCode: 0,
+				cancelled: false,
+				truncated: false,
+				totalLines: 1,
+				totalBytes: 15,
+				outputLines: 1,
+				outputBytes: 15,
+				minimized: {
+					filter: "bun-test",
+					inputBytes: 4_000,
+					outputBytes: 1_000,
+				},
+			};
+		});
+		const appendSpy = vi.spyOn(bashMinimizerGain, "appendBashMinimizerGainRecord").mockResolvedValue();
+
+		const tool = new BashTool(makeSession());
+		await tool.execute("call-minimized", { command: "bun test noisy.test.ts", cwd: "/tmp" });
+
+		expect(appendSpy).toHaveBeenCalledTimes(1);
+	});
 });

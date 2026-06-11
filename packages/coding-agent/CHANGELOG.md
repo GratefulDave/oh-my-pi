@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `/gain` current-scope reporting from nested repository directories and stopped shell minimizer savings from being recorded twice when the raw-output artifact path already logged the gain.
+- Fixed Lex subagent UX and managed extension persistence across fork rebuilds.
+- Fixed minimizer-gain miss recording to reuse the captured bash output sink dump instead of dumping the same sink twice.
+
 ## [15.10.12] - 2026-06-10
 
 ### Added
@@ -45,6 +51,7 @@
 - Fixed ACP `available_commands_update` to include extension-registered slash commands so clients like Zed surface them in the slash-command palette.
 - Fixed ACP cancel button leaving the session in a stuck state — a new prompt sent while a turn is still in-flight (e.g. immediately after pressing Stop in Zed before `session/cancel` is processed) now implicitly cancels the running turn and queues the new message, instead of throwing an error that blocks further interaction.
 - Fixed interactive `!`/`!!` shell shortcuts to run non-bash commands through the configured user shell, including interactive startup for zsh/fish aliases and functions ([#1816](https://github.com/can1357/oh-my-pi/issues/1816)).
+
 
 ## [15.10.11] - 2026-06-10
 

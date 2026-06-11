@@ -9,7 +9,7 @@ function runningProgress(overrides: Partial<AgentProgress> = {}): AgentProgress 
 	return {
 		index: 0,
 		id: "KeySettingsHotPaths",
-		agent: "task",
+		agent: "explore",
 		agentSource: "bundled",
 		status: "running",
 		task: "investigate hot paths",
@@ -61,7 +61,7 @@ describe("task progress rendering", () => {
 					options,
 					theme,
 				),
-				"CountPackages",
+				"Explore",
 			);
 		};
 
@@ -69,18 +69,18 @@ describe("task progress rendering", () => {
 		const rawRow1 = renderRow(700);
 		const strippedRow = Bun.stripANSI(rawRow0);
 
-		expect(strippedRow).toContain("• CountPackages: List workspace packages");
+		expect(strippedRow).toContain("Explore  List workspace packages");
+		expect(strippedRow).not.toContain("CountPackages:");
 		expect(strippedRow).not.toContain(theme.status.running);
-		expect(strippedRow).not.toContain(theme.getSpinnerFrames("status")[0]);
-		// The label is one solid bold-accent run, identical across shimmer frames.
-		const label = theme.fg("accent", theme.bold("CountPackages"));
+		// The agent label is one solid accent run, identical across shimmer frames.
+		const label = theme.fg("accent", "Explore");
 		expect(rawRow0).toContain(label);
 		expect(rawRow1).toContain(label);
 		// The description shimmers, so the row as a whole animates between frames.
 		expect(rawRow0).not.toBe(rawRow1);
 	});
 
-	it("keeps the bullet replacement when shimmer is disabled", async () => {
+	it("keeps the running row readable when shimmer is disabled", async () => {
 		const theme = (await getThemeByName("dark"))!;
 		resetSettingsForTest();
 		await Settings.init({ inMemory: true, overrides: { "display.shimmer": "disabled" } });
@@ -93,13 +93,12 @@ describe("task progress rendering", () => {
 					options,
 					theme,
 				),
-				"KeySettingsHotPaths",
+				"Explore",
 			),
 		);
 
-		expect(strippedRow).toContain("• KeySettingsHotPaths");
+		expect(strippedRow).toContain("Explore  investigate hot paths");
 		expect(strippedRow).not.toContain(theme.status.running);
-		expect(strippedRow).not.toContain(theme.getSpinnerFrames("status")[0]);
 	});
 
 	it("pins unfinished tasks below finished ones in the live view", async () => {
@@ -110,10 +109,10 @@ describe("task progress rendering", () => {
 			results: [],
 			totalDurationMs: 0,
 			progress: [
-				runningProgress({ index: 0, id: "FirstRunning", status: "running" }),
-				runningProgress({ index: 1, id: "DoneEarly", status: "completed" }),
-				runningProgress({ index: 2, id: "StillPending", status: "pending" }),
-				runningProgress({ index: 3, id: "FailedFast", status: "failed" }),
+				runningProgress({ index: 0, id: "FirstRunning", description: "FirstRunning", status: "running" }),
+				runningProgress({ index: 1, id: "DoneEarly", description: "DoneEarly", status: "completed" }),
+				runningProgress({ index: 2, id: "StillPending", description: "StillPending", status: "pending" }),
+				runningProgress({ index: 3, id: "FailedFast", description: "FailedFast", status: "failed" }),
 			],
 		};
 
@@ -128,6 +127,22 @@ describe("task progress rendering", () => {
 		const positions = ["DoneEarly", "FailedFast", "FirstRunning", "StillPending"].map(id => rendered.indexOf(id));
 		expect(positions.every(p => p >= 0)).toBe(true);
 		expect(positions).toEqual([...positions].sort((a, b) => a - b));
+	});
+
+	it("renders the pending call as the selected agent", async () => {
+		const theme = (await getThemeByName("dark"))!;
+		const component = taskToolRenderer.renderCall(
+			{
+				agent: "explore",
+				tasks: [{ id: "Docs", description: "Explore docs directory", assignment: "List docs files" }],
+			},
+			{ expanded: false, isPartial: false },
+			theme,
+		);
+		const stripped = Bun.stripANSI(component.render(120).join("\n"));
+
+		expect(stripped).toContain("▸ Explore");
+		expect(stripped).toContain("Explore docs directory");
 	});
 });
 
@@ -159,8 +174,8 @@ describe("task result detail-less state", () => {
 		// A failed task must surface the error glyph and never the "done" bullet.
 		expect(stripped).toContain(theme.status.error);
 		expect(stripped).not.toContain(theme.status.done);
-		expect(stripped).toContain("Task");
-		expect(stripped).toContain("explore");
+		expect(stripped).toContain("Explore");
+		expect(stripped).not.toContain("Task");
 		expect(stripped).toContain("Validation failed");
 	});
 
@@ -175,5 +190,7 @@ describe("task result detail-less state", () => {
 
 		expect(stripped).toContain(theme.status.done);
 		expect(stripped).not.toContain(theme.status.error);
+		expect(stripped).toContain("Explore");
+		expect(stripped).not.toContain("Task");
 	});
 });

@@ -368,7 +368,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 			minimized && minimized.text !== minimized.originalText
 				? { filter: minimized.filter, inputBytes: minimized.inputBytes, outputBytes: minimized.outputBytes }
 				: undefined;
-		if (minimizedSummary) {
+		if (minimized && minimizedSummary) {
 			sink.replace(minimized.text);
 			if (options?.onMinimizedSave) {
 				const artifactId = await options.onMinimizedSave(minimized.originalText, {
