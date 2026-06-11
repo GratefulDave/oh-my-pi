@@ -37,9 +37,9 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-ai": "^15.10.12-lex",
-		"@oh-my-pi/pi-catalog": "^15.10.12-lex",
-		"@oh-my-pi/pi-utils": "^15.10.12-lex",
+		"@oh-my-pi/pi-ai": "workspace:*",
+		"@oh-my-pi/pi-catalog": "workspace:*",
+		"@oh-my-pi/pi-utils": "workspace:*",
 		"@tailwindcss/node": "catalog:",
 		"chart.js": "catalog:",
 		"date-fns": "catalog:",

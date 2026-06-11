@@ -34,11 +34,11 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "catalog:",
-		"@oh-my-pi/pi-utils": "^15.10.12-lex",
+		"@oh-my-pi/pi-utils": "workspace:*",
 		"zod": "catalog:"
 	},
 	"devDependencies": {
-		"@oh-my-pi/pi-ai": "^15.10.12-lex",
+		"@oh-my-pi/pi-ai": "workspace:*",
 		"@types/bun": "catalog:"
 	},
 	"engines": {

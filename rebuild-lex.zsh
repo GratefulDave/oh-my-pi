@@ -47,6 +47,30 @@ bun install
 print_step "Building registered extensions and native support"
 bun scripts/rebuild-extensions.ts
 
+# The pi-natives build step above writes the fork .node to packages/natives/native/.
+# When bun installs @oh-my-pi/pi-natives@<version> from npm, it places the upstream
+# binary in node_modules/@oh-my-pi/pi-natives-<platform>/<file>.node.
+# The loader resolves the leaf package BEFORE the workspace native/, so the
+# npm binary (missing fork-only exports like applyShellMinimizer) wins unless
+# we replace it here. Sync must happen BEFORE the binary build so embed-native.ts
+# picks up the fork binary (it embeds the leaf package, not the workspace file).
+print_step "Syncing fork native into leaf package (node_modules)"
+built_natives=(packages/natives/native/pi_natives.*.node(N))
+if (( ${#built_natives} == 0 )); then
+	printf 'error: no built native found under packages/natives/native/\n' >&2
+	exit 1
+fi
+platform_tag="${$(uname -s):l}-${$(uname -m):s/x86_64/x64/:s/arm64/arm64}"
+leaf_pkg_dir="$repo_dir/node_modules/@oh-my-pi/pi-natives-${platform_tag}"
+if [[ -d "$leaf_pkg_dir" ]]; then
+	for n in "${built_natives[@]}"; do
+		cp "$n" "$leaf_pkg_dir/${n:t}"
+		printf '  synced: %s\n' "$leaf_pkg_dir/${n:t}"
+	done
+else
+	printf '  no leaf package found at %s (skipping)\n' "$leaf_pkg_dir"
+fi
+
 print_step "Building lex binary"
 bun --cwd=packages/coding-agent run build
 
@@ -60,11 +84,6 @@ fi
 # overwrites a stale same-version cache on its own. Wipe and repopulate from
 # the build output so no stale native survives a rebuild.
 print_step "Refreshing native cache for $natives_version"
-built_natives=(packages/natives/native/pi_natives.*.node(N))
-if (( ${#built_natives} == 0 )); then
-	printf 'error: no built native found under packages/natives/native/\n' >&2
-	exit 1
-fi
 native_cache="$HOME/.omp/natives/$natives_version"
 rm -rf "$native_cache"
 mkdir -p "$native_cache"
