@@ -70,3 +70,4 @@ python/robomp/.cache/
 python/robomp/src/robomp/static/
 python/robomp/web/dist/
 python/robomp/.env
+*.bun-build
