@@ -87,6 +87,19 @@ type RunRpcMode = (
 	eventBus?: EventBus,
 ) => Promise<never>;
 
+export function shouldShowUpdateVersion(
+	latestVersion: string | undefined,
+	currentVersion: string,
+): latestVersion is string {
+	if (!latestVersion) return false;
+
+	if (currentVersion.includes("-lex")) {
+		return false;
+	}
+
+	return Bun.semver.order(latestVersion, currentVersion) > 0;
+}
+
 function maybeShowStartupSplash(options: {
 	isInteractive: boolean;
 	resuming: boolean;
@@ -99,7 +112,6 @@ function maybeShowStartupSplash(options: {
 	if (!process.stdin.isTTY || !process.stdout.isTTY) return;
 	//process.stdout.write(`${chalk.dim(`omp ${options.version}`)}\n${chalk.dim("Initializing session…")}\n`);
 }
-
 async function checkForNewVersion(currentVersion: string): Promise<string | undefined> {
 	if (!settings.get("startup.checkUpdate")) {
 		return;
@@ -111,7 +123,7 @@ async function checkForNewVersion(currentVersion: string): Promise<string | unde
 		const data = (await response.json()) as { version?: string };
 		const latestVersion = data.version;
 
-		if (latestVersion && Bun.semver.order(latestVersion, currentVersion) > 0) {
+		if (shouldShowUpdateVersion(latestVersion, currentVersion)) {
 			return latestVersion;
 		}
 
@@ -1260,7 +1272,7 @@ export async function runRootCommand(
 			const changelogMarkdown = await logger.time("main:getChangelogForDisplay", getChangelogForDisplay, parsedArgs);
 
 			const scopedModelsForDisplay = sessionOptions.scopedModels ?? scopedModels;
-			if (scopedModelsForDisplay.length > 0) {
+			if (parsedArgs.models && scopedModelsForDisplay.length > 0) {
 				const modelList = scopedModelsForDisplay
 					.map(scopedModel => {
 						const thinkingStr = !scopedModel.thinkingLevel ? `:${scopedModel.thinkingLevel}` : "";

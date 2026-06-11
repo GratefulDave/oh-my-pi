@@ -1,0 +1,55 @@
+{
+  "sessions": {
+    "019eb05c-6810-7000-8ebf-af246077e949": {
+      "sessionId": "019eb05c-6810-7000-8ebf-af246077e949",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Lex subagents ux persistence",
+      "savedBytes": 19033,
+      "originalBytes": 23574,
+      "replacementBytes": 4541,
+      "hits": 4,
+      "firstTs": 1781076112189,
+      "lastTs": 1781076715090
+    },
+    "019eb140-57de-7000-bcf5-301ad8168c42": {
+      "sessionId": "019eb140-57de-7000-bcf5-301ad8168c42",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Review pi.dev package extensions",
+      "savedBytes": 20744,
+      "originalBytes": 22948,
+      "replacementBytes": 2204,
+      "hits": 2,
+      "firstTs": 1781090565553,
+      "lastTs": 1781090571659
+    },
+    "019eb3dd-f5de-7000-bc7c-6178ddbdccbb": {
+      "sessionId": "019eb3dd-f5de-7000-bc7c-6178ddbdccbb",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Investigate gain view changes",
+      "savedBytes": 9391,
+      "originalBytes": 10165,
+      "replacementBytes": 774,
+      "hits": 1,
+      "firstTs": 1781134252452,
+      "lastTs": 1781134252452
+    },
+    "019eb4dd-b30e-7000-b434-d902d129e3df": {
+      "sessionId": "019eb4dd-b30e-7000-b434-d902d129e3df",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Create babysit PR skill",
+      "savedBytes": 3054,
+      "originalBytes": 4682,
+      "replacementBytes": 1628,
+      "hits": 1,
+      "tools": {
+        "web_search": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 3054
+        }
+      },
+      "firstTs": 1781157564152,
+      "lastTs": 1781157564159
+    }
+  }
+}

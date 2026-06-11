@@ -773,6 +773,65 @@ describe("ExtensionRunner", () => {
 		});
 	});
 
+	describe("model role override API", () => {
+		it("lets extensions override session model roles at runtime", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("session_start", () => {
+						pi.overrideModelRoles({ default: "provider/default", smol: "provider/smol" });
+					});
+				}
+			`;
+			const explicitExtensionPath = path.join(tempDir.path(), "model-roles.ts");
+			fs.writeFileSync(explicitExtensionPath, extCode);
+
+			const result = await loadTestExtensions([explicitExtensionPath]);
+			const runner = new ExtensionRunner(
+				result.extensions,
+				result.runtime,
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+			);
+			const overrideModelRoles = vi.fn();
+			runner.initialize(
+				{
+					sendMessage: () => {},
+					sendUserMessage: () => {},
+					appendEntry: () => {},
+					setLabel: () => {},
+					getActiveTools: () => [],
+					getAllTools: () => [],
+					setActiveTools: async () => {},
+					getCommands: () => [],
+					setModel: async () => false,
+					getThinkingLevel: () => undefined,
+					setThinkingLevel: () => {},
+					overrideModelRoles,
+					getSessionName: () => undefined,
+					setSessionName: async () => {},
+				},
+				{
+					getModel: () => undefined,
+					isIdle: () => true,
+					abort: () => {},
+					hasPendingMessages: () => false,
+					shutdown: () => {},
+					getContextUsage: () => undefined,
+					compact: async () => {},
+					getSystemPrompt: () => [],
+				},
+			);
+
+			await runner.emit({ type: "session_start" });
+
+			expect(overrideModelRoles).toHaveBeenCalledWith({
+				default: "provider/default",
+				smol: "provider/smol",
+			});
+		});
+	});
+
 	describe("memory context", () => {
 		it("exposes the lazy memory runtime after initialization", async () => {
 			const extCode = `
@@ -818,6 +877,7 @@ describe("ExtensionRunner", () => {
 					setModel: async () => false,
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
+					overrideModelRoles: () => {},
 					getSessionName: () => undefined,
 					setSessionName: async () => {},
 				},
@@ -880,6 +940,7 @@ describe("ExtensionRunner", () => {
 					setModel: async () => false,
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
+					overrideModelRoles: () => {},
 					getSessionName: () => sessionManager.getSessionName(),
 					setSessionName: async name => {
 						await sessionManager.setSessionName(name);
@@ -1094,6 +1155,7 @@ describe("ExtensionRunner", () => {
 					setModel: async () => false,
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
+					overrideModelRoles: () => {},
 					getSessionName: () => sessionManager.getSessionName(),
 					setSessionName: async () => {},
 				},

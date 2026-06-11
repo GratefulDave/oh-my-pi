@@ -270,6 +270,9 @@ export async function runEvalAgent(args: unknown, options: EvalAgentBridgeOption
 			onProgress: progress => emitProgressStatus(options.emitStatus, progress),
 			authStorage: options.session.authStorage,
 			modelRegistry: options.session.modelRegistry,
+			// Eval-spawned subagents share the parent's extension load result so
+			// async extension providers are not cleared by a second discovery pass.
+			preloadedExtensions: options.session.getPreloadedExtensions?.(),
 			settings: options.session.settings,
 			// Eval `agent()` subagents are never wall-clock capped: the parent
 			// cell's idle watchdog is suspended for the whole bridge call

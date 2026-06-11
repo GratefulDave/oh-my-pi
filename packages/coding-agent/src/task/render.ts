@@ -161,6 +161,16 @@ function formatTaskId(id: string): string {
 	return segments.length < 2 ? id : segments.join(">");
 }
 
+function formatAgentDisplayName(name: string | undefined): string {
+	const trimmed = name?.trim();
+	if (!trimmed || trimmed === "task") return "Agent";
+	return trimmed
+		.split(/[-_]+/)
+		.filter(segment => segment.length > 0)
+		.map(segment => `${segment.charAt(0).toUpperCase()}${segment.slice(1)}`)
+		.join(" ");
+}
+
 const MISSING_YIELD_WARNING_PREFIX = "SYSTEM WARNING: Subagent exited without calling yield tool";
 
 function extractMissingYieldWarning(output: string): { warning?: string; rest: string } {
@@ -677,10 +687,8 @@ function renderAgentProgress(
 				? "error"
 				: "accent";
 
-	// Main status line: id: description [status] · stats · ⟨agent⟩
 	const description = progress.description?.trim();
 	const displayId = formatTaskId(progress.id);
-	const titlePart = description ? `${theme.bold(displayId)}: ${description}` : displayId;
 	const indent = prefix ? `${prefix} ` : "";
 	let statusLine: string;
 	if (progress.status === "running" || progress.status === "pending") {
@@ -715,17 +723,15 @@ function renderAgentProgress(
 	}
 
 	const showBadge = settings.get("task.showResolvedModelBadge");
-	if (progress.status === "running") {
-		if (!description) {
-			const taskPreview = truncateToWidth(progress.assignment ?? progress.task, 40);
-			statusLine += ` ${theme.fg("muted", taskPreview)}`;
-		}
-		statusLine = appendAgentStats(statusLine, { ...progress, showResolvedModelBadge: showBadge }, theme);
-	} else if (progress.status === "completed") {
+	if (progress.status === "running" || progress.status === "completed") {
 		statusLine = appendAgentStats(statusLine, { ...progress, showResolvedModelBadge: showBadge }, theme);
 	}
-
+	statusLine += `${theme.sep.dot}${theme.fg("dim", formatDuration(progress.durationMs))}`;
 	lines.push(statusLine);
+
+	if (expanded) {
+		lines.push(`${continuePrefix}${theme.tree.hook} ${theme.fg("dim", `id: ${displayId}`)}`);
+	}
 
 	lines.push(...renderTaskSection(progress.assignment ?? progress.task, continuePrefix, expanded, theme));
 
@@ -987,15 +993,14 @@ function renderAgentResult(
 					? "merge failed"
 					: "failed";
 
-	// Main status line: id: description [status] · stats · ⟨agent⟩
 	const description = result.description?.trim();
 	const displayId = formatTaskId(result.id);
-	const titlePart = description ? `${theme.bold(displayId)}: ${description}` : displayId;
-	let statusLine = `${prefix ? `${prefix} ` : ""}${theme.fg(iconColor, icon)} ${theme.fg("accent", titlePart)} ${formatBadge(
-		statusText,
-		iconColor,
-		theme,
-	)}`;
+	const agentLabel = formatAgentDisplayName(result.agent);
+	let statusLine = `${prefix ? `${prefix} ` : ""}${theme.fg(iconColor, icon)} ${theme.fg("accent", agentLabel)}`;
+	if (description) {
+		statusLine += `  ${theme.fg("accent", replaceTabs(description))}`;
+	}
+	statusLine += ` ${formatBadge(statusText, iconColor, theme)}`;
 	const showBadge = settings.get("task.showResolvedModelBadge");
 	statusLine = appendAgentStats(
 		statusLine,
@@ -1017,6 +1022,9 @@ function renderAgentResult(
 	}
 
 	lines.push(statusLine);
+	if (expanded) {
+		lines.push(`${continuePrefix}${theme.tree.hook} ${theme.fg("dim", `id: ${displayId}`)}`);
+	}
 
 	lines.push(...renderTaskSection(result.assignment ?? result.task, continuePrefix, expanded, theme));
 
@@ -1206,13 +1214,12 @@ export function renderResult(
 	// Surface the dispatched agent type (e.g. `Reviewer`) alongside the count
 	// so the header reads `Task 1 agent: Reviewer`.
 	const countLabel = agentCount > 0 ? `${agentCount} ${agentCount === 1 ? "agent" : "agents"}` : undefined;
-	const metaLabel = countLabel ? (agentLabel ? `${countLabel}: ${agentLabel}` : countLabel) : agentLabel;
 	const header = renderStatusLine(
 		{
 			icon: icon === "success" ? undefined : icon,
 			iconOverride: icon === "success" ? theme.styledSymbol("status.done", "accent") : undefined,
-			title: "Task",
-			meta: metaLabel ? [metaLabel] : undefined,
+			title: formatAgentDisplayName(agentName),
+			meta: countLabel ? [countLabel] : undefined,
 		},
 		theme,
 	);

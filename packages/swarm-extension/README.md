@@ -30,11 +30,11 @@ The standalone runner has no timeout. It runs iteration after iteration until th
 
 ### Inside oh-my-pi (TUI)
 
-Register the extension in your config (`~/.omp/config.json` or `.omp/config.json`):
+Register the built extension bundle in your config (`~/.omp/config.json` or `.omp/config.json`):
 
 ```json
 {
-	"extensions": ["packages/swarm-extension"]
+	"extensions": ["packages/swarm-extension/dist/extension.bundle.js"]
 }
 ```
 
@@ -470,3 +470,5 @@ src/swarm/
   state.ts            Filesystem state persistence
   render.ts           Progress display formatting
 ```
+
+This package owns YAML DAG/pipeline orchestration only. Lex mailbox coordination remains in `pi-actor-swarm`; keep the command surfaces separate until a single swarm UX is deliberately chosen.

@@ -37,8 +37,9 @@ export interface BashExecutorOptions {
 	 */
 	onMinimizedSave?: (
 		originalText: string,
-		info: { filter: string; inputBytes: number; outputBytes: number },
+		info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
 	) => Promise<string | undefined>;
+	onUnminimizedOutput?: (info: { outputBytes: number; exitCode: number | null }) => Promise<void>;
 }
 
 export interface BashResult {
@@ -51,6 +52,7 @@ export interface BashResult {
 	outputLines: number;
 	outputBytes: number;
 	artifactId?: string;
+	minimized?: { filter: string; inputBytes: number; outputBytes: number };
 }
 
 const shellSessions = new Map<string, Shell>();
@@ -374,13 +376,16 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		// artifact, and splice an `artifact://<id>` footer into the visible text so
 		// the agent can retrieve the raw bytes losslessly.
 		const minimized = winner.result.minimized;
-		if (minimized && minimized.text !== minimized.originalText) {
+		const minimizedSummary =
+			minimized && minimized.text !== minimized.originalText
+				? { filter: minimized.filter, inputBytes: minimized.inputBytes, outputBytes: minimized.outputBytes }
+				: undefined;
+		if (minimized && minimizedSummary) {
 			sink.replace(minimized.text);
 			if (options?.onMinimizedSave) {
 				const artifactId = await options.onMinimizedSave(minimized.originalText, {
-					filter: minimized.filter,
-					inputBytes: minimized.inputBytes,
-					outputBytes: minimized.outputBytes,
+					...minimizedSummary,
+					exitCode: winner.result.exitCode ?? null,
 				});
 				if (artifactId) {
 					const sep = minimized.text.endsWith("\n") ? "" : "\n";
@@ -389,11 +394,20 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 			}
 		}
 
+		const result = await sink.dump();
+		if (!minimizedSummary && options?.onUnminimizedOutput) {
+			await options.onUnminimizedOutput({
+				outputBytes: result.outputBytes,
+				exitCode: winner.result.exitCode ?? null,
+			});
+		}
+
 		// Normal completion
 		return {
 			exitCode: winner.result.exitCode,
 			cancelled: false,
-			...(await sink.dump()),
+			...result,
+			...(minimizedSummary ? { minimized: minimizedSummary } : {}),
 		};
 	} catch (err) {
 		resetSession = true;

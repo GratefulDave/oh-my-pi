@@ -46,6 +46,18 @@
 
 - Added the `enclosingBlockBoundaries` native API (with `EnclosingBoundaryOptions` and `LineRange` types) that returns, for a set of visible line ranges, the off-window boundary lines of every multi-line tree-sitter node whose span crosses the window — the closer when an opener is shown and the opener when a closer is shown. Covers brace and indentation languages (Python) via real syntactic spans; returns `null` for unrecognized languages or sources with syntax errors so callers can fall back to a lexical scan.
 - Added a `nohup` shell builtin to the embedded `pi_shell`, shadowing the external `/usr/bin/nohup`. It runs its operand command and propagates that command's exit status (and reports `missing operand` / exit 125 with no operand), but deliberately does **not** mask `SIGHUP` or detach the child into a new session the way real `nohup` does. Agents reach for `nohup … &` assuming the shell is one-shot; in this persistent embedded shell that assumption is wrong and the only effect of real `nohup` was to leak background processes that outlived the host. The builtin keeps such commands as ordinary descendants so they are reaped with the host instead of surviving as orphans.
+- Added minimizer options `sourceOutlineLevel` and `legacyFilters` to the `MinimizerOptions` native surface. The minimizer is fully deterministic — no network calls and no extra dependencies are linked into the addon.
+- Added the `applyShellMinimizer` native API (plus the `ShellMinimizerApplyOptions` type) to run the shell-output minimizer over an already-captured command result without spawning a shell. It is **async** (returns `Promise<MinimizerResult | null>`): minimization can run over a multi-megabyte capture, so the pass runs on a blocking pool to keep it off the JS event loop. Resolves to a `MinimizerResult` only when the output was actually rewritten, and `null` for disabled/omitted/passthrough cases, matching the inline `executeShell` minimizer contract.
+
+### Fixed
+
+- Fixed `executeShell`'s `minimized` telemetry being attached to whole-command runs where a supported filter ran but left the output unchanged (e.g. a short `git diff --name-only`). The result is now gated on the filter actually rewriting the output and retaining the original buffer, restoring the documented contract that `minimized` is absent for filter no-ops.
+- Fixed `git stash list` minimization discarding the `<branch>` from each entry; the branch is the primary thing users scan a stash list for and is now preserved compactly as `stash@{N}: [branch] <hash> <message>`.
+- Fixed a byte/char offset mix in the listing-filter center-truncation that could shift the truncation window off its intended anchor for lines with multibyte leading whitespace (NBSP, ideographic space).
+- Fixed the `too-large` capture-cap path emitting a `minimized` result with empty `text`/`original_text` when output exceeded `maxCaptureBytes` and was streamed raw. Both the whole-command and segmented-chain paths now leave `minimized` absent (matching every other passthrough and `applyShellMinimizer`), so consumers keying off `minimized` presence can no longer mistake an oversized command for an empty rewrite.
+- Fixed `applyShellMinimizer` / whole-buffer chain minimization corrupting output for all-git chains with differing subcommands or incompatible same-subcommand actions (e.g. `git commit --dry-run && git commit -m init`): combined captures now stay opaque unless the git subcommand has an explicit compatible renderer.
+- Fixed per-call minimizer kill switches being weakened by settings files: `enabled: false` remains a hard off switch, and `legacyFilters` properly respects a caller's explicit `false` in addition to `true` when a settings file sets the opposite value.
+- Fixed conservative minimizer passthrough and preservation gaps for `find -printf`/action output, `aws s3 ls --summarize` footers, `git stash` empty-state output, `uv run python <script> ... pytest` wrapper routing, and gcc/clang diagnostic totals.
 
 ## [15.10.2] - 2026-06-08
 
@@ -56,6 +68,31 @@
 ### Fixed
 
 - Fixed the native `copyToClipboard` leaving the X11 clipboard empty on Linux even while the process kept running. arboard answers clipboard `SelectionRequest`s from a background thread that lives only as long as a `Clipboard` instance exists, and the binding dropped its transient `Clipboard` immediately after `set_text` — tearing that thread down so the selection lost its owner and the clipboard read back empty (matching the `returned ok but clipboard=''` symptom). The Linux path now holds a single `Clipboard` for the lifetime of the process so the owner thread keeps serving, with no `xclip`/`wl-copy` subprocess; macOS/Windows keep the transient write on the calling thread ([#2075](https://github.com/can1357/oh-my-pi/issues/2075)).
+
+### Added
+
+- Added minimizer options `sourceOutlineLevel` and `legacyFilters` to the `MinimizerOptions` native surface. The minimizer is fully deterministic — no network calls and no extra dependencies are linked into the addon.
+- Added the `applyShellMinimizer` native API (plus the `ShellMinimizerApplyOptions` type) to run the shell-output minimizer over an already-captured command result without spawning a shell. It is **async** (returns `Promise<MinimizerResult | null>`): minimization can run over a multi-megabyte capture, so the pass runs on a blocking pool to keep it off the JS event loop. Resolves to a `MinimizerResult` only when the output was actually rewritten, and `null` for disabled/omitted/passthrough cases, matching the inline `executeShell` minimizer contract.
+- Added minimizer coverage for `bun check` as a first-class subcommand: `supports()` now admits it, the dispatch routes directly to the typecheck/lint filter instead of falling through to the package-manager filter, and the `bun check` subcommand is excluded from `is_non_exec_package_subcommand` so package-manager stripping is not applied to checker output.
+- Added minimizer builtin filters for `apt`, `apt-get`, `yum`, `dnf`, and `apk` package managers: strips `Get:`/`Hit:`/`Ign:` download lines, `Fetched`/`Preparing`/`Unpacking`/`Setting up`/`Processing`/`Reading`/`Building` progress noise, and `(Reading database …` lines; 60-line cap, `on_empty = ok`.
+- Added minimizer builtin filter for `conda`: strips `## …` plan-header lines, `Downloading`/`Extracting`/`Preparing|Verifying|Executing transaction` lines, and `###`/`===` progress bars; 50-line cap, `on_empty = ok`.
+
+### Fixed
+
+- Fixed `executeShell`'s `minimized` telemetry being attached to whole-command runs where a supported filter ran but left the output unchanged (e.g. a short `git diff --name-only`). The result is now gated on the filter actually rewriting the output and retaining the original buffer, restoring the documented contract that `minimized` is absent for filter no-ops.
+- Fixed `git stash list` minimization discarding the `<branch>` from each entry; the branch is the primary thing users scan a stash list for and is now preserved compactly as `stash@{N}: [branch] <hash> <message>`.
+- Fixed a byte/char offset mix in the listing-filter center-truncation that could shift the truncation window off its intended anchor for lines with multibyte leading whitespace (NBSP, ideographic space).
+- Fixed the `too-large` capture-cap path emitting a `minimized` result with empty `text`/`original_text` when output exceeded `maxCaptureBytes` and was streamed raw. Both the whole-command and segmented-chain paths now leave `minimized` absent (matching every other passthrough and `applyShellMinimizer`), so consumers keying off `minimized` presence can no longer mistake an oversized command for an empty rewrite.
+- Fixed `applyShellMinimizer` / whole-buffer chain minimization corrupting output for command chains (e.g. `git -C a status && git -C b status`, `git commit --dry-run && git commit -m init`). The whole-buffer entry point sees only the chain's interleaved capture and cannot attribute lines back to each segment, so a single git renderer would synthesize one merged result that never existed (e.g. `condense_status` keeping only the last `On branch` and summing both repos' counts). Whole-buffer chain captures now always stay opaque and are preserved verbatim; per-segment minimization is handled separately by the segmented chain runner, which captures each segment in isolation.
+- Fixed per-call minimizer kill switches being weakened by settings files: `enabled: false` remains a hard off switch, and `legacyFilters` properly respects a caller's explicit `false` in addition to `true` when a settings file sets the opposite value.
+- Fixed conservative minimizer passthrough and preservation gaps for `find -printf`/action output, `aws s3 ls --summarize` footers, `git stash` empty-state output, `uv run python <script> ... pytest` wrapper routing, and gcc/clang diagnostic totals.
+
+## [15.10.5] - 2026-06-08
+
+### Added
+
+- Added the `enclosingBlockBoundaries` native API (with `EnclosingBoundaryOptions` and `LineRange` types) that returns, for a set of visible line ranges, the off-window boundary lines of every multi-line tree-sitter node whose span crosses the window — the closer when an opener is shown and the opener when a closer is shown. Covers brace and indentation languages (Python) via real syntactic spans; returns `null` for unrecognized languages or sources with syntax errors so callers can fall back to a lexical scan.
+- Added a `nohup` shell builtin to the embedded `pi_shell`, shadowing the external `/usr/bin/nohup`. It runs its operand command and propagates that command's exit status (and reports `missing operand` / exit 125 with no operand), but deliberately does **not** mask `SIGHUP` or detach the child into a new session the way real `nohup` does. Agents reach for `nohup … &` assuming the shell is one-shot; in this persistent embedded shell that assumption is wrong and the only effect of real `nohup` was to leak background processes that outlived the host. The builtin keeps such commands as ordinary descendants so they are reaped with the host instead of surviving as orphans.
 
 ## [15.10.1] - 2026-06-07
 

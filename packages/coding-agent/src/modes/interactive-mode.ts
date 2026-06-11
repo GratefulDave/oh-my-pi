@@ -108,6 +108,7 @@ import type { HookInputComponent } from "./components/hook-input";
 import type { HookSelectorComponent, HookSelectorSlider } from "./components/hook-selector";
 import { PlanReviewOverlay } from "./components/plan-review-overlay";
 import { StatusLineComponent } from "./components/status-line";
+import { SubagentStatusWidget } from "./components/subagent-status-widget";
 import type { ToolExecutionHandle } from "./components/tool-execution";
 import { TranscriptContainer } from "./components/transcript-container";
 import { WelcomeComponent, type LspServerInfo as WelcomeLspServerInfo } from "./components/welcome";
@@ -299,6 +300,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	hookWidgetContainerAbove: Container;
 	hookWidgetContainerBelow: Container;
 	statusLine: StatusLineComponent;
+	subagentStatusWidget: SubagentStatusWidget;
 
 	isInitialized = false;
 	isBashMode = false;
@@ -395,6 +397,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	#voicePreviousUseTerminalCursor: boolean | null = null;
 	#resizeHandler?: () => void;
 	#observerRegistry: SessionObserverRegistry;
+	#subagentStatusTimer: NodeJS.Timeout | undefined;
 	#eventBus?: EventBus;
 	#eventBusUnsubscribers: Array<() => void> = [];
 	#welcomeComponent?: WelcomeComponent;
@@ -513,6 +516,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#selectorController = new SelectorController(this);
 		this.#inputController = new InputController(this);
 		this.#observerRegistry = new SessionObserverRegistry();
+		this.subagentStatusWidget = new SubagentStatusWidget(this.#observerRegistry, session);
 	}
 
 	playWelcomeIntro(): void {
@@ -610,6 +614,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.ui.addChild(this.omfgContainer);
 		this.ui.addChild(this.errorBannerContainer);
 		this.ui.addChild(this.statusLine); // Only renders hook statuses (main status in editor border)
+		this.ui.addChild(this.subagentStatusWidget);
 		this.ui.addChild(this.hookWidgetContainerAbove);
 		this.ui.addChild(this.editorContainer);
 		this.ui.addChild(this.hookWidgetContainerBelow);
@@ -625,6 +630,11 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#observerRegistry.setMainSession(this.sessionManager.getSessionFile() ?? undefined);
 		this.#observerRegistry.onChange(() => {
 			this.statusLine.setSubagentCount(this.#observerRegistry.getActiveSubagentCount());
+			if (this.subagentStatusWidget.hasVisibleRows()) {
+				this.#startSubagentStatusTimer();
+			} else {
+				this.#stopSubagentStatusTimer();
+			}
 			// Auto-checkmark todos whose matching subagent just succeeded, then
 			// re-render so the running override (the static "live" glyph when a
 			// subagent is doing the work for a still-pending todo) updates as
@@ -2549,6 +2559,20 @@ export class InteractiveMode implements InteractiveModeContext {
 		return choice === "Yes";
 	}
 
+	#startSubagentStatusTimer(): void {
+		if (this.#subagentStatusTimer) return;
+		this.#subagentStatusTimer = setInterval(() => {
+			this.ui.requestRender();
+			this.updateEditorTopBorder();
+		}, 80);
+	}
+
+	#stopSubagentStatusTimer(): void {
+		if (!this.#subagentStatusTimer) return;
+		clearInterval(this.#subagentStatusTimer);
+		this.#subagentStatusTimer = undefined;
+	}
+
 	stop(): void {
 		if (this.loadingAnimation) {
 			this.#stopLoadingAnimation(false);
@@ -2566,6 +2590,7 @@ export class InteractiveMode implements InteractiveModeContext {
 			unsubscribe();
 		}
 		this.#eventBusUnsubscribers = [];
+		this.#stopSubagentStatusTimer();
 		this.#observerRegistry.dispose();
 		this.#eventController.dispose();
 		this.statusLine.dispose();
@@ -3191,6 +3216,10 @@ export class InteractiveMode implements InteractiveModeContext {
 	}
 
 	showAgentsDashboard(): void {
+		if (this.#observerRegistry.getSessions().some(session => session.kind === "subagent")) {
+			this.showSessionObserver();
+			return;
+		}
 		void this.#selectorController.showAgentsDashboard();
 	}
 

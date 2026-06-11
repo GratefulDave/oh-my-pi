@@ -171,7 +171,7 @@ import { GoalRuntime } from "../goals/runtime";
 import type { Goal, GoalModeState } from "../goals/state";
 import type { HindsightSessionState } from "../hindsight/state";
 import { type LocalProtocolOptions, resolveLocalUrlToPath } from "../internal-urls";
-import { IrcBus, type IrcMessage } from "../irc/bus";
+import type { IrcMessage } from "../irc/bus";
 import { resolveMemoryBackend } from "../memory-backend";
 import { getMnemopiSessionState, type MnemopiSessionState, setMnemopiSessionState } from "../mnemopi/state";
 import { containsOrchestrate, ORCHESTRATE_NOTICE } from "../modes/orchestrate";
@@ -185,7 +185,6 @@ import type { PlanModeState } from "../plan-mode/state";
 import autoContinuePrompt from "../prompts/system/auto-continue.md" with { type: "text" };
 import eagerTodoPrompt from "../prompts/system/eager-todo.md" with { type: "text" };
 import emptyStopRetryTemplate from "../prompts/system/empty-stop-retry.md" with { type: "text" };
-import ircAutoReplyTemplate from "../prompts/system/irc-autoreply.md" with { type: "text" };
 import ircIncomingTemplate from "../prompts/system/irc-incoming.md" with { type: "text" };
 import planModeActivePrompt from "../prompts/system/plan-mode-active.md" with { type: "text" };
 import planModeReferencePrompt from "../prompts/system/plan-mode-reference.md" with { type: "text" };
@@ -222,6 +221,7 @@ import {
 	selectDiscoverableToolNamesByServer,
 } from "../tool-discovery/tool-index";
 import { assertEditableFile } from "../tools/auto-generated-guard";
+import { appendBashMinimizerGainRecord, inferBashMinimizerMissedFilter } from "../tools/bash-minimizer-gain";
 import type { CheckpointState } from "../tools/checkpoint";
 import { outputMeta } from "../tools/output-meta";
 import { normalizeLocalScheme, resolveToCwd } from "../tools/path-utils";
@@ -299,8 +299,7 @@ export type AgentSessionEvent =
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
-export type CommandMetadataChangedListener = () => void | Promise<void>;
-export type AsyncJobSnapshotItem = Pick<AsyncJob, "id" | "type" | "status" | "label" | "startTime">;
+export type AsyncJobSnapshotItem = Pick<AsyncJob, "id" | "type" | "status" | "label" | "startTime" | "queued">;
 
 const EMPTY_STOP_MAX_RETRIES = 3;
 const RETRY_BACKOFF_MAX_DELAY_MS = 8_000;
@@ -548,7 +547,6 @@ interface ActiveRetryFallbackState {
 	originalSelector: string;
 	originalThinkingLevel: ConfiguredThinkingLevel | undefined;
 	lastAppliedFallbackThinkingLevel: ConfiguredThinkingLevel | undefined;
-	pinned: boolean;
 }
 
 function parseRetryFallbackSelector(selector: string): RetryFallbackSelector | undefined {
@@ -886,7 +884,6 @@ export class AgentSession {
 	/** Last (enable, providerId) tuple resolved by `#syncAppendOnlyContext` — used to skip no-op invalidations. */
 	#lastAppendOnlyResolution?: { enable: boolean; providerId: string | undefined };
 	#eventListeners: AgentSessionEventListener[] = [];
-	#commandMetadataChangedListeners: CommandMetadataChangedListener[] = [];
 
 	/** Tracks pending steering messages for UI display. Removed when delivered.
 	 *  Entry shape: `{ text }` for plain-text steers (user-message dequeue
@@ -1467,6 +1464,7 @@ export class AgentSession {
 			status: job.status,
 			label: job.label,
 			startTime: job.startTime,
+			queued: job.queued,
 		}));
 		const recent = manager.getRecentJobs(options?.recentLimit ?? 5, ownerFilter).map(job => ({
 			id: job.id,
@@ -1474,6 +1472,7 @@ export class AgentSession {
 			status: job.status,
 			label: job.label,
 			startTime: job.startTime,
+			queued: job.queued,
 		}));
 		const delivery = manager.getDeliveryState(ownerFilter);
 		return { running, recent, delivery };
@@ -3037,27 +3036,6 @@ export class AgentSession {
 		};
 	}
 
-	subscribeCommandMetadataChanged(listener: CommandMetadataChangedListener): () => void {
-		this.#commandMetadataChangedListeners.push(listener);
-		return () => {
-			const index = this.#commandMetadataChangedListeners.indexOf(listener);
-			if (index !== -1) {
-				this.#commandMetadataChangedListeners.splice(index, 1);
-			}
-		};
-	}
-
-	#notifyCommandMetadataChanged(): void {
-		const listeners = [...this.#commandMetadataChangedListeners];
-		for (const listener of listeners) {
-			try {
-				void listener();
-			} catch (err) {
-				logger.error("Command metadata listener threw", { err });
-			}
-		}
-	}
-
 	/**
 	 * Temporarily disconnect from agent events.
 	 * User listeners are preserved and will receive events again after resubscribe().
@@ -3213,7 +3191,7 @@ export class AgentSession {
 		this.setHindsightSessionState(undefined);
 		hindsightState?.dispose();
 		const mnemopiState = setMnemopiSessionState(this, undefined);
-		await mnemopiState?.dispose();
+		mnemopiState?.dispose();
 		this.#disconnectFromAgent();
 		if (this.#unsubscribeAppendOnly) {
 			this.#unsubscribeAppendOnly();
@@ -4374,15 +4352,9 @@ export class AgentSession {
 		return [...this.#customCommands, ...this.#mcpPromptCommands];
 	}
 
-	/** MCP prompt commands only, for command-list metadata. */
-	get mcpPromptCommands(): ReadonlyArray<LoadedCustomCommand> {
-		return this.#mcpPromptCommands;
-	}
-
 	/** Update the MCP prompt commands list. Called when server prompts are (re)loaded. */
 	setMCPPromptCommands(commands: LoadedCustomCommand[]): void {
 		this.#mcpPromptCommands = commands;
-		this.#notifyCommandMetadataChanged();
 	}
 
 	// =========================================================================
@@ -4495,16 +4467,12 @@ export class AgentSession {
 		return { ...message, content: normalized } as T;
 	}
 
-	#magicKeywordEnabled(keyword: "orchestrate" | "ultrathink" | "workflow"): boolean {
-		return this.settings.get("magicKeywords.enabled") && this.settings.get(`magicKeywords.${keyword}`);
-	}
-
 	#createMagicKeywordNotices(text: string): CustomMessage[] {
 		const timestamp = Date.now();
 		const turnBudget = parseTurnBudget(text);
 		this.sessionManager.beginTurnBudget(turnBudget?.total ?? null, turnBudget?.hard ?? false);
 		const keywordNotices: CustomMessage[] = [];
-		if (this.#magicKeywordEnabled("ultrathink") && containsUltrathink(text)) {
+		if (containsUltrathink(text)) {
 			keywordNotices.push({
 				role: "custom",
 				customType: "ultrathink-notice",
@@ -4514,7 +4482,7 @@ export class AgentSession {
 				timestamp,
 			});
 		}
-		if (this.#magicKeywordEnabled("orchestrate") && containsOrchestrate(text)) {
+		if (containsOrchestrate(text)) {
 			keywordNotices.push({
 				role: "custom",
 				customType: "orchestrate-notice",
@@ -4524,7 +4492,7 @@ export class AgentSession {
 				timestamp,
 			});
 		}
-		if (this.#magicKeywordEnabled("workflow") && containsWorkflow(text)) {
+		if (containsWorkflow(text)) {
 			keywordNotices.push({
 				role: "custom",
 				customType: "workflow-notice",
@@ -5955,7 +5923,7 @@ export class AgentSession {
 		if (!model?.reasoning) return;
 
 		let resolved: Effort | undefined;
-		if (this.#magicKeywordEnabled("ultrathink") && containsUltrathink(promptText)) {
+		if (containsUltrathink(promptText)) {
 			// The user explicitly asked for maximum thinking; bypass the classifier
 			// and jump straight to the highest auto-supported level for this model.
 			resolved = clampAutoThinkingEffort(model, Effort.XHigh);
@@ -8292,16 +8260,8 @@ export class AgentSession {
 		const contextWindow = this.model?.contextWindow ?? 0;
 		if (isContextOverflow(message, contextWindow)) return false;
 
-		if (this.#isClassifierRefusal(message)) return true;
-
 		const err = message.errorMessage;
 		return this.#isTransientErrorMessage(err) || isUsageLimitError(err);
-	}
-
-	#isClassifierRefusal(message: AssistantMessage): boolean {
-		if (message.stopReason !== "error") return false;
-		const stopType = message.stopDetails?.type;
-		return stopType === "refusal" || stopType === "sensitive";
 	}
 
 	#isTransientErrorMessage(errorMessage: string): boolean {
@@ -8447,7 +8407,6 @@ export class AgentSession {
 		role: string,
 		selector: RetryFallbackSelector,
 		currentSelector: string,
-		options?: { pinFallback?: boolean },
 	): Promise<void> {
 		const candidate = this.#modelRegistry.find(selector.provider, selector.id);
 		if (!candidate) {
@@ -8473,11 +8432,9 @@ export class AgentSession {
 				originalSelector: currentSelector,
 				originalThinkingLevel: currentThinkingLevel,
 				lastAppliedFallbackThinkingLevel: nextThinkingLevel,
-				pinned: options?.pinFallback === true,
 			};
 		} else {
 			this.#activeRetryFallback.lastAppliedFallbackThinkingLevel = nextThinkingLevel;
-			this.#activeRetryFallback.pinned = this.#activeRetryFallback.pinned || options?.pinFallback === true;
 		}
 		await this.#emitSessionEvent({
 			type: "retry_fallback_applied",
@@ -8487,7 +8444,7 @@ export class AgentSession {
 		});
 	}
 
-	async #tryRetryModelFallback(currentSelector: string, options?: { pinFallback?: boolean }): Promise<boolean> {
+	async #tryRetryModelFallback(currentSelector: string): Promise<boolean> {
 		const role = this.#activeRetryFallback?.role ?? this.#resolveRetryFallbackRole(currentSelector);
 		if (!role) return false;
 
@@ -8497,7 +8454,7 @@ export class AgentSession {
 			if (!candidate) continue;
 			const apiKey = await this.#modelRegistry.getApiKey(candidate, this.sessionId);
 			if (!apiKey) continue;
-			await this.#applyRetryFallbackCandidate(role, selector, currentSelector, options);
+			await this.#applyRetryFallbackCandidate(role, selector, currentSelector);
 			return true;
 		}
 
@@ -8506,7 +8463,6 @@ export class AgentSession {
 
 	async #maybeRestoreRetryFallbackPrimary(): Promise<void> {
 		if (!this.#activeRetryFallback) return;
-		if (this.#activeRetryFallback.pinned) return;
 		if (this.#getRetryFallbackRevertPolicy() !== "cooldown-expiry") return;
 
 		const {
@@ -8604,7 +8560,6 @@ export class AgentSession {
 	async #handleRetryableError(message: AssistantMessage): Promise<boolean> {
 		const retrySettings = this.settings.getGroup("retry");
 		if (!retrySettings.enabled) return false;
-		const classifierRefusal = this.#isClassifierRefusal(message);
 
 		const generation = this.#promptGeneration;
 		this.#retryAttempt++;
@@ -8678,21 +8633,14 @@ export class AgentSession {
 		const currentSelector = this.model ? formatRetryFallbackSelector(this.model, this.thinkingLevel) : undefined;
 		if (!switchedCredential && currentSelector) {
 			if (retrySettings.modelFallback) {
-				if (!classifierRefusal) {
-					this.#noteRetryFallbackCooldown(currentSelector, parsedRetryAfterMs, errorMessage);
-				}
-				switchedModel = await this.#tryRetryModelFallback(currentSelector, { pinFallback: classifierRefusal });
+				this.#noteRetryFallbackCooldown(currentSelector, parsedRetryAfterMs, errorMessage);
+				switchedModel = await this.#tryRetryModelFallback(currentSelector);
 			}
 			if (switchedModel) {
 				delayMs = 0;
 			} else if (usageLimitWaitMs === undefined && parsedRetryAfterMs && parsedRetryAfterMs > delayMs) {
 				delayMs = parsedRetryAfterMs;
 			}
-		}
-		if (classifierRefusal && !switchedModel) {
-			this.#retryAttempt = 0;
-			this.#resolveRetry();
-			return false;
 		}
 
 		// Fail-fast cap: if the provider asks us to wait longer than
@@ -8844,6 +8792,62 @@ export class AgentSession {
 			return undefined;
 		}
 	}
+	async #appendBashMinimizerGainFromResult(command: string, cwd: string, result: BashResult): Promise<void> {
+		if (!result.minimized) return;
+		try {
+			await appendBashMinimizerGainRecord({
+				command,
+				cwd,
+				sessionCwd: this.sessionManager.getCwd(),
+				filter: result.minimized.filter,
+				inputBytes: result.minimized.inputBytes,
+				outputBytes: result.minimized.outputBytes,
+				exitCode: result.exitCode ?? null,
+				agentDir: this.settings.getAgentDir(),
+			});
+		} catch (error) {
+			logger.warn("Failed to append bash minimizer gain record", { error });
+		}
+	}
+
+	async #appendBashMinimizerGain(
+		command: string,
+		cwd: string,
+		info: {
+			filter: string;
+			inputBytes: number;
+			outputBytes: number;
+			exitCode: number | null;
+			kind?: "saved" | "missed";
+		},
+	): Promise<void> {
+		try {
+			await appendBashMinimizerGainRecord({
+				command,
+				cwd,
+				sessionCwd: this.sessionManager.getCwd(),
+				filter: info.filter,
+				inputBytes: info.inputBytes,
+				outputBytes: info.outputBytes,
+				exitCode: info.exitCode,
+				kind: info.kind,
+				agentDir: this.settings.getAgentDir(),
+			});
+		} catch (error) {
+			logger.warn("Failed to append bash minimizer gain record", { error });
+		}
+	}
+
+	async #saveBashMinimizedArtifactAndGain(
+		command: string,
+		cwd: string,
+		originalText: string,
+		info: { filter: string; inputBytes: number; outputBytes: number; exitCode: number | null },
+	): Promise<string | undefined> {
+		const artifactId = await this.#saveBashOriginalArtifact(originalText);
+		await this.#appendBashMinimizerGain(command, cwd, info);
+		return artifactId;
+	}
 
 	/**
 	 * Execute a bash command.
@@ -8869,6 +8873,7 @@ export class AgentSession {
 				cwd,
 			});
 			if (hookResult?.result) {
+				await this.#appendBashMinimizerGainFromResult(command, cwd, hookResult.result);
 				this.recordBashResult(command, hookResult.result, options);
 				return hookResult.result;
 			}
@@ -8877,16 +8882,31 @@ export class AgentSession {
 		const abortController = new AbortController();
 		this.#bashAbortControllers.add(abortController);
 
+		let savedGainRecorded = false;
 		try {
 			const result = await executeBashCommand(command, {
 				onChunk,
 				signal: abortController.signal,
 				sessionKey: this.sessionId,
 				timeout: clampTimeout("bash") * 1000,
-				onMinimizedSave: originalText => this.#saveBashOriginalArtifact(originalText),
+				onMinimizedSave: async (originalText, info) => {
+					savedGainRecorded = true;
+					return await this.#saveBashMinimizedArtifactAndGain(command, cwd, originalText, info);
+				},
+				onUnminimizedOutput: info =>
+					this.#appendBashMinimizerGain(command, cwd, {
+						filter: inferBashMinimizerMissedFilter(command),
+						inputBytes: info.outputBytes,
+						outputBytes: info.outputBytes,
+						exitCode: info.exitCode,
+						kind: "missed",
+					}),
 				useUserShell: options?.useUserShell,
 			});
 
+			if (!savedGainRecorded) {
+				await this.#appendBashMinimizerGainFromResult(command, cwd, result);
+			}
 			this.recordBashResult(command, result, options);
 			return result;
 		} finally {
@@ -9152,20 +9172,11 @@ export class AgentSession {
 	 *   → "woken".
 	 *
 	 * Never blocks on the recipient's turn: the wake turn is fire-and-forget.
-	 *
-	 * When the sender expects a reply (`send await:true`) and this session is
-	 * mid-turn with async execution disabled, the next step boundary may be
-	 * gated on the sender's own batch finishing (blocking task spawns), so a
-	 * real reply turn can never happen in time. In that case an ephemeral
-	 * side-channel auto-reply is generated from the current context (the old
-	 * `respondAsBackground` path) and sent back over the bus on this agent's
-	 * behalf.
 	 */
-	async deliverIrcMessage(msg: IrcMessage, opts?: { expectsReply?: boolean }): Promise<"injected" | "woken"> {
+	async deliverIrcMessage(msg: IrcMessage): Promise<"injected" | "woken"> {
 		if (this.#isDisposed) {
 			throw new Error("Recipient session is disposed.");
 		}
-		const autoReply = (opts?.expectsReply ?? false) && this.isStreaming && !this.settings.get("async.enabled");
 		const record: CustomMessage = {
 			role: "custom",
 			customType: "irc:incoming",
@@ -9173,7 +9184,6 @@ export class AgentSession {
 				from: msg.from,
 				message: msg.body,
 				replyTo: msg.replyTo ?? "",
-				autoReplied: autoReply,
 			}),
 			display: true,
 			details: { id: msg.id, from: msg.from, message: msg.body, ...(msg.replyTo ? { replyTo: msg.replyTo } : {}) },
@@ -9183,7 +9193,6 @@ export class AgentSession {
 		void this.#emitSessionEvent({ type: "irc_message", message: record });
 		if (this.isStreaming) {
 			this.#pendingIrcAsides.push(record);
-			if (autoReply) void this.#runIrcAutoReply(msg);
 			return "injected";
 		}
 		// Idle: same wake primitive the yield queue uses for async-result
@@ -9192,50 +9201,6 @@ export class AgentSession {
 			logger.warn("IRC wake turn failed", { from: msg.from, to: msg.to, error: String(error) });
 		});
 		return "woken";
-	}
-
-	/**
-	 * Generate and deliver an ephemeral auto-reply to `msg` on this agent's
-	 * behalf: a no-tools side-channel turn over the current history (same
-	 * pipeline as `/btw`), recorded into this session as an `irc:autoreply`
-	 * aside so the model knows what was said for it, and sent back to the
-	 * sender as a regular bus message (`replyTo: msg.id`) so their parked
-	 * `wait`/`await:true` resolves. Failures only log — the sender then hits
-	 * its normal wait timeout.
-	 */
-	async #runIrcAutoReply(msg: IrcMessage): Promise<void> {
-		try {
-			const { replyText } = await this.runEphemeralTurn({
-				promptText: prompt.render(ircAutoReplyTemplate, {
-					from: msg.from,
-					message: msg.body,
-					replyTo: msg.replyTo ?? "",
-				}),
-			});
-			const body = replyText.trim();
-			if (!body || this.#isDisposed) return;
-			const record: CustomMessage = {
-				role: "custom",
-				customType: "irc:autoreply",
-				content: `[IRC you → \`${msg.from}\` (auto)]\n\n${body}`,
-				display: true,
-				details: { to: msg.from, body, replyTo: msg.id },
-				attribution: "agent",
-				timestamp: Date.now(),
-			};
-			void this.#emitSessionEvent({ type: "irc_message", message: record });
-			// Asides drain at the next step boundary; anything left over is
-			// flushed at the start of the next prompt (#flushPendingIrcAsides).
-			this.#pendingIrcAsides.push(record);
-			// `from` must be the id the sender addressed (msg.to) so their
-			// from-filtered waiter matches.
-			const receipt = await IrcBus.global().send({ from: msg.to, to: msg.from, body, replyTo: msg.id });
-			if (receipt.outcome === "failed") {
-				logger.warn("IRC auto-reply delivery failed", { to: msg.from, error: receipt.error });
-			}
-		} catch (error) {
-			logger.warn("IRC auto-reply turn failed", { from: msg.from, error: String(error) });
-		}
 	}
 
 	/**

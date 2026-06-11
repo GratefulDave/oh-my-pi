@@ -1469,6 +1469,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			settings,
 			authStorage,
 			modelRegistry,
+			// Expose the parent's loaded extensions so eval-spawned subagents inherit
+			// provider registrations instead of re-running discovery on the shared registry.
+			getPreloadedExtensions: () => extensionsResult,
 			getTelemetry: () => agent?.telemetry,
 			// Subagents inherit the singleton (the parent's manager) so their bash/task
 			// completions still flow into the spawning conversation's yieldQueue.
@@ -1667,7 +1670,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		// extensions are available for model selection on session resume / fallback.
 		const activeExtensionSources = extensionsResult.extensions.map(extension => extension.path);
 		modelRegistry.syncExtensionSources(activeExtensionSources);
+		const preloadedExtensionSources = options.preloadedExtensions
+			? new Set(options.preloadedExtensions.extensions.map(extension => extension.path))
+			: null;
 		for (const sourceId of new Set(activeExtensionSources)) {
+			if (preloadedExtensionSources?.has(sourceId)) continue;
 			modelRegistry.clearSourceRegistrations(sourceId);
 		}
 		if (extensionsResult.runtime.pendingProviderRegistrations.length > 0) {

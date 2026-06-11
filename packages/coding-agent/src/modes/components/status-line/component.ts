@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import { estimateTokens } from "@oh-my-pi/pi-agent-core/compaction";
 import { type Component, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
-import { getProjectDir } from "@oh-my-pi/pi-utils";
+import { formatCount, getProjectDir } from "@oh-my-pi/pi-utils";
 import { $ } from "bun";
 import { settings } from "../../../config/settings";
 import type { AgentSession } from "../../../session/agent-session";
@@ -745,9 +745,23 @@ export class StatusLineComponent implements Component {
 			}
 		}
 
-		const runningBackgroundJobs = this.session.getAsyncJobSnapshot()?.running.length ?? 0;
-		if (runningBackgroundJobs > 0) {
-			rightParts.unshift(theme.fg("statusLineSubagents", `${theme.icon.job} ${runningBackgroundJobs}`));
+		const runningJobs = this.session.getAsyncJobSnapshot()?.running ?? [];
+		const taskJobs = runningJobs.filter(job => job.type === "task");
+		const queuedTaskJobs = taskJobs.filter(job => job.queued).length;
+		const runningTaskJobs = taskJobs.length - queuedTaskJobs;
+		const nonTaskJobs = runningJobs.length - taskJobs.length;
+		if (taskJobs.length > 0) {
+			const icon = theme.icon.agents ? `${theme.icon.agents} ` : "";
+			const label =
+				runningTaskJobs > 0 && queuedTaskJobs > 0
+					? `${runningTaskJobs} running, ${queuedTaskJobs} queued agents`
+					: runningTaskJobs > 0
+						? `${runningTaskJobs} running ${runningTaskJobs === 1 ? "agent" : "agents"}`
+						: `${queuedTaskJobs} queued ${queuedTaskJobs === 1 ? "agent" : "agents"}`;
+			rightParts.push(theme.fg("statusLineSubagents", `${icon}${label}`));
+		}
+		if (nonTaskJobs > 0) {
+			rightParts.push(theme.fg("statusLineSubagents", `${formatCount("job", nonTaskJobs)} running`));
 		}
 		const topFillWidth = Math.max(0, width);
 		const left = [...leftParts];

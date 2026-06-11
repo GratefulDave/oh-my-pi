@@ -1153,6 +1153,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				rules: this.session.rules,
 				preloadedExtensionPaths: this.session.extensionPaths,
 				preloadedCustomToolPaths: this.session.customToolPaths,
+				preloadedExtensions: this.session.getPreloadedExtensions?.(),
 				localProtocolOptions,
 				parentArtifactManager,
 				parentHindsightSessionState: this.session.getHindsightSessionState?.(),
@@ -1184,6 +1185,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 						worktree: isolationDir,
 						preloadedExtensionPaths: undefined,
 						preloadedCustomToolPaths: undefined,
+						preloadedExtensions: undefined,
 					});
 					if (mergeMode === "branch" && result.exitCode === 0) {
 						try {
