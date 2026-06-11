@@ -1,105 +1,80 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { globPaths } from "@oh-my-pi/pi-utils";
+import type { Dirent } from "node:fs";
 import type { FileFingerprint, SemanticLanguage } from "./types";
 
-const SOURCE_PATTERNS = [
-	"**/*.ts",
-	"**/*.tsx",
-	"**/*.mts",
-	"**/*.cts",
-	"**/*.js",
-	"**/*.jsx",
-	"**/*.mjs",
-	"**/*.cjs",
-	"**/*.py",
-	"**/*.rs",
-	"**/*.go",
-	"**/*.java",
-	"**/*.kt",
-	"**/*.swift",
-	"**/*.md",
-	"**/*.txt",
-];
+const SOURCE_EXTENSIONS: Record<string, true> = {
+	".ts": true,
+	".tsx": true,
+	".mts": true,
+	".cts": true,
+	".js": true,
+	".jsx": true,
+	".mjs": true,
+	".cjs": true,
+	".py": true,
+	".rs": true,
+	".go": true,
+	".java": true,
+	".kt": true,
+	".swift": true,
+	".md": true,
+	".txt": true,
+};
 
-const DEFAULT_EXCLUDES = [
-	".omp",
-	".omp/**",
-	".omc",
-	".omc/**",
-	".omx",
-	".omx/**",
-	".agents",
-	".agents/**",
-	".claude",
-	".claude/**",
-	".codex",
-	".codex/**",
-	".cursor",
-	".cursor/**",
-	".zed",
-	".zed/**",
-	".idea",
-	".idea/**",
-	"**/.omp",
-	"**/.omp/**",
-	"**/.omc",
-	"**/.omc/**",
-	"**/.omx",
-	"**/.omx/**",
-	"**/.agents",
-	"**/.agents/**",
-	"**/.claude",
-	"**/.claude/**",
-	"**/.codex",
-	"**/.codex/**",
-	"**/.cursor",
-	"**/.cursor/**",
-	"**/.zed",
-	"**/.zed/**",
-	"**/.idea",
-	"**/.idea/**",
-	".venv",
-	".venv/**",
-	"**/.venv",
-	"**/.venv/**",
-	"venv",
-	"venv/**",
-	"**/venv",
-	"**/venv/**",
-	"**/site-packages",
-	"**/site-packages/**",
-	"**/__generated__",
-	"**/__generated__/**",
-	"**/*.gen.ts",
-	"dist",
-	"dist/**",
-	"build",
-	"build/**",
-	"coverage",
-	"coverage/**",
-	"target",
-	"target/**",
-	".next",
-	".next/**",
-	".turbo",
-	".turbo/**",
-	"*.min.js",
-];
+const EXCLUDED_DIR_NAMES: Record<string, true> = {
+	".git": true,
+	".omp": true,
+	".omc": true,
+	".omx": true,
+	".agents": true,
+	".claude": true,
+	".codex": true,
+	".cursor": true,
+	".zed": true,
+	".idea": true,
+	".venv": true,
+	"venv": true,
+	"site-packages": true,
+	"__generated__": true,
+	dist: true,
+	build: true,
+	coverage: true,
+	target: true,
+	".next": true,
+	".turbo": true,
+};
 
 const MAX_FILE_BYTES = 512 * 1024;
 
 export async function discoverSourceFiles(cwd: string): Promise<string[]> {
-	const files = await globPaths(SOURCE_PATTERNS, {
-		cwd,
-		gitignore: true,
-		dot: true,
-		exclude: DEFAULT_EXCLUDES,
-		onlyFiles: true,
-		timeoutMs: 30_000,
-	});
+	const files: string[] = [];
+	await collectSourceFiles(cwd, "", files);
 	files.sort((left, right) => left.localeCompare(right));
 	return files;
+}
+
+async function collectSourceFiles(cwd: string, relativeDir: string, files: string[]): Promise<void> {
+	const absoluteDir = relativeDir ? path.join(cwd, relativeDir) : cwd;
+	let entries: Dirent[];
+	try {
+		entries = await fs.readdir(absoluteDir, { withFileTypes: true });
+	} catch {
+		return;
+	}
+
+	for (const entry of entries) {
+		const relativePath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
+		if (entry.isDirectory()) {
+			if (EXCLUDED_DIR_NAMES[entry.name]) continue;
+			await collectSourceFiles(cwd, relativePath, files);
+			continue;
+		}
+		if (!entry.isFile()) continue;
+		if (entry.name.endsWith(".min.js") || entry.name.endsWith(".gen.ts")) continue;
+		if (!SOURCE_EXTENSIONS[path.extname(entry.name)]) continue;
+		files.push(relativePath);
+	}
 }
 
 export async function readFileFingerprint(cwd: string, relativePath: string): Promise<FileFingerprint | null> {
