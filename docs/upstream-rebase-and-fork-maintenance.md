@@ -148,6 +148,29 @@ git branch -D pr/<merged-branch>
 
 ---
 
+## Current PR slicing after #2176
+
+PR #2176 moved the deterministic shell-output minimizer into upstream `main`. Treat that code as
+upstream-owned on the next sync. Keep the fork for the personal extension stack and only prepare
+these standalone upstream PRs:
+
+1. **Native key handling** — `crates/pi-natives/src/keys.rs` only. Exclude `-lex` sentinels,
+   generated native JS/DTS, package manifests, and `bun.lock`.
+2. **Sparse thinking metadata** — `packages/catalog/src/model-thinking.ts` plus a regression test
+   for sparse explicit `thinking` metadata. Exclude fork package-version rewrites.
+3. **Extension provider inheritance** — forward loaded extension/provider state into task and eval
+   child sessions. Add a forwarding-level regression before opening the PR.
+4. **Extension model-role override API** — expose session-local `pi.overrideModelRoles(...)` to
+   extensions. Keep separate from provider inheritance even though both touch task execution.
+5. **Minimizer core follow-ups** — split by risk: API/config surface, chain safety, then filter
+   families. Do not couple these to the minimizer-gain UI/JSONL extension.
+
+Keep these out of upstream PRs unless explicitly requested upstream: `.omp/*`, fork extension
+packages, Antigravity/private provider code, `-lex` versioning, `rebuild-lex.zsh`, fork sync docs,
+and minimizer-gain telemetry/UI.
+
+---
+
 ## 6. Conflict hot zones (historical)
 
 - `packages/ai/src/models.json` — upstream renames/deletes vs fork-retained tools.

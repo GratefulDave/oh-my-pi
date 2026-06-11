@@ -59,13 +59,14 @@ bun --cwd=packages/pi-observer run build
 # -> packages/pi-observer/dist/observer.bundle.js
 ```
 
-### Build all (workspace sweep)
+### Build all managed extensions
 ```bash
-bun run build          # = bun run --workspaces --if-present build
+bun scripts/rebuild-extensions.ts
 ```
-This also builds non-extension packages (coding-agent, ai, natives, …). To build only
-extensions, run each `bun --cwd=packages/<name> run build`.
-
+In the Lex fork this also rebuilds `packages/natives` before extension bundles. In an exported
+personal-extension repo without `packages/natives`, the same script automatically skips the native
+build and rebuilds only managed extension targets discovered from `.omp/settings.json` and package
+manifests.
 ### Bundler config (canonical, from `pi-observer/scripts/build-bundle.ts`)
 ```ts
 await Bun.build({
@@ -106,6 +107,25 @@ To test without editing settings, inject at launch:
 ```bash
 omp --extension packages/pi-observer/dist/observer.bundle.js
 ```
+
+### Install into user-scope stock `omp`/`lex`
+```bash
+bun scripts/install-user-extensions.ts
+bun run extensions:smoke:stock
+```
+The installer symlinks built bundles into `~/.omp/agent/extensions/<name>/`, writes the tilde paths
+to both `~/.omp/agent/settings.json` and `~/.omp/agent/config.yml`, and preserves unmanaged user
+extensions. The smoke command verifies those symlinks/settings, then launches `omp --version`; pass
+`--list-models` when you also want a runtime provider-load check.
+
+### Export to a standalone personal extension repo
+```bash
+bun run extensions:export -- --dest ../omp-personal-extensions --force
+```
+The export copies managed extension packages, local `.omp/extensions/*` entries, installer/build
+scripts, and `.omp/settings.json`; generated package manifests strip `-lex` dependency ranges back
+to stock `@oh-my-pi/*` versions so the repo can install against stock `omp` packages. Keep that repo
+private unless the Antigravity/provider behavior is intentionally public.
 
 ---
 
