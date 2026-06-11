@@ -1,8 +1,10 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { buildMinimizerGainDiagnostic, loadMinimizerGainContext } from "./gain-engine";
+import { buildMinimizerGainDiagnostic, exportMinimizerGainJsonl, loadMinimizerGainContext } from "./gain-engine";
 import { type DualContext, type GainTheme, MinimizerGainOverlayComponent, type ScopeIndex } from "./overlay";
 
-export { buildMinimizerGainDiagnostic, loadMinimizerGainContext } from "./gain-engine";
+export { buildMinimizerGainDiagnostic, exportMinimizerGainJsonl, loadMinimizerGainContext } from "./gain-engine";
 
 // ---------------------------------------------------------------------------
 // Extension entry point
@@ -16,6 +18,14 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 		handler: async (args, ctx) => {
 			const parsed = parseGainSlashArgs(args);
 			const cwd = ctx.cwd;
+			if (parsed.exportJsonlPath !== undefined) {
+				const context = await loadMinimizerGainContext({ cwd, all: parsed.all, days: parsed.days });
+				const exportPath = path.resolve(cwd, parsed.exportJsonlPath);
+				await fs.mkdir(path.dirname(exportPath), { recursive: true });
+				await fs.writeFile(exportPath, exportMinimizerGainJsonl(context), "utf8");
+				ctx.ui.notify(`Minimizer gain JSONL exported to ${exportPath}`, "info");
+				return;
+			}
 			const initialScope: ScopeIndex = parsed.all ? 1 : 0;
 
 			const buildDiagnosticForCwd = async (scopeCwd: string | undefined): Promise<DualContext["diagnostic"]> => {
@@ -64,6 +74,7 @@ interface GainSlashArgs {
 	all: boolean;
 	days?: number;
 	mode: GainSlashMode;
+	exportJsonlPath?: string;
 }
 
 function parseGainSlashArgs(args: string): GainSlashArgs {
@@ -84,7 +95,11 @@ function parseGainSlashArgs(args: string): GainSlashArgs {
 		if ((lower === "--days" || lower === "-d") && i + 1 < tokens.length) {
 			const parsed = Number.parseInt(tokens[i + 1], 10);
 			if (Number.isFinite(parsed) && parsed > 0) result.days = parsed;
-			break;
+			i += 1;
+		} else if (lower === "--export-jsonl") {
+			const next = tokens[i + 1];
+			result.exportJsonlPath = next && !next.startsWith("-") ? next : ".omp/minimizer-gain-export.jsonl";
+			if (next && !next.startsWith("-")) i += 1;
 		}
 	}
 	return result;

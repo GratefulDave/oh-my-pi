@@ -630,6 +630,19 @@ export class MinimizerGainOverlayComponent {
 			} else {
 				lines.push(...this.#renderByCommandTable(context.summary.byCommand, contentWidth));
 			}
+			lines.push("");
+			lines.push(clean(this.#heading("By Source"), width));
+			lines.push(clean(this.#border("─".repeat(Math.max(1, contentWidth))), width));
+			if (context.summary.bySource.length === 0) {
+				lines.push(clean(this.#dim("  (none)"), width));
+			} else {
+				lines.push(
+					...this.#renderByCommandTable(
+						context.summary.bySource.map(row => ({ ...row, command: row.source })),
+						contentWidth,
+					),
+				);
+			}
 			if (context.all) {
 				lines.push("");
 				lines.push(clean(this.#heading("Repositories"), width));

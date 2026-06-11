@@ -9,12 +9,12 @@ import {
 import minimizerGain from "../src/extension";
 import {
 	buildMinimizerGainDiagnostic,
+	exportMinimizerGainJsonl,
 	getMinimizerGainPath,
 	loadMinimizerGainContext,
 	readMinimizerGain,
 	resetMinimizerGainStatusForTesting,
 } from "../src/gain-engine";
-
 interface RegisteredCommand {
 	description: string;
 	handler: (args: string, ctx: unknown) => Promise<void>;
@@ -119,6 +119,29 @@ describe("minimizer gain records", () => {
 			sessionCwd: fs.realpathSync(baseRepo),
 			savedBytes: 1200,
 		});
+	});
+
+	test("current scope uses the git repo root when cwd is nested", async () => {
+		const agentDir = path.join(tempDir, "agent");
+		const nestedCwd = path.join(cwd, "packages", "coding-agent");
+		fs.mkdirSync(path.join(cwd, ".git"));
+		fs.mkdirSync(nestedCwd, { recursive: true });
+		await appendBashMinimizerGainRecord({
+			agentDir,
+			command: "bun test packages/coding-agent/test/bash.test.ts",
+			cwd,
+			sessionCwd: cwd,
+			filter: "bun-test",
+			inputBytes: 2_000,
+			outputBytes: 500,
+			exitCode: 0,
+		});
+
+		const context = await loadMinimizerGainContext({ agentDir, cwd: nestedCwd, all: false });
+
+		expect(context.cwd).toBe(cwd);
+		expect(context.records).toHaveLength(1);
+		expect(context.summary.savedBytes).toBe(1_500);
 	});
 
 	test("migrates legacy sibling cwd records from session transcripts", async () => {
@@ -235,6 +258,109 @@ describe("minimizer gain records", () => {
 
 		expect(label).toBe("Minimizer Gain");
 		expect(commands.get("gain")?.description).toBe("Show native minimizer savings for current repo");
+	});
+
+	test("filters configured ignored commands from missed diagnostics", async () => {
+		const agentDir = path.join(tempDir, "agent");
+		await appendBashMinimizerGainRecord({
+			agentDir,
+			command: "echo low value",
+			cwd,
+			filter: "echo",
+			inputBytes: 120,
+			outputBytes: 120,
+			exitCode: 0,
+			kind: "missed",
+		});
+		await appendBashMinimizerGainRecord({
+			agentDir,
+			command: "git status",
+			cwd,
+			filter: "git",
+			inputBytes: 240,
+			outputBytes: 240,
+			exitCode: 0,
+			kind: "missed",
+		});
+
+		const context = await loadMinimizerGainContext({
+			agentDir,
+			cwd,
+			all: false,
+			ignoredMissedCommands: ["echo"],
+		});
+
+		expect(context.missed.commands.map(item => item.command)).toEqual(["git status"]);
+	});
+
+	test("exports daily and command totals as JSONL", async () => {
+		const agentDir = path.join(tempDir, "agent");
+		await appendBashMinimizerGainRecord({
+			agentDir,
+			command: "bun test packages/pi-minimizer-gain/test/gain-engine.test.ts",
+			cwd,
+			filter: "bun-test",
+			inputBytes: 400,
+			outputBytes: 100,
+			exitCode: 0,
+		});
+
+		const context = await loadMinimizerGainContext({ agentDir, cwd, all: false });
+		const lines = exportMinimizerGainJsonl(context).trim().split("\n").map(line => JSON.parse(line));
+
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toMatchObject({ kind: "daily-total", commands: 1, savedBytes: 300 });
+		expect(lines[1]).toMatchObject({
+			kind: "command-total",
+			command: "bun test packages/pi-minimizer-gain/test/gain-engine.test.ts",
+			commands: 1,
+			savedBytes: 300,
+		});
+	});
+
+	test("summarizes source extension buckets and uses unknown without path signals", async () => {
+		const agentDir = path.join(tempDir, "agent");
+		const recordsPath = getMinimizerGainPath(agentDir);
+		fs.mkdirSync(agentDir, { recursive: true });
+		fs.writeFileSync(
+			recordsPath,
+			[
+				JSON.stringify({
+					schemaVersion: 2,
+					timestamp: new Date().toISOString(),
+					cwd,
+					command: "bun test",
+					filter: "bun-test",
+					inputBytes: 800,
+					outputBytes: 200,
+					savedBytes: 600,
+					savedTokens: 150,
+					exitCode: 0,
+					kind: "saved",
+					sourcePaths: ["src/gain-engine.ts"],
+				}),
+				JSON.stringify({
+					schemaVersion: 2,
+					timestamp: new Date().toISOString(),
+					cwd,
+					command: "bun test unknown",
+					filter: "bun-test",
+					inputBytes: 400,
+					outputBytes: 100,
+					savedBytes: 300,
+					savedTokens: 75,
+					exitCode: 0,
+					kind: "saved",
+				}),
+			].join("\n"),
+		);
+
+		const context = await loadMinimizerGainContext({ agentDir, cwd, all: false });
+
+		expect(context.summary.bySource).toEqual([
+			expect.objectContaining({ source: ".ts", commands: 1, savedBytes: 600 }),
+			expect.objectContaining({ source: "unknown", commands: 1, savedBytes: 300 }),
+		]);
 	});
 
 	test("classifies compound missed commands separately", () => {

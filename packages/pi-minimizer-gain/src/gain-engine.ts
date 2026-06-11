@@ -78,6 +78,7 @@ export interface MinimizerGainRecord {
 	savedTokens?: number;
 	exitCode: number | null;
 	kind?: MinimizerGainKind;
+	sourcePaths?: string[];
 }
 
 export interface MinimizerGainTotals {
@@ -102,12 +103,22 @@ export interface MinimizerGainCommandSummary extends MinimizerGainTotals {
 export interface MinimizerGainCwdSummary extends MinimizerGainTotals {
 	cwd: string;
 }
+export interface MinimizerGainSourceSummary extends MinimizerGainTotals {
+	source: string;
+}
+export interface MinimizerGainDailySummary extends MinimizerGainTotals {
+	date: string;
+}
+
+
 
 export interface MinimizerGainSummary extends MinimizerGainTotals {
 	byFilter: MinimizerGainFilterSummary[];
 	byCommand: MinimizerGainCommandSummary[];
 	byCwd: MinimizerGainCwdSummary[];
+	bySource: MinimizerGainSourceSummary[];
 }
+
 
 export interface MinimizerGainContext {
 	path: string;
@@ -118,12 +129,22 @@ export interface MinimizerGainContext {
 	summary: MinimizerGainSummary;
 	missed: MinimizerMissedSummary;
 }
+export interface MinimizerGainConfig {
+	ignoredMissedCommands: ReadonlySet<string>;
+}
+
+export interface MinimizerGainJsonlExportOptions {
+	includeDailyTotals?: boolean;
+	includeCommandTotals?: boolean;
+}
+
 
 export async function loadMinimizerGainContext(input: {
 	cwd: string;
 	all: boolean;
 	days?: number;
 	agentDir?: string;
+	ignoredMissedCommands?: Iterable<string>;
 }): Promise<MinimizerGainContext> {
 	const days = input.days ?? 30;
 	const scope = input.all ? undefined : await resolveMinimizerGainScope(input.cwd);
@@ -133,6 +154,7 @@ export async function loadMinimizerGainContext(input: {
 		await migrateLegacySessionCwds({ agentDir: input.agentDir, recordsFilePath, scopeCwd: cwd });
 	}
 	const records = await readMinimizerGain({ sinceDays: days, scope, agentDir: input.agentDir });
+	const config = await loadMinimizerGainConfig(input.agentDir, input.ignoredMissedCommands);
 	return {
 		path: getMinimizerGainPath(input.agentDir),
 		days,
@@ -140,7 +162,7 @@ export async function loadMinimizerGainContext(input: {
 		all: input.all,
 		records,
 		summary: summarizeMinimizerGain(records),
-		missed: summarizeMissedMinimizerGain(records),
+		missed: summarizeMissedMinimizerGain(records, 10, config.ignoredMissedCommands),
 	};
 }
 
@@ -198,6 +220,7 @@ type ParsedRecordFields = {
 	savedTokens: number | undefined | Invalid;
 	exitCode: number | null | Invalid;
 	kind: MinimizerGainKind | undefined | Invalid;
+	sourcePaths: string[] | undefined | Invalid;
 };
 type ValidRecordFields = {
 	schemaVersion: number | undefined;
@@ -212,6 +235,7 @@ type ValidRecordFields = {
 	savedTokens?: number;
 	exitCode: number | null;
 	kind: MinimizerGainKind | undefined;
+	sourcePaths: string[] | undefined;
 };
 
 const INVALID = Symbol("invalid");
@@ -235,9 +259,34 @@ export async function resolveMinimizerGainCwd(cwd: string | undefined): Promise<
 async function resolveMinimizerGainScope(cwd: string | undefined): Promise<MinimizerGainScope | undefined> {
 	const resolved = await resolveMinimizerGainCwd(cwd);
 	if (resolved === undefined) return undefined;
-	const aliases = await resolveMinimizerGainCwdAliases(resolved);
-	return { cwd: resolved, aliases };
+	const scopeRoot = await resolveMinimizerGainScopeRoot(resolved);
+	const aliases = await resolveMinimizerGainCwdAliases(scopeRoot);
+	return { cwd: scopeRoot, aliases };
 }
+async function resolveMinimizerGainScopeRoot(cwd: string): Promise<string> {
+	const repoRoot = await findRepoRoot(cwd);
+	return repoRoot ?? cwd;
+}
+
+async function findRepoRoot(startDir: string): Promise<string | null> {
+	let current = startDir;
+	while (true) {
+		if (await hasGitEntry(current)) return current;
+		const parent = path.dirname(current);
+		if (parent === current) return null;
+		current = parent;
+	}
+}
+
+async function hasGitEntry(dir: string): Promise<boolean> {
+	try {
+		await fs.stat(path.join(dir, ".git"));
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 
 async function resolveMinimizerGainCwdAliases(cwd: string): Promise<readonly string[]> {
 	const aliases = [cwd];
@@ -257,8 +306,7 @@ export async function readMinimizerGain(options: ReadMinimizerGainOptions = {}):
 			.split("\n")
 			.map((line, idx) => parseMinimizerGainRecord(line, idx + 1))
 			.filter(
-				(record): record is MinimizerGainRecord =>
-					record !== null && matchesGainFilters(record, scope, cutoff),
+				(record): record is MinimizerGainRecord => record !== null && matchesGainFilters(record, scope, cutoff),
 			);
 	} catch (err) {
 		if (!(err instanceof Error && "code" in err && (err as { code?: string }).code === "ENOENT")) {
@@ -274,6 +322,7 @@ export function summarizeMinimizerGain(records: MinimizerGainRecord[]): Minimize
 	const byFilter = new Map<string, MinimizerGainFilterSummary>();
 	const byCommand = new Map<string, MinimizerGainCommandSummary>();
 	const byCwd = new Map<string, MinimizerGainCwdSummary>();
+	const bySource = new Map<string, MinimizerGainSourceSummary>();
 
 	for (const record of records) {
 		if (!isSavingsRecord(record)) continue;
@@ -281,6 +330,7 @@ export function summarizeMinimizerGain(records: MinimizerGainRecord[]): Minimize
 		addRecord(getFilterSummary(byFilter, record.filter), record);
 		addRecord(getCommandSummary(byCommand, record.command), record);
 		addRecord(getCwdSummary(byCwd, record.cwd), record);
+		addRecord(getSourceSummary(bySource, getSourceBucket(record)), record);
 	}
 
 	return {
@@ -288,13 +338,19 @@ export function summarizeMinimizerGain(records: MinimizerGainRecord[]): Minimize
 		byFilter: finalizeGroups(byFilter),
 		byCommand: finalizeGroups(byCommand),
 		byCwd: finalizeGroups(byCwd),
+		bySource: finalizeGroups(bySource),
 	};
 }
 
-export function summarizeMissedMinimizerGain(records: MinimizerGainRecord[], limit = 10): MinimizerMissedSummary {
+export function summarizeMissedMinimizerGain(
+	records: MinimizerGainRecord[],
+	limit = 10,
+	ignoredCommands: Iterable<string> = [],
+): MinimizerMissedSummary {
+	const ignored = normalizeIgnoredCommands(ignoredCommands);
 	const groups = new Map<string, MinimizerMissedAccumulator>();
 	for (const record of records) {
-		if (record.kind !== "missed") continue;
+		if (record.kind !== "missed" || ignored.has(normalizeCommandName(record.command))) continue;
 		const item = getMissedItem(groups, record);
 		item.commands += 1;
 		item.inputBytes += record.inputBytes;
@@ -312,6 +368,37 @@ export function summarizeMissedMinimizerGain(records: MinimizerGainRecord[], lim
 		.sort((a, b) => b.estimatedPotentialTokensSaved - a.estimatedPotentialTokensSaved)
 		.slice(0, limit);
 	return { commands, potentialTokenSavings };
+}
+
+export async function loadMinimizerGainConfig(
+	agentDir?: string,
+	ignoredCommands: Iterable<string> = [],
+): Promise<MinimizerGainConfig> {
+	const fileCommands = await readIgnoredMissedCommandsConfig(agentDir);
+	const envCommands = splitCommandList(process.env.PI_MINIMIZER_GAIN_IGNORED_COMMANDS);
+	return {
+		ignoredMissedCommands: normalizeIgnoredCommands([...fileCommands, ...envCommands, ...ignoredCommands]),
+	};
+}
+
+export function exportMinimizerGainJsonl(
+	context: MinimizerGainContext,
+	options: MinimizerGainJsonlExportOptions = {},
+): string {
+	const includeDailyTotals = options.includeDailyTotals ?? true;
+	const includeCommandTotals = options.includeCommandTotals ?? true;
+	const lines: string[] = [];
+	if (includeDailyTotals) {
+		for (const daily of summarizeDailyTotals(context.records)) {
+			lines.push(JSON.stringify({ kind: "daily-total", ...daily }));
+		}
+	}
+	if (includeCommandTotals) {
+		for (const command of context.summary.byCommand) {
+			lines.push(JSON.stringify({ kind: "command-total", ...command }));
+		}
+	}
+	return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
 }
 
 // ---------------------------------------------------------------------------
@@ -647,6 +734,78 @@ function extractBashTranscriptCommands(event: JsonObject, sessionCwd: string): B
 	return commands;
 }
 
+function getSourceSummary(map: Map<string, MinimizerGainSourceSummary>, source: string): MinimizerGainSourceSummary {
+	return getOrInsert(map, source, () => ({ source, ...createTotals() }));
+}
+
+function getDailySummary(map: Map<string, MinimizerGainDailySummary>, date: string): MinimizerGainDailySummary {
+	return getOrInsert(map, date, () => ({ date, ...createTotals() }));
+}
+
+function summarizeDailyTotals(records: MinimizerGainRecord[]): MinimizerGainDailySummary[] {
+	const byDay = new Map<string, MinimizerGainDailySummary>();
+	for (const record of records) {
+		if (!isSavingsRecord(record)) continue;
+		const date = record.timestamp.slice(0, 10);
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+		addRecord(getDailySummary(byDay, date), record);
+	}
+	return [...byDay.values()].map(finalizeTotals).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+async function readIgnoredMissedCommandsConfig(agentDir: string | undefined): Promise<string[]> {
+	const configPath = path.join(agentDir ?? getAgentDir(), "extensions", "pi-minimizer-gain", "config.json");
+	try {
+		const config = parseJsonObject(await fs.readFile(configPath, "utf8"));
+		return stringArray(config?.ignoredMissedCommands);
+	} catch {
+		return [];
+	}
+}
+
+function splitCommandList(value: string | undefined): string[] {
+	if (value === undefined) return [];
+	return value
+		.split(",")
+		.map(item => item.trim())
+		.filter(Boolean);
+}
+
+function stringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter((item): item is string => typeof item === "string" && item.trim() !== "");
+}
+
+function normalizeIgnoredCommands(commands: Iterable<string>): Set<string> {
+	const normalized = new Set<string>();
+	for (const command of commands) {
+		const name = normalizeCommandName(command);
+		if (name !== "") normalized.add(name);
+	}
+	return normalized;
+}
+
+function normalizeCommandName(command: string): string {
+	const trimmed = command.trim();
+	if (trimmed === "") return "";
+	const first = trimmed.split(/\s+/, 1)[0] ?? "";
+	const slash = first.lastIndexOf("/");
+	return (slash === -1 ? first : first.slice(slash + 1)).toLowerCase();
+}
+
+
+function getSourceBucket(record: MinimizerGainRecord): string {
+	if (!record.sourcePaths || record.sourcePaths.length === 0) return "unknown";
+	const buckets = new Set<string>();
+	for (const sourcePath of record.sourcePaths) {
+		const ext = path.extname(sourcePath);
+		buckets.add(ext.length === 0 ? "no-extension" : ext);
+	}
+	if (buckets.size === 0) return "unknown";
+	if (buckets.size > 1) return "mixed";
+	return [...buckets][0] ?? "unknown";
+}
+
 // Internal helpers
 // ---------------------------------------------------------------------------
 
@@ -805,18 +964,20 @@ function parseRecordFields(value: JsonObject): MinimizerGainRecord | null {
 		savedTokens: optionalNumber(value.savedTokens),
 		exitCode: parseExitCode(value.exitCode),
 		kind: parseKind(value.kind),
+		sourcePaths: optionalStringArray(value.sourcePaths ?? value.sourcePath),
 	};
 	return hasInvalidField(fields) ? null : toMinimizerGainRecord(fields as ValidRecordFields);
 }
 
 function toMinimizerGainRecord(fields: ValidRecordFields): MinimizerGainRecord {
-	const { schemaVersion, cwd, sessionCwd, kind, ...record } = fields;
+	const { schemaVersion, cwd, sessionCwd, kind, sourcePaths, ...record } = fields;
 	return {
 		...(schemaVersion === undefined ? {} : { schemaVersion }),
 		...record,
 		...(cwd === undefined ? {} : { cwd }),
 		...(sessionCwd === undefined ? {} : { sessionCwd }),
 		...(kind === undefined ? {} : { kind }),
+		...(sourcePaths === undefined ? {} : { sourcePaths }),
 	};
 }
 
@@ -855,6 +1016,18 @@ function optionalNumber(value: unknown): number | undefined | Invalid {
 	return value === undefined || (typeof value === "number" && Number.isFinite(value)) ? value : INVALID;
 }
 
+function optionalStringArray(value: unknown): string[] | undefined | Invalid {
+	if (value === undefined) return undefined;
+	if (typeof value === "string") return value.trim() === "" ? [] : [value];
+	if (!Array.isArray(value)) return INVALID;
+	const result: string[] = [];
+	for (const item of value) {
+		if (typeof item !== "string") return INVALID;
+		if (item.trim() !== "") result.push(item);
+	}
+	return result;
+}
+
 function parseExitCode(value: unknown): number | null | Invalid {
 	return value === null || (typeof value === "number" && Number.isInteger(value)) ? value : INVALID;
 }
@@ -879,7 +1052,11 @@ function matchesCwd(record: MinimizerGainRecord, scope: MinimizerGainScope | und
 	return matchesScopePath(record.cwd, scope) || matchesScopePath(record.sessionCwd, scope);
 }
 
-function matchesGainFilters(record: MinimizerGainRecord, scope: MinimizerGainScope | undefined, cutoff: number | null): boolean {
+function matchesGainFilters(
+	record: MinimizerGainRecord,
+	scope: MinimizerGainScope | undefined,
+	cutoff: number | null,
+): boolean {
 	return matchesCwd(record, scope) && matchesCutoff(record, cutoff);
 }
 
