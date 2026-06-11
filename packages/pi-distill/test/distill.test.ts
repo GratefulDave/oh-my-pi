@@ -5,8 +5,8 @@ import * as path from "node:path";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import * as YAML from "yaml";
 import { byteLength, DEFAULTS } from "../src/compress";
-import type { DistillConfig } from "../src/config";
-import { type DistillContext, type DistillRuntimeState, processToolResult } from "../src/index";
+import { type DistillConfig, loadConfig } from "../src/config";
+import piDistill, { type DistillContext, type DistillRuntimeState, processToolResult } from "../src/index";
 import { aggregate, resetStatsForTests } from "../src/stats";
 
 const tempDirs: string[] = [];
@@ -18,6 +18,7 @@ const baseConfig: DistillConfig = {
 	scalarMax: 12,
 	builtinSkip: new Set(),
 	verbatimTools: new Set(),
+	whitelistTools: null,
 };
 
 const opts = {
@@ -48,13 +49,13 @@ function originalJson(): string {
 	);
 }
 
-function fakeContext(options: { saveFails?: boolean; artifactPathMissing?: boolean } = {}): DistillContext {
+function fakeContext(options: { saveFails?: boolean; artifactPathMissing?: boolean; cwd?: string } = {}): DistillContext {
 	const artifacts = new Map<string, string>();
 	return {
 		sessionManager: {
 			getArtifactsDir: () => "/tmp/pi-distill-artifacts",
 			getSessionId: () => "test-session",
-			getCwd: () => process.cwd(),
+			getCwd: () => options.cwd ?? process.cwd(),
 			saveArtifact: async content => {
 				if (options.saveFails) return undefined;
 				artifacts.set("0", content);
@@ -64,6 +65,31 @@ function fakeContext(options: { saveFails?: boolean; artifactPathMissing?: boole
 				options.artifactPathMissing || !artifacts.has(id) ? null : `/tmp/pi-distill-artifacts/${id}.txt`,
 		},
 	};
+}
+
+async function withEnv<T>(updates: Record<string, string | undefined>, run: () => T | Promise<T>): Promise<T> {
+	const previous: Record<string, string | undefined> = {};
+	for (const key of Object.keys(updates)) {
+		previous[key] = process.env[key];
+		const value = updates[key];
+		if (value === undefined) {
+			delete process.env[key];
+		} else {
+			process.env[key] = value;
+		}
+	}
+	try {
+		return await run();
+	} finally {
+		for (const key of Object.keys(updates)) {
+			const value = previous[key];
+			if (value === undefined) {
+				delete process.env[key];
+			} else {
+				process.env[key] = value;
+			}
+		}
+	}
 }
 
 async function distillText(text: string, context: DistillContext = fakeContext(), cfg: DistillConfig = baseConfig) {
@@ -221,9 +247,43 @@ describe("pi-distill structured compression", () => {
 		expect(state.savedBytes).toBe(byteLength(text) - byteLength(replacement));
 	});
 
+	test("honors whitelist mode when configured", async () => {
+		const text = originalJson();
+		const blocked = await distillText(text, fakeContext(), {
+			...baseConfig,
+			whitelistTools: new Set(["mcp__docs_read"]),
+		});
+		expect(blocked.result).toBeUndefined();
+		expect(blocked.state.hits).toBe(0);
+
+		const allowed = await distillText(text, fakeContext(), {
+			...baseConfig,
+			whitelistTools: new Set(["custom_tool"]),
+		});
+		expect(allowed.result).toBeDefined();
+		expect(allowed.state.hits).toBe(1);
+	});
+
+	test("loads builtin skip and whitelist overrides from env", async () => {
+		await withEnv(
+			{
+				PI_DISTILL_BUILTIN_SKIP: "read,bash",
+				PI_DISTILL_WHITELIST_TOOLS: "custom_tool,mcp__docs_read",
+			},
+			() => {
+				const cfg = loadConfig();
+				expect(cfg.builtinSkip.has("read")).toBe(true);
+				expect(cfg.builtinSkip.has("bash")).toBe(true);
+				expect(cfg.builtinSkip.has("write")).toBe(false);
+				expect(cfg.whitelistTools?.has("custom_tool")).toBe(true);
+				expect(cfg.whitelistTools?.has("mcp__docs_read")).toBe(true);
+			},
+		);
+	});
+
 	test("aggregates reduction percent from recorded original bytes", async () => {
 		const text = originalJson();
-		const context = fakeContext();
+		const context = fakeContext({ cwd: await tempDir() });
 		const { result } = await distillText(text, context);
 		const replacement = result?.content[0]?.type === "text" ? result.content[0].text : "";
 		const stats = aggregate(context);
@@ -232,6 +292,21 @@ describe("pi-distill structured compression", () => {
 		expect(stats.project.replacementBytes).toBe(byteLength(replacement));
 		expect(stats.project.knownSavedBytes).toBe(byteLength(text) - byteLength(replacement));
 		expect(stats.project.reductionPercent).toBeCloseTo(expectedReduction, 6);
+	});
+
+	test("aggregates per-tool candidates, hits, and saved bytes", async () => {
+		const text = originalJson();
+		const context = fakeContext({ cwd: await tempDir() });
+		const { result, state } = await distillText(text, context);
+		const replacement = result?.content[0]?.type === "text" ? result.content[0].text : "";
+		const expectedSavedBytes = byteLength(text) - byteLength(replacement);
+		const stats = aggregate(context);
+		expect(state.savedBytes).toBe(expectedSavedBytes);
+		expect(stats.project.tools.custom_tool).toEqual({
+			candidates: 1,
+			hits: 1,
+			savedBytes: expectedSavedBytes,
+		});
 	});
 
 	test("compresses unstructured AST grep output and updates displayContent", async () => {
@@ -397,5 +472,43 @@ describe("pi-distill structured compression", () => {
 		const artifactPath = await sessionManager.getArtifactPath(artifactId);
 		expect(artifactPath).toBeString();
 		expect(await Bun.file(artifactPath ?? "").text()).toBe(`[Resource: mem://large]\n${original}`);
+	});
+
+	test("distill-stats surfaces per-tool stats", async () => {
+		const commands = new Map<string, { handler: (args: string[], ctx: DistillContext) => Promise<void> }>();
+		const handlers: Array<(event: Parameters<typeof processToolResult>[0], ctx: DistillContext) => Promise<unknown>> = [];
+		piDistill({
+			registerCommand: (name, command) => {
+				commands.set(name, command);
+			},
+			on: (event, handler) => {
+				if (event === "tool_result") handlers.push(handler);
+			},
+		});
+		const context = fakeContext({ cwd: await tempDir() });
+		let message = "";
+		const commandContext: DistillContext = {
+			...context,
+			ui: {
+				notify: (value: string) => {
+					message = value;
+				},
+			},
+		};
+		const largeJson = JSON.stringify(
+			{ items: Array.from({ length: 80 }, (_, index) => ({ index, value: "x".repeat(120) })) },
+			null,
+			2,
+		);
+		const stateEvent = {
+			toolName: "custom_tool",
+			content: [{ type: "text" as const, text: largeJson }],
+			details: undefined,
+			isError: false,
+		};
+		await handlers[0]?.(stateEvent, context);
+		await commands.get("distill-stats")?.handler([], commandContext);
+		expect(message).toContain("custom_tool: 1 candidates, 1 hits");
+		expect(message).toContain("KB saved");
 	});
 });

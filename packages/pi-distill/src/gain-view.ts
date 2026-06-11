@@ -180,6 +180,7 @@ function emptyTotals(): Totals {
 		replacementBytes: 0,
 		knownSavedBytes: 0,
 		reductionPercent: null,
+		tools: {},
 	};
 }
 

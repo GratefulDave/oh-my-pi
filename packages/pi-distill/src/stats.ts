@@ -4,6 +4,12 @@ import * as path from "node:path";
 
 const DEBOUNCE_MS = 250;
 
+export interface ToolStats {
+	candidates: number;
+	hits: number;
+	savedBytes: number;
+}
+
 export interface SessionRecord {
 	sessionId: string;
 	project: string;
@@ -14,6 +20,7 @@ export interface SessionRecord {
 	replacementBytes?: number;
 	firstTs: number;
 	lastTs: number;
+	tools?: Record<string, ToolStats>;
 }
 
 interface RuntimeRecord extends SessionRecord {
@@ -34,6 +41,7 @@ export interface Totals {
 	replacementBytes: number;
 	knownSavedBytes: number;
 	reductionPercent: number | null;
+	tools: Record<string, ToolStats>;
 }
 
 export interface AggregateStats {
@@ -67,6 +75,7 @@ function globalStatsPath(): string {
 }
 
 function toStoreRecord(record: RuntimeRecord): SessionRecord {
+	const tools = copyToolStats(record.tools);
 	return {
 		sessionId: record.sessionId,
 		project: record.project,
@@ -75,6 +84,7 @@ function toStoreRecord(record: RuntimeRecord): SessionRecord {
 		...(record.originalBytes === undefined ? {} : { originalBytes: record.originalBytes }),
 		...(record.replacementBytes === undefined ? {} : { replacementBytes: record.replacementBytes }),
 		hits: record.hits,
+		...(tools === undefined ? {} : { tools }),
 		firstTs: record.firstTs,
 		lastTs: record.lastTs,
 	};
@@ -154,6 +164,64 @@ function sessionInfo(ctx: StatsContext): Pick<SessionRecord, "sessionId" | "proj
 	};
 }
 
+function copyToolStats(tools: Record<string, ToolStats> | undefined): Record<string, ToolStats> | undefined {
+	if (!tools) return undefined;
+	const entries = Object.entries(tools);
+	if (entries.length === 0) return undefined;
+	const copy: Record<string, ToolStats> = {};
+	for (const [toolName, stats] of entries) {
+		copy[toolName] = {
+			candidates: stats.candidates,
+			hits: stats.hits,
+			savedBytes: stats.savedBytes,
+		};
+	}
+	return copy;
+}
+
+function mergeToolStats(records: SessionRecord[]): Record<string, ToolStats> {
+	const tools: Record<string, ToolStats> = {};
+	for (const record of records) {
+		if (!record.tools) continue;
+		for (const [toolName, stats] of Object.entries(record.tools)) {
+			const tool = tools[toolName] ?? { candidates: 0, hits: 0, savedBytes: 0 };
+			tool.candidates += stats.candidates;
+			tool.hits += stats.hits;
+			tool.savedBytes += stats.savedBytes;
+			tools[toolName] = tool;
+		}
+	}
+	return tools;
+}
+
+function recordFor(ctx: StatsContext, now: number): { key: string; record: RuntimeRecord } {
+	const info = sessionInfo(ctx);
+	const projectStorePath = projectStatsPath(info.project);
+	const globalStorePathValue = globalStatsPath();
+	const key = recordKey(info.sessionId, projectStorePath, globalStorePathValue);
+	const existing = recordsByKey.get(key);
+	const record = existing ?? {
+		...info,
+		savedBytes: 0,
+		hits: 0,
+		firstTs: now,
+		lastTs: now,
+		projectStorePath,
+		globalStorePath: globalStorePathValue,
+	};
+	record.project = info.project;
+	record.label = info.label;
+	recordsByKey.set(key, record);
+	return { key, record };
+}
+
+function toolStatsFor(record: RuntimeRecord, toolName: string): ToolStats {
+	record.tools ??= {};
+	const stats = record.tools[toolName] ?? { candidates: 0, hits: 0, savedBytes: 0 };
+	record.tools[toolName] = stats;
+	return stats;
+}
+
 function recordKey(sessionId: string, projectStorePath: string, globalStorePath: string): string {
 	return `${globalStorePath}\n${projectStorePath}\n${sessionId}`;
 }
@@ -177,6 +245,7 @@ function totalsFor(records: SessionRecord[]): Totals {
 		replacementBytes,
 		reductionPercent,
 		knownSavedBytes,
+		tools: mergeToolStats(records),
 	};
 }
 
@@ -188,38 +257,38 @@ function withMemoryRecords(store: StatsStore, predicate: (record: RuntimeRecord)
 	return { sessions };
 }
 
+export function recordCandidate(ctx: StatsContext, toolName: string): void {
+	try {
+		const now = Date.now();
+		const { key, record } = recordFor(ctx, now);
+		const tool = toolStatsFor(record, toolName);
+		tool.candidates += 1;
+		record.lastTs = now;
+		dirtyKeys.add(key);
+		schedulePersist();
+	} catch {}
+}
+
 export function recordHit(
 	ctx: StatsContext,
+	toolName: string,
 	savedBytes: number,
 	originalBytes?: number,
 	replacementBytes?: number,
 ): void {
 	try {
-		const info = sessionInfo(ctx);
 		const now = Date.now();
-		const projectStorePath = projectStatsPath(info.project);
-		const globalStorePathValue = globalStatsPath();
-		const key = recordKey(info.sessionId, projectStorePath, globalStorePathValue);
-		const existing = recordsByKey.get(key);
-		const record = existing ?? {
-			...info,
-			savedBytes: 0,
-			hits: 0,
-			firstTs: now,
-			lastTs: now,
-			projectStorePath,
-			globalStorePath: globalStorePathValue,
-		};
-		record.project = info.project;
-		record.label = info.label;
+		const { key, record } = recordFor(ctx, now);
+		const tool = toolStatsFor(record, toolName);
 		record.savedBytes += savedBytes;
 		record.hits += 1;
+		tool.savedBytes += savedBytes;
+		tool.hits += 1;
 		if (originalBytes !== undefined) record.originalBytes = (record.originalBytes ?? 0) + originalBytes;
 		if (replacementBytes !== undefined) {
 			record.replacementBytes = (record.replacementBytes ?? 0) + replacementBytes;
 		}
 		record.lastTs = now;
-		recordsByKey.set(key, record);
 		dirtyKeys.add(key);
 		schedulePersist();
 	} catch {}

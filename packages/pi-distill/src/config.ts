@@ -25,7 +25,9 @@ interface FileConfig {
 	arrayHead?: unknown;
 	arrayTail?: unknown;
 	scalarMax?: unknown;
+	builtinSkip?: unknown;
 	verbatimTools?: unknown;
+	whitelistTools?: unknown;
 }
 
 export interface DistillConfig {
@@ -35,6 +37,7 @@ export interface DistillConfig {
 	scalarMax: number;
 	builtinSkip: Set<string>;
 	verbatimTools: Set<string>;
+	whitelistTools: Set<string> | null;
 }
 
 function readFileConfig(): FileConfig {
@@ -61,18 +64,33 @@ function stringArray(value: unknown): string[] {
 	return Array.isArray(value) ? value.filter(item => typeof item === "string") : [];
 }
 
-export function loadConfig(): DistillConfig {
-	const file = readFileConfig();
-	const envVerbatim = (process.env.PI_DISTILL_VERBATIM_TOOLS ?? "")
+function envStringArray(key: string): string[] | undefined {
+	const raw = process.env[key];
+	if (raw === undefined) return undefined;
+	return raw
 		.split(",")
 		.map(item => item.trim())
 		.filter(Boolean);
+}
+
+function configuredStringArray(envKey: string, fileValue: unknown): string[] | undefined {
+	const envValue = envStringArray(envKey);
+	if (envValue !== undefined) return envValue;
+	return Array.isArray(fileValue) ? stringArray(fileValue) : undefined;
+}
+
+export function loadConfig(): DistillConfig {
+	const file = readFileConfig();
+	const envVerbatim = envStringArray("PI_DISTILL_VERBATIM_TOOLS") ?? [];
+	const builtinSkip = configuredStringArray("PI_DISTILL_BUILTIN_SKIP", file.builtinSkip) ?? BUILTIN_TOOLS;
+	const whitelistTools = configuredStringArray("PI_DISTILL_WHITELIST_TOOLS", file.whitelistTools);
 	return {
 		minBytes: configNumber("PI_DISTILL_MIN_BYTES", file.minBytes, DEFAULTS.minBytes),
 		arrayHead: configNumber("PI_DISTILL_ARRAY_HEAD", file.arrayHead, DEFAULTS.arrayHead),
 		arrayTail: configNumber("PI_DISTILL_ARRAY_TAIL", file.arrayTail, DEFAULTS.arrayTail),
 		scalarMax: configNumber("PI_DISTILL_SCALAR_MAX", file.scalarMax, DEFAULTS.scalarMax),
-		builtinSkip: new Set(BUILTIN_TOOLS),
+		builtinSkip: new Set(builtinSkip),
 		verbatimTools: new Set([...stringArray(file.verbatimTools), ...envVerbatim]),
+		whitelistTools: whitelistTools === undefined ? null : new Set(whitelistTools),
 	};
 }

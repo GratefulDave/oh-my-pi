@@ -2,7 +2,7 @@ import { byteLength, compressNode, type DistillOptions, wrapCompressed } from ".
 import { type DistillConfig, loadConfig } from "./config";
 import { type GainContext, showGainView } from "./gain-view";
 import { parseStructured, type StructuredPayload } from "./sniff";
-import { flush, recordHit } from "./stats";
+import { aggregate, flush, recordCandidate, recordHit, type ToolStats } from "./stats";
 
 interface TextPart {
 	type: "text";
@@ -107,6 +107,12 @@ const FORCE_CONSIDER_TOOLS = new Set(["ast_grep"]);
 
 function shouldConsiderTool(toolName: string): boolean {
 	return FORCE_CONSIDER_TOOLS.has(toolName);
+}
+
+function shouldAllowTool(toolName: string, cfg: DistillConfig): boolean {
+	if (cfg.builtinSkip.has(toolName)) return false;
+	if (cfg.verbatimTools.has(toolName)) return false;
+	return cfg.whitelistTools === null || cfg.whitelistTools.has(toolName);
 }
 
 function shouldConsiderText(toolName: string, text: string, cfg: DistillConfig): boolean {
@@ -264,10 +270,39 @@ function detailsWithDisplayContent(details: unknown, text: string): unknown {
 	return { ...details, displayContent: text };
 }
 
-function recordReplacement(ctx: DistillContext, state: DistillRuntimeState, replacement: TextCompression): void {
+function recordReplacement(
+	ctx: DistillContext,
+	state: DistillRuntimeState,
+	toolName: string,
+	replacement: TextCompression,
+): void {
 	state.savedBytes += replacement.savedBytes;
 	state.hits += 1;
-	recordHit(ctx, replacement.savedBytes, replacement.originalBytes, replacement.replacementBytes);
+	recordHit(ctx, toolName, replacement.savedBytes, replacement.originalBytes, replacement.replacementBytes);
+}
+
+function formatToolStats(tools: Record<string, ToolStats> | undefined): string {
+	if (!tools) return "";
+	const entries = Object.entries(tools)
+		.filter(([, stats]) => stats.candidates > 0 || stats.hits > 0 || stats.savedBytes > 0)
+		.sort(
+			([leftName, left], [rightName, right]) =>
+				right.savedBytes - left.savedBytes || right.hits - left.hits || leftName.localeCompare(rightName),
+		)
+		.slice(0, 5);
+	if (entries.length === 0) return "";
+	return `; tools: ${entries
+		.map(
+			([name, stats]) =>
+				`${name}: ${stats.candidates} candidates, ${stats.hits} hits, ${(stats.savedBytes / 1024).toFixed(1)} KB saved`,
+		)
+		.join("; ")}`;
+}
+
+function currentSessionTools(ctx: DistillContext): Record<string, ToolStats> | undefined {
+	const sessionId = ctx.sessionManager?.getSessionId?.();
+	if (!sessionId) return undefined;
+	return aggregate(ctx).sessions.find(session => session.sessionId === sessionId)?.tools;
 }
 
 export async function processToolResult(
@@ -278,8 +313,7 @@ export async function processToolResult(
 	state: DistillRuntimeState,
 ): Promise<DistillReplacement | undefined> {
 	if (event.isError) return undefined;
-	if (cfg.builtinSkip.has(event.toolName)) return undefined;
-	if (cfg.verbatimTools.has(event.toolName)) return undefined;
+	if (!shouldAllowTool(event.toolName, cfg)) return undefined;
 
 	const contentText = event.content
 		.filter((part): part is TextPart => part.type === "text")
@@ -293,13 +327,14 @@ export async function processToolResult(
 			? displayText
 			: contentText;
 	if (!shouldConsiderText(event.toolName, originalText, cfg)) return undefined;
+	recordCandidate(ctx, event.toolName);
 
 	if (isMcpEvent(event)) {
 		for (const candidate of rawTextCandidates(event.details)) {
 			if (!shouldConsiderText(event.toolName, candidate, cfg)) continue;
 			const replacement = await compressedReplacement(candidate, originalText, ctx, opts);
 			if (!replacement) continue;
-			recordReplacement(ctx, state, replacement);
+			recordReplacement(ctx, state, event.toolName, replacement);
 			return {
 				content: [{ type: "text", text: replacement.text }],
 				details: detailsWithDisplayContent(event.details, replacement.text),
@@ -314,7 +349,7 @@ export async function processToolResult(
 			(structured ? await compressedReplacement(fallbackText, originalText, ctx, opts) : null) ??
 			(await compressedTextFallback(fallbackText, event.toolName, ctx, opts));
 		if (!replacement) return undefined;
-		recordReplacement(ctx, state, replacement);
+		recordReplacement(ctx, state, event.toolName, replacement);
 		return {
 			content: [{ type: "text", text: replacement.text }],
 			details: detailsWithDisplayContent(event.details, replacement.text),
@@ -348,7 +383,7 @@ export async function processToolResult(
 			continue;
 		}
 		changed = true;
-		recordReplacement(ctx, state, replacement);
+		recordReplacement(ctx, state, event.toolName, replacement);
 		out.push({ ...part, text: replacement.text });
 	}
 
@@ -384,8 +419,9 @@ export default function piDistill(pi: PiApi): void {
 	pi.registerCommand("distill-stats", {
 		description: "Show pi-distill bytes saved this session",
 		handler: async (_args, ctx) => {
+			const toolStats = formatToolStats(currentSessionTools(ctx));
 			ctx.ui?.notify?.(
-				`pi-distill: ${(state.savedBytes / 1024).toFixed(1)} KB saved across ${state.hits} tool results`,
+				`pi-distill: ${(state.savedBytes / 1024).toFixed(1)} KB saved across ${state.hits} tool results${toolStats}`,
 				"info",
 			);
 		},
