@@ -11,7 +11,7 @@
     ".omp/extensions/profile-manager/dist/index.js"
   ],
   "disabledProviders": [],
-  "activeModelProfile": "antigravity",
+  "activeModelProfile": "deepseek",
   "cycleOrder": [
     "smol",
     "default",
@@ -52,13 +52,13 @@
     "llama.cpp"
   ],
   "modelRoles": {
-    "commit": "google-antigravity/gemini-3.5-flash-extra-low:low",
-    "default": "google-antigravity/claude-sonnet-4-6:medium",
-    "designer": "google-antigravity/gemini-pro-agent",
-    "plan": "google-antigravity/claude-opus-4-6-thinking:high",
+    "commit": "deepseek/deepseek-v4-flash:low",
+    "default": "deepseek/deepseek-v4-flash:medium",
+    "designer": "deepseek/deepseek-v4-pro:high",
+    "plan": "deepseek/deepseek-v4-pro:high",
     "slow": "google-antigravity/claude-opus-4-6-thinking",
-    "smol": "google-antigravity/gemini-3.5-flash-low:low",
-    "task": "google-antigravity/claude-sonnet-4-6",
+    "smol": "deepseek/deepseek-v4-flash:low",
+    "task": "deepseek/deepseek-v4-pro",
     "vision": "google-antigravity/gemini-3-flash-agent"
   },
   "modelProfiles": {
