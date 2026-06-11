@@ -24,6 +24,15 @@ omp --model opencode-antigravity/antigravity-claude-sonnet-4-6
 omp --model opencode-antigravity/antigravity-gemini-3.1-pro
 ```
 
+## Compatibility smoke
+
+Use these exact commands after installing or rebuilding the extension:
+
+```sh
+omp login opencode-antigravity
+omp --model opencode-antigravity/antigravity-claude-sonnet-4-6
+```
+
 ## Risk
 
 The upstream project warns that this auth path may violate Google terms of service and that users have reported bans or shadow-bans. This wrapper cannot remove that risk. It only reduces OMP-specific divergence by sending OMP requests through the same upstream OpenCode plugin path.

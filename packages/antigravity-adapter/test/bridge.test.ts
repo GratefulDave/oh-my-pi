@@ -278,17 +278,31 @@ describe("OpenCode Antigravity auth adapter", () => {
 			expect(result?.projectId).toBe("proj-1");
 		});
 
-		it("returns null when refresh access token fails", async () => {
+		it("maps existing-token refresh failures to null after probing plugin account storage", async () => {
 			vi.spyOn(pluginStorage, "loadAccounts").mockResolvedValue({
 				version: 4,
-				accounts: [{ refreshToken: "tok-bad", enabled: true, addedAt: 0, lastUsed: 0 }],
+				accounts: [
+					{
+						refreshToken: "tok-bad",
+						enabled: true,
+						projectId: "proj-1",
+						managedProjectId: "managed-1",
+						addedAt: 0,
+						lastUsed: 0,
+					},
+				],
 				activeIndex: 0,
 			});
-			vi.spyOn(pluginToken, "refreshAccessToken").mockRejectedValue(new Error("Token revoked"));
+			const refresh = vi.spyOn(pluginToken, "refreshAccessToken").mockRejectedValue(new Error("Token revoked"));
 
 			const result = await probeExistingToken(noopClient);
 
 			expect(result).toBeNull();
+			expect(refresh).toHaveBeenCalledWith(
+				{ type: "oauth", refresh: "tok-bad|proj-1|managed-1" },
+				noopClient,
+				PROVIDER_ID,
+			);
 		});
 
 		it("returns null when refresh returns undefined (missing refresh token)", async () => {
