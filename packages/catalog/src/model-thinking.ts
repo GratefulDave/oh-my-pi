@@ -95,15 +95,10 @@ export function resolveModelThinking<TApi extends Api>(
 	spec: ModelSpec<TApi>,
 	compat: CompatOf<TApi>,
 ): ThinkingConfig | undefined {
-	if (!spec.reasoning) {
-		return undefined;
-	}
-	if (omitsWireReasoningEffort(spec.api, compat)) {
-		return undefined;
-	}
-	const explicitThinking = spec.thinking;
-	if (explicitThinking?.efforts && explicitThinking.efforts.length > 0) {
-		return fillThinkingWireDefaults(spec, explicitThinking);
+	if (!spec.reasoning) return undefined;
+	if (omitsWireReasoningEffort(spec.api, compat)) return undefined;
+	if (spec.thinking && Array.isArray(spec.thinking.efforts) && spec.thinking.efforts.length > 0) {
+		return fillThinkingWireDefaults(spec, spec.thinking);
 	}
 	// Empty/malformed explicit metadata is treated as absent — infer instead.
 	return deriveThinking(spec, compat);

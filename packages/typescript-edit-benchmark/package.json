@@ -4,6 +4,7 @@
 	"name": "@oh-my-pi/typescript-edit-benchmark",
 	"version": "15.10.12-lex",
 	"description": "Edit benchmark suite using TypeScript source code mutations",
+	"homepage": "https://omp.sh",
 	"author": "Can Boluk",
 	"license": "MIT",
 	"repository": {
