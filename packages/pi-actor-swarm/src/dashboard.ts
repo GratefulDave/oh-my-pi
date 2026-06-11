@@ -123,13 +123,22 @@ export class SwarmDashboard {
 		// Agent table
 		lines.push(bold("  Agents:"));
 		for (const agent of cfg.agents) {
-			const stateIcon =
-				agent.state === "working" ? "⚙" : agent.state === "waiting" ? "⏳" : agent.state === "error" ? "✗" : "●";
+			const isStale = agent.stale;
+			const stateIcon = isStale
+				? "!"
+				: agent.state === "working"
+					? "⚙"
+					: agent.state === "waiting"
+						? "⏳"
+						: agent.state === "error"
+							? "✗"
+							: "●";
+			const stateText = isStale ? "stale" : agent.state;
 			const queueLen = getQueueLength(agent.id);
 			const queueStr = queueLen > 0 ? fg("warning", ` [${queueLen} pending]`) : "";
 
 			lines.push(
-				`    ${fg(stateColor(agent.state), stateIcon)} ${bold(agent.id.padEnd(14))} ${dim(agent.role.padEnd(16))} ${dim(`sent:${agent.sentCount} rcvd:${agent.receivedCount}`)}${queueStr}`,
+				`    ${fg(isStale ? "error" : stateColor(agent.state), stateIcon)} ${bold(agent.id.padEnd(14))} ${dim(agent.role.padEnd(16))} ${dim(`state:${stateText} sent:${agent.sentCount} rcvd:${agent.receivedCount}`)}${queueStr}`,
 			);
 
 			if (agent.state === "working" && agent.currentTask) {
@@ -148,8 +157,8 @@ export class SwarmDashboard {
 
 		lines.push("");
 		lines.push(bold("  Commands:"));
-		lines.push(dim("    /swarm send <agent> <message>  — send message to agent"));
-		lines.push(dim("    /swarm init <name>             — initialize swarm"));
+		lines.push(dim("    /swarm-send <agent> <message>  — send message to agent"));
+		lines.push(dim("    /swarm-logs export [path]      — export JSONL history"));
 		lines.push(dim("    Press Esc to close"));
 
 		return lines;

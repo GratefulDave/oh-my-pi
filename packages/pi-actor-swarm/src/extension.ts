@@ -4,7 +4,16 @@
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { SwarmDashboard } from "./dashboard";
-import { clearSwarm, getConfig, initSwarm, postMessage, type RoutingPolicy, type SwarmAgent } from "./mailbox";
+import {
+	clearSwarm,
+	exportSwarmLogs,
+	getConfig,
+	initSwarm,
+	postMessage,
+	type RoutingPolicy,
+	type SwarmAgent,
+	setProjectRoot,
+} from "./mailbox";
 
 type CustomTheme = {
 	fg?: (color: string, text: string) => string;
@@ -50,10 +59,11 @@ function normalizeTheme(theme: CustomTheme): {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function parseSwarmInitArgs(args: string): { name: string; routingPolicy: RoutingPolicy } {
+function parseSwarmInitArgs(args: string): { name: string; routingPolicy: RoutingPolicy; staleAgentTtlMs: number } {
 	const tokens = args.trim().split(/\s+/).filter(Boolean);
-	const name = tokens[0] ?? "default-swarm";
+	const name = tokens[0]?.startsWith("-") ? "default-swarm" : (tokens[0] ?? "default-swarm");
 	let routingPolicy: RoutingPolicy = "priority";
+	let staleAgentTtlMs = 30 * 60 * 1000;
 
 	const policyIdx = tokens.findIndex(t => t === "--policy" || t === "-p");
 	if (policyIdx >= 0 && policyIdx + 1 < tokens.length) {
@@ -63,7 +73,13 @@ function parseSwarmInitArgs(args: string): { name: string; routingPolicy: Routin
 		}
 	}
 
-	return { name, routingPolicy };
+	const ttlIdx = tokens.indexOf("--stale-ttl-ms");
+	if (ttlIdx >= 0 && ttlIdx + 1 < tokens.length) {
+		const value = Number(tokens[ttlIdx + 1]);
+		if (Number.isFinite(value) && value > 0) staleAgentTtlMs = value;
+	}
+
+	return { name, routingPolicy, staleAgentTtlMs };
 }
 
 const DEFAULT_AGENTS: SwarmAgent[] = [
@@ -75,6 +91,8 @@ const DEFAULT_AGENTS: SwarmAgent[] = [
 		currentTask: null,
 		sentCount: 0,
 		receivedCount: 0,
+		lastActivityMs: 0,
+		stale: false,
 	},
 	{
 		id: "builder",
@@ -84,6 +102,8 @@ const DEFAULT_AGENTS: SwarmAgent[] = [
 		currentTask: null,
 		sentCount: 0,
 		receivedCount: 0,
+		lastActivityMs: 0,
+		stale: false,
 	},
 	{
 		id: "reviewer",
@@ -93,8 +113,20 @@ const DEFAULT_AGENTS: SwarmAgent[] = [
 		currentTask: null,
 		sentCount: 0,
 		receivedCount: 0,
+		lastActivityMs: 0,
+		stale: false,
 	},
-	{ id: "qa", role: "tester", model: "default", state: "idle", currentTask: null, sentCount: 0, receivedCount: 0 },
+	{
+		id: "qa",
+		role: "tester",
+		model: "default",
+		state: "idle",
+		currentTask: null,
+		sentCount: 0,
+		receivedCount: 0,
+		lastActivityMs: 0,
+		stale: false,
+	},
 ];
 
 // ---------------------------------------------------------------------------
@@ -104,16 +136,18 @@ const DEFAULT_AGENTS: SwarmAgent[] = [
 export default function actorSwarm(pi: ExtensionAPI): void {
 	pi.setLabel("Actor Swarm");
 
-	// /swarm init <name> [--policy <routing>]
+	// /swarm init <name> [--policy <routing>] [--stale-ttl-ms <ms>]
 	pi.registerCommand("swarm-init", {
 		description: "Initialize a multi-agent swarm for coordination",
 		handler: async (args, ctx) => {
-			const { name, routingPolicy } = parseSwarmInitArgs(args);
+			setProjectRoot(ctx.cwd);
+			const { name, routingPolicy, staleAgentTtlMs } = parseSwarmInitArgs(args);
 			initSwarm({
 				name,
 				agents: [...DEFAULT_AGENTS],
 				routingPolicy,
 				createdAt: Date.now(),
+				staleAgentTtlMs,
 			});
 			ctx.ui.setEditorText(
 				`Swarm "${name}" initialized with ${DEFAULT_AGENTS.length} agents (${routingPolicy} routing).\n\nUse /swarm-status to view, /swarm-send <agent> <message> to coordinate.`,
@@ -125,6 +159,7 @@ export default function actorSwarm(pi: ExtensionAPI): void {
 	pi.registerCommand("swarm-status", {
 		description: "Show swarm status dashboard",
 		handler: async (_args, ctx) => {
+			setProjectRoot(ctx.cwd);
 			const cfg = getConfig();
 			if (!cfg) {
 				ctx.ui.setEditorText("No active swarm. Use /swarm-init to create one.");
@@ -151,6 +186,7 @@ export default function actorSwarm(pi: ExtensionAPI): void {
 	pi.registerCommand("swarm-send", {
 		description: "Send a message to a swarm agent",
 		handler: async (args, ctx) => {
+			setProjectRoot(ctx.cwd);
 			const cfg = getConfig();
 			if (!cfg) {
 				ctx.ui.setEditorText("No active swarm. Use /swarm-init to create one.");
@@ -197,10 +233,26 @@ export default function actorSwarm(pi: ExtensionAPI): void {
 		},
 	});
 
+	// /swarm-logs export [path] — export history and final agent states as JSONL
+	pi.registerCommand("swarm-logs", {
+		description: "Export swarm message history and final agent states",
+		handler: async (args, ctx) => {
+			setProjectRoot(ctx.cwd);
+			const tokens = args.trim().split(/\s+/).filter(Boolean);
+			if (tokens[0] !== "export") {
+				ctx.ui.setEditorText("Usage: /swarm-logs export [path]");
+				return;
+			}
+			const outputPath = exportSwarmLogs(tokens[1]);
+			ctx.ui.setEditorText(`Swarm logs exported to ${outputPath}`);
+		},
+	});
+
 	// /swarm-reset — clear swarm state
 	pi.registerCommand("swarm-reset", {
 		description: "Clear the active swarm",
 		handler: async (_args, ctx) => {
+			setProjectRoot(ctx.cwd);
 			clearSwarm();
 			ctx.ui.setEditorText("Swarm cleared.");
 		},
