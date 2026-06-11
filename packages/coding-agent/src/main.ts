@@ -1272,7 +1272,7 @@ export async function runRootCommand(
 			const changelogMarkdown = await logger.time("main:getChangelogForDisplay", getChangelogForDisplay, parsedArgs);
 
 			const scopedModelsForDisplay = sessionOptions.scopedModels ?? scopedModels;
-			if (scopedModelsForDisplay.length > 0) {
+			if (parsedArgs.models && scopedModelsForDisplay.length > 0) {
 				const modelList = scopedModelsForDisplay
 					.map(scopedModel => {
 						const thinkingStr = !scopedModel.thinkingLevel ? `:${scopedModel.thinkingLevel}` : "";
