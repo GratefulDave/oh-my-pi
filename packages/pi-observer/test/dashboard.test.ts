@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ObserverDashboard } from "../src/dashboard";
 import { stripAnsi } from "../src/renderer";
-import { onSubagentProgress, resetStats } from "../src/stats-collector";
+import { onIrcMessage, onSubagentProgress, resetStats } from "../src/stats-collector";
 
 const theme = {
 	fg(_color: string, text: string): string {
@@ -414,5 +414,50 @@ describe("ObserverDashboard", () => {
 		expect(text).toContain("Session observability · Agents · 2 nodes ┬ Run B");
 		// Middle column (phase children) still highlights Agents — the drilled-into node.
 		expect(text).toContain("❯ ● Agents ›");
+	});
+
+	test("slash filter narrows agents and intercom by substring, status, and tool name", () => {
+		seedAgents();
+		onIrcMessage({
+			timestamp: 1,
+			channel: "#agents",
+			from: "Main",
+			to: "reviewer",
+			body: "review status",
+			kind: "message",
+			delivered: ["reviewer"],
+			failed: [],
+		});
+		const dashboard = makeDashboard();
+
+		dashboard.act("/");
+		for (const char of "reviewer") dashboard.act(char);
+		dashboard.act("enter");
+		dashboard.act("enter");
+		dashboard.act("enter");
+		let text = renderText(dashboard);
+		expect(text).toContain("filter=\"reviewer\"");
+		expect(text).toContain("Run B");
+		expect(text).not.toContain("Run A");
+
+		dashboard.act("escape");
+		dashboard.act("/");
+		for (const char of "edit") dashboard.act(char);
+		dashboard.act("enter");
+		dashboard.act("enter");
+		dashboard.act("enter");
+		text = renderText(dashboard);
+		expect(text).toContain("Run A");
+		expect(text).not.toContain("Run B");
+
+		dashboard.act("escape");
+		dashboard.act("/");
+		for (const char of "running") dashboard.act(char);
+		dashboard.act("enter");
+		dashboard.act("enter");
+		dashboard.act("enter");
+		text = renderText(dashboard);
+		expect(text).toContain("Run A");
+		expect(text).not.toContain("Run B");
 	});
 });

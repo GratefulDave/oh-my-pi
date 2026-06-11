@@ -5,7 +5,15 @@
 import { matchesKey } from "@oh-my-pi/pi-tui";
 import { buildObserverHierarchy, type ObserverHierarchy, type ObserverNode, statusGlyph } from "./hierarchy";
 import { stripAnsi, truncateVisible, visibleWidth } from "./renderer";
-import { formatDuration, getSessionUptime, getStats, getSubagentTotals, type ObserverStats } from "./stats-collector";
+import {
+	formatDuration,
+	getSessionUptime,
+	getStats,
+	getSubagentTotals,
+	type IrcMessageActivity,
+	type ObserverStats,
+	type SubagentActivity,
+} from "./stats-collector";
 
 interface ObserverTheme {
 	fg(color: string, text: string): string;
@@ -17,14 +25,17 @@ type RequestRender = () => void;
 type DoneCallback = () => void;
 type TimerHandle = Parameters<typeof clearInterval>[0];
 
-const REFRESH_INTERVAL_MS = 500;
+export const DEFAULT_REFRESH_INTERVAL_MS = 500;
 const LEFT_COL_MIN_WIDTH = 16;
 const LEFT_COL_MAX_WIDTH = 32;
 const DETAIL_MIN_WIDTH = 20;
 const MAX_LIST_COLUMNS = 3;
 const ROOT_SCOPE = "__root__";
-const FOOTER = "↑↓ select · ↵/→ drill · ←/esc back · tab→detail";
+const FOOTER = "↑↓ select · ↵/→ drill · ←/esc back · tab→detail · / filter";
 
+export interface ObserverDashboardOptions {
+	refreshIntervalMs?: number;
+}
 type ActivePane = "tree" | "detail";
 
 function isDownKey(key: string): boolean {
@@ -110,6 +121,49 @@ function wrapPlain(text: string, width: number, maxLines: number): string[] {
 	return lines.length > 0 ? lines : [""];
 }
 
+function matchesFilterText(value: string | undefined, query: string): boolean {
+	return value?.toLowerCase().includes(query) ?? false;
+}
+
+function matchesIrcFilter(message: IrcMessageActivity, query: string): boolean {
+	return (
+		matchesFilterText(message.channel, query) ||
+		matchesFilterText(message.from, query) ||
+		matchesFilterText(message.to, query) ||
+		matchesFilterText(message.body, query) ||
+		matchesFilterText(message.kind, query) ||
+		message.delivered.some(id => matchesFilterText(id, query)) ||
+		message.failed.some(id => matchesFilterText(id, query))
+	);
+}
+
+function matchesAgentFilter(agent: SubagentActivity, query: string): boolean {
+	return (
+		matchesFilterText(agent.id, query) ||
+		matchesFilterText(agent.agent, query) ||
+		matchesFilterText(agent.status, query) ||
+		matchesFilterText(agent.currentTool, query) ||
+		matchesFilterText(agent.currentToolArgs, query) ||
+		matchesFilterText(agent.task, query) ||
+		matchesFilterText(agent.assignment, query) ||
+		matchesFilterText(agent.description, query) ||
+		matchesFilterText(agent.lastIntent, query) ||
+		matchesFilterText(agent.failureReason, query) ||
+		agent.recentOutput.some(line => matchesFilterText(line, query)) ||
+		(agent.recentTools ?? []).some(tool => matchesFilterText(tool.tool, query) || matchesFilterText(tool.args, query))
+	);
+}
+
+function filteredStats(stats: ObserverStats, filterText: string): ObserverStats {
+	const query = filterText.trim().toLowerCase();
+	if (query.length === 0) return stats;
+	const subagents = new Map<string, SubagentActivity>();
+	for (const agent of stats.subagents.values()) {
+		if (matchesAgentFilter(agent, query)) subagents.set(agent.id, agent);
+	}
+	const ircMessages = stats.ircMessages.filter(message => matchesIrcFilter(message, query));
+	return { ...stats, subagents, ircMessages };
+}
 function scopeKey(parentId: string | undefined): string {
 	return parentId ?? ROOT_SCOPE;
 }
@@ -132,6 +186,8 @@ function colorForStatus(status: ObserverNode["status"]): string {
 }
 
 export class ObserverDashboard {
+	#filterText = "";
+	#editingFilter = false;
 	#refreshHandle: TimerHandle | undefined;
 	#lastStats: ObserverStats | undefined;
 	#path: string[] = [];
@@ -147,11 +203,12 @@ export class ObserverDashboard {
 		private readonly theme: ObserverTheme,
 		readonly requestRender: RequestRender,
 		private readonly done: DoneCallback,
+		options: ObserverDashboardOptions = {},
 	) {
 		this.#refreshHandle = setInterval(() => {
 			this.#lastStats = getStats() as ObserverStats;
 			requestRender();
-		}, REFRESH_INTERVAL_MS);
+		}, options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS);
 	}
 
 	handleInput(data: string): void {
@@ -161,6 +218,8 @@ export class ObserverDashboard {
 	invalidate(): void {}
 
 	act(key: string): boolean {
+		if (this.#editingFilter) return this.#handleFilterInput(key);
+		if (key === "/") return this.#startFilter();
 		if (key === "tab") return this.#togglePane();
 		if (isBackKey(key)) {
 			if (this.#expandedDetailId != null) {
@@ -175,6 +234,12 @@ export class ObserverDashboard {
 				this.#activePane = "tree";
 				this.#rightPaneNodeId = this.#currentParentId();
 				this.#expandedDetailId = undefined;
+				this.requestRender();
+				return true;
+			}
+			if (this.#filterText.length > 0) {
+				this.#filterText = "";
+				this.#resetNavigation();
 				this.requestRender();
 				return true;
 			}
@@ -196,31 +261,37 @@ export class ObserverDashboard {
 		return subagentCount > 0 ? Math.max(32, Math.min(48, 14 + subagentCount * 3)) : 28;
 	}
 
+
 	layout(width: number, height: number): void {
 		this.#width = width;
 		this.#height = height;
 	}
-
 	render(width: number, height = this.#height): string[] {
 		if (width > 0 && height > 0) this.layout(width, height);
-		const stats = this.#lastStats ?? (getStats() as ObserverStats);
+		const baseStats = this.#lastStats ?? (getStats() as ObserverStats);
+		const stats = filteredStats(baseStats, this.#filterText);
 		const now = Date.now();
 		const hierarchy = buildObserverHierarchy(stats, now);
 		this.#clampPath(hierarchy);
 		const panelWidth = Math.max(60, this.#width - 4);
 		const panelHeight = Math.max(12, this.#height - 7);
 		const agents = [...stats.subagents.values()];
+		const totalAgents = baseStats.subagents.size;
 		const completed = agents.filter(agent => agent.status === "completed").length;
+		const filterSuffix =
+			this.#filterText.length > 0 || this.#editingFilter
+				? ` · filter:${this.#editingFilter ? " " : ""}${this.#filterText || "…"}`
+				: "";
 		const lines = [this.theme.fg("border", "─".repeat(panelWidth))];
 		lines.push(this.theme.bold(this.theme.fg("accent", "session-observability")));
 		lines.push(
 			this.theme.dim(
-				`${"Real-time agents, tasks, intercom, and metrics".padEnd(Math.max(0, panelWidth - 24))}${completed}/${agents.length} agents · ${formatDuration(getSessionUptime())}`,
+				`${"Real-time agents, tasks, intercom, and metrics".padEnd(Math.max(0, panelWidth - 24))}${completed}/${agents.length}${totalAgents !== agents.length ? ` of ${totalAgents}` : ""} agents · ${formatDuration(getSessionUptime())}${filterSuffix}`,
 			),
 		);
 		lines.push("");
 		lines.push(...this.#renderPanel(hierarchy, panelWidth, panelHeight));
-		lines.push(this.theme.dim(FOOTER));
+		lines.push(this.theme.dim(this.#footerText()));
 		return lines.slice(0, this.#height);
 	}
 
@@ -393,8 +464,59 @@ export class ObserverDashboard {
 		);
 	}
 
+	#viewStats(): ObserverStats {
+		return filteredStats(this.#lastStats ?? (getStats() as ObserverStats), this.#filterText);
+	}
+
+	#footerText(): string {
+		if (this.#editingFilter) return "filter: type query · enter apply · esc cancel";
+		if (this.#filterText.length > 0) return `${FOOTER} · filter="${this.#filterText}" · esc clear`;
+		return FOOTER;
+	}
+
+	#startFilter(): boolean {
+		this.#editingFilter = true;
+		this.#filterText = "";
+		this.requestRender();
+		return true;
+	}
+
+	#handleFilterInput(key: string): boolean {
+		if (key === "escape") {
+			this.#editingFilter = false;
+			this.requestRender();
+			return true;
+		}
+		if (key === "enter") {
+			this.#editingFilter = false;
+			this.#resetNavigation();
+			this.requestRender();
+			return true;
+		}
+		if (key === "backspace" || key === "\x7f" || key === "\b") {
+			this.#filterText = this.#filterText.slice(0, -1);
+			this.requestRender();
+			return true;
+		}
+		if (key.length === 1 && key >= " ") {
+			this.#filterText += key;
+			this.requestRender();
+			return true;
+		}
+		return true;
+	}
+
+	#resetNavigation(): void {
+		this.#path = [];
+		this.#cursorByParent.clear();
+		this.#scrollByParent.clear();
+		this.#rightPaneNodeId = undefined;
+		this.#expandedDetailId = undefined;
+		this.#activePane = "tree";
+	}
+
 	#drillOrExpand(): boolean {
-		const stats = this.#lastStats ?? (getStats() as ObserverStats);
+		const stats = this.#viewStats();
 		const hierarchy = buildObserverHierarchy(stats, Date.now());
 		this.#clampPath(hierarchy);
 		const selected = this.#selectedNode(hierarchy);
@@ -415,7 +537,7 @@ export class ObserverDashboard {
 	}
 
 	#moveSelection(delta: number): boolean {
-		const stats = this.#lastStats ?? (getStats() as ObserverStats);
+		const stats = this.#viewStats();
 		const hierarchy = buildObserverHierarchy(stats, Date.now());
 		this.#clampPath(hierarchy);
 		const parentId = this.#currentParentId();
@@ -431,7 +553,7 @@ export class ObserverDashboard {
 	}
 
 	#togglePane(): boolean {
-		const stats = this.#lastStats ?? (getStats() as ObserverStats);
+		const stats = this.#viewStats();
 		const hierarchy = buildObserverHierarchy(stats, Date.now());
 		if (!this.#selectedNode(hierarchy)) return false;
 		this.#activePane = this.#activePane === "tree" ? "detail" : "tree";

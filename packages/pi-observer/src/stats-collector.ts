@@ -156,6 +156,22 @@ export interface ObserverStats {
 	ircMessages: IrcMessageActivity[];
 }
 
+export interface ObserverStatsSnapshot {
+	sessionStartTime: number;
+	sessionUptimeMs: number;
+	agentRuns: number;
+	turnCount: number;
+	currentTurn: TurnStats | null;
+	activeToolCalls: ToolCallTiming[];
+	totalTokensInput: number;
+	totalTokensOutput: number;
+	toolCallCounts: Record<string, number>;
+	estimatedCost: number;
+	subagentTotals: SubagentTotals;
+	subagents: SubagentActivity[];
+	ircMessages: IrcMessageActivity[];
+}
+
 export function createObserverStats(): ObserverStats {
 	return {
 		sessionStartTime: Date.now(),
@@ -359,6 +375,82 @@ export function onSubagentLifecycle(
 			completedAt: isTerminalStatus(status) ? now : undefined,
 		});
 	}
+}
+
+export function snapshotStats(now = Date.now()): ObserverStatsSnapshot {
+	return {
+		sessionStartTime: stats.sessionStartTime,
+		sessionUptimeMs: Math.max(0, now - stats.sessionStartTime),
+		agentRuns: stats.agentRuns,
+		turnCount: stats.turns.length,
+		currentTurn: stats.currentTurn,
+		activeToolCalls: [...stats.activeToolCalls.values()],
+		totalTokensInput: stats.totalTokensInput,
+		totalTokensOutput: stats.totalTokensOutput,
+		toolCallCounts: Object.fromEntries(stats.toolCallCounts),
+		estimatedCost: stats.estimatedCost,
+		subagentTotals: getSubagentTotals(),
+		subagents: [...stats.subagents.values()],
+		ircMessages: [...stats.ircMessages],
+	};
+}
+
+export function statsSnapshotToJson(snapshot: ObserverStatsSnapshot = snapshotStats()): string {
+	return `${JSON.stringify(snapshot, null, 2)}\n`;
+}
+
+export function statsSnapshotToCsv(snapshot: ObserverStatsSnapshot = snapshotStats()): string {
+	const rows: string[][] = [
+		["section", "id", "name", "status", "metric", "value", "detail"],
+		["summary", "session", "uptime_ms", "", "", String(snapshot.sessionUptimeMs), ""],
+		["summary", "session", "agent_runs", "", "", String(snapshot.agentRuns), ""],
+		["summary", "session", "turn_count", "", "", String(snapshot.turnCount), ""],
+		["summary", "session", "tokens_input", "", "", String(snapshot.totalTokensInput), ""],
+		["summary", "session", "tokens_output", "", "", String(snapshot.totalTokensOutput), ""],
+		["summary", "session", "estimated_cost", "", "", String(snapshot.estimatedCost), ""],
+		[
+			"summary",
+			"subagents",
+			"totals",
+			"",
+			"count",
+			String(snapshot.subagentTotals.count),
+			`active=${snapshot.subagentTotals.activeCount};tokens=${snapshot.subagentTotals.tokens};tools=${snapshot.subagentTotals.toolCount};cost=${snapshot.subagentTotals.cost}`,
+		],
+	];
+	for (const [toolName, count] of Object.entries(snapshot.toolCallCounts)) {
+		rows.push(["tool", toolName, toolName, "", "count", String(count), ""]);
+	}
+	for (const call of snapshot.activeToolCalls) {
+		rows.push(["active_tool", call.toolCallId, call.toolName, "running", "duration_ms", "", ""]);
+	}
+	for (const agent of snapshot.subagents) {
+		rows.push([
+			"subagent",
+			agent.id,
+			agent.agent,
+			agent.status,
+			"tokens",
+			String(agent.tokens),
+			agent.assignment ?? agent.task ?? agent.description ?? "",
+		]);
+		rows.push(["subagent", agent.id, agent.agent, agent.status, "tools", String(agent.toolCount), agent.currentTool ?? ""]);
+		rows.push(["subagent", agent.id, agent.agent, agent.status, "cost", String(agent.cost), ""]);
+	}
+	for (const message of snapshot.ircMessages) {
+		rows.push(["irc", `${message.timestamp}`, `${message.from}->${message.to}`, message.kind, "message", message.body, message.channel]);
+	}
+	return `${rows.map(row => row.map(csvCell).join(",")).join("\n")}\n`;
+}
+
+function csvCell(value: string): string {
+	if (!/[",\r\n]/.test(value)) return value;
+	return `"${value.replaceAll('"', '""')}"`;
+}
+
+export function defaultExportPath(format: "json" | "csv", now = new Date()): string {
+	const stamp = now.toISOString().replaceAll(":", "-").replace(/\.\d{3}Z$/, "Z");
+	return `.omp/observer/observe-${stamp}.${format}`;
 }
 
 export function onIrcMessage(message: IrcMessageActivity): void {

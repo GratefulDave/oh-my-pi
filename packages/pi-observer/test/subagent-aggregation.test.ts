@@ -8,6 +8,9 @@
 // full wiring through the extension's default export.
 // ---------------------------------------------------------------------------
 
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import { beforeEach, describe, expect, test } from "bun:test";
 import observer from "../src/extension";
 import { stripAnsi } from "../src/renderer";
@@ -38,6 +41,7 @@ type FakeCommandContext = {
 	cwd: string;
 	ui: {
 		setEditorText(text: string): void;
+		notify?(message: string, level?: "info" | "warning" | "error"): void;
 		custom<T>(
 			factory: (
 				tui: { requestRender(): void; terminal?: { rows: number } },
@@ -334,6 +338,91 @@ describe("pi-observer subagent fan-in", () => {
 			delivered: [],
 			failed: [],
 		});
+	});
+
+	test("observe-export writes json without resetting accumulated counters", async () => {
+		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-observer-"));
+		try {
+			const { pi, commands } = makeFakePi();
+			observer(pi);
+			onSubagentProgress({
+				id: "export-1",
+				agent: "executor",
+				status: "running",
+				tokens: 321,
+				toolCount: 2,
+				cost: 0.04,
+				currentTool: "read",
+			});
+			const command = commands.get("observe-export");
+			expect(command).toBeDefined();
+			let notification = "";
+			const ctx: FakeCommandContext = {
+				cwd: dir,
+				ui: {
+					setEditorText() {},
+					notify(message: string): void {
+						notification = message;
+					},
+					async custom<T>(): Promise<T> {
+						throw new Error("observe-export should not open a custom view");
+					},
+				},
+			};
+
+			await command!.handler("json export.json", ctx);
+
+			const exported = JSON.parse(await fs.readFile(path.join(dir, "export.json"), "utf8")) as {
+				subagentTotals?: { count?: number; tokens?: number };
+				subagents?: Array<{ id?: string; currentTool?: string }>;
+			};
+			expect(exported.subagentTotals?.count).toBe(1);
+			expect(exported.subagentTotals?.tokens).toBe(321);
+			expect(exported.subagents?.[0]?.id).toBe("export-1");
+			expect(exported.subagents?.[0]?.currentTool).toBe("read");
+			expect(notification).toContain("export.json");
+			expect(getSubagentTotals()).toEqual({ count: 1, activeCount: 1, tokens: 321, toolCount: 2, cost: 0.04 });
+		} finally {
+			await fs.rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("observe-export writes csv to predictable default path", async () => {
+		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-observer-"));
+		try {
+			const { pi, commands } = makeFakePi();
+			observer(pi);
+			onSubagentProgress({
+				id: "csv-1",
+				agent: "reviewer",
+				status: "completed",
+				tokens: 10,
+				toolCount: 1,
+				cost: 0.01,
+				assignment: "contains, comma",
+			});
+			const ctx: FakeCommandContext = {
+				cwd: dir,
+				ui: {
+					setEditorText() {},
+					async custom<T>(): Promise<T> {
+						throw new Error("observe-export should not open a custom view");
+					},
+				},
+			};
+
+			await commands.get("observe-export")!.handler("csv", ctx);
+
+			const files = await fs.readdir(path.join(dir, ".omp/observer"));
+			expect(files).toHaveLength(1);
+			expect(files[0]).toStartWith("observe-");
+			expect(files[0]).toEndWith(".csv");
+			const csv = await fs.readFile(path.join(dir, ".omp/observer", files[0]!), "utf8");
+			expect(csv).toContain("section,id,name,status,metric,value,detail");
+			expect(csv).toContain('subagent,csv-1,reviewer,completed,tokens,10,"contains, comma"');
+		} finally {
+			await fs.rm(dir, { recursive: true, force: true });
+		}
 	});
 
 	test("malformed payloads are ignored", () => {

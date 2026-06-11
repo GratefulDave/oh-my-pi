@@ -2,9 +2,12 @@
 // pi-observer — real-time agent activity monitor extension.
 // ---------------------------------------------------------------------------
 
-import { ObserverDashboard } from "./dashboard";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import { DEFAULT_REFRESH_INTERVAL_MS, ObserverDashboard } from "./dashboard";
 import { type RenderOptions, renderJobResult, type ThemeLike, type ToolResult } from "./job-renderer";
 import {
+	defaultExportPath,
 	onAgentStart,
 	onIrcMessage,
 	onSubagentLifecycle,
@@ -15,6 +18,9 @@ import {
 	onTurnEnd,
 	onTurnStart,
 	resetStats,
+	snapshotStats,
+	statsSnapshotToCsv,
+	statsSnapshotToJson,
 	type SubagentStatus,
 } from "./stats-collector";
 
@@ -167,6 +173,7 @@ type ExtensionCommandContext = {
 			) => unknown,
 			options?: { overlay?: boolean },
 		): Promise<T>;
+		notify?(message: string, level?: "info" | "warning" | "error"): void;
 	};
 	getModel?: () => { id?: string } | undefined;
 };
@@ -285,6 +292,48 @@ function normalizeTheme(theme: CustomTheme): {
 	return { fg, bold, dim };
 }
 
+function parseExportArgs(args: string): { format: "json" | "csv"; outputPath: string | undefined } | undefined {
+	const parts = args.trim().split(/\s+/).filter(Boolean);
+	const format = parts[0];
+	if (format !== "json" && format !== "csv") return undefined;
+	return { format, outputPath: parts[1] };
+}
+
+function parseObserveArgs(args: string): { refreshIntervalMs: number } {
+	const parts = args.trim().split(/\s+/).filter(Boolean);
+	const refreshIndex = parts.findIndex(part => part === "--refresh-ms" || part === "--refresh-interval-ms");
+	if (refreshIndex === -1) return { refreshIntervalMs: DEFAULT_REFRESH_INTERVAL_MS };
+	const raw = parts[refreshIndex + 1];
+	const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+	return {
+		refreshIntervalMs: Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_REFRESH_INTERVAL_MS,
+	};
+}
+function resolveExportPath(cwd: string, outputPath: string | undefined, format: "json" | "csv"): string {
+	const target = outputPath ?? defaultExportPath(format);
+	return path.isAbsolute(target) ? target : path.join(cwd, target);
+}
+
+async function writeExportFile(targetPath: string, content: string): Promise<void> {
+	await fs.mkdir(path.dirname(targetPath), { recursive: true });
+	await Bun.write(targetPath, content);
+}
+
+async function exportStats(args: string, ctx: ExtensionCommandContext): Promise<void> {
+	const parsed = parseExportArgs(args);
+	if (!parsed) {
+		ctx.ui.notify?.("Usage: /observe-export json|csv [path]", "warning");
+		ctx.ui.setEditorText("");
+		return;
+	}
+	const snapshot = snapshotStats();
+	const content = parsed.format === "json" ? statsSnapshotToJson(snapshot) : statsSnapshotToCsv(snapshot);
+	const targetPath = resolveExportPath(ctx.cwd, parsed.outputPath, parsed.format);
+	await writeExportFile(targetPath, content);
+	ctx.ui.notify?.(`Observer stats exported to ${targetPath}`, "info");
+	ctx.ui.setEditorText("");
+}
+
 // ---------------------------------------------------------------------------
 // Extension entry point
 // ---------------------------------------------------------------------------
@@ -397,7 +446,8 @@ export default function observer(pi: ExtensionAPI): void {
 	// Register /observe slash command.
 	pi.registerCommand("observe", {
 		description: "Show real-time agent activity monitor",
-		handler: async (_args, ctx) => {
+		handler: async (args, ctx) => {
+			const { refreshIntervalMs } = parseObserveArgs(args);
 			ctx.ui.setEditorText("");
 
 			await ctx.ui.custom<void>(
@@ -406,11 +456,17 @@ export default function observer(pi: ExtensionAPI): void {
 						normalizeTheme(theme),
 						() => tui.requestRender(),
 						() => done(undefined),
+						{ refreshIntervalMs },
 					);
 					return dashboard;
 				},
 				{ overlay: true },
 			);
 		},
+	});
+
+	pi.registerCommand("observe-export", {
+		description: "Export accumulated observer stats as json or csv",
+		handler: exportStats,
 	});
 }
