@@ -389,6 +389,7 @@ export function buildContextSummary(results: ExternalAgentResult[]): string {
 		}
 		const statusIcon = r.success ? "✓" : "✗";
 		let line = `${statusIcon} ${r.provider} (${r.backend})`;
+		if (r.reusedFromCache) line += " reused exact same-session result";
 		if (r.error) line += ` error: ${r.error}`;
 		const toolCount = r.events.filter(e => e.type === "tool_start").length;
 		if (toolCount > 0) line += ` tools: ${toolCount}`;
@@ -412,6 +413,7 @@ export function buildExternalOrchestrationReport(
 	];
 	for (const result of results) {
 		reportLines.push("", `## ${result.provider}`, `- Status: ${result.success ? "success" : "failure"}`);
+		if (result.reusedFromCache) reportLines.push("- Reuse: exact same-session cache hit");
 		reportLines.push(`- Duration: ${result.durationMs ?? "?"}ms`);
 
 		const output = result.output.trim();

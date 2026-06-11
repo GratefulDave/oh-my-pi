@@ -5,6 +5,8 @@ import type {
 	ExternalAgentBackend,
 	ExternalAgentMode,
 	ExternalAgentProvider,
+	ExternalAgentRequest,
+	ExternalAgentResult,
 	ExternalOrchestrationResult,
 	ParsedDelegateArgs,
 } from "./types";
@@ -51,6 +53,99 @@ const USAGE = [
 ].join("\n");
 
 type ParseResult = { value: ParsedDelegateArgs } | { error: string };
+interface DelegateReportRecord {
+	id: number;
+	createdAtMs: number;
+	backend: ExternalAgentBackend;
+	mode: ExternalAgentMode;
+	cwd: string;
+	promptHash: string;
+	promptPreview: string;
+	agents: ExternalAgentProvider[];
+	successCount: number;
+	artifactId?: string;
+	contextSummary: string;
+	fullReport: string;
+	reusedCount: number;
+}
+const cachedResults = new Map<string, ExternalAgentResult>();
+const reportIndex: DelegateReportRecord[] = [];
+let nextReportId = 1;
+
+function hashPrompt(prompt: string): string {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < prompt.length; i++) {
+		hash ^= prompt.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function buildResultCacheKey(request: ExternalAgentRequest): string {
+	return [request.provider, request.backend, request.mode ?? "exec", request.cwd, hashPrompt(request.prompt)].join("\u001f");
+}
+
+function cloneCachedResult(result: ExternalAgentResult): ExternalAgentResult {
+	return {
+		...result,
+		events: [...result.events, { type: "status", message: "reused exact same-session delegate result" }],
+		reusedFromCache: true,
+		durationMs: 0,
+	};
+}
+
+function promptPreview(prompt: string): string {
+	const compact = prompt.replace(/\s+/g, " ").trim();
+	return compact.length > 80 ? `${compact.slice(0, 77)}...` : compact;
+}
+
+function formatReportList(): string {
+	if (reportIndex.length === 0) return "No delegate results in this session.";
+	const lines = ["# Delegate results", ""];
+	for (const record of reportIndex) {
+		const date = new Date(record.createdAtMs).toISOString();
+		const artifact = record.artifactId ? ` artifact=${record.artifactId}` : "";
+		const reused = record.reusedCount > 0 ? ` reused=${record.reusedCount}` : "";
+		lines.push(
+			`${record.id}. ${date} ${record.successCount}/${record.agents.length} ${record.backend}/${record.mode} ${record.agents.join(",")} prompt=${record.promptHash}${artifact}${reused}`,
+			`   ${record.promptPreview}`,
+		);
+	}
+	return lines.join("\n");
+}
+
+function findReportRecord(selector: string): DelegateReportRecord | undefined {
+	const trimmed = selector.trim();
+	if (!trimmed) return reportIndex.at(-1);
+	const id = Number.parseInt(trimmed, 10);
+	if (Number.isFinite(id)) return reportIndex.find(record => record.id === id);
+	return reportIndex.find(record => record.artifactId === trimmed || record.promptHash === trimmed);
+}
+
+function formatReportRecord(record: DelegateReportRecord): string {
+	const lines = [
+		`# Delegate result ${record.id}`,
+		`- Created: ${new Date(record.createdAtMs).toISOString()}`,
+		`- Backend: ${record.backend}`,
+		`- Mode: ${record.mode}`,
+		`- CWD: ${record.cwd}`,
+		`- Agents: ${record.agents.join(", ")}`,
+		`- Prompt hash: ${record.promptHash}`,
+		`- Reused exact same-session results: ${record.reusedCount}`,
+	];
+	if (record.artifactId) lines.push(`- Artifact: ${record.artifactId}`);
+	lines.push("", record.fullReport);
+	return lines.join("\n");
+}
+
+function parseDelegateResultsArgs(args: string): { action: "list" | "show" | "clear"; selector?: string } | { error: string } {
+	const trimmed = args.trim();
+	if (!trimmed || trimmed === "list") return { action: "list" };
+	if (trimmed === "clear") return { action: "clear" };
+	if (trimmed === "show") return { action: "show" };
+	if (trimmed.startsWith("show ")) return { action: "show", selector: trimmed.slice(5) };
+	return { error: "Usage: /delegate-results list|show [id|artifactId|promptHash]|clear" };
+}
 
 function parseDelegateArgs(args: string): ParseResult {
 	const trimmed = args.trim();
@@ -162,23 +257,26 @@ export default function omnidelegate(pi: ExtensionAPI): void {
 
 			const defaultBackend = (pi.getFlag?.("delegate-default-backend") as string) ?? "acpx";
 			const defaultMode = (pi.getFlag?.("delegate-default-mode") as string) ?? "exec";
+			const backend = value.backend ?? (defaultBackend as ExternalAgentBackend);
+			const mode = value.mode ?? (defaultMode as ExternalAgentMode);
 			const cwd = ctx.cwd;
-			const requests = value.providers.map(provider => ({
+			const requests: ExternalAgentRequest[] = value.providers.map(provider => ({
 				provider,
-				backend: value.backend ?? (defaultBackend as ExternalAgentBackend),
+				backend,
 				prompt: value.prompt,
 				cwd,
 				session: value.session,
-				mode: value.mode ?? (defaultMode as ExternalAgentMode),
+				mode,
 				timeoutMs: value.timeoutMs,
 			}));
+			const cacheKeys = requests.map(buildResultCacheKey);
 
 			// Types for tui/theme/keybindings are inferred from ExtensionUIContext.custom() signature.
 			const result = await ctx.ui.custom<ExternalOrchestrationResult>(
 				(tui, _theme, _keybindings, done) => {
 					let report: ExternalOrchestrationResult | null = null;
 					const monitor = new DelegateMonitorComponent(
-						value.backend ?? "acpx",
+						backend,
 						value.providers,
 						() => tui.terminal.rows,
 						() => tui.requestRender(),
@@ -187,16 +285,31 @@ export default function omnidelegate(pi: ExtensionAPI): void {
 						},
 					);
 
-					void runExternalAgentsParallel(requests, (event, index, request) => {
-						monitor.append(event, index, request);
-					}).then(async results => {
+					const results: ExternalAgentResult[] = new Array(requests.length);
+					const missingRequests: ExternalAgentRequest[] = [];
+					const missingIndexes: number[] = [];
+					for (let index = 0; index < requests.length; index++) {
+						const request = requests[index];
+						const cached = cachedResults.get(cacheKeys[index]);
+						if (cached) {
+							const reused = cloneCachedResult(cached);
+							results[index] = reused;
+							monitor.append({ type: "status", message: "reused exact same-session result" }, index, request);
+						} else {
+							missingRequests.push(request);
+							missingIndexes.push(index);
+						}
+					}
+
+					const finish = async (): Promise<void> => {
 						const fullReport = buildExternalOrchestrationReport(results, {
-							backend: value.backend ?? "acpx",
+							backend,
 							cwd,
 							agentCount: value.providers.length,
 						});
 						const contextSummary = buildContextSummary(results);
 						const successCount = results.filter(r => r.success).length;
+						const reusedCount = results.filter(r => r.reusedFromCache).length;
 
 						let artifactId: string | undefined;
 						try {
@@ -206,7 +319,7 @@ export default function omnidelegate(pi: ExtensionAPI): void {
 						}
 
 						report = {
-							backend: value.backend ?? "acpx",
+							backend,
 							agents: value.providers,
 							results,
 							contextSummary,
@@ -214,8 +327,39 @@ export default function omnidelegate(pi: ExtensionAPI): void {
 							successCount,
 							artifactId,
 						};
-						monitor.complete(successCount, artifactId);
-					});
+						reportIndex.push({
+							id: nextReportId++,
+							createdAtMs: Date.now(),
+							backend,
+							mode,
+							cwd,
+							promptHash: hashPrompt(value.prompt),
+							promptPreview: promptPreview(value.prompt),
+							agents: value.providers,
+							successCount,
+							artifactId,
+							contextSummary,
+							fullReport,
+							reusedCount,
+						});
+						monitor.complete(successCount, artifactId, reusedCount);
+					};
+
+					if (missingRequests.length === 0) {
+						void finish();
+					} else {
+						void runExternalAgentsParallel(missingRequests, (event, index, request) => {
+							monitor.append(event, missingIndexes[index], request);
+						}).then(async freshResults => {
+							for (let i = 0; i < freshResults.length; i++) {
+								const originalIndex = missingIndexes[i];
+								const fresh = freshResults[i];
+								results[originalIndex] = fresh;
+								cachedResults.set(cacheKeys[originalIndex], fresh);
+							}
+							await finish();
+						});
+					}
 
 					return monitor;
 				},
@@ -228,6 +372,47 @@ export default function omnidelegate(pi: ExtensionAPI): void {
 			);
 			ctx.ui.setStatus("omnidelegate", `Done: ${result.successCount}/${result.agents.length} succeeded.`);
 			ctx.ui.setEditorText("");
+		},
+	});
+
+	pi.registerCommand("delegate-results", {
+		description: "List, show, or clear same-session delegate reports",
+		handler: async (args, ctx) => {
+			const parsed = parseDelegateResultsArgs(args);
+			if ("error" in parsed) {
+				ctx.ui.setStatus("omnidelegate", parsed.error);
+				ctx.ui.setEditorText("");
+				return;
+			}
+
+			if (parsed.action === "clear") {
+				const clearedReports = reportIndex.length;
+				const clearedResults = cachedResults.size;
+				reportIndex.length = 0;
+				cachedResults.clear();
+				ctx.ui.setEditorText("");
+				ctx.ui.setStatus(
+					"omnidelegate",
+					`Cleared ${clearedReports} delegate report(s) and ${clearedResults} cached result(s).`,
+				);
+				return;
+			}
+
+			if (parsed.action === "list") {
+				ctx.ui.setEditorText(formatReportList());
+				ctx.ui.setStatus("omnidelegate", `${reportIndex.length} delegate result(s) in this session.`);
+				return;
+			}
+
+			const record = findReportRecord(parsed.selector ?? "");
+			if (!record) {
+				ctx.ui.setStatus("omnidelegate", "Delegate result not found.");
+				ctx.ui.setEditorText("");
+				return;
+			}
+
+			ctx.ui.setEditorText(formatReportRecord(record));
+			ctx.ui.setStatus("omnidelegate", `Showing delegate result ${record.id}.`);
 		},
 	});
 }

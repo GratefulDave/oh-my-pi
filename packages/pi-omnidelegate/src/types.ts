@@ -70,6 +70,7 @@ export interface ExternalAgentResult {
 	events: ExternalAgentEvent[];
 	error?: string;
 	durationMs?: number;
+	reusedFromCache?: boolean;
 }
 
 /** Bounded summary extracted from a delegated agent's output via DELEGATION_SUMMARY: marker. */

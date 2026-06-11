@@ -76,7 +76,9 @@ describe("omnidelegate extension", () => {
 		const harness = createHarness();
 		expect(harness.label).toBe("OmniDelegate");
 		expect(harness.commands.has("delegate")).toBe(true);
+		expect(harness.commands.has("delegate-results")).toBe(true);
 		expect(harness.commands.get("delegate")?.description).toContain("external AI agents");
+		expect(harness.commands.get("delegate-results")?.description).toContain("same-session delegate reports");
 	});
 
 	test("surfaces usage without launching agents when prompt is missing", async () => {
@@ -86,6 +88,25 @@ describe("omnidelegate extension", () => {
 		await command?.handler("", harness.ctx);
 		expect(harness.statuses.at(-1)?.key).toBe("omnidelegate");
 		expect(harness.statuses.at(-1)?.value).toContain("Usage: /delegate");
+		expect(harness.editorTexts.at(-1)).toBe("");
+	});
+
+	test("lists empty same-session delegate results", async () => {
+		const harness = createHarness();
+		const command = harness.commands.get("delegate-results");
+		expect(command).toBeDefined();
+		await command?.handler("list", harness.ctx);
+		expect(harness.statuses.at(-1)?.key).toBe("omnidelegate");
+		expect(harness.statuses.at(-1)?.value).toBe("0 delegate result(s) in this session.");
+		expect(harness.editorTexts.at(-1)).toBe("No delegate results in this session.");
+	});
+
+	test("surfaces delegate-results usage for invalid subcommands", async () => {
+		const harness = createHarness();
+		const command = harness.commands.get("delegate-results");
+		expect(command).toBeDefined();
+		await command?.handler("bogus", harness.ctx);
+		expect(harness.statuses.at(-1)?.value).toContain("Usage: /delegate-results");
 		expect(harness.editorTexts.at(-1)).toBe("");
 	});
 });

@@ -25,6 +25,9 @@ From within an OMP session:
 /delegate --backend acpx --agents gemini,claude "compare Rust vs Zig"
 /delegate --agents codex --mode prompt "explain this code"
 /delegate --session my-session --timeout 60000 "long running task"
+/delegate-results list
+/delegate-results show 1
+/delegate-results clear
 ```
 
 ### Options
@@ -34,6 +37,15 @@ From within an OMP session:
 - `--session` — Session name for the external agents
 - `--mode` — Mode: `exec` (default) or `prompt`
 - `--timeout` — Timeout in milliseconds
+
+
+### Result cache
+
+- `/delegate-results list` — Show delegate reports saved during the current session
+- `/delegate-results show [id|artifactId|promptHash]` — Open a saved report; defaults to the latest
+- `/delegate-results clear` — Clear the in-memory report index and exact-match result cache
+
+Exact same-session `/delegate` calls reuse results only when provider, backend, mode, working directory, and prompt hash match.
 
 ### Settings
 

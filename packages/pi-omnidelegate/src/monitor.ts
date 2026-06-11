@@ -87,6 +87,7 @@ export class DelegateMonitorComponent implements Component {
 	#successCount = 0;
 	#totalAgents = 0;
 	#artifactId?: string;
+	#reusedCount = 0;
 	#onClose?: () => void;
 	#requestRender: () => void;
 
@@ -120,10 +121,11 @@ export class DelegateMonitorComponent implements Component {
 		this.#requestRender();
 	}
 
-	complete(successCount: number, artifactId?: string): void {
+	complete(successCount: number, artifactId?: string, reusedCount = 0): void {
 		this.#done = true;
 		this.#successCount = successCount;
 		this.#artifactId = artifactId;
+		this.#reusedCount = reusedCount;
 		this.#requestRender();
 	}
 
@@ -235,6 +237,7 @@ export class DelegateMonitorComponent implements Component {
 
 		if (this.#done) {
 			const parts = [` ${this.#successCount}/${this.#totalAgents} succeeded`];
+			if (this.#reusedCount > 0) parts.push(`${this.#reusedCount} reused exact same-session result(s)`);
 			if (this.#artifactId) parts.push(`artifact: ${this.#artifactId}`);
 			parts.push("Esc/q to close");
 			lines.push(truncateToWidth(parts.join("  "), width));
