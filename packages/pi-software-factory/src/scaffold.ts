@@ -9,6 +9,10 @@ interface TemplateFile {
 	content: string;
 }
 
+export const FACTORY_PRESETS = ["standard", "minimal"] as const;
+
+export type FactoryPreset = (typeof FACTORY_PRESETS)[number];
+
 const FACTORY_TEMPLATES: TemplateFile[] = [
 	{
 		target: ".omp/factory/factory.json",
@@ -153,9 +157,42 @@ interface ScaffoldOptions {
 	enableMemory: boolean;
 }
 
+export interface PlannedTemplateFile {
+	target: string;
+	content: string;
+}
+
 export interface ScaffoldResult {
 	filesWritten: string[];
 	errors: Array<{ target: string; error: string }>;
+}
+
+export interface ScaffoldDryRunResult {
+	filesToWrite: string[];
+	filesSkipped: string[];
+	errors: Array<{ target: string; error: string }>;
+}
+
+export interface UpgradeDryRunResult {
+	create: string[];
+	update: string[];
+	conflict: Array<{ target: string; error: string }>;
+	unchanged: string[];
+}
+
+export function getFactoryPresets(): readonly FactoryPreset[] {
+	return FACTORY_PRESETS;
+}
+
+export function getPlannedFactoryTemplates(options: ScaffoldOptions): PlannedTemplateFile[] {
+	const repoName = path.basename(options.cwd);
+	return FACTORY_TEMPLATES.map(template => ({
+		target: template.target,
+		content: template.content
+			.replace("__PRESET__", options.preset)
+			.replace("__REPO_NAME__", repoName)
+			.replace("__REPO_KIND__", "node"),
+	}));
 }
 
 async function exists(filePath: string): Promise<boolean> {
@@ -168,12 +205,12 @@ async function exists(filePath: string): Promise<boolean> {
 	}
 }
 
-async function writeFile(targetPath: string, content: string, overwrite: boolean): Promise<void> {
+async function writeFile(targetPath: string, content: string, overwrite: boolean): Promise<boolean> {
 	const dir = path.dirname(targetPath);
 	await fs.mkdir(dir, { recursive: true });
 
 	if (!overwrite && (await exists(targetPath))) {
-		return; // skip existing files when not overwriting
+		return false; // skip existing files when not overwriting
 	}
 
 	await Bun.write(targetPath, content);
@@ -182,25 +219,74 @@ async function writeFile(targetPath: string, content: string, overwrite: boolean
 	if (targetPath.endsWith(".sh")) {
 		await fs.chmod(targetPath, 0o755);
 	}
+
+	return true;
 }
 
 export async function scaffoldFactory(options: ScaffoldOptions): Promise<ScaffoldResult> {
-	const { cwd, preset } = options;
-	const repoName = path.basename(cwd);
 	const result: ScaffoldResult = { filesWritten: [], errors: [] };
 
-	for (const template of FACTORY_TEMPLATES) {
-		const targetPath = path.join(cwd, template.target);
+	for (const template of getPlannedFactoryTemplates(options)) {
+		const targetPath = path.join(options.cwd, template.target);
 		try {
-			const content = template.content
-				.replace("__PRESET__", preset)
-				.replace("__REPO_NAME__", repoName)
-				.replace("__REPO_KIND__", "node");
-
-			await writeFile(targetPath, content, false);
-			result.filesWritten.push(template.target);
+			if (await writeFile(targetPath, template.content, false)) {
+				result.filesWritten.push(template.target);
+			}
 		} catch (err) {
 			result.errors.push({
+				target: template.target,
+				error: err instanceof Error ? err.message : String(err),
+			});
+		}
+	}
+
+	return result;
+}
+
+export async function dryRunScaffoldFactory(options: ScaffoldOptions): Promise<ScaffoldDryRunResult> {
+	const result: ScaffoldDryRunResult = { filesToWrite: [], filesSkipped: [], errors: [] };
+
+	for (const template of getPlannedFactoryTemplates(options)) {
+		const targetPath = path.join(options.cwd, template.target);
+		try {
+			if (await exists(targetPath)) {
+				result.filesSkipped.push(template.target);
+			} else {
+				result.filesToWrite.push(template.target);
+			}
+		} catch (err) {
+			result.errors.push({
+				target: template.target,
+				error: err instanceof Error ? err.message : String(err),
+			});
+		}
+	}
+
+	return result;
+}
+
+export async function dryRunUpgradeFactory(options: ScaffoldOptions): Promise<UpgradeDryRunResult> {
+	const result: UpgradeDryRunResult = { create: [], update: [], conflict: [], unchanged: [] };
+	const templates = getPlannedFactoryTemplates(options).filter(template =>
+		template.target.startsWith(".omp/factory/"),
+	);
+
+	for (const template of templates) {
+		const targetPath = path.join(options.cwd, template.target);
+		try {
+			if (!(await exists(targetPath))) {
+				result.create.push(template.target);
+				continue;
+			}
+
+			const current = await Bun.file(targetPath).text();
+			if (current === template.content) {
+				result.unchanged.push(template.target);
+			} else {
+				result.update.push(template.target);
+			}
+		} catch (err) {
+			result.conflict.push({
 				target: template.target,
 				error: err instanceof Error ? err.message : String(err),
 			});

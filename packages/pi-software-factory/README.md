@@ -24,6 +24,9 @@ Once the factory is scaffolded and the extension is loaded:
 
 ```
 /factory-init --preset standard   # Scaffold factory files
+/factory-init --dry-run           # Show files that would be written
+/factory-init --list-presets      # List available scaffold presets
+/factory-upgrade --dry-run        # Compare .omp/factory files with current templates
 /factory-status                   # Check factory health
 ```
 
@@ -48,5 +51,6 @@ After scaffolding, these files are created:
 
 The extension provides:
 - `/factory-status` — Check factory configuration health
-- `/factory-init` — Scaffold factory files for the current project
-- `tool_call` hook — Safety rule enforcement (future)
+- `/factory-init` — Scaffold factory files for the current project, with dry-run and preset listing options
+- `/factory-upgrade --dry-run` — Report create/update/conflict buckets for `.omp/factory/*` templates
+- `tool_call` hook — Warns or blocks matching tool calls from `.omp/factory/safety.rules.json`
