@@ -2,15 +2,11 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { discoverManagedExtensionSources, extensionName, readJson } from "./fork-managed-extensions";
 
 const REPO = path.resolve(import.meta.dir, "..");
 const NATIVES_DIR = path.join(REPO, "packages", "natives");
-const SETTINGS_PATH = path.join(REPO, ".omp", "settings.json");
 const HOST_EXTERNALS = ["@oh-my-pi/pi-coding-agent"];
-
-interface RepoSettings {
-	extensions?: unknown;
-}
 
 interface PackageJson {
 	scripts?: Record<string, string>;
@@ -32,14 +28,6 @@ type BuildTarget =
 			external: string[];
 	  };
 
-async function readJson<T>(filePath: string): Promise<T | null> {
-	try {
-		return (await Bun.file(filePath).json()) as T;
-	} catch (err) {
-		if (isEnoent(err)) return null;
-		throw err;
-	}
-}
 
 function isEnoent(err: unknown): boolean {
 	return err instanceof Error && "code" in err && (err as { code?: string }).code === "ENOENT";
@@ -54,19 +42,22 @@ async function pathExists(filePath: string): Promise<boolean> {
 		throw err;
 	}
 }
+async function dirExists(dirPath: string): Promise<boolean> {
+	try {
+		const stat = await fs.stat(dirPath);
+		return stat.isDirectory();
+	} catch (err) {
+		if (isEnoent(err)) return false;
+		throw err;
+	}
+}
 
 function normalizeRelative(filePath: string): string {
 	return path.relative(REPO, filePath).split(path.sep).join("/");
 }
 
 function extName(extensionPath: string): string {
-	const normalized = extensionPath.split(path.sep).join("/");
-	const parts = normalized.split("/");
-	const packagesIdx = parts.indexOf("packages");
-	if (packagesIdx >= 0 && parts[packagesIdx + 1]) return parts[packagesIdx + 1];
-	const extensionsIdx = parts.indexOf("extensions");
-	if (extensionsIdx >= 0 && parts[extensionsIdx + 1]) return parts[extensionsIdx + 1];
-	return path.basename(path.dirname(path.dirname(normalized)));
+	return extensionName(extensionPath);
 }
 
 function getPackageDir(extensionPath: string): string | null {
@@ -206,21 +197,24 @@ async function verifyNativeMinimizer(): Promise<void> {
 	}
 }
 
-const settings = await readJson<RepoSettings>(SETTINGS_PATH);
-const extensionPaths = Array.isArray(settings?.extensions)
-	? settings.extensions.filter((value): value is string => typeof value === "string")
-	: [];
+const sources = await discoverManagedExtensionSources(REPO);
+const extensionPaths = sources.map(source => source.rel);
 
 if (extensionPaths.length === 0) {
-	console.error("No extension paths found in .omp/settings.json#extensions");
+	console.error("No managed extensions found in .omp/settings.json, package manifests, or .omp/extensions");
 	process.exit(1);
 }
 
 const targets = await collectTargets(extensionPaths);
-console.log(`Rebuilding pi-natives and ${targets.length} extension target${targets.length === 1 ? "" : "s"} from .omp/settings.json`);
+const hasNativePackage = await dirExists(NATIVES_DIR);
+console.log(
+	`Rebuilding ${hasNativePackage ? "pi-natives and " : ""}${targets.length} extension target${targets.length === 1 ? "" : "s"} from managed extension sources`,
+);
 
-await runPackageBuild("pi-natives", NATIVES_DIR);
-await verifyNativeMinimizer();
+if (hasNativePackage) {
+	await runPackageBuild("pi-natives", NATIVES_DIR);
+	await verifyNativeMinimizer();
+}
 
 for (const target of targets) {
 	if (target.kind === "package-script") {

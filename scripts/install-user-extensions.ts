@@ -14,6 +14,7 @@ import { YAML } from "bun";
 import * as fs from "node:fs/promises";
 import { homedir } from "node:os";
 import * as path from "node:path";
+import { discoverManagedExtensionSources, extensionName as extName, readJson } from "./fork-managed-extensions";
 
 interface RepoSettings {
 	extensions?: string[];
@@ -27,11 +28,6 @@ interface RepoSettings {
 	modelRoles?: unknown;
 }
 
-interface PackageJson {
-	omp?: {
-		extensions?: unknown;
-	};
-}
 
 const PROFILE_KEYS = ["modelRoles", "defaultThinkingLevel", "enabledModels", "cycleOrder", "modelProviderOrder"] as const;
 
@@ -43,22 +39,6 @@ const USER_CONFIG = path.join(USER_DIR, "config.yml");
 const USER_SETTINGS = path.join(USER_DIR, "settings.json");
 const DRY = process.argv.includes("--dry-run");
 
-function extName(rel: string): string {
-	const parts = rel.split("/");
-	const packagesIdx = parts.indexOf("packages");
-	if (packagesIdx >= 0 && parts[packagesIdx + 1]) return parts[packagesIdx + 1];
-	const extensionsIdx = parts.indexOf("extensions");
-	if (extensionsIdx >= 0 && parts[extensionsIdx + 1]) return parts[extensionsIdx + 1];
-	return path.basename(path.dirname(path.dirname(rel)));
-}
-
-async function readJson<T>(filePath: string): Promise<T | null> {
-	try {
-		return JSON.parse(await fs.readFile(filePath, "utf8")) as T;
-	} catch {
-		return null;
-	}
-}
 
 async function readYaml(filePath: string): Promise<Record<string, unknown> | null> {
 	try {
@@ -196,46 +176,19 @@ async function verifyLink(dest: string, src: string): Promise<string | null> {
 	return null;
 }
 
-async function discoverPackageExtensionSources(): Promise<string[]> {
-	const packagesDir = path.join(REPO, "packages");
-	const entries = await fs.readdir(packagesDir, { withFileTypes: true }).catch(() => []);
-	const sources: string[] = [];
-	for (const entry of entries) {
-		if (!entry.isDirectory()) continue;
-		const packageDir = path.join(packagesDir, entry.name);
-		const manifest = await readJson<PackageJson>(path.join(packageDir, "package.json"));
-		const extensions = manifest?.omp?.extensions;
-		if (!Array.isArray(extensions)) continue;
-		for (const extension of extensions) {
-			if (typeof extension !== "string") continue;
-			const rel = path.relative(REPO, path.resolve(packageDir, extension)).split(path.sep).join("/");
-			sources.push(rel);
-		}
-	}
-	return sources;
-}
 
 const repoSettings = normalizeAntigravityConfig(
 	(await readJson<RepoSettings>(path.join(REPO, ".omp", "settings.json"))) ?? {},
 ) as Record<string, unknown>;
-const configuredSources = Array.isArray(repoSettings.extensions)
-	? repoSettings.extensions.filter((value): value is string => typeof value === "string")
-	: [];
-const configuredNames = new Set(configuredSources.map(extName));
-const manifestSources = await discoverPackageExtensionSources();
-const sources = [...configuredSources];
-for (const rel of manifestSources) {
-	if (configuredNames.has(extName(rel))) continue;
-	sources.push(rel);
-}
-if (sources.length === 0) {
-	console.error("No extensions found in repo .omp/settings.json#extensions or package manifests");
-	process.exit(1);
+const sources = await discoverManagedExtensionSources(REPO);
+const sourceRels = sources.map(source => source.rel);
+if (sourceRels.length === 0) {
+	throw new Error("No managed extensions found in .omp/settings.json, package manifests, or .omp/extensions");
 }
 
 const registered: string[] = [];
 const missing: string[] = [];
-for (const rel of sources) {
+for (const rel of sourceRels) {
 	const src = path.resolve(REPO, rel);
 	const name = extName(rel);
 	const file = path.basename(rel);
@@ -295,7 +248,7 @@ if (!DRY) {
 
 const verifyErrors: string[] = [];
 if (!DRY) {
-	for (const rel of sources) {
+	for (const rel of sourceRels) {
 		const src = path.resolve(REPO, rel);
 		if (!(await pathExists(src))) continue;
 		const name = extName(rel);
