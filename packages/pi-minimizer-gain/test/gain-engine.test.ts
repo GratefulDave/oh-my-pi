@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { MinimizerGainOverlayComponent } from "../src/overlay";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -366,5 +367,99 @@ describe("minimizer gain records", () => {
 	test("classifies compound missed commands separately", () => {
 		expect(inferBashMinimizerMissedFilter("git status && git log")).toBe("compound");
 		expect(inferBashMinimizerMissedFilter("/usr/bin/git status")).toBe("git");
+	});
+
+	test("refresh callback receives current scope index after scope switch", async () => {
+		const stubContext: import("../src/gain-engine").MinimizerGainContext = {
+			path: "/tmp",
+			days: 30,
+			cwd: "/tmp",
+			all: false,
+			records: [],
+			summary: {
+				commands: 0,
+				inputBytes: 0,
+				outputBytes: 0,
+				savedBytes: 0,
+				estimatedTokensSaved: 0,
+				usesEstimatedTokensSaved: false,
+				estimatedInputTokens: 0,
+				tokensSavedRatio: null,
+				byFilter: [],
+				byCommand: [],
+				byCwd: [],
+				bySource: [],
+			},
+			missed: { commands: [], potentialTokenSavings: [] },
+		};
+		const dualContext = { current: stubContext, all: stubContext };
+
+		const capturedScopes: number[] = [];
+		const loadContext = async (scope: number) => {
+			capturedScopes.push(scope);
+			return dualContext;
+		};
+
+		const overlay = new MinimizerGainOverlayComponent(
+			{} as never,
+			dualContext,
+			() => {},
+			() => {},
+			loadContext,
+			0,
+		);
+
+		overlay.act("s");
+		await Bun.sleep(20);
+		overlay.dispose();
+
+		expect(capturedScopes).toContain(1);
+	});
+
+	test("scope switch triggers an immediate refresh", async () => {
+		const stubContext: import("../src/gain-engine").MinimizerGainContext = {
+			path: "/tmp",
+			days: 30,
+			cwd: "/tmp",
+			all: false,
+			records: [],
+			summary: {
+				commands: 0,
+				inputBytes: 0,
+				outputBytes: 0,
+				savedBytes: 0,
+				estimatedTokensSaved: 0,
+				usesEstimatedTokensSaved: false,
+				estimatedInputTokens: 0,
+				tokensSavedRatio: null,
+				byFilter: [],
+				byCommand: [],
+				byCwd: [],
+				bySource: [],
+			},
+			missed: { commands: [], potentialTokenSavings: [] },
+		};
+		const dualContext = { current: stubContext, all: stubContext };
+
+		let callCount = 0;
+		const loadContext = async (_scope: number) => {
+			callCount++;
+			return dualContext;
+		};
+
+		const overlay = new MinimizerGainOverlayComponent(
+			{} as never,
+			dualContext,
+			() => {},
+			() => {},
+			loadContext,
+			0,
+		);
+
+		overlay.act("s");
+		await Bun.sleep(20);
+		overlay.dispose();
+
+		expect(callCount).toBeGreaterThanOrEqual(1);
 	});
 });

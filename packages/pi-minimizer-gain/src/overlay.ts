@@ -79,7 +79,7 @@ function formatFullNumber(n: number): string {
 		.toString()
 		.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
-type LoadMinimizerGainContext = () => Promise<DualContext>;
+type LoadMinimizerGainContext = (scope: ScopeIndex) => Promise<DualContext>;
 
 const REFRESH_INTERVAL_MS = 1000;
 
@@ -178,7 +178,7 @@ export class MinimizerGainOverlayComponent {
 		if (!this.#loadContext || this.#refreshing || this.#disposed) return;
 		this.#refreshing = true;
 		try {
-			const context = await this.#loadContext();
+		const context = await this.#loadContext(this.#activeScopeIndex);
 			if (this.#disposed) return;
 			this.#dualContext = context;
 			this.#requestRender();
@@ -202,6 +202,7 @@ export class MinimizerGainOverlayComponent {
 		if (key === "s" || key === "S") {
 			this.#activeScopeIndex = ((this.#activeScopeIndex + 1) % SCOPES.length) as ScopeIndex;
 			this.#requestRender();
+			void this.refresh();
 			return true;
 		}
 		if (key === "r" || key === "R") {
@@ -224,6 +225,7 @@ export class MinimizerGainOverlayComponent {
 		if (matchesKey(data, "shift+tab") || data === "s" || data === "S") {
 			this.#activeScopeIndex = ((this.#activeScopeIndex + 1) % SCOPES.length) as ScopeIndex;
 			this.#requestRender();
+			void this.refresh();
 			return;
 		}
 		if (data === "r" || data === "R") {

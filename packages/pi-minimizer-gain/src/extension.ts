@@ -51,11 +51,11 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 						dualContext,
 						() => tui.requestRender(),
 						() => done(undefined),
-						async () => ({
-							current: await loadMinimizerGainContext({ cwd, all: false, days: parsed.days }),
-							all: await loadMinimizerGainContext({ cwd, all: true, days: parsed.days }),
-							diagnostic: await buildDiagnosticForCwd(initialScope === 0 ? cwd : undefined),
-						}),
+					async (scope) => ({
+						current: await loadMinimizerGainContext({ cwd, all: false, days: parsed.days }),
+						all: await loadMinimizerGainContext({ cwd, all: true, days: parsed.days }),
+						diagnostic: await buildDiagnosticForCwd(scope === 0 ? cwd : undefined),
+					}),
 						initialScope,
 					),
 				{ overlay: true },
