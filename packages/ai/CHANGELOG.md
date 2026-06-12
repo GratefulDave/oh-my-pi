@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [15.12.1] - 2026-06-12
+
+### Added
+
+- Added the optional `ToolResultMessage.useless` flag: tools can declare a finished result contextually useless (zero matches, elapsed wait) so compaction passes may elide it once consumed. Never serialized to provider wire formats and never set together with `isError`.
+
+## [15.12.0] - 2026-06-12
+
+### Fixed
+
+- Fixed Anthropic requests bypassing lone-surrogate sanitization after payload hooks or Anthropic-origin tool-call replay: the model itself can emit unpaired surrogate escapes in its own tool-argument JSON (streamed out fine, then rejected with `400 The request body is not valid JSON` on every subsequent request, bricking the session). The final Anthropic payload is now deep-sanitized with `toWellFormed()` immediately before SDK serialization; the pass is identity-preserving, so well-formed arguments stay byte-identical and prompt-cache prefixes are unaffected.
+
 ## [15.11.8] - 2026-06-12
 
 ### Breaking Changes

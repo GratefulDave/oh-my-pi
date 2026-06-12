@@ -196,6 +196,13 @@ export interface ExecutorOptions {
 	index: number;
 	id: string;
 	parentToolCallId?: string;
+	/**
+	 * Spawn runs as a detached background job (parent turn not blocked on it).
+	 * Rides the subagent lifecycle/progress payloads so HUD-style surfaces can
+	 * skip spawns the transcript already renders inline. See
+	 * {@link SubagentLifecyclePayload.detached}.
+	 */
+	detached?: boolean;
 	modelOverride?: string | string[];
 	/**
 	 * Active model selector of the parent session, used as an auth-aware fallback
@@ -658,6 +665,7 @@ interface RunMonitorArgs {
 	onProgress?: (progress: AgentProgress) => void;
 	eventBus?: EventBus;
 	parentToolCallId?: string;
+	detached?: boolean;
 	sessionFile?: string;
 	/** Soft assistant-request budget; 0 disables the guard. */
 	softRequestBudget: number;
@@ -838,6 +846,7 @@ function createSubagentRunMonitor(args: RunMonitorArgs): SubagentRunMonitor {
 				agentSource: agent.source,
 				task,
 				parentToolCallId: args.parentToolCallId,
+				detached: args.detached,
 				assignment,
 				progress: { ...progress },
 				sessionFile: args.sessionFile,
@@ -1415,6 +1424,7 @@ interface FinalizeRunArgs {
 	artifactsDir?: string;
 	eventBus?: EventBus;
 	parentToolCallId?: string;
+	detached?: boolean;
 	sessionFile?: string;
 	startTime: number;
 }
@@ -1513,6 +1523,7 @@ async function finalizeRunResult(args: FinalizeRunArgs): Promise<SingleResult> {
 			id,
 			agent: agent.name,
 			parentToolCallId: args.parentToolCallId,
+			detached: args.detached,
 			agentSource: agent.source,
 			description: args.description,
 			status: progress.status as "completed" | "failed" | "aborted",
@@ -1679,6 +1690,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		onProgress,
 		eventBus: options.eventBus,
 		parentToolCallId: options.parentToolCallId,
+		detached: options.detached,
 		sessionFile: subtaskSessionFile,
 		softRequestBudget,
 		maxRuntimeMs,
@@ -1924,6 +1936,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 					id,
 					agent: agent.name,
 					parentToolCallId: options.parentToolCallId,
+					detached: options.detached,
 					agentSource: agent.source,
 					description: options.description,
 					status: "started",
@@ -2131,6 +2144,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		artifactsDir: options.artifactsDir,
 		eventBus: options.eventBus,
 		parentToolCallId: options.parentToolCallId,
+		detached: options.detached,
 		sessionFile: subtaskSessionFile,
 		startTime,
 	});

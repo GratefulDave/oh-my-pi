@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/antigravity-adapter",
-	"version": "15.11.8-lex",
+	"version": "15.12.3-lex",
 	"description": "OMP provider adapter for the OpenCode Antigravity auth plugin",
 	"homepage": "https://omp.sh",
 	"author": "Derek Rynd",
@@ -30,8 +30,8 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-ai": "^15.11.8-lex",
-		"@oh-my-pi/pi-utils": "^15.11.8-lex",
+		"@oh-my-pi/pi-ai": "^15.12.3-lex",
+		"@oh-my-pi/pi-utils": "^15.12.3-lex",
 		"opencode-antigravity-auth": "1.6.5-beta.0"
 	},
 	"devDependencies": {

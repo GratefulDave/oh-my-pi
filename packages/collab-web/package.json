@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/collab-web",
-	"version": "15.11.8-lex",
+	"version": "15.12.3-lex",
 	"private": true,
 	"description": "Browser guest client and local relay tools for omp collab live sessions",
 	"homepage": "https://omp.sh",
@@ -26,7 +26,8 @@
 		"dev": "bun ./index.html",
 		"mock-host": "bun scripts/mock-host.ts",
 		"relay": "bun scripts/local-relay.ts",
-		"build": "bun build ./index.html --outdir=dist --minify",
+		"build": "rm -rf dist && bun build ./index.html --outdir=dist --minify --entry-naming=[hash].[ext] --chunk-naming=[hash].[ext] --asset-naming=[hash].[ext] && mv dist/*.html dist/index.html && cp -R public/. dist/",
+		"build:tool-views": "bun scripts/build-tool-views.ts",
 		"prepack": "bun run build",
 		"test": "bun test --parallel",
 		"check": "biome check . && bun run check:types",
@@ -36,7 +37,7 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-wire": "^15.11.8-lex",
+		"@oh-my-pi/pi-wire": "^15.12.3-lex",
 		"lucide-react": "catalog:",
 		"marked": "catalog:",
 		"react": "catalog:",
@@ -54,6 +55,7 @@
 		"dist",
 		"src",
 		"scripts",
+		"public",
 		"index.html",
 		"README.md",
 		"CHANGELOG.md"
