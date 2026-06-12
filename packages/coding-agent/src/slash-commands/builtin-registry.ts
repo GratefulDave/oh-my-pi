@@ -3,8 +3,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import { setNextRequestDebugPath } from "@oh-my-pi/pi-ai/utils/request-debug";
+import type { AutocompleteItem } from "@oh-my-pi/pi-tui";
 import { Snowflake, setProjectDir } from "@oh-my-pi/pi-utils";
 import { $ } from "bun";
+import { COLLAB_GUEST_ALLOWED_COMMANDS, CollabGuestLink } from "../collab/guest";
+import { CollabHost } from "../collab/host";
 import type { SettingPath, SettingValue } from "../config/settings";
 import { settings } from "../config/settings";
 import {
@@ -42,6 +45,7 @@ import type {
 	SlashCommandResult,
 	SlashCommandRuntime,
 	SlashCommandSpec,
+	SubcommandDef,
 	TuiSlashCommandRuntime,
 } from "./types";
 
@@ -440,6 +444,115 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		handleTui: async (_command, runtime) => {
 			await runtime.ctx.handleShareCommand();
 			runtime.ctx.editor.setText("");
+		},
+	},
+	{
+		name: "collab",
+		description: "Share this session live via a relay",
+		inlineHint: "[start|stop|status] [relayUrl]",
+		allowArgs: true,
+		handleTui: async (command, runtime) => {
+			const ctx = runtime.ctx;
+			ctx.editor.setText("");
+			const args = command.args.trim();
+			const [first = ""] = args.split(/\s+/, 1);
+			if (first === "stop") {
+				if (!ctx.collabHost) {
+					ctx.showStatus("Not hosting a collab session");
+					return;
+				}
+				await ctx.collabHost.stop("host stopped");
+				ctx.showStatus("Collab stopped");
+				return;
+			}
+			if (first === "status") {
+				if (ctx.collabHost) {
+					const names = ctx.collabHost.participants.map(p => (p.role === "host" ? `${p.name} (host)` : p.name));
+					ctx.showStatus(`Collab: ${names.join(", ")} — ${ctx.collabHost.link}`);
+				} else if (ctx.collabGuest) {
+					ctx.showStatus("In a collab session as a guest (/leave to exit)");
+				} else {
+					ctx.showStatus("Not in a collab session");
+				}
+				return;
+			}
+			if (ctx.collabGuest) {
+				ctx.showError("Already in a collab session as a guest (/leave first)");
+				return;
+			}
+			if (ctx.collabHost) {
+				ctx.session.emitNotice("info", `Collab link: ${ctx.collabHost.link}`, "collab");
+				return;
+			}
+			const explicitUrl = first === "start" ? args.slice("start".length).trim() : args;
+			const relayInput = explicitUrl || ctx.settings.get("collab.relayUrl") || "";
+			if (!relayInput) {
+				ctx.showError(
+					"No relay configured. Set collab.relayUrl in /settings or pass one: /collab relay.example.com",
+				);
+				return;
+			}
+			// Scheme-less relay args default to wss (ws:// must be spelled out for localhost).
+			const relayUrl = relayInput.includes("://") ? relayInput : `wss://${relayInput}`;
+			const host = new CollabHost(ctx);
+			try {
+				await host.start(relayUrl);
+			} catch (err) {
+				ctx.showError(`Failed to start collab session: ${errorMessage(err)}`);
+				return;
+			}
+			ctx.collabHost = host;
+			ctx.session.emitNotice(
+				"info",
+				`Collab link: ${host.link}\nAnyone with this link can read the session and prompt the agent.`,
+				"collab",
+			);
+		},
+	},
+	{
+		name: "join",
+		description: "Join a shared collab session",
+		inlineHint: "<link>",
+		allowArgs: true,
+		handleTui: async (command, runtime) => {
+			const ctx = runtime.ctx;
+			ctx.editor.setText("");
+			const link = command.args.trim();
+			if (!link) {
+				ctx.showError("Usage: /join <link>");
+				return;
+			}
+			if (ctx.collabHost) {
+				ctx.showError("Stop hosting first (/collab stop)");
+				return;
+			}
+			if (ctx.collabGuest) {
+				ctx.showError("Already in a collab session (/leave first)");
+				return;
+			}
+			try {
+				await new CollabGuestLink(ctx).join(link);
+			} catch (err) {
+				ctx.showError(`Failed to join collab session: ${errorMessage(err)}`);
+			}
+		},
+	},
+	{
+		name: "leave",
+		description: "Leave the collab session",
+		handleTui: async (_command, runtime) => {
+			const ctx = runtime.ctx;
+			ctx.editor.setText("");
+			if (ctx.collabGuest) {
+				await ctx.collabGuest.leave("left");
+				return;
+			}
+			if (ctx.collabHost) {
+				await ctx.collabHost.stop("host stopped");
+				ctx.showStatus("Collab stopped");
+				return;
+			}
+			ctx.showStatus("Not in a collab session");
 		},
 	},
 	{
@@ -1853,6 +1966,70 @@ for (const command of BUILTIN_SLASH_COMMAND_REGISTRY) {
 
 export const BUILTIN_SLASH_COMMAND_RESERVED_NAMES: ReadonlySet<string> = new Set(BUILTIN_SLASH_COMMAND_LOOKUP.keys());
 
+/**
+ * Build getArgumentCompletions from declarative subcommand definitions.
+ * Returns subcommand names filtered by prefix in the dropdown.
+ */
+function buildArgumentCompletions(subcommands: SubcommandDef[]): (prefix: string) => AutocompleteItem[] | null {
+	return (argumentPrefix: string) => {
+		if (argumentPrefix.includes(" ")) return null; // past the subcommand
+		const lower = argumentPrefix.toLowerCase();
+		const matches = subcommands
+			.filter(s => s.name.startsWith(lower))
+			.map(s => ({
+				value: `${s.name} `,
+				label: s.name,
+				description: s.description,
+				hint: s.usage,
+			}));
+		return matches.length > 0 ? matches : null;
+	};
+}
+
+/**
+ * Build getInlineHint from declarative subcommand definitions.
+ * Shows remaining completion + usage as dim ghost text after cursor.
+ */
+function buildSubcommandInlineHint(subcommands: SubcommandDef[]): (argumentText: string) => string | null {
+	return (argumentText: string) => {
+		const trimmed = argumentText.trimStart();
+		const spaceIndex = trimmed.indexOf(" ");
+
+		if (spaceIndex === -1) {
+			// Still typing subcommand name — show remaining chars + usage
+			const prefix = trimmed.toLowerCase();
+			if (prefix.length === 0) return null;
+			const match = subcommands.find(s => s.name.startsWith(prefix));
+			if (!match) return null;
+			const remaining = match.name.slice(prefix.length);
+			return remaining + (match.usage ? ` ${match.usage}` : "");
+		}
+
+		// Subcommand typed — show remaining usage params
+		const subName = trimmed.slice(0, spaceIndex).toLowerCase();
+		const afterSub = trimmed.slice(spaceIndex + 1);
+		const sub = subcommands.find(s => s.name === subName);
+		if (!sub?.usage) return null;
+
+		if (afterSub.length > 0) {
+			const usageParts = sub.usage.split(" ");
+			const inputParts = afterSub.trim().split(/\s+/);
+			const remaining = usageParts.slice(inputParts.length);
+			return remaining.length > 0 ? remaining.join(" ") : null;
+		}
+
+		return sub.usage;
+	};
+}
+
+/**
+ * Build getInlineHint for commands with a simple static hint string.
+ * Shows the hint only when no arguments have been typed yet.
+ */
+function buildStaticInlineHint(hint: string): (argumentText: string) => string | null {
+	return (argumentText: string) => (argumentText.trim().length === 0 ? hint : null);
+}
+
 /** Builtin command metadata used for slash-command autocomplete and help text. */
 export const BUILTIN_SLASH_COMMAND_DEFS: ReadonlyArray<BuiltinSlashCommand> = BUILTIN_SLASH_COMMAND_REGISTRY.map(
 	command => ({
@@ -1863,6 +2040,32 @@ export const BUILTIN_SLASH_COMMAND_DEFS: ReadonlyArray<BuiltinSlashCommand> = BU
 		inlineHint: command.inlineHint,
 	}),
 );
+
+/**
+ * Materialized builtin slash commands with completion functions derived from
+ * declarative subcommand/hint definitions.
+ */
+export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<
+	BuiltinSlashCommand & {
+		getArgumentCompletions?: (prefix: string) => AutocompleteItem[] | null;
+		getInlineHint?: (argumentText: string) => string | null;
+	}
+> = BUILTIN_SLASH_COMMAND_DEFS.map(cmd => {
+	if (cmd.subcommands) {
+		return {
+			...cmd,
+			getArgumentCompletions: buildArgumentCompletions(cmd.subcommands),
+			getInlineHint: buildSubcommandInlineHint(cmd.subcommands),
+		};
+	}
+	if (cmd.inlineHint) {
+		return {
+			...cmd,
+			getInlineHint: buildStaticInlineHint(cmd.inlineHint),
+		};
+	}
+	return cmd;
+});
 
 /**
  * Unified registry exposed for cross-mode tooling. Each spec carries at least
@@ -1889,6 +2092,13 @@ export async function executeBuiltinSlashCommand(
 	if (!command) return false;
 	if (parsed.args.length > 0 && !command.allowArgs) {
 		return false;
+	}
+	// Collab guests run a read-mostly replica: session-mutating builtins are
+	// host-only; the allowlist covers purely local/read-only commands.
+	if (runtime.ctx.collabGuest && !COLLAB_GUEST_ALLOWED_COMMANDS[command.name]) {
+		runtime.ctx.showStatus(`/${command.name} is host-only during a collab session`);
+		runtime.ctx.editor.setText("");
+		return true;
 	}
 	if (command.handleTui) {
 		const result = await command.handleTui(parsed, runtime);
