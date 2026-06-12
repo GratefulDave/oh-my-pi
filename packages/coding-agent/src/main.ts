@@ -1295,10 +1295,12 @@ export async function runRootCommand(
 			const versionCheckPromise = checkForNewVersion(VERSION).catch(() => undefined);
 			const changelogMarkdown = await logger.time("main:getChangelogForDisplay", getChangelogForDisplay, parsedArgs);
 
-			const modelScopeNotification = buildModelScopeNotification(
-				scopedModels,
-				settingsInstance.get("startup.quiet"),
-			);
+			const modelScopeNotification = parsedArgs.models
+				? buildModelScopeNotification(
+					scopedModels,
+					settingsInstance.get("startup.quiet"),
+				)
+				: null;
 			if (modelScopeNotification) {
 				// Routed through the TUI (not stdout): the startup capture owns the
 				// terminal in raw mode here, and the TUI's first clearScrollback paint
