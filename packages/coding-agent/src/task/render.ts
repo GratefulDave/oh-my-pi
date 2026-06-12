@@ -11,7 +11,6 @@ import { formatNumber } from "@oh-my-pi/pi-utils";
 import { settings } from "../config/settings";
 import type { RenderResultOptions } from "../extensibility/custom-tools/types";
 import { formatContextUsage } from "../modes/components/status-line/context-thresholds";
-import { shimmerEnabled, shimmerText } from "../modes/theme/shimmer";
 import { getMarkdownTheme, type Theme } from "../modes/theme/theme";
 import {
 	formatBadge,
@@ -34,6 +33,18 @@ import { framedBlock, renderStatusLine } from "../tui";
 import { repairDoubleEncodedJsonString } from "./repair-args";
 import { subprocessToolRegistry } from "./subprocess-tool-registry";
 import type { AgentProgress, SingleResult, TaskItem, TaskParams, TaskToolDetails } from "./types";
+
+/** Render context threaded in from `ToolExecutionComponent.#buildRenderContext`. */
+interface TaskRenderContext {
+	hasResult?: boolean;
+	/**
+	 * The block left the transcript live region (detached spawn the transcript
+	 * has moved past, or a sealed block): progress rows render static gray, so
+	 * commit-eligible rows do not repaint after entering native scrollback.
+	 */
+	frozen?: boolean;
+}
+type TaskRenderOptions = RenderResultOptions & { renderContext?: TaskRenderContext };
 
 /**
  * Get status icon for agent state.
@@ -154,7 +165,7 @@ function formatJsonScalar(value: unknown, _theme: Theme): string {
 	return "";
 }
 
-function formatTaskId(id: string): string {
+export function formatTaskId(id: string): string {
 	// Ids are name-based (e.g. "Anna", "Anna-2"); a "." separates nesting levels
 	// (e.g. "Anna.Bob"). Render the hierarchy with a ">" breadcrumb.
 	const segments = id.split(".");
@@ -624,13 +635,15 @@ function createMarkdownSectionRenderer(text: string, theme: Theme): AssignmentSe
 /**
  * Render the tool call arguments.
  */
-export function renderCall(
-	args: TaskParams,
-	options: RenderResultOptions & { renderContext?: { hasResult?: boolean } },
-	theme: Theme,
-): Component {
+export function renderCall(args: TaskParams, options: TaskRenderOptions, theme: Theme): Component {
 	const showIsolated = "isolated" in args && args.isolated === true;
-	const header = renderStatusLine({ icon: "pending", title: "Task", description: args.agent }, theme);
+	// Dispatch glyph from the first frame: spawning is non-blocking, so a
+	// pending/hourglass icon would misread the call as something the turn
+	// waits on.
+	const header = renderStatusLine(
+		{ iconOverride: theme.styledSymbol("tool.task", "accent"), title: "Task", description: args.agent },
+		theme,
+	);
 	const assignmentSection = createAssignmentSectionRenderer(args, theme);
 	const contextSection = createContextSectionRenderer(args, theme);
 	return framedBlock(theme, width => {
@@ -676,6 +689,7 @@ function renderAgentProgress(
 	expanded: boolean,
 	theme: Theme,
 	spinnerFrame?: number,
+	frozen = false,
 ): string[] {
 	const lines: string[] = [];
 
@@ -692,21 +706,23 @@ function renderAgentProgress(
 	const indent = prefix ? `${prefix} ` : "";
 	let statusLine: string;
 	if (progress.status === "running" || progress.status === "pending") {
-		// Live (or queued) agents shimmer their description so the row reads as
-		// in-flight even after the block freezes — the async spawn result keeps
-		// the agent on "pending" while the detached job runs.
-		const bullet =
-			progress.status === "running" ? theme.styledSymbol("status.done", "text") : theme.fg(iconColor, icon);
-		const name = theme.fg("accent", description ? theme.bold(displayId) : displayId);
-		statusLine = `${indent}${bullet} ${name}`;
+		// Live (or queued) agents use the same dot finished rows keep: detached
+		// async spawns can stay "pending" while real work is running, so a
+		// pending/hourglass or spinner glyph reads wrong in the transcript. Keep
+		// the row static; the Task tool header already carries the dispatch icon.
+		const dot = theme.styledSymbol("status.done", frozen ? "dim" : "accent");
+		const nameColor = frozen ? "dim" : "accent";
+		const name = theme.fg(nameColor, description ? theme.bold(displayId) : displayId);
+		statusLine = `${indent}${dot} ${name}`;
 		if (description) {
-			const desc = shimmerEnabled() ? shimmerText(description, theme) : theme.fg("accent", description);
-			statusLine += `${theme.fg("accent", ":")} ${desc}`;
+			statusLine += `${theme.fg(nameColor, ":")} ${theme.fg(nameColor, description)}`;
 		}
+	} else if (progress.status === "completed") {
+		// Finished rows keep the dot but settle from accent to the plain
+		// foreground: completion reads as a color change, not a new glyph.
+		statusLine = `${indent}${theme.styledSymbol("status.done", "text")} ${theme.fg("text", titlePart)}`;
 	} else {
-		const glyph =
-			progress.status === "completed" ? theme.styledSymbol("status.done", "accent") : theme.fg(iconColor, icon);
-		statusLine = `${indent}${glyph} ${theme.fg("accent", titlePart)}`;
+		statusLine = `${indent}${theme.fg(iconColor, icon)} ${theme.fg("accent", titlePart)}`;
 	}
 
 	// Show retry-blocked badge so the parent immediately sees that a child
@@ -842,7 +858,7 @@ function renderAgentProgress(
 	const inflight = progress.inflightTaskDetails;
 	if (completedTaskCalls.length > 0 || inflight) {
 		const snapshots = inflight ? [...completedTaskCalls, inflight] : completedTaskCalls;
-		const nestedLines = renderNestedTaskTree(snapshots, expanded, theme, spinnerFrame);
+		const nestedLines = renderNestedTaskTree(snapshots, expanded, theme, spinnerFrame, frozen);
 		for (const line of nestedLines) {
 			lines.push(`${continuePrefix}${line}`);
 		}
@@ -980,7 +996,7 @@ function renderAgentResult(
 		: needsWarning
 			? theme.status.warning
 			: success
-				? theme.styledSymbol("status.done", "accent")
+				? theme.styledSymbol("status.done", "text")
 				: theme.status.error;
 	const iconColor = needsWarning ? "warning" : success ? "success" : mergeFailed ? "warning" : "error";
 	const statusText = aborted
@@ -995,12 +1011,11 @@ function renderAgentResult(
 
 	const description = result.description?.trim();
 	const displayId = formatTaskId(result.id);
-	const agentLabel = formatAgentDisplayName(result.agent);
-	let statusLine = `${prefix ? `${prefix} ` : ""}${theme.fg(iconColor, icon)} ${theme.fg("accent", agentLabel)}`;
-	if (description) {
-		statusLine += `  ${theme.fg("accent", replaceTabs(description))}`;
-	}
-	statusLine += ` ${formatBadge(statusText, iconColor, theme)}`;
+	const titlePart = description ? `${theme.bold(displayId)}: ${description}` : displayId;
+	let statusLine = `${prefix ? `${prefix} ` : ""}${theme.fg(iconColor, icon)} ${theme.fg(
+		success && !needsWarning ? "text" : "accent",
+		titlePart,
+	)} ${formatBadge(statusText, iconColor, theme)}`;
 	const showBadge = settings.get("task.showResolvedModelBadge");
 	statusLine = appendAgentStats(
 		statusLine,
@@ -1168,7 +1183,7 @@ function orderResultsForDisplay(results: readonly SingleResult[]): SingleResult[
  */
 export function renderResult(
 	result: { content: Array<{ type: string; text?: string }>; details?: TaskToolDetails; isError?: boolean },
-	options: RenderResultOptions,
+	options: TaskRenderOptions,
 	theme: Theme,
 	args?: TaskParams,
 ): Component {
@@ -1216,23 +1231,32 @@ export function renderResult(
 	const countLabel = agentCount > 0 ? `${agentCount} ${agentCount === 1 ? "agent" : "agents"}` : undefined;
 	const header = renderStatusLine(
 		{
-			icon: icon === "success" ? undefined : icon,
-			iconOverride: icon === "success" ? theme.styledSymbol("status.done", "accent") : undefined,
-			title: formatAgentDisplayName(agentName),
-			meta: countLabel ? [countLabel] : undefined,
+			icon: icon === "success" || icon === "running" ? undefined : icon,
+			// While agents are in flight the header shows the dispatch glyph, not a
+			// spinner: async spawns return immediately, so "running" means
+			// "delegated to peers", not "this call is blocking the turn".
+			iconOverride:
+				icon === "running"
+					? theme.styledSymbol("tool.task", "accent")
+					: icon === "success"
+						? theme.styledSymbol("status.done", "accent")
+						: undefined,
+			title: "Task",
+			meta: metaLabel ? [metaLabel] : undefined,
 		},
 		theme,
 	);
 
 	return framedBlock(theme, width => {
 		const { expanded, isPartial, spinnerFrame } = options;
+		const frozen = options.renderContext?.frozen === true;
 		const lines: string[] = [];
 
 		const shouldRenderProgress =
 			Boolean(details.progress && details.progress.length > 0) && (isPartial || details.results.length === 0);
 		if (shouldRenderProgress && details.progress) {
 			orderProgressForDisplay(details.progress).forEach(progress => {
-				lines.push(...renderAgentProgress(progress, "", "  ", expanded, theme, spinnerFrame));
+				lines.push(...renderAgentProgress(progress, "", "  ", expanded, theme, spinnerFrame, frozen));
 			});
 		} else if (details.results && details.results.length > 0) {
 			orderResultsForDisplay(details.results).forEach(res => {
@@ -1352,6 +1376,7 @@ function renderNestedTaskTree(
 	expanded: boolean,
 	theme: Theme,
 	spinnerFrame?: number,
+	frozen = false,
 ): string[] {
 	const lines: string[] = [];
 	for (const details of detailsList) {
@@ -1369,7 +1394,7 @@ function renderNestedTaskTree(
 			const ordered = orderProgressForDisplay(inflight);
 			ordered.forEach((prog, index) => {
 				const { prefix, continuePrefix } = nestedMarkers(index === ordered.length - 1, theme);
-				lines.push(...renderAgentProgress(prog, prefix, continuePrefix, expanded, theme, spinnerFrame));
+				lines.push(...renderAgentProgress(prog, prefix, continuePrefix, expanded, theme, spinnerFrame, frozen));
 			});
 		}
 	}
