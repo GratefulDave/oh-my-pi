@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/collab-web",
-	"version": "15.11.7",
+	"version": "15.11.8-lex",
 	"private": true,
 	"description": "Browser guest client and local relay tools for omp collab live sessions",
 	"homepage": "https://omp.sh",
@@ -36,7 +36,7 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-wire": "catalog:",
+		"@oh-my-pi/pi-wire": "^15.11.8-lex",
 		"lucide-react": "catalog:",
 		"marked": "catalog:",
 		"react": "catalog:",

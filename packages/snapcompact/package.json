@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/snapcompact",
-	"version": "15.11.8",
+	"version": "15.11.8-lex",
 	"description": "Bitmap-frame context compression for vision-capable LLMs",
 	"homepage": "https://omp.sh",
 	"author": "Can Boluk",
@@ -31,9 +31,9 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-ai": "catalog:",
-		"@oh-my-pi/pi-natives": "catalog:",
-		"@oh-my-pi/pi-utils": "catalog:"
+		"@oh-my-pi/pi-ai": "^15.11.8-lex",
+		"@oh-my-pi/pi-natives": "^15.11.8-lex",
+		"@oh-my-pi/pi-utils": "^15.11.8-lex"
 	},
 	"devDependencies": {
 		"@types/bun": "catalog:"
