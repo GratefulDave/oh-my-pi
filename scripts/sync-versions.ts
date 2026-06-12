@@ -71,13 +71,14 @@ if (newVersion) {
 	// ── 2a. Update root catalog ───────────────────────────────────────────────
 	const rootPkgPath = join(root, "package.json");
 	const rootPkg = (await Bun.file(rootPkgPath).json()) as {
-		catalog?: Record<string, string>;
+		workspaces?: { catalog?: Record<string, string> };
 	};
 	let catalogUpdates = 0;
-	if (rootPkg.catalog) {
-		for (const name of Object.keys(rootPkg.catalog)) {
-			if (versionMap[name] !== undefined && rootPkg.catalog[name] !== newVersion) {
-				rootPkg.catalog[name] = newVersion;
+	const catalog = rootPkg.workspaces?.catalog;
+	if (catalog) {
+		for (const name of Object.keys(catalog)) {
+			if (versionMap[name] !== undefined && catalog[name] !== newVersion) {
+				catalog[name] = newVersion;
 				catalogUpdates++;
 			}
 		}
