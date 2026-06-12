@@ -736,6 +736,7 @@ export class ExtensionUiController {
 					maxHeight: "100%",
 					margin: 0,
 				});
+				this.ctx.ui.requestRender();
 				return;
 			}
 			this.ctx.editorContainer.clear();

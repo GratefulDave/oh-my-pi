@@ -43,10 +43,15 @@ function clean(text: string, width: number): string {
 	return truncateToWidth(replaceTabs(text), width);
 }
 
+const KITTY_ESCAPE_RE = /^\x1b\[27(?:;\d*(?::\d+)?)?u$/;
+
 function matchesKey(data: string, expected: string): boolean {
-	// Kitty protocol escape key: \x1b[27u (plain) or \x1b[1;27u (with modifiers)
+	// Kitty protocol escape: CSI 27 u (codepoint 27 = escape), possibly with
+	// modifier and/or event-type fields. Level 2 terminals (Ghostty) report
+	// event types (press/release), so the sequence can be \x1b[27u,
+	// \x1b[27;1u, \x1b[27;1:1u, etc.
 	if (expected === "escape") {
-		return data === "\x1b" || data === "\x1b[27u" || data === "\x1b[1;27u";
+		return data === "\x1b" || KITTY_ESCAPE_RE.test(data);
 	}
 	if (expected === "tab") return data === "\t" || data === "\x1b[I";
 	if (expected === "shift+tab") return data === "\x1b[Z" || data === "\x1b[1;2I";
