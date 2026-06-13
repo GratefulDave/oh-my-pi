@@ -1,11 +1,17 @@
-import { ScrollView, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
+import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import { type AggregateStats, aggregate, type SessionRecord, type Totals } from "./stats";
 
 const KB = 1024;
-const MIN_TABLE_WIDTH = 48;
+const MIN_WIDTH = 52;
+
+// ---------------------------------------------------------------------------
+// Theme / context interfaces
+// ---------------------------------------------------------------------------
 
 export interface ThemeLike {
 	fg?: (name: string, text: string) => string;
+	bold?: (text: string) => string;
+	boxSharp?: { horizontal: string };
 }
 
 export interface TuiLike {
@@ -28,13 +34,20 @@ export interface GainContext {
 	};
 }
 
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
+
 export async function showGainView(ctx: GainContext): Promise<void> {
 	try {
 		const data = aggregate(ctx);
 		if (ctx.hasUI && ctx.ui?.custom) {
-			await ctx.ui.custom((tui, theme, _keybindings, done) => createGainOverlay(data, tui, theme, done), {
-				overlay: true,
-			});
+			await ctx.ui.custom(
+				(tui, theme, _keybindings, done) => new DistillGainOverlayComponent(data, tui, theme, done),
+				{
+					overlay: true,
+				},
+			);
 			return;
 		}
 		const text = formatPlainText(data, process.stdout.columns ?? 100);
@@ -47,141 +60,388 @@ export async function showGainView(ctx: GainContext): Promise<void> {
 	}
 }
 
-function createGainOverlay(data: AggregateStats, tui: TuiLike, theme: ThemeLike, done: (value?: unknown) => void) {
-	let scrollOffset = 0;
-	return {
-		render(width: number): string[] {
-			const safeWidth = Math.max(MIN_TABLE_WIDTH, width);
-			const rows = renderSessionRows(data.sessions, safeWidth, theme);
-			const terminalRows = process.stdout.rows ?? 40;
-			const viewportRows = Math.max(5, terminalRows - 7);
-			const maxScroll = Math.max(0, rows.length - viewportRows);
-			scrollOffset = Math.min(scrollOffset, maxScroll);
-			const scrollView = new ScrollView(rows.slice(scrollOffset, scrollOffset + viewportRows), {
-				height: viewportRows,
-				scrollbar: "auto",
-				totalRows: rows.length,
-				theme: {
-					track: text => color(theme, "dim", text),
-					thumb: text => color(theme, "accent", text),
-				},
-			});
-			scrollView.setScrollOffset(scrollOffset);
-			return [
-				renderTitle(safeWidth, theme),
-				renderTotalsLine("Project", data.project, safeWidth, theme),
-				renderTotalsLine("Global ", data.global, safeWidth, theme),
-				color(theme, "dim", fit("", safeWidth)),
-				...scrollView.render(safeWidth),
-				renderFooter(safeWidth, theme),
-			];
-		},
-		handleInput(input: string): void {
-			const terminalRows = process.stdout.rows ?? 40;
-			const viewportRows = Math.max(5, terminalRows - 7);
-			const maxScroll = Math.max(0, dataRows(data).length - viewportRows);
-			if (input === "\u001b" || input === "\u001b[27u" || input === "\r" || input === "\n" || input === "\r\n") {
-				done(undefined);
-				return;
+// ---------------------------------------------------------------------------
+// Overlay component
+// ---------------------------------------------------------------------------
+
+const TABS = ["Gain", "Status"] as const;
+type TabIndex = 0 | 1;
+
+// Column widths for session table
+const COL_DATE = 12;
+const COL_KB = 9;
+const COL_TOK = 10;
+const COL_HITS = 7;
+const SESSION_FIXED = COL_DATE + 1 + COL_KB + 1 + COL_TOK + 1 + COL_HITS;
+
+// Efficiency bar
+const BAR_WIDTH = 22;
+const FILL_CHAR = "█";
+const EMPTY_CHAR = "░";
+
+class DistillGainOverlayComponent {
+	#data: AggregateStats;
+	#tui: TuiLike;
+	#theme: ThemeLike;
+	#done: (value?: unknown) => void;
+	#activeTab: TabIndex = 0;
+	#scrollOffset = 0;
+
+	constructor(data: AggregateStats, tui: TuiLike, theme: ThemeLike, done: (value?: unknown) => void) {
+		this.#data = data;
+		this.#tui = tui;
+		this.#theme = theme;
+		this.#done = done;
+	}
+
+	// TUI overlay interface
+	invalidate(): void {}
+
+	handleInput(input: string): void {
+		const rows = this.#tabRows();
+		const termRows = process.stdout.rows ?? 40;
+		const viewportRows = Math.max(5, termRows - 10);
+		const maxScroll = Math.max(0, rows.length - viewportRows);
+
+		if (input === "\u001b" || input === "\u001b[27u" || input === "\r" || input === "\n" || input === "\r\n") {
+			this.#done(undefined);
+			return;
+		}
+		if (input === "\t" || input === "\u001b[27;2;9u") {
+			this.#activeTab = ((this.#activeTab + 1) % TABS.length) as TabIndex;
+			this.#scrollOffset = 0;
+			this.#tui.requestRender();
+			return;
+		}
+		if (input === "\u001b[A" || input === "k") {
+			this.#scrollOffset = Math.max(0, this.#scrollOffset - 1);
+		} else if (input === "\u001b[B" || input === "j") {
+			this.#scrollOffset = Math.min(maxScroll, this.#scrollOffset + 1);
+		} else if (input === "\u001b[5~") {
+			this.#scrollOffset = Math.max(0, this.#scrollOffset - viewportRows);
+		} else if (input === "\u001b[6~") {
+			this.#scrollOffset = Math.min(maxScroll, this.#scrollOffset + viewportRows);
+		} else if (input === "g") {
+			this.#scrollOffset = 0;
+		} else if (input === "G") {
+			this.#scrollOffset = maxScroll;
+		} else {
+			return;
+		}
+		this.#tui.requestRender();
+	}
+
+	render(width: number): string[] {
+		const w = Math.max(MIN_WIDTH, width);
+		const cw = w - 2; // content width (inside 1-char pad each side)
+
+		const lines: string[] = [];
+
+		// Top border + title row
+		lines.push(this.#border(w));
+		lines.push(
+			clean(
+				`${this.#heading("pi-distill savings")}  ${this.#formatTab("Gain", this.#activeTab === 0)} ${this.#dim("|")} ${this.#formatTab("Status", this.#activeTab === 1)}`,
+				w,
+			),
+		);
+		lines.push(this.#border(w));
+		lines.push("");
+
+		const bodyRows = this.#tabRows(cw);
+		const termRows = process.stdout.rows ?? 40;
+		const viewportRows = Math.max(5, termRows - 10);
+		const maxScroll = Math.max(0, bodyRows.length - viewportRows);
+		this.#scrollOffset = Math.min(this.#scrollOffset, maxScroll);
+
+		const visible = bodyRows.slice(this.#scrollOffset, this.#scrollOffset + viewportRows);
+		for (const row of visible) lines.push(row);
+
+		// Pad to viewport if short
+		while (lines.length < viewportRows + 4) lines.push("");
+
+		// Footer
+		lines.push(this.#dim(fit("Tab switch  ↑/↓ j/k scroll  PgUp/PgDn page  g/G top/btm  Esc close", w)));
+		if (maxScroll > 0) {
+			const pct = Math.round((this.#scrollOffset / maxScroll) * 100);
+			lines.push(
+				this.#dim(
+					fit(
+						`  ${pct}% (${this.#scrollOffset + 1}–${Math.min(this.#scrollOffset + viewportRows, bodyRows.length)} of ${bodyRows.length})`,
+						w,
+					),
+				),
+			);
+		}
+		lines.push(this.#border(w));
+		return lines;
+	}
+
+	// -------------------------------------------------------------------
+	// Tab content builders
+	// -------------------------------------------------------------------
+
+	#tabRows(cw = 80): string[] {
+		return this.#activeTab === 0 ? this.#gainRows(cw) : this.#statusRows(cw);
+	}
+
+	#gainRows(cw: number): string[] {
+		const { project, global: g, sessions } = this.#data;
+		const lines: string[] = [];
+
+		// Totals block
+		lines.push(clean(this.#heading("Totals"), cw));
+		lines.push(this.#border(cw));
+		lines.push(this.#row("Project saved", formatKB(project.savedBytes) + this.#efficiencyInline(project), cw));
+		lines.push(this.#row("Global saved", formatKB(g.savedBytes) + this.#efficiencyInline(g), cw));
+		lines.push(this.#row("Est tokens (project)", formatTokens(project.estTokens), cw));
+		lines.push(this.#row("Est tokens (global)", formatTokens(g.estTokens), cw));
+		lines.push(this.#row("Project sessions", String(project.sessions), cw));
+		lines.push(this.#row("Global sessions", String(g.sessions), cw));
+		lines.push(this.#row("Project hits", String(project.hits), cw));
+		lines.push(this.#row("Global hits", String(g.hits), cw));
+		lines.push("");
+
+		// Efficiency bar
+		const ratio = project.reductionPercent !== null ? project.reductionPercent / 100 : null;
+		lines.push(clean(this.#heading("Efficiency (project)"), cw));
+		lines.push(this.#border(cw));
+		lines.push(this.#row("Reduction", this.#efficiencyBar(ratio), cw));
+		lines.push("");
+
+		// By-tool breakdown
+		const toolEntries = Object.entries(project.tools ?? {}).sort((a, b) => b[1].savedBytes - a[1].savedBytes);
+		lines.push(clean(this.#heading("By Tool (project)"), cw));
+		lines.push(this.#border(cw));
+		if (toolEntries.length === 0) {
+			lines.push(clean(this.#dim("  (no tool data yet)"), cw));
+		} else {
+			const COL_TOOL = Math.max(10, cw - 2 - 9 - 1 - 7 - 1 - 8); // saved, hits, cands
+			lines.push(
+				clean(
+					"  " +
+						this.#head("Tool".padEnd(COL_TOOL)) +
+						" " +
+						this.#head("Saved".padStart(9)) +
+						" " +
+						this.#head("Hits".padStart(7)) +
+						" " +
+						this.#head("Cands".padStart(8)),
+					cw,
+				),
+			);
+			for (const [name, ts] of toolEntries.slice(0, 12)) {
+				const tool = truncateToWidth(name, COL_TOOL).padEnd(COL_TOOL);
+				const saved = this.#success(formatKB(ts.savedBytes).padStart(9));
+				const hits = this.#dim(String(ts.hits).padStart(7));
+				const cands = this.#dim(String(ts.candidates).padStart(8));
+				lines.push(clean(`  ${this.#code(tool)} ${saved} ${hits} ${cands}`, cw));
 			}
-			if (input === "\u001b[A" || input === "k") {
-				scrollOffset = Math.max(0, scrollOffset - 1);
-			} else if (input === "\u001b[B" || input === "j") {
-				scrollOffset = Math.min(maxScroll, scrollOffset + 1);
-			} else if (input === "\u001b[5~") {
-				scrollOffset = Math.max(0, scrollOffset - viewportRows);
-			} else if (input === "\u001b[6~") {
-				scrollOffset = Math.min(maxScroll, scrollOffset + viewportRows);
-			} else if (input === "g") {
-				scrollOffset = 0;
-			} else if (input === "G") {
-				scrollOffset = maxScroll;
+		}
+		lines.push("");
+
+		// Session history
+		lines.push(clean(this.#heading("Session History (recent first)"), cw));
+		lines.push(this.#border(cw));
+		const sessWidth = Math.max(10, cw - 2 - SESSION_FIXED);
+		lines.push(
+			clean(
+				"  " +
+					this.#head("Date".padEnd(COL_DATE)) +
+					" " +
+					this.#head("Session".padEnd(sessWidth)) +
+					" " +
+					this.#head("Saved".padStart(COL_KB)) +
+					" " +
+					this.#head("Est Tok".padStart(COL_TOK)) +
+					" " +
+					this.#head("Hits".padStart(COL_HITS)),
+				cw,
+			),
+		);
+		if (sessions.length === 0) {
+			lines.push(clean(this.#dim("  No sessions recorded yet."), cw));
+		} else {
+			for (const s of sessions) {
+				lines.push(clean(this.#sessionRow(s, sessWidth), cw));
 			}
-			tui.requestRender();
-		},
-		invalidate(): void {},
-	};
+		}
+
+		return lines;
+	}
+
+	#statusRows(cw: number): string[] {
+		const { project, global: g } = this.#data;
+		const lines: string[] = [];
+
+		lines.push(clean(this.#heading("Distill Status"), cw));
+		lines.push(this.#border(cw));
+		lines.push(this.#row("Project saved", formatKB(project.savedBytes), cw));
+		lines.push(this.#row("Global saved", formatKB(g.savedBytes), cw));
+		lines.push(this.#row("Project original", formatKB(project.originalBytes), cw));
+		lines.push(this.#row("Project replacement", formatKB(project.replacementBytes), cw));
+		lines.push(this.#row("Project known saved", formatKB(project.knownSavedBytes), cw));
+
+		const red = project.reductionPercent;
+		const redStr = red === null ? "-" : `${formatPercent(red)}`;
+		lines.push(this.#row("Reduction %", red !== null && red >= 20 ? this.#success(redStr) : this.#dim(redStr), cw));
+		lines.push(this.#row("Est tokens (project)", formatTokens(project.estTokens), cw));
+		lines.push(this.#row("Est tokens (global)", formatTokens(g.estTokens), cw));
+		lines.push(this.#row("Sessions (project)", String(project.sessions), cw));
+		lines.push(this.#row("Sessions (global)", String(g.sessions), cw));
+		lines.push(this.#row("Hits (project)", String(project.hits), cw));
+		lines.push(this.#row("Hits (global)", String(g.hits), cw));
+		lines.push("");
+
+		const toolEntries = Object.entries(project.tools ?? {}).sort((a, b) => b[1].savedBytes - a[1].savedBytes);
+		lines.push(clean(this.#heading("Tool Breakdown (project)"), cw));
+		lines.push(this.#border(cw));
+		if (toolEntries.length === 0) {
+			lines.push(clean(this.#dim("  (no data)"), cw));
+		} else {
+			for (const [name, ts] of toolEntries) {
+				const hitRate = ts.candidates > 0 ? (ts.hits / ts.candidates) * 100 : null;
+				const rateStr = hitRate !== null ? `  hit rate ${hitRate.toFixed(0)}%` : "";
+				const color = hitRate !== null && hitRate >= 50 ? "success" : hitRate !== null ? "warning" : "dim";
+				lines.push(
+					clean(
+						`  ${this.#keyword(name)}:  ${this.#success(formatKB(ts.savedBytes))} saved,  ${String(ts.hits)} hits / ${String(ts.candidates)} cands${this.#theme.fg?.(color, rateStr) ?? rateStr}`,
+						cw,
+					),
+				);
+			}
+		}
+
+		return lines;
+	}
+
+	// -------------------------------------------------------------------
+	// Cell / formatting helpers
+	// -------------------------------------------------------------------
+
+	#sessionRow(s: SessionRecord, sessWidth: number): string {
+		const label = s.label || s.project;
+		const parts = label.split(/[/\\]+/).filter(Boolean);
+		const tail = parts.length === 0 ? label || "unknown" : parts.slice(-2).join("/");
+		const date = padCell(formatDate(s.lastTs), COL_DATE);
+		const name = padCell(truncateToWidth(tail, sessWidth), sessWidth);
+		const saved = padCell(formatKB(Math.max(0, s.savedBytes)), COL_KB, "right");
+		const tok = padCell(formatTokens(Math.round(Math.max(0, s.savedBytes) / 4)), COL_TOK, "right");
+		const hits = padCell(String(Math.round(Math.max(0, s.hits))), COL_HITS, "right");
+		return `  ${this.#dim(date)} ${name} ${this.#success(saved)} ${this.#dim(tok)} ${this.#dim(hits)}`;
+	}
+
+	#efficiencyBar(ratio: number | null): string {
+		if (ratio === null) return this.#dim("-");
+		const clamped = Math.max(0, Math.min(1, ratio));
+		const filled = Math.round(clamped * BAR_WIDTH);
+		const empty = BAR_WIDTH - filled;
+		const pct = `${(clamped * 100).toFixed(1)}%`;
+		const colorKey = ratio >= 0.3 ? "success" : ratio >= 0.1 ? "warning" : "error";
+		return `${this.#theme.fg?.(colorKey, FILL_CHAR.repeat(filled)) ?? FILL_CHAR.repeat(filled)}${this.#dim(EMPTY_CHAR.repeat(empty))} ${this.#theme.fg?.(colorKey, pct) ?? pct}`;
+	}
+
+	#efficiencyInline(totals: Totals): string {
+		const r = totals.reductionPercent;
+		if (r === null) return "";
+		const pct = ` (${formatPercent(r)} reduction)`;
+		const colorKey = r >= 30 ? "success" : r >= 10 ? "warning" : "dim";
+		return this.#theme.fg?.(colorKey, pct) ?? pct;
+	}
+
+	#border(w: number): string {
+		const ch = this.#theme.boxSharp?.horizontal ?? "─";
+		return this.#theme.fg?.("border", ch.repeat(Math.max(1, w))) ?? ch.repeat(Math.max(1, w));
+	}
+
+	#formatTab(label: string, active: boolean): string {
+		if (active)
+			return this.#theme.fg?.("accent", this.#theme.bold?.(`[ ${label} ]`) ?? `[ ${label} ]`) ?? `[ ${label} ]`;
+		return this.#dim(`  ${label}  `);
+	}
+
+	#row(label: string, value: string, w: number): string {
+		return clean(`  ${this.#keyword(label)}: ${value}`, w);
+	}
+
+	#heading(text: string): string {
+		return this.#theme.fg?.("mdHeading", this.#theme.bold?.(text) ?? text) ?? text;
+	}
+
+	#head(text: string): string {
+		return this.#theme.fg?.("mdHeading", this.#theme.bold?.(text) ?? text) ?? text;
+	}
+
+	#code(text: string): string {
+		return this.#theme.fg?.("mdCode", text) ?? text;
+	}
+
+	#keyword(text: string): string {
+		return this.#theme.fg?.("syntaxKeyword", text) ?? text;
+	}
+
+	#success(text: string): string {
+		return this.#theme.fg?.("success", text) ?? text;
+	}
+
+	#dim(text: string): string {
+		return this.#theme.fg?.("dim", text) ?? text;
+	}
 }
+
+// ---------------------------------------------------------------------------
+// Plain-text fallback (no TUI)
+// ---------------------------------------------------------------------------
 
 function formatPlainText(data: AggregateStats, width: number): string {
-	const safeWidth = Math.max(MIN_TABLE_WIDTH, width);
-	return [
+	const w = Math.max(MIN_WIDTH, width);
+	const { project, global: g, sessions } = data;
+	const lines = [
 		"pi-distill savings",
-		stripAnsi(renderTotalsLine("Project", data.project, safeWidth, {})),
-		stripAnsi(renderTotalsLine("Global ", data.global, safeWidth, {})),
+		`Project: ${formatKB(project.savedBytes)} saved  ${formatTokens(project.estTokens)} est tokens  ${String(project.hits)} hits  ${String(project.sessions)} sessions`,
+		`Global:  ${formatKB(g.savedBytes)} saved  ${formatTokens(g.estTokens)} est tokens  ${String(g.hits)} hits  ${String(g.sessions)} sessions`,
 		"",
-		...dataRows(data).map(row => stripAnsi(fit(row, safeWidth))),
-	].join("\n");
-}
-
-function dataRows(data: AggregateStats): string[] {
-	return [
-		`${padCell("Date", 12)} ${padCell("Session", 28)} ${padCell("KB", 9, "right")} ${padCell("Tokens", 8, "right")} ${padCell("Hits", 6, "right")}`,
-		`${"-".repeat(12)} ${"-".repeat(28)} ${"-".repeat(9)} ${"-".repeat(8)} ${"-".repeat(6)}`,
-		...(data.sessions.length === 0
-			? ["No saved output recorded yet."]
-			: data.sessions.map(session => formatSessionRow(session))),
 	];
+	if (sessions.length === 0) {
+		lines.push("No sessions recorded yet.");
+	} else {
+		lines.push(
+			`${"Date".padEnd(COL_DATE)} ${"Session".padEnd(28)} ${"Saved".padStart(COL_KB)} ${"Est Tok".padStart(COL_TOK)} ${"Hits".padStart(COL_HITS)}`,
+		);
+		lines.push(
+			`${"-".repeat(COL_DATE)} ${"-".repeat(28)} ${"-".repeat(COL_KB)} ${"-".repeat(COL_TOK)} ${"-".repeat(COL_HITS)}`,
+		);
+		for (const s of sessions) {
+			const label = s.label || s.project;
+			const parts = label.split(/[/\\]+/).filter(Boolean);
+			const tail = parts.length === 0 ? label || "unknown" : parts.slice(-2).join("/");
+			lines.push(
+				[
+					padCell(formatDate(s.lastTs), COL_DATE),
+					padCell(tail, 28),
+					padCell(formatKB(Math.max(0, s.savedBytes)), COL_KB, "right"),
+					padCell(formatTokens(Math.round(Math.max(0, s.savedBytes) / 4)), COL_TOK, "right"),
+					padCell(String(Math.round(Math.max(0, s.hits))), COL_HITS, "right"),
+				].join(" "),
+			);
+		}
+	}
+	return lines.map(line => fit(stripAnsi(line), w)).join("\n");
 }
 
-function renderSessionRows(sessions: SessionRecord[], width: number, theme: ThemeLike): string[] {
-	const rows = dataRows({
-		project: emptyTotals(),
-		global: emptyTotals(),
-		sessions,
-	});
-	return rows.map((row, index) => {
-		const text = fit(row, width);
-		return index <= 1 ? color(theme, "dim", text) : text;
-	});
+// ---------------------------------------------------------------------------
+// Util
+// ---------------------------------------------------------------------------
+
+function formatKB(bytes: number): string {
+	if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
+	if (bytes < KB) return `${bytes} B`;
+	return `${(bytes / KB).toFixed(1)} KB`;
 }
 
-function formatSessionRow(session: SessionRecord): string {
-	const label = session.label || session.project;
-	const parts = label.split(/[\\/]+/).filter(Boolean);
-	const tailLabel = parts.length === 0 ? label || "unknown" : parts.slice(-2).join("/");
-	return [
-		padCell(formatDate(session.lastTs), 12),
-		padCell(tailLabel, 28),
-		padCell(`${(Math.max(0, session.savedBytes) / KB).toFixed(1)} KB`, 9, "right"),
-		padCell(Math.round(Math.max(0, session.savedBytes) / 4).toLocaleString("en-US"), 8, "right"),
-		padCell(Math.round(Math.max(0, session.hits)).toLocaleString("en-US"), 6, "right"),
-	].join(" ");
-}
-
-function renderTitle(width: number, theme: ThemeLike): string {
-	return color(theme, "accent", fit("pi-distill savings", width));
-}
-
-function renderTotalsLine(label: string, totals: Totals, width: number, theme: ThemeLike): string {
-	const reduction =
-		totals.reductionPercent === null ? "reduction n/a" : `${formatPercent(totals.reductionPercent)} reduction`;
-	const parts = [
-		`${label}:`,
-		`${(Math.max(0, totals.savedBytes) / KB).toFixed(1)} KB saved`,
-		`${Math.round(Math.max(0, totals.estTokens)).toLocaleString("en-US")} est tokens`,
-		reduction,
-		`${Math.round(Math.max(0, totals.sessions)).toLocaleString("en-US")} sessions`,
-	];
-	return color(theme, "muted", fit(parts.join("  "), width));
-}
-
-function renderFooter(width: number, theme: ThemeLike): string {
-	return color(theme, "dim", fit("Esc/Enter close  Up/Down or j/k scroll  PgUp/PgDn page", width));
-}
-
-function emptyTotals(): Totals {
-	return {
-		savedBytes: 0,
-		hits: 0,
-		estTokens: 0,
-		sessions: 0,
-		originalBytes: 0,
-		replacementBytes: 0,
-		knownSavedBytes: 0,
-		reductionPercent: null,
-		tools: {},
-	};
+function formatTokens(tokens: number): string {
+	if (!Number.isFinite(tokens) || tokens <= 0) return "0";
+	return Math.round(tokens).toLocaleString("en-US");
 }
 
 function formatPercent(value: number): string {
@@ -209,8 +469,8 @@ function fit(value: string, width: number): string {
 	return `${text}${" ".repeat(padding)}`;
 }
 
-function color(theme: ThemeLike, name: string, text: string): string {
-	return theme.fg?.(name, text) ?? text;
+function clean(text: string, width: number): string {
+	return fit(text.replace(/\t/g, "    "), width);
 }
 
 function stripAnsi(value: string): string {

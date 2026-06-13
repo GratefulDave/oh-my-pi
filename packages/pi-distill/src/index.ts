@@ -2,7 +2,7 @@ import { byteLength, compressNode, type DistillOptions, wrapCompressed } from ".
 import { type DistillConfig, loadConfig } from "./config";
 import { type GainContext, showGainView } from "./gain-view";
 import { parseStructured, type StructuredPayload } from "./sniff";
-import { aggregate, flush, recordCandidate, recordHit, type ToolStats } from "./stats";
+import { flush, recordCandidate, recordHit } from "./stats";
 
 interface TextPart {
 	type: "text";
@@ -281,30 +281,6 @@ function recordReplacement(
 	recordHit(ctx, toolName, replacement.savedBytes, replacement.originalBytes, replacement.replacementBytes);
 }
 
-function formatToolStats(tools: Record<string, ToolStats> | undefined): string {
-	if (!tools) return "";
-	const entries = Object.entries(tools)
-		.filter(([, stats]) => stats.candidates > 0 || stats.hits > 0 || stats.savedBytes > 0)
-		.sort(
-			([leftName, left], [rightName, right]) =>
-				right.savedBytes - left.savedBytes || right.hits - left.hits || leftName.localeCompare(rightName),
-		)
-		.slice(0, 5);
-	if (entries.length === 0) return "";
-	return `; tools: ${entries
-		.map(
-			([name, stats]) =>
-				`${name}: ${stats.candidates} candidates, ${stats.hits} hits, ${(stats.savedBytes / 1024).toFixed(1)} KB saved`,
-		)
-		.join("; ")}`;
-}
-
-function currentSessionTools(ctx: DistillContext): Record<string, ToolStats> | undefined {
-	const sessionId = ctx.sessionManager?.getSessionId?.();
-	if (!sessionId) return undefined;
-	return aggregate(ctx).sessions.find(session => session.sessionId === sessionId)?.tools;
-}
-
 export async function processToolResult(
 	event: DistillToolResultEvent,
 	ctx: DistillContext,
@@ -413,17 +389,6 @@ export default function piDistill(pi: PiApi): void {
 		handler: async (_args, ctx) => {
 			enabled = !enabled;
 			ctx.ui?.notify?.(`pi-distill ${enabled ? "enabled" : "disabled"}`, "info");
-		},
-	});
-
-	pi.registerCommand("distill-stats", {
-		description: "Show pi-distill bytes saved this session",
-		handler: async (_args, ctx) => {
-			const toolStats = formatToolStats(currentSessionTools(ctx));
-			ctx.ui?.notify?.(
-				`pi-distill: ${(state.savedBytes / 1024).toFixed(1)} KB saved across ${state.hits} tool results${toolStats}`,
-				"info",
-			);
 		},
 	});
 
