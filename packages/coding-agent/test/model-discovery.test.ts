@@ -291,8 +291,13 @@ describe("ModelRegistry runtime discovery", () => {
 				JSON.stringify({
 					object: "list",
 					data: [
-						{ id: "Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-mlx-8bit", object: "model" },
-						{ id: "Nex-N2-mini-oQ6", object: "model" },
+						{
+							id: "Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-mlx-8bit",
+							object: "model",
+							max_model_len: 262144,
+							max_output_tokens: 65536,
+						},
+						{ id: "Nex-N2-mini-oQ6", object: "model", max_model_len: 16384 },
 					],
 				}),
 				{ status: 200, headers: { "Content-Type": "application/json" } },
@@ -302,12 +307,18 @@ describe("ModelRegistry runtime discovery", () => {
 		const registry = new ModelRegistry(authStorage, modelsJsonPath, { fetch: fetchMock });
 		await registry.refreshProvider("omlx", "online");
 
-		expect(registry.find("omlx", "Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-mlx-8bit")).toBeDefined();
-		expect(registry.find("omlx", "Nex-N2-mini-oQ6")).toBeDefined();
+		const huihui = registry.find("omlx", "Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-mlx-8bit");
+		const nex = registry.find("omlx", "Nex-N2-mini-oQ6");
+		expect(huihui).toBeDefined();
+		expect(nex).toBeDefined();
 		expect(registry.getAvailable().some(model => model.provider === "omlx")).toBe(true);
 		expect(registry.getProviderDiscoveryState("omlx")?.status).toBe("ok");
-		expect(registry.find("omlx", "Nex-N2-mini-oQ6")?.api).toBe("openai-completions");
-		expect(registry.find("omlx", "Nex-N2-mini-oQ6")?.baseUrl).toBe("http://127.0.0.1:18790/v1");
+		expect(nex?.api).toBe("openai-completions");
+		expect(nex?.baseUrl).toBe("http://127.0.0.1:18790/v1");
+		expect(huihui?.contextWindow).toBe(262144);
+		expect(huihui?.maxTokens).toBe(65536);
+		expect(nex?.contextWindow).toBe(16384);
+		expect(nex?.maxTokens).toBe(16384);
 	});
 
 	test("normalizes cached ollama completions rows to responses on load", () => {

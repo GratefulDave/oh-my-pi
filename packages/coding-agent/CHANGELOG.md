@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Fixed OpenAI-compatible oMLX model discovery so `/v1/models` metadata such as `max_model_len` and `max_output_tokens` updates each model's context window and output cap instead of falling back to the generic 128K/32K defaults.
 - Fixed extension-installed Antigravity settings so rebuilds preserve the antigravity provider instead of rewriting it to native google-antigravity, and allowed runtime providers to combine static fallback models with dynamic discovery.
 - Fixed settings-based enabledModels so Antigravity and oMLX profiles refresh against live extension/discovery providers instead of freezing a stale startup model scope.
 

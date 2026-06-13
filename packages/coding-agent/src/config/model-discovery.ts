@@ -116,6 +116,12 @@ type LlamaCppDiscoveredServerMetadata = {
 	input?: ("text" | "image")[];
 };
 
+type OpenAICompatibleDiscoveredModelRecord = Record<string, unknown> & {
+	id?: string;
+	name?: string;
+	supported_endpoint_types?: string[];
+};
+
 function toPositiveNumberOrUndefined(value: unknown): number | undefined {
 	if (typeof value === "number" && Number.isFinite(value) && value > 0) {
 		return value;
@@ -159,6 +165,40 @@ function extractLlamaCppContextWindow(payload: Record<string, unknown>): number 
 		}
 	}
 	return toPositiveNumberOrUndefined(payload.n_ctx);
+}
+function extractOpenAICompatibleContextWindow(record: Record<string, unknown>): number | undefined {
+	const maxModelLen = toPositiveNumberOrUndefined(record.max_model_len);
+	if (maxModelLen !== undefined) return maxModelLen;
+	const maxContextLength = toPositiveNumberOrUndefined(record.max_context_length);
+	if (maxContextLength !== undefined) return maxContextLength;
+	const contextLength = toPositiveNumberOrUndefined(record.context_length);
+	if (contextLength !== undefined) return contextLength;
+	const contextWindow = toPositiveNumberOrUndefined(record.context_window);
+	if (contextWindow !== undefined) return contextWindow;
+	return toPositiveNumberOrUndefined(record.context_size);
+}
+
+function extractOpenAICompatibleMaxTokens(record: Record<string, unknown>): number | undefined {
+	const maxOutputTokens = toPositiveNumberOrUndefined(record.max_output_tokens);
+	if (maxOutputTokens !== undefined) return maxOutputTokens;
+	const maxCompletionTokens = toPositiveNumberOrUndefined(record.max_completion_tokens);
+	if (maxCompletionTokens !== undefined) return maxCompletionTokens;
+	const outputTokenLimit = toPositiveNumberOrUndefined(record.output_token_limit);
+	if (outputTokenLimit !== undefined) return outputTokenLimit;
+	const topProvider = record.top_provider;
+	if (!isRecord(topProvider)) return undefined;
+	return toPositiveNumberOrUndefined(topProvider.max_completion_tokens);
+}
+
+function resolveOpenAICompatibleMaxTokens(
+	record: Record<string, unknown>,
+	api: Api | undefined,
+	contextWindow: number,
+	referenceMaxTokens?: number,
+): number {
+	const explicitMaxTokens = extractOpenAICompatibleMaxTokens(record);
+	const maxTokens = explicitMaxTokens ?? referenceMaxTokens ?? discoveryDefaultMaxTokens(api);
+	return Math.min(contextWindow, maxTokens);
 }
 
 function extractLlamaCppInputCapabilities(payload: Record<string, unknown>): ("text" | "image")[] | undefined {
@@ -393,24 +433,25 @@ export async function discoverOpenAIModelsList(
 	const response = apiKey
 		? await withAuth(apiKey, key => attempt({ ...baseHeaders, Authorization: `Bearer ${key}` }))
 		: await attempt(baseHeaders);
-	const payload = (await response.json()) as { data?: Array<{ id: string }> };
+	const payload = (await response.json()) as { data?: OpenAICompatibleDiscoveredModelRecord[] };
 	const models = payload.data ?? [];
 	const discovered: Model<Api>[] = [];
 	for (const item of models) {
 		const id = item.id;
 		if (!id) continue;
+		const contextWindow = extractOpenAICompatibleContextWindow(item) ?? 128000;
 		discovered.push(
 			buildModel({
 				id,
-				name: id,
+				name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : id,
 				api: providerConfig.api,
 				provider: providerConfig.provider,
 				baseUrl,
 				reasoning: false,
 				input: ["text"],
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				contextWindow: 128000,
-				maxTokens: discoveryDefaultMaxTokens(providerConfig.api),
+				contextWindow,
+				maxTokens: resolveOpenAICompatibleMaxTokens(item, providerConfig.api, contextWindow),
 				headers,
 				compat: {
 					supportsStore: false,
@@ -462,9 +503,7 @@ export async function discoverProxyModels(
 	const response = apiKey
 		? await withAuth(apiKey, key => attempt({ ...baseHeaders, Authorization: `Bearer ${key}` }))
 		: await attempt(baseHeaders);
-	const payload = (await response.json()) as {
-		data?: Array<{ id?: string; name?: string; supported_endpoint_types?: string[] }>;
-	};
+	const payload = (await response.json()) as { data?: OpenAICompatibleDiscoveredModelRecord[] };
 	const items = payload.data ?? [];
 	const discovered: Model<Api>[] = [];
 	for (const item of items) {
@@ -485,6 +524,7 @@ export async function discoverProxyModels(
 			(discoveryName && discoveryName !== id ? discoveryName : undefined) ??
 			stripBracketedModelIdAffixes(id) ??
 			id;
+		const contextWindow = extractOpenAICompatibleContextWindow(item) ?? reference?.contextWindow ?? 128000;
 		discovered.push(
 			buildModel({
 				id,
@@ -499,8 +539,8 @@ export async function discoverProxyModels(
 				// upstream bundled catalogs, so keep costs local-unknown even when
 				// we successfully recover the upstream model identity.
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				contextWindow: reference?.contextWindow ?? 128000,
-				maxTokens: reference?.maxTokens ?? discoveryDefaultMaxTokens(api),
+				contextWindow,
+				maxTokens: resolveOpenAICompatibleMaxTokens(item, api, contextWindow, reference?.maxTokens),
 				headers,
 				// OpenAI-compat fields are no-ops on anthropic models; the
 				// Anthropic SDK ignores them. Provider-level disableStrictTools
