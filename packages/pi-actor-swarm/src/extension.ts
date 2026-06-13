@@ -2,7 +2,6 @@
 // pi-actor-swarm — mailbox-driven multi-agent swarm coordination.
 // ---------------------------------------------------------------------------
 
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { SwarmDashboard } from "./dashboard";
 import {
 	clearSwarm,
@@ -14,6 +13,34 @@ import {
 	type SwarmAgent,
 	setProjectRoot,
 } from "./mailbox";
+
+interface SwarmTui {
+	requestRender(): void;
+}
+
+interface SwarmUi {
+	setEditorText(value: string): void;
+	custom<T>(
+		factory: (tui: SwarmTui, theme: CustomTheme, keybindings: unknown, done: (value: T) => void) => unknown,
+		options: { overlay: boolean },
+	): Promise<T>;
+}
+
+interface SwarmCommandContext {
+	cwd: string;
+	ui: SwarmUi;
+}
+
+interface SwarmExtensionApi {
+	setLabel(value: string): void;
+	registerCommand(
+		name: string,
+		command: {
+			description: string;
+			handler(args: string, ctx: SwarmCommandContext): Promise<void>;
+		},
+	): void;
+}
 
 type CustomTheme = {
 	fg?: (color: string, text: string) => string;
@@ -133,7 +160,7 @@ const DEFAULT_AGENTS: SwarmAgent[] = [
 // Extension entry point
 // ---------------------------------------------------------------------------
 
-export default function actorSwarm(pi: ExtensionAPI): void {
+export default function actorSwarm(pi: SwarmExtensionApi): void {
 	pi.setLabel("Actor Swarm");
 
 	// /swarm init <name> [--policy <routing>] [--stale-ttl-ms <ms>]

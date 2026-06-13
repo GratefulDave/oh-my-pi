@@ -1,7 +1,47 @@
 import * as path from "node:path";
-import type { ExtensionAPI, ToolCallEventResult } from "@oh-my-pi/pi-coding-agent";
 import { runFactoryDoctor } from "./doctor";
 import { dryRunScaffoldFactory, dryRunUpgradeFactory, getFactoryPresets, scaffoldFactory } from "./scaffold";
+
+interface FactoryUi {
+	notify(message: string, level: "info" | "warning"): void;
+	setEditorText(value: string): void;
+	setStatus(id: string, value: string): void;
+}
+
+interface FactoryCommandContext {
+	cwd: string;
+	ui: FactoryUi;
+}
+
+interface FactoryToolCallEvent {
+	toolName: string;
+	input: unknown;
+}
+
+interface FactoryToolCallContext {
+	cwd: string;
+	ui?: { notify?: (message: string, level: "info" | "warning") => void };
+}
+
+interface FactoryToolCallResult {
+	block?: boolean;
+	reason?: string;
+}
+
+interface FactoryExtensionApi {
+	setLabel(value: string): void;
+	registerCommand(
+		name: string,
+		command: {
+			description: string;
+			handler(args: string, ctx: FactoryCommandContext): Promise<void>;
+		},
+	): void;
+	on(
+		event: "tool_call",
+		handler: (event: FactoryToolCallEvent, ctx: FactoryToolCallContext) => Promise<FactoryToolCallResult | undefined>,
+	): void;
+}
 
 type SafetyAction = "block" | "warn";
 
@@ -103,9 +143,9 @@ function formatSafetyMessage(rule: SafetyRule, toolName: string): string {
 }
 
 async function evaluateSafetyRule(
-	event: { toolName: string; input: unknown },
-	ctx: { cwd: string; ui?: { notify?: (message: string, level: "info" | "warning") => void } },
-): Promise<ToolCallEventResult | undefined> {
+	event: FactoryToolCallEvent,
+	ctx: FactoryToolCallContext,
+): Promise<FactoryToolCallResult | undefined> {
 	const rulesFile = await loadSafetyRules(ctx.cwd);
 	if (!rulesFile) return undefined;
 
@@ -124,7 +164,7 @@ async function evaluateSafetyRule(
 	return undefined;
 }
 
-export default function softwareFactory(pi: ExtensionAPI): void {
+export default function softwareFactory(pi: FactoryExtensionApi): void {
 	pi.setLabel("Software Factory");
 
 	// Register slash command: /factory-status

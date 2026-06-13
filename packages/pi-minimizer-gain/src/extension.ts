@@ -1,6 +1,5 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import {
 	buildMinimizerGainDiagnostic,
 	exportMinimizerGainJsonl,
@@ -16,11 +15,41 @@ export {
 	loadMinimizerGainContext,
 } from "./gain-engine";
 
+interface GainUi {
+	setEditorText(value: string): void;
+	notify?(message: string, level: "info" | "warning" | "error"): void;
+	custom<T>(
+		factory: (
+			tui: { requestRender(): void },
+			theme: unknown,
+			keybindings: unknown,
+			done: (value: T) => void,
+		) => unknown,
+		options: { overlay: boolean },
+	): Promise<void>;
+}
+
+interface GainCommandContext {
+	cwd: string;
+	ui: GainUi;
+}
+
+interface GainExtensionApi {
+	setLabel(value: string): void;
+	registerCommand(
+		name: string,
+		command: {
+			description: string;
+			handler(args: string, ctx: GainCommandContext): Promise<void>;
+		},
+	): void;
+}
+
 // ---------------------------------------------------------------------------
 // Extension entry point
 // ---------------------------------------------------------------------------
 
-export default function minimizerGain(pi: ExtensionAPI): void {
+export default function minimizerGain(pi: GainExtensionApi): void {
 	pi.setLabel("Minimizer Gain");
 
 	pi.registerCommand("gain", {
@@ -33,7 +62,7 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 				const exportPath = path.resolve(cwd, parsed.exportJsonlPath);
 				await fs.mkdir(path.dirname(exportPath), { recursive: true });
 				await fs.writeFile(exportPath, exportMinimizerGainJsonl(context), "utf8");
-				ctx.ui.notify(`Minimizer gain JSONL exported to ${exportPath}`, "info");
+				ctx.ui.notify?.(`Minimizer gain JSONL exported to ${exportPath}`, "info");
 				return;
 			}
 			const initialScope: ScopeIndex = parsed.all ? 2 : 1;
@@ -53,13 +82,18 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 			const loadCurrent = () => loadMinimizerGainContext({ cwd, all: false, days: parsed.days });
 			const loadAll = () => loadMinimizerGainContext({ cwd, all: true, days: parsed.days });
 
-			const [sessionCtx, currentCtx, allCtx] = await Promise.all([loadSession(), loadCurrent(), loadAll()]);
+			const [sessionCtx, currentCtx, allCtx, diagnostic] = await Promise.all([
+				loadSession(),
+				loadCurrent(),
+				loadAll(),
+				buildDiagnosticForCwd(parsed.all ? undefined : cwd),
+			]);
 
 			const dualContext: DualContext = {
 				session: sessionCtx,
 				current: currentCtx,
 				all: allCtx,
-				diagnostic: undefined,
+				diagnostic,
 				sessionStartedAt: sessionStart,
 			};
 

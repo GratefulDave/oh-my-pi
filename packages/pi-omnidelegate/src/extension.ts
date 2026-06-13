@@ -1,4 +1,3 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { DelegateMonitorComponent } from "./monitor";
 import { buildContextSummary, buildExternalOrchestrationReport, runExternalAgentsParallel } from "./runner";
 import type {
@@ -10,6 +9,42 @@ import type {
 	ExternalOrchestrationResult,
 	ParsedDelegateArgs,
 } from "./types";
+
+interface DelegateTui {
+	terminal: { rows: number };
+	requestRender(): void;
+}
+
+interface DelegateUi {
+	setEditorText(value: string): void;
+	setStatus(id: string, value: string): void;
+	notify(message: string, level: "info" | "warning" | "error"): void;
+	custom<T>(
+		factory: (tui: DelegateTui, theme: unknown, keybindings: unknown, done: (value: T) => void) => unknown,
+		options: { overlay: boolean },
+	): Promise<T>;
+}
+
+interface DelegateCommandContext {
+	cwd: string;
+	ui: DelegateUi;
+	sessionManager: {
+		saveArtifact(content: string, label: string): Promise<string>;
+	};
+}
+
+interface DelegateExtensionApi {
+	setLabel(value: string): void;
+	registerFlag(name: string, options: { type: "string"; default: string }): void;
+	getFlag?(name: string): unknown;
+	registerCommand(
+		name: string,
+		command: {
+			description: string;
+			handler(args: string, ctx: DelegateCommandContext): Promise<void>;
+		},
+	): void;
+}
 
 function isExternalAgentBackend(value: string): value is ExternalAgentBackend {
 	return value === "acpx" || value === "tmux" || value === "cmux";
@@ -82,7 +117,9 @@ function hashPrompt(prompt: string): string {
 }
 
 function buildResultCacheKey(request: ExternalAgentRequest): string {
-	return [request.provider, request.backend, request.mode ?? "exec", request.cwd, hashPrompt(request.prompt)].join("\u001f");
+	return [request.provider, request.backend, request.mode ?? "exec", request.cwd, hashPrompt(request.prompt)].join(
+		"\u001f",
+	);
 }
 
 function cloneCachedResult(result: ExternalAgentResult): ExternalAgentResult {
@@ -138,7 +175,9 @@ function formatReportRecord(record: DelegateReportRecord): string {
 	return lines.join("\n");
 }
 
-function parseDelegateResultsArgs(args: string): { action: "list" | "show" | "clear"; selector?: string } | { error: string } {
+function parseDelegateResultsArgs(
+	args: string,
+): { action: "list" | "show" | "clear"; selector?: string } | { error: string } {
 	const trimmed = args.trim();
 	if (!trimmed || trimmed === "list") return { action: "list" };
 	if (trimmed === "clear") return { action: "clear" };
@@ -225,7 +264,7 @@ function parseDelegateArgs(args: string): ParseResult {
 	};
 }
 
-export default function omnidelegate(pi: ExtensionAPI): void {
+export default function omnidelegate(pi: DelegateExtensionApi): void {
 	pi.setLabel("OmniDelegate");
 
 	pi.registerFlag("delegate-default-backend", {
