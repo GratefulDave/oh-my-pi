@@ -261,7 +261,6 @@ export class ObserverDashboard {
 		return subagentCount > 0 ? Math.max(32, Math.min(48, 14 + subagentCount * 3)) : 28;
 	}
 
-
 	layout(width: number, height: number): void {
 		this.#width = width;
 		this.#height = height;

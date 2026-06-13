@@ -18,10 +18,10 @@ import {
 	onTurnEnd,
 	onTurnStart,
 	resetStats,
+	type SubagentStatus,
 	snapshotStats,
 	statsSnapshotToCsv,
 	statsSnapshotToJson,
-	type SubagentStatus,
 } from "./stats-collector";
 
 // ---------------------------------------------------------------------------

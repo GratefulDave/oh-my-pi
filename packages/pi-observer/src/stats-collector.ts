@@ -434,11 +434,27 @@ export function statsSnapshotToCsv(snapshot: ObserverStatsSnapshot = snapshotSta
 			String(agent.tokens),
 			agent.assignment ?? agent.task ?? agent.description ?? "",
 		]);
-		rows.push(["subagent", agent.id, agent.agent, agent.status, "tools", String(agent.toolCount), agent.currentTool ?? ""]);
+		rows.push([
+			"subagent",
+			agent.id,
+			agent.agent,
+			agent.status,
+			"tools",
+			String(agent.toolCount),
+			agent.currentTool ?? "",
+		]);
 		rows.push(["subagent", agent.id, agent.agent, agent.status, "cost", String(agent.cost), ""]);
 	}
 	for (const message of snapshot.ircMessages) {
-		rows.push(["irc", `${message.timestamp}`, `${message.from}->${message.to}`, message.kind, "message", message.body, message.channel]);
+		rows.push([
+			"irc",
+			`${message.timestamp}`,
+			`${message.from}->${message.to}`,
+			message.kind,
+			"message",
+			message.body,
+			message.channel,
+		]);
 	}
 	return `${rows.map(row => row.map(csvCell).join(",")).join("\n")}\n`;
 }
@@ -449,7 +465,10 @@ function csvCell(value: string): string {
 }
 
 export function defaultExportPath(format: "json" | "csv", now = new Date()): string {
-	const stamp = now.toISOString().replaceAll(":", "-").replace(/\.\d{3}Z$/, "Z");
+	const stamp = now
+		.toISOString()
+		.replaceAll(":", "-")
+		.replace(/\.\d{3}Z$/, "Z");
 	return `.omp/observer/observe-${stamp}.${format}`;
 }
 
