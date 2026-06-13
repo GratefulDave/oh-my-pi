@@ -324,6 +324,18 @@ await fs.mkdir(path.join(nativeDir, ".build"), { recursive: true });
 const buildOutputDir = await fs.mkdtemp(buildOutputDirPrefix);
 napiArgs[10] = buildOutputDir;
 
+// On systems where a non-rustup cargo (e.g. Homebrew) is first on PATH, the
+// napi CLI picks up that cargo and ignores rust-toolchain.toml — including
+// inside its own `cargo metadata` call (hardcoded "cargo", not CARGO env).
+// Prepend ~/.cargo/bin to PATH so every cargo spawn in the napi subprocess
+// resolves the rustup shim, which reads rust-toolchain.toml and dispatches
+// to the pinned nightly toolchain.
+const rustupCargoDir = `${Bun.env.HOME ?? process.env.HOME ?? "~"}/.cargo/bin`;
+const napiEnv: Record<string, string> = {
+	...process.env,
+	PATH: `${rustupCargoDir}:${process.env.PATH ?? ""}`,
+};
+
 // Resolve napi bin directly: `bunx @napi-rs/cli` can pick up the wrong bin on
 // systems where `cli` exists on PATH (e.g. Mono's /usr/bin/cli on Ubuntu).
 const napiBin = Bun.which("napi", {
@@ -334,7 +346,7 @@ if (!napiBin) {
 }
 
 try {
-	const buildResult = await $`${napiBin} ${napiArgs}`.nothrow();
+	const buildResult = await $`${napiBin} ${napiArgs}`.env(napiEnv).nothrow();
 	if (buildResult.exitCode !== 0) {
 		const stderr = buildResult.stderr?.toString("utf-8") ?? "";
 		throw new Error(`napi build failed${stderr ? `:\n${stderr}` : ""}`);
