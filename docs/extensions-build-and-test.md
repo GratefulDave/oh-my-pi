@@ -33,7 +33,7 @@ binary and the extensions keep working** — nothing in the binary's own source 
 
 | Extension | Source dir | Entry | Bundle output | Build? |
 |-----------|-----------|-------|---------------|--------|
-| antigravity-adapter | `packages/antigravity-adapter/` | `src/extension.ts` | `dist/antigravity.bundle.js` | yes |
+| antigravity | `packages/antigravity/` | `src/extension.ts` | `dist/antigravity.bundle.js` | yes |
 | pi-minimizer-gain | `packages/pi-minimizer-gain/` | `src/extension.ts` | `dist/gaing.bundle.js` | yes |
 | pi-distill | `packages/pi-distill/` | `src/index.ts` | `dist/distill.bundle.js` | yes |
 | pi-observer | `packages/pi-observer/` | `src/extension.ts` | `dist/observer.bundle.js` | yes |
@@ -187,7 +187,6 @@ Restart omp to pick up a new bundle (extensions load at startup).
 - **OFF-LEX SAFE** (run on stock upstream omp): pi-observer, pi-actor-swarm, pi-omnidelegate,
   pi-software-factory, swarm-extension, semantic-search, profile-manager (reprofiled to read/write
   `.omp/settings.json` `modelProfiles`, no LEX `getProfileApi`).
-- **FRAGILE**: antigravity-adapter — uses internal `pi-ai` subpath imports; AG code is fork-only
-  and must never enter upstream.
+- **FRAGILE**: antigravity — active extension is fork-only and self-contained; the old plugin bridge is retained disabled under `packages/antigravity/_backups/opencode-antigravity-auth-bridge/`.
 - **BLOCKED**: pi-minimizer-gain — depends on `pi-natives` native surface; unblocks when the NAPI
   minimizer binding (PR #1642) lands.

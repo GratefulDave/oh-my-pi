@@ -2,7 +2,7 @@
 
 Current live `lex`/`omp` setup loads these managed extensions from `~/.omp/agent/settings.json`:
 
-- `antigravity-adapter`
+- `antigravity`
 - `pi-minimizer-gain`
 - `pi-observer`
 - `pi-distill`
@@ -29,7 +29,7 @@ Use these commands inside an interactive `lex`/`omp` session unless noted otherw
 | Scaffold/check factory workflow files | `pi-software-factory` `/factory-*` |
 | Switch model profiles | `profile-manager` `/pm ...` |
 | Build/search the cwd semantic index | `semantic-search` `/semantic-*` |
-| Use Antigravity-backed models | `antigravity-adapter` model provider/login commands |
+| Use Antigravity-backed models | `antigravity` model provider/login commands |
 
 ## `swarm-extension`: YAML workflow runner
 
@@ -244,22 +244,22 @@ Current profile setup includes `openai` as the active model profile.
 
 The extension also registers a `semantic_search` tool for agent/tool use. Indexes are cwd-local.
 
-## `antigravity-adapter`: Antigravity provider bridge
+## `antigravity`: self-contained Antigravity provider
 
-This extension registers `opencode-antigravity/*` models. It does not add slash commands; use normal provider/login/model selection flows:
+This extension registers `antigravity/*` models. It does not add slash commands; use normal provider/login/model selection flows:
 
 ```bash
-omp login opencode-antigravity
-omp --model opencode-antigravity/antigravity-claude-sonnet-4-6
+omp login antigravity
+omp --model antigravity/claude-sonnet-4-6
 ```
 
 Current settings enable:
 
 - `openai-codex/*`
-- `opencode-antigravity/*`
+- `antigravity/*`
 - `google-antigravity/*`
 
-Keep this bridge fork-only unless upstream support appears; it is intentionally separate from default upstream extension behavior.
+Keep this extension fork-only unless upstream support appears; it is intentionally self-contained in OMP/Lex and the previous OpenCode-plugin bridge is retained disabled only as a backup.
 
 ## Rebuild/export commands for this fork
 

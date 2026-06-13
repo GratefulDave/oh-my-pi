@@ -1,6 +1,6 @@
 {
   "extensions": [
-    "packages/antigravity-adapter/dist/antigravity.bundle.js",
+    "packages/antigravity/dist/antigravity.bundle.js",
     "packages/pi-minimizer-gain/dist/gaing.bundle.js",
     "packages/pi-observer/dist/observer.bundle.js",
     "packages/pi-distill/dist/distill.bundle.js",
@@ -10,7 +10,10 @@
     "packages/swarm-extension/dist/extension.bundle.js",
     ".omp/extensions/profile-manager/dist/index.js"
   ],
-  "disabledProviders": [],
+  "disabledProviders": [
+    "google-antigravity",
+    "opencode-antigravity"
+  ],
   "activeModelProfile": "antigravity",
   "cycleOrder": [
     "smol",
@@ -21,8 +24,7 @@
   "defaultThinkingLevel": "medium",
   "enabledModels": [
     "openai-codex/*",
-    "opencode-antigravity/*",
-    "google-antigravity/*",
+    "antigravity/*",
     "anthropic/*",
     "google/*",
     "openai/*",
@@ -31,14 +33,13 @@
     "perplexity/*",
     "omlx/*",
     "nvidia/*",
-    "lmstudio/*",
+    "lm-studio/*",
     "ollama/*",
     "llama.cpp/*"
   ],
   "modelProviderOrder": [
     "openai-codex",
-    "google-antigravity",
-    "opencode-antigravity",
+    "antigravity",
     "anthropic",
     "google",
     "openai",
@@ -47,19 +48,19 @@
     "perplexity",
     "nvidia",
     "omlx",
-    "lmstudio",
+    "lm-studio",
     "ollama",
     "llama.cpp"
   ],
   "modelRoles": {
-    "commit": "google-antigravity/gemini-3.5-flash-extra-low:low",
-    "default": "google-antigravity/claude-sonnet-4-6:medium",
-    "designer": "google-antigravity/gemini-pro-agent",
-    "plan": "google-antigravity/claude-opus-4-6-thinking:high",
-    "slow": "google-antigravity/claude-opus-4-6-thinking",
-    "smol": "google-antigravity/gemini-3.5-flash-low:low",
-    "task": "google-antigravity/claude-sonnet-4-6",
-    "vision": "google-antigravity/gemini-3-flash-agent"
+    "commit": "antigravity/gemini-3.5-flash-extra-low:low",
+    "default": "antigravity/claude-sonnet-4-6:medium",
+    "designer": "antigravity/gemini-pro-agent:high",
+    "plan": "antigravity/claude-opus-4-6-thinking:high",
+    "slow": "antigravity/claude-opus-4-6-thinking:high",
+    "smol": "antigravity/gemini-3.5-flash-extra-low:low",
+    "task": "antigravity/claude-sonnet-4-6:medium",
+    "vision": "antigravity/gemini-3.5-flash-low"
   },
   "modelProfiles": {
     "antigravity": {
@@ -72,8 +73,7 @@
       "defaultThinkingLevel": "medium",
       "enabledModels": [
         "openai-codex/*",
-        "opencode-antigravity/*",
-        "google-antigravity/*",
+        "antigravity/*",
         "anthropic/*",
         "google/*",
         "openai/*",
@@ -82,14 +82,13 @@
         "perplexity/*",
         "omlx/*",
         "nvidia/*",
-        "lmstudio/*",
+        "lm-studio/*",
         "ollama/*",
         "llama.cpp/*"
       ],
       "modelProviderOrder": [
         "openai-codex",
-        "google-antigravity",
-        "opencode-antigravity",
+        "antigravity",
         "anthropic",
         "google",
         "openai",
@@ -98,43 +97,19 @@
         "perplexity",
         "nvidia",
         "omlx",
-        "lmstudio",
+        "lm-studio",
         "ollama",
         "llama.cpp"
       ],
       "modelRoles": {
-        "commit": "google-antigravity/gemini-3.5-flash-extra-low:low",
-        "default": "google-antigravity/claude-sonnet-4-6:medium",
-        "designer": "google-antigravity/gemini-pro-agent",
-        "plan": "google-antigravity/claude-opus-4-6-thinking:high",
-        "slow": "google-antigravity/claude-opus-4-6-thinking",
-        "smol": "google-antigravity/gemini-3.5-flash-low:low",
-        "task": "google-antigravity/claude-sonnet-4-6",
-        "vision": "google-antigravity/gemini-3-flash-agent"
-      }
-    },
-    "codex-ag": {
-      "cycleOrder": [
-        "smol",
-        "default",
-        "plan",
-        "slow"
-      ],
-      "defaultThinkingLevel": "medium",
-      "enabledModels": [
-        "openai-codex/*",
-        "AG-*",
-        "opencode-antigravity/*"
-      ],
-      "modelProviderOrder": [
-        "openai-codex",
-        "opencode-antigravity"
-      ],
-      "modelRoles": {
-        "default": "openai-codex/gpt-5.5:high",
-        "smol": "AG-gemini-3.5-flash:medium",
-        "plan": "AG-claude-sonnet-4.6-thinking:medium",
-        "slow": "AG-claude-opus-4.6-thinking:xhigh"
+        "commit": "antigravity/gemini-3.5-flash-extra-low:low",
+        "default": "antigravity/claude-sonnet-4-6:medium",
+        "designer": "antigravity/gemini-pro-agent:high",
+        "plan": "antigravity/claude-opus-4-6-thinking:high",
+        "slow": "antigravity/claude-opus-4-6-thinking:high",
+        "smol": "antigravity/gemini-3.5-flash-extra-low:low",
+        "task": "antigravity/claude-sonnet-4-6:medium",
+        "vision": "antigravity/gemini-3.5-flash-low"
       }
     }
   }

@@ -92,18 +92,22 @@ Plus template directory under `src/factory/templates/software-factory/`.
 | `test/session-observer-registry.test.ts` | Tests (+1,509) |
 | `test/session-observer-window.test.ts` | Tests (+440) |
 
-### 1.6 Antigravity Adapter — fork-original package
+### 1.6 Antigravity Extension — fork-original package
 
-New `packages/antigravity-adapter/` — bridges Lex to OpenCode/Antigravity providers:
+New `packages/antigravity/` — self-contained Antigravity OAuth/request provider:
 
 | File | Purpose |
 |---|---|
-| `src/auth-adapter.ts` | Authentication adapter |
+| `src/runtime/oauth.ts` | Google OAuth login/token exchange |
+| `src/runtime/credentials.ts` | OMP credential serialization and refresh |
+| `src/runtime/model-resolver.ts` | Antigravity model/tier resolution |
+| `src/runtime/request.ts` | Cloud Code request rewrite and header shaping |
+| `src/runtime/response.ts` | Response/error metadata transforms |
+| `src/runtime/quota.ts` | Dynamic model discovery and quota helpers |
 | `src/stream-adapter.ts` | Streaming adapter |
-| `src/models.ts` | Model resolution |
-| `src/opencode-client-adapter.ts` | OpenCode client bridge |
+| `src/models.ts` | Static model registration |
 | `src/extension.ts` | Extension entry |
-| `test/bridge.test.ts` | Tests (+515) |
+| `test/bridge.test.ts` | Isolation and parity tests |
 
 ### 1.7 Status Line Segment Editor — fork-original
 
@@ -532,7 +536,7 @@ The minimizer engine saw the most Rust-level changes — fork-original additions
 | Software factory | TypeScript code (`src/factory/`) + templates | **Fork-original** |
 | Gain/minimizer overlay | TypeScript code (`minimizer-gain.ts`, `gain-cli.ts`, TUI) | **Fork-original** |
 | Session observer overhaul | TypeScript code + tests | **Fork-original** (partial) |
-| Antigravity adapter | Separate package `packages/antigravity-adapter/` | **Fork-original** |
+| Antigravity extension | Separate package `packages/antigravity/` | **Fork-original** |
 | Status line segment editor | TypeScript code | **Fork-original** |
 | External orchestration monitor | TypeScript code + tests | **Fork-original** |
 | Skills overlay | TypeScript code | **Fork-original** |

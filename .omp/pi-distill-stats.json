@@ -68,6 +68,312 @@
       },
       "firstTs": 1781266638164,
       "lastTs": 1781266638165
+    },
+    "019ebd54-f94d-7000-af41-5ddf47310e4f": {
+      "sessionId": "019ebd54-f94d-7000-af41-5ddf47310e4f",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 9534,
+      "originalBytes": 10967,
+      "replacementBytes": 1433,
+      "hits": 1,
+      "tools": {
+        "web_search": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 9534
+        }
+      },
+      "firstTs": 1781292961911,
+      "lastTs": 1781292961913
+    },
+    "019ebea5-3f4c-7000-8490-f5611dc93674": {
+      "sessionId": "019ebea5-3f4c-7000-8490-f5611dc93674",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Fix escape key behavior in model selection",
+      "savedBytes": 60000,
+      "originalBytes": 64106,
+      "replacementBytes": 4106,
+      "hits": 4,
+      "tools": {
+        "mcp__context_mode_ctx_execute": {
+          "candidates": 4,
+          "hits": 4,
+          "savedBytes": 60000
+        }
+      },
+      "firstTs": 1781316086963,
+      "lastTs": 1781316400819
+    },
+    "019ebf74-3353-7000-9d2d-2f6bec9a1b02": {
+      "sessionId": "019ebf74-3353-7000-9d2d-2f6bec9a1b02",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 0,
+      "hits": 0,
+      "tools": {
+        "ast_grep": {
+          "candidates": 2,
+          "hits": 0,
+          "savedBytes": 0
+        }
+      },
+      "firstTs": 1781328541158,
+      "lastTs": 1781328541159
+    },
+    "019ebf7c-ac1f-7000-8e30-ae00dd346677": {
+      "sessionId": "019ebf7c-ac1f-7000-8e30-ae00dd346677",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Antigravity extension naming",
+      "savedBytes": 38088,
+      "originalBytes": 40020,
+      "replacementBytes": 1932,
+      "hits": 2,
+      "tools": {
+        "mcp__auggie_codebase_retrieval": {
+          "candidates": 2,
+          "hits": 2,
+          "savedBytes": 38088
+        }
+      },
+      "firstTs": 1781329263424,
+      "lastTs": 1781336322707
+    },
+    "019ebf6f-ec21-7000-bd80-25bd820bb4cd": {
+      "sessionId": "019ebf6f-ec21-7000-bd80-25bd820bb4cd",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Compare strav and omp",
+      "savedBytes": 40514,
+      "originalBytes": 44546,
+      "replacementBytes": 4032,
+      "hits": 3,
+      "tools": {
+        "web_search": {
+          "candidates": 3,
+          "hits": 3,
+          "savedBytes": 40514
+        }
+      },
+      "firstTs": 1781329283945,
+      "lastTs": 1781329327516
+    },
+    "019ebf80-0514-7000-beeb-670584d85ed1": {
+      "sessionId": "019ebf80-0514-7000-beeb-670584d85ed1",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 19078,
+      "originalBytes": 19894,
+      "replacementBytes": 816,
+      "hits": 1,
+      "tools": {
+        "mcp__auggie_codebase_retrieval": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 19078
+        }
+      },
+      "firstTs": 1781329313241,
+      "lastTs": 1781329313243
+    },
+    "019ebf80-0515-7000-8dbb-5bdce75183ef": {
+      "sessionId": "019ebf80-0515-7000-8dbb-5bdce75183ef",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 19080,
+      "originalBytes": 19907,
+      "replacementBytes": 827,
+      "hits": 1,
+      "tools": {
+        "mcp__auggie_codebase_retrieval": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 19080
+        }
+      },
+      "firstTs": 1781329316484,
+      "lastTs": 1781329316486
+    },
+    "019ebf80-0516-7000-a3b9-7483fd4eefe7": {
+      "sessionId": "019ebf80-0516-7000-a3b9-7483fd4eefe7",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 19146,
+      "originalBytes": 20014,
+      "replacementBytes": 868,
+      "hits": 1,
+      "tools": {
+        "mcp__auggie_codebase_retrieval": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 19146
+        }
+      },
+      "firstTs": 1781329320943,
+      "lastTs": 1781329320944
+    },
+    "019ebf80-0517-7000-82e2-a7051d62484b": {
+      "sessionId": "019ebf80-0517-7000-82e2-a7051d62484b",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 19087,
+      "originalBytes": 20002,
+      "replacementBytes": 915,
+      "hits": 1,
+      "tools": {
+        "mcp__auggie_codebase_retrieval": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 19087
+        }
+      },
+      "firstTs": 1781329321227,
+      "lastTs": 1781329321228
+    },
+    "019ebf80-0518-7000-a0e6-36ca13828acb": {
+      "sessionId": "019ebf80-0518-7000-a0e6-36ca13828acb",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 18980,
+      "originalBytes": 20002,
+      "replacementBytes": 1022,
+      "hits": 1,
+      "tools": {
+        "mcp__auggie_codebase_retrieval": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 18980
+        }
+      },
+      "firstTs": 1781329321468,
+      "lastTs": 1781329321470
+    },
+    "019ebff8-8d26-7000-bcc6-77b9c610fe78": {
+      "sessionId": "019ebff8-8d26-7000-bcc6-77b9c610fe78",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Antigravity extension isolation",
+      "savedBytes": 3301,
+      "originalBytes": 4376,
+      "replacementBytes": 1075,
+      "hits": 1,
+      "tools": {
+        "mcp__context_mode_ctx_search": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 3301
+        }
+      },
+      "firstTs": 1781340072113,
+      "lastTs": 1781340072115
+    },
+    "019ec02f-398a-7000-9991-43effba94d54": {
+      "sessionId": "019ec02f-398a-7000-9991-43effba94d54",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 4883,
+      "originalBytes": 6033,
+      "replacementBytes": 1150,
+      "hits": 1,
+      "tools": {
+        "mcp__context_mode_ctx_execute": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 4883
+        }
+      },
+      "firstTs": 1781340863166,
+      "lastTs": 1781340863167
+    },
+    "019ec04f-3de7-7000-b017-ce7a1fe922e6": {
+      "sessionId": "019ec04f-3de7-7000-b017-ce7a1fe922e6",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 7218,
+      "originalBytes": 9440,
+      "replacementBytes": 2222,
+      "hits": 2,
+      "tools": {
+        "mcp__context_mode_ctx_batch_execute": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 3239
+        },
+        "mcp__context_mode_ctx_execute": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 3979
+        }
+      },
+      "firstTs": 1781342919274,
+      "lastTs": 1781343034801
+    },
+    "019ec1f1-3348-7000-b848-ec7836a86c99": {
+      "sessionId": "019ec1f1-3348-7000-b848-ec7836a86c99",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 39617,
+      "originalBytes": 50431,
+      "replacementBytes": 10814,
+      "hits": 5,
+      "tools": {
+        "browser": {
+          "candidates": 6,
+          "hits": 5,
+          "savedBytes": 39617
+        }
+      },
+      "firstTs": 1781370875345,
+      "lastTs": 1781371236717
+    },
+    "019ec207-9898-7000-aae5-14d6f3d55211": {
+      "sessionId": "019ec207-9898-7000-aae5-14d6f3d55211",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 18867,
+      "originalBytes": 20016,
+      "replacementBytes": 1149,
+      "hits": 1,
+      "tools": {
+        "mcp__auggie_codebase_retrieval": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 18867
+        }
+      },
+      "firstTs": 1781371763959,
+      "lastTs": 1781371763966
+    },
+    "019ec20e-ec19-7000-82f7-218f355b963a": {
+      "sessionId": "019ec20e-ec19-7000-82f7-218f355b963a",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Antigravity profile extension repair",
+      "savedBytes": 40755,
+      "originalBytes": 49577,
+      "replacementBytes": 8822,
+      "hits": 7,
+      "tools": {
+        "mcp__context_mode_ctx_stats": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 4251
+        },
+        "mcp__context_mode_ctx_search": {
+          "candidates": 4,
+          "hits": 4,
+          "savedBytes": 27419
+        },
+        "mcp__context_mode_ctx_execute": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 5243
+        },
+        "mcp__context_mode_ctx_execute_file": {
+          "candidates": 1,
+          "hits": 1,
+          "savedBytes": 3842
+        }
+      },
+      "firstTs": 1781374513914,
+      "lastTs": 1781375220226
     }
   }
 }
