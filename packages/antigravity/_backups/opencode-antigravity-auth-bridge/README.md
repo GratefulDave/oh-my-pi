@@ -1,3 +1,5 @@
+Disabled backup of the previous OpenCode-plugin bridge; not loaded by OMP/Lex unless copied out manually.
+
 # Antigravity Adapter for OMP
 
 This OMP extension registers `opencode-antigravity/*` models and routes them through the installed `opencode-antigravity-auth` OpenCode plugin.
