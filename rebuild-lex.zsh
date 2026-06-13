@@ -44,6 +44,13 @@ printf '  sentinel: %s\n' "$sentinel"
 
 bun install
 
+# After bun install, nested node_modules copies of @oh-my-pi/pi-natives may
+# carry the upstream version (e.g. "15.11.7") from npm, shadowing the workspace
+# symlink. The compiler resolves the nearest copy, so the binary would embed
+# the wrong version string → native loader looks in the wrong cache dir.
+print_step "Stamping pi-natives version in nested node_modules copies"
+bun scripts/stamp-nested-pi-natives.ts
+
 print_step "Building registered extensions and native support"
 bun scripts/rebuild-extensions.ts
 
@@ -147,11 +154,11 @@ print_step "Minimizer gain bundle smoke test"
 bun --cwd=packages/pi-minimizer-gain run smoke:bundle
 
 # Smoke-test the extension path that has broken repeatedly: the global
-# Antigravity adapter must be loaded by the rebuilt binary from outside the repo
-# and expose its extension provider models for BOTH command names.
+# Antigravity extension must be loaded by the rebuilt binary from outside the repo
+# and expose its self-contained provider models for BOTH command names.
 print_step "Extension load smoke test"
-lex_models_out="$(cd /tmp && lex --list-models opencode-antigravity 2>&1 || true)"
-omp_models_out="$(cd /tmp && omp --list-models opencode-antigravity 2>&1 || true)"
+lex_models_out="$(cd /tmp && lex --list-models antigravity 2>&1 || true)"
+omp_models_out="$(cd /tmp && omp --list-models antigravity 2>&1 || true)"
 if [[ "$lex_models_out" == *"Failed to load extension"* ]]; then
 	printf 'error: lex still reports an extension load failure after rebuild:\n%s\n' "$lex_models_out" >&2
 	exit 1
@@ -160,11 +167,11 @@ if [[ "$omp_models_out" == *"Failed to load extension"* ]]; then
 	printf 'error: omp still reports an extension load failure after rebuild:\n%s\n' "$omp_models_out" >&2
 	exit 1
 fi
-if [[ "$lex_models_out" != *"opencode-antigravity"* ]]; then
+if [[ "$lex_models_out" != *"antigravity"* ]]; then
 	printf 'error: lex antigravity extension models are not visible after rebuild:\n%s\n' "$lex_models_out" >&2
 	exit 1
 fi
-if [[ "$omp_models_out" != *"opencode-antigravity"* ]]; then
+if [[ "$omp_models_out" != *"antigravity"* ]]; then
 	printf 'error: omp antigravity extension models are not visible after rebuild:\n%s\n' "$omp_models_out" >&2
 	exit 1
 fi
