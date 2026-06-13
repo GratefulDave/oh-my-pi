@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed extension-installed Antigravity settings so rebuilds preserve the antigravity provider instead of rewriting it to native google-antigravity, and allowed runtime providers to combine static fallback models with dynamic discovery.
+- Fixed settings-based enabledModels so Antigravity and oMLX profiles refresh against live extension/discovery providers instead of freezing a stale startup model scope.
+
 ## [15.12.3] - 2026-06-12
 
 ### Fixed
