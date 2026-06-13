@@ -111,6 +111,55 @@
         "task": "antigravity/claude-sonnet-4-6:medium",
         "vision": "antigravity/gemini-3.5-flash-low"
       }
+    },
+    "omlx": {
+      "modelRoles": {
+        "commit": "antigravity/gemini-3.5-flash-extra-low:low",
+        "default": "antigravity/claude-sonnet-4-6:medium",
+        "designer": "antigravity/gemini-pro-agent:high",
+        "plan": "antigravity/claude-opus-4-6-thinking:high",
+        "slow": "antigravity/claude-opus-4-6-thinking:high",
+        "smol": "antigravity/gemini-3.5-flash-extra-low:low",
+        "task": "antigravity/claude-sonnet-4-6:medium",
+        "vision": "antigravity/gemini-3.5-flash-low"
+      },
+      "defaultThinkingLevel": "medium",
+      "enabledModels": [
+        "openai-codex/*",
+        "antigravity/*",
+        "anthropic/*",
+        "google/*",
+        "openai/*",
+        "grok/*",
+        "deepseek/*",
+        "perplexity/*",
+        "omlx/*",
+        "nvidia/*",
+        "lmstudio/*",
+        "ollama/*",
+        "llama.cpp/*"
+      ],
+      "cycleOrder": [
+        "smol",
+        "default",
+        "plan",
+        "slow"
+      ],
+      "modelProviderOrder": [
+        "openai-codex",
+        "antigravity",
+        "anthropic",
+        "google",
+        "openai",
+        "grok",
+        "deepseek",
+        "perplexity",
+        "nvidia",
+        "omlx",
+        "lmstudio",
+        "ollama",
+        "llama.cpp"
+      ]
     }
   }
 }
