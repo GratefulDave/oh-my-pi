@@ -84,24 +84,26 @@ function formatFullNumber(n: number): string {
 		.toString()
 		.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
-type LoadMinimizerGainContext = (scope: ScopeIndex) => Promise<DualContext>;
+type LoadMinimizerGainContext = (scope: ScopeIndex, prev: DualContext) => Promise<DualContext>;
 
 const REFRESH_INTERVAL_MS = 1000;
 
 const TABS = ["Gain", "Missed", "Status"] as const;
 type TabIndex = 0 | 1 | 2;
 
-const SCOPES = ["Current", "All"] as const;
-type ScopeIndex = 0 | 1;
+const SCOPES = ["Session", "Current", "All"] as const;
+type ScopeIndex = 0 | 1 | 2;
 
 export interface DiagnosticErrorSentinel {
 	buildError: string;
 }
 
 interface DualContext {
+	session: MinimizerGainContext;
 	current: MinimizerGainContext;
 	all: MinimizerGainContext;
 	diagnostic?: MinimizerGainDiagnostic | DiagnosticErrorSentinel;
+	sessionStartedAt?: number;
 }
 
 function formatExitCodes(exitCodes: Array<number | null>): string {
@@ -183,7 +185,7 @@ export class MinimizerGainOverlayComponent {
 		if (!this.#loadContext || this.#refreshing || this.#disposed) return;
 		this.#refreshing = true;
 		try {
-		const context = await this.#loadContext(this.#activeScopeIndex);
+			const context = await this.#loadContext(this.#activeScopeIndex, this.#dualContext);
 			if (this.#disposed) return;
 			this.#dualContext = context;
 			this.#requestRender();
@@ -239,7 +241,9 @@ export class MinimizerGainOverlayComponent {
 	}
 
 	#getActiveContext(): MinimizerGainContext {
-		return this.#activeScopeIndex === 0 ? this.#dualContext.current : this.#dualContext.all;
+		if (this.#activeScopeIndex === 0) return this.#dualContext.session;
+		if (this.#activeScopeIndex === 1) return this.#dualContext.current;
+		return this.#dualContext.all;
 	}
 
 	// -------------------------------------------------------------------
@@ -588,7 +592,7 @@ export class MinimizerGainOverlayComponent {
 		lines.push(this.#makeBorder(width));
 		lines.push(
 			clean(
-				`${this.#heading("Minimizer Gain")} ${this.#formatTab("Current", activeScope === "Current")} ${this.#dim("|")} ${this.#formatTab("All", activeScope === "All")}`,
+				`${this.#heading("Minimizer Gain")} ${this.#formatTab("Session", activeScope === "Session")} ${this.#dim("|")} ${this.#formatTab("Current", activeScope === "Current")} ${this.#dim("|")} ${this.#formatTab("All", activeScope === "All")}`,
 				width,
 			),
 		);
@@ -600,7 +604,12 @@ export class MinimizerGainOverlayComponent {
 		);
 
 		lines.push(
-			clean(this.#muted(`Scope: ${context.all ? "all repos" : shortenPath(context.cwd ?? process.cwd())}`), width),
+			clean(
+				this.#muted(
+					`Scope: ${context.all ? "all repos" : this.#activeScopeIndex === 0 ? `session (started ${formatDurationMs(Date.now() - (this.#dualContext.sessionStartedAt ?? Date.now()))} ago)` : shortenPath(context.cwd ?? process.cwd())}`,
+				),
+				width,
+			),
 		);
 		lines.push("");
 
@@ -614,7 +623,11 @@ export class MinimizerGainOverlayComponent {
 		}
 
 		if (activeTab === "Gain") {
-			const scopeLabel = context.all ? "Global Scope" : "Current Scope";
+			const scopeLabel = context.all
+				? "Global Scope"
+				: this.#activeScopeIndex === 0
+					? "Session Scope"
+					: "Current Scope";
 			lines.push(clean(this.#heading(`Token Savings (${scopeLabel})`), width));
 			lines.push(this.#makeBorder(contentWidth));
 			lines.push(this.#formatRow("Total commands", formatFullNumber(context.summary.commands), width));

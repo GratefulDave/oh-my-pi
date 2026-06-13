@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { MinimizerGainOverlayComponent } from "../src/overlay";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -16,6 +15,8 @@ import {
 	readMinimizerGain,
 	resetMinimizerGainStatusForTesting,
 } from "../src/gain-engine";
+import { MinimizerGainOverlayComponent } from "../src/overlay";
+
 interface RegisteredCommand {
 	description: string;
 	handler: (args: string, ctx: unknown) => Promise<void>;
@@ -307,7 +308,10 @@ describe("minimizer gain records", () => {
 		});
 
 		const context = await loadMinimizerGainContext({ agentDir, cwd, all: false });
-		const lines = exportMinimizerGainJsonl(context).trim().split("\n").map(line => JSON.parse(line));
+		const lines = exportMinimizerGainJsonl(context)
+			.trim()
+			.split("\n")
+			.map(line => JSON.parse(line));
 
 		expect(lines).toHaveLength(2);
 		expect(lines[0]).toMatchObject({ kind: "daily-total", commands: 1, savedBytes: 300 });

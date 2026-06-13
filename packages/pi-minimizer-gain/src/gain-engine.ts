@@ -110,15 +110,12 @@ export interface MinimizerGainDailySummary extends MinimizerGainTotals {
 	date: string;
 }
 
-
-
 export interface MinimizerGainSummary extends MinimizerGainTotals {
 	byFilter: MinimizerGainFilterSummary[];
 	byCommand: MinimizerGainCommandSummary[];
 	byCwd: MinimizerGainCwdSummary[];
 	bySource: MinimizerGainSourceSummary[];
 }
-
 
 export interface MinimizerGainContext {
 	path: string;
@@ -138,11 +135,15 @@ export interface MinimizerGainJsonlExportOptions {
 	includeCommandTotals?: boolean;
 }
 
+export function getModuleStartedAt(): number {
+	return MODULE_STARTED_AT;
+}
 
 export async function loadMinimizerGainContext(input: {
 	cwd: string;
 	all: boolean;
 	days?: number;
+	sinceTimestamp?: number;
 	agentDir?: string;
 	ignoredMissedCommands?: Iterable<string>;
 }): Promise<MinimizerGainContext> {
@@ -153,7 +154,12 @@ export async function loadMinimizerGainContext(input: {
 	if (cwd !== undefined) {
 		await migrateLegacySessionCwds({ agentDir: input.agentDir, recordsFilePath, scopeCwd: cwd });
 	}
-	const records = await readMinimizerGain({ sinceDays: days, scope, agentDir: input.agentDir });
+	const records = await readMinimizerGain({
+		sinceDays: days,
+		sinceTimestamp: input.sinceTimestamp,
+		scope,
+		agentDir: input.agentDir,
+	});
 	const config = await loadMinimizerGainConfig(input.agentDir, input.ignoredMissedCommands);
 	return {
 		path: getMinimizerGainPath(input.agentDir),
@@ -200,6 +206,7 @@ interface MinimizerGainScope {
 
 export interface ReadMinimizerGainOptions {
 	sinceDays?: number;
+	sinceTimestamp?: number;
 	cwd?: string;
 	scope?: MinimizerGainScope;
 	agentDir?: string;
@@ -287,7 +294,6 @@ async function hasGitEntry(dir: string): Promise<boolean> {
 	}
 }
 
-
 async function resolveMinimizerGainCwdAliases(cwd: string): Promise<readonly string[]> {
 	const aliases = [cwd];
 	const upstreamCloneMatch = /^(.*)-upstream-(?:v?\d[\w.-]*)$/.exec(path.basename(cwd));
@@ -300,7 +306,9 @@ async function resolveMinimizerGainCwdAliases(cwd: string): Promise<readonly str
 export async function readMinimizerGain(options: ReadMinimizerGainOptions = {}): Promise<MinimizerGainRecord[]> {
 	try {
 		const content = await fs.readFile(getMinimizerGainPath(options.agentDir), "utf-8");
-		const cutoff = resolveCutoff(options.sinceDays);
+		const dayCutoff = resolveCutoff(options.sinceDays);
+		const tsCutoff = options.sinceTimestamp ?? null;
+		const cutoff = dayCutoff !== null && tsCutoff !== null ? Math.max(dayCutoff, tsCutoff) : (dayCutoff ?? tsCutoff);
 		const scope = options.scope ?? (options.cwd ? await resolveMinimizerGainScope(options.cwd) : undefined);
 		return content
 			.split("\n")
@@ -792,7 +800,6 @@ function normalizeCommandName(command: string): string {
 	const slash = first.lastIndexOf("/");
 	return (slash === -1 ? first : first.slice(slash + 1)).toLowerCase();
 }
-
 
 function getSourceBucket(record: MinimizerGainRecord): string {
 	if (!record.sourcePaths || record.sourcePaths.length === 0) return "unknown";

@@ -1,10 +1,20 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { buildMinimizerGainDiagnostic, exportMinimizerGainJsonl, loadMinimizerGainContext } from "./gain-engine";
+import {
+	buildMinimizerGainDiagnostic,
+	exportMinimizerGainJsonl,
+	getModuleStartedAt,
+	loadMinimizerGainContext,
+} from "./gain-engine";
 import { type DualContext, type GainTheme, MinimizerGainOverlayComponent, type ScopeIndex } from "./overlay";
 
-export { buildMinimizerGainDiagnostic, exportMinimizerGainJsonl, loadMinimizerGainContext } from "./gain-engine";
+export {
+	buildMinimizerGainDiagnostic,
+	exportMinimizerGainJsonl,
+	getModuleStartedAt,
+	loadMinimizerGainContext,
+} from "./gain-engine";
 
 // ---------------------------------------------------------------------------
 // Extension entry point
@@ -26,7 +36,7 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 				ctx.ui.notify(`Minimizer gain JSONL exported to ${exportPath}`, "info");
 				return;
 			}
-			const initialScope: ScopeIndex = parsed.all ? 1 : 0;
+			const initialScope: ScopeIndex = parsed.all ? 2 : 1;
 
 			const buildDiagnosticForCwd = async (scopeCwd: string | undefined): Promise<DualContext["diagnostic"]> => {
 				try {
@@ -36,10 +46,21 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 				}
 			};
 
+			const sessionStart = getModuleStartedAt();
+
+			const loadSession = () =>
+				loadMinimizerGainContext({ cwd, all: false, days: parsed.days, sinceTimestamp: sessionStart });
+			const loadCurrent = () => loadMinimizerGainContext({ cwd, all: false, days: parsed.days });
+			const loadAll = () => loadMinimizerGainContext({ cwd, all: true, days: parsed.days });
+
+			const [sessionCtx, currentCtx, allCtx] = await Promise.all([loadSession(), loadCurrent(), loadAll()]);
+
 			const dualContext: DualContext = {
-				current: await loadMinimizerGainContext({ cwd, all: false, days: parsed.days }),
-				all: await loadMinimizerGainContext({ cwd, all: true, days: parsed.days }),
-				diagnostic: await buildDiagnosticForCwd(initialScope === 0 ? cwd : undefined),
+				session: sessionCtx,
+				current: currentCtx,
+				all: allCtx,
+				diagnostic: undefined,
+				sessionStartedAt: sessionStart,
 			};
 
 			ctx.ui.setEditorText("");
@@ -51,11 +72,23 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 						dualContext,
 						() => tui.requestRender(),
 						() => done(undefined),
-					async (scope) => ({
-						current: await loadMinimizerGainContext({ cwd, all: false, days: parsed.days }),
-						all: await loadMinimizerGainContext({ cwd, all: true, days: parsed.days }),
-						diagnostic: await buildDiagnosticForCwd(scope === 0 ? cwd : undefined),
-					}),
+						async (scope, prev) => {
+							// Only reload the active scope; keep the others from prev to avoid
+							// pointless JSONL reads (especially when session is empty).
+							const [newSession, newCurrent, newAll, newDiag] = await Promise.all([
+								scope === 0 ? loadSession() : Promise.resolve(prev.session),
+								scope === 1 ? loadCurrent() : Promise.resolve(prev.current),
+								scope === 2 ? loadAll() : Promise.resolve(prev.all),
+								buildDiagnosticForCwd(scope <= 1 ? cwd : undefined),
+							]);
+							return {
+								session: newSession,
+								current: newCurrent,
+								all: newAll,
+								diagnostic: newDiag,
+								sessionStartedAt: sessionStart,
+							};
+						},
 						initialScope,
 					),
 				{ overlay: true },
