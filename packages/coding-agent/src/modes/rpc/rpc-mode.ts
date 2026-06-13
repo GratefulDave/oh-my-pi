@@ -554,9 +554,6 @@ export async function runRpcMode(
 	const emitAvailableCommandsUpdate = async () => {
 		output({ type: "available_commands_update", commands: await getAvailableCommands() });
 	};
-	session.subscribeCommandMetadataChanged(() => {
-		void emitAvailableCommandsUpdate();
-	});
 	await emitAvailableCommandsUpdate();
 
 	// Handle a single command

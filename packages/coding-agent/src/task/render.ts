@@ -710,6 +710,7 @@ function renderAgentProgress(
 
 	const description = progress.description?.trim();
 	const displayId = formatTaskId(progress.id);
+	const titlePart = description ? `${theme.bold(displayId)}: ${description}` : displayId;
 	const indent = prefix ? `${prefix} ` : "";
 	let statusLine: string;
 	if (progress.status === "running" || progress.status === "pending") {
@@ -1283,6 +1284,8 @@ export function renderResult(
 	// Surface the dispatched agent type (e.g. `Reviewer`) alongside the count
 	// so the header reads `Task 1 agent: Reviewer`.
 	const countLabel = agentCount > 0 ? `${agentCount} ${agentCount === 1 ? "agent" : "agents"}` : undefined;
+	const metaLabel =
+		countLabel && agentLabel ? `${countLabel}: ${formatAgentDisplayName(agentLabel)}` : (countLabel ?? agentLabel);
 	const header = renderStatusLine(
 		{
 			icon: icon === "success" || icon === "running" ? undefined : icon,

@@ -205,6 +205,7 @@ export class SessionObserverRegistry {
 						index: payload.index,
 						lastUpdate: Date.now(),
 						progress,
+						kind: "subagent",
 					});
 				}
 				this.#notifyListeners();

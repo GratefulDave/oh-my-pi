@@ -3348,7 +3348,7 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	showAgentsDashboard(): void {
 		if (this.#observerRegistry.getSessions().some(session => session.kind === "subagent")) {
-			this.showSessionObserver();
+			this.showAgentHub();
 			return;
 		}
 		void this.#selectorController.showAgentsDashboard();
