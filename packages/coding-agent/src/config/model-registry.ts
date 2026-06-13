@@ -629,6 +629,7 @@ export class ModelRegistry {
 	// Runtime model managers registered by extensions via fetchDynamicModels.
 	// Keyed by provider name; use the same SQLite cache path as builtins.
 	#runtimeModelManagers: Map<string, { options: ModelManagerOptions<Api>; sourceId: string }> = new Map();
+	#runtimeDiscoverableProviders: Set<string> = new Set();
 	#rebuildPending: boolean = false;
 	#rebuildSuspended: number = 0;
 	#fetch: FetchImpl;
@@ -1749,9 +1750,14 @@ export class ModelRegistry {
 
 	getDiscoverableProviders(): string[] {
 		const disabledProviders = getDisabledProviderIdsFromSettings();
-		return this.#discoverableProviders
-			.filter(provider => !disabledProviders.has(provider.provider))
-			.map(provider => provider.provider);
+		const providers = new Set<string>();
+		for (const provider of this.#discoverableProviders) {
+			if (!disabledProviders.has(provider.provider)) providers.add(provider.provider);
+		}
+		for (const provider of this.#runtimeDiscoverableProviders) {
+			if (!disabledProviders.has(provider)) providers.add(provider);
+		}
+		return Array.from(providers);
 	}
 
 	getProviderDiscoveryState(provider: string): ProviderDiscoveryState | undefined {
@@ -1851,6 +1857,7 @@ export class ModelRegistry {
 		this.#runtimeProviderOverrides.delete(providerName);
 		this.#runtimeModelOverlays = this.#runtimeModelOverlays.filter(overlay => overlay.provider !== providerName);
 		this.#runtimeModelManagers.delete(providerName);
+		this.#runtimeDiscoverableProviders.delete(providerName);
 		this.authStorage.removeConfigApiKey(providerName);
 	}
 
@@ -1961,6 +1968,7 @@ export class ModelRegistry {
 			this.#runtimeProviderApiKeys.set(providerName, config.apiKey);
 		}
 
+		let staticRuntimeModels: Model<Api>[] = [];
 		if (config.models && config.models.length > 0) {
 			// Build model overlays that persist across refresh() cycles
 			const newOverlays: CustomModelOverlay[] = [];
@@ -1981,15 +1989,14 @@ export class ModelRegistry {
 				}
 				newOverlays.push(overlay);
 			}
+			staticRuntimeModels = newOverlays.map(overlay => finalizeCustomModel(overlay, { useDefaults: true }));
 			// Store as runtime overlays so they survive #reloadStaticModels()
 			this.#runtimeModelOverlays = this.#runtimeModelOverlays.filter(m => m.provider !== providerName);
 			this.#runtimeModelOverlays.push(...newOverlays);
 
 			// Also update #models immediately for the current cycle
 			const nextModels = this.#models.filter(m => m.provider !== providerName);
-			for (const overlay of newOverlays) {
-				nextModels.push(finalizeCustomModel(overlay, { useDefaults: true }));
-			}
+			nextModels.push(...staticRuntimeModels);
 			const runtimeTransportOverride = this.#runtimeProviderOverrides.get(providerName);
 			const withRuntimeTransportOverride = runtimeTransportOverride
 				? nextModels.map(model => {
@@ -1998,18 +2005,13 @@ export class ModelRegistry {
 					})
 				: nextModels;
 
-			if (config.oauth?.modifyModels) {
-				const credential = this.authStorage.getOAuthCredential(providerName);
-				if (credential) {
-					this.#models = config.oauth.modifyModels(withRuntimeTransportOverride, credential);
-					this.#rebuildCanonicalIndex();
-					return;
-				}
-			}
-
-			this.#models = withRuntimeTransportOverride;
+			const credential = config.oauth?.modifyModels ? this.authStorage.getOAuthCredential(providerName) : undefined;
+			this.#models =
+				config.oauth?.modifyModels && credential
+					? config.oauth.modifyModels(withRuntimeTransportOverride, credential)
+					: withRuntimeTransportOverride;
 			this.#rebuildCanonicalIndex();
-			return;
+			if (!config.fetchDynamicModels) return;
 		}
 
 		if (config.fetchDynamicModels) {
@@ -2022,10 +2024,10 @@ export class ModelRegistry {
 			const providerCompat = config.compat;
 			const managerOptions: ModelManagerOptions<Api> = {
 				providerId: providerName as Parameters<typeof createModelManager>[0]["providerId"],
-				staticModels: [],
+				staticModels: staticRuntimeModels.map(toModelSpec),
 				cacheDbPath: this.#cacheDbPath,
 				cacheTtlMs: 24 * 60 * 60 * 1000,
-				dynamicModelsAuthoritative: true,
+				dynamicModelsAuthoritative: staticRuntimeModels.length === 0,
 				fetchDynamicModels: async () => {
 					const apiKey = await this.#peekApiKeyForProvider(providerName);
 					const resolvedKey = isAuthenticated(apiKey) ? apiKey : undefined;
@@ -2049,6 +2051,7 @@ export class ModelRegistry {
 				},
 			};
 			this.#runtimeModelManagers.set(providerName, { options: managerOptions, sourceId: sourceId ?? "" });
+			this.#runtimeDiscoverableProviders.add(providerName);
 			// Discovery is driven by refreshRuntimeProviders() after the drain — not
 			// here, so registration has no network side effect and callers can await.
 		}

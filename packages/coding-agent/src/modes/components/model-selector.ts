@@ -18,7 +18,11 @@ import {
 } from "@oh-my-pi/pi-tui";
 import { formatNumber } from "@oh-my-pi/pi-utils";
 import type { ModelRegistry } from "../../config/model-registry";
-import { getModelMatchPreferences, resolveModelRoleValue } from "../../config/model-resolver";
+import {
+	filterAvailableModelsByEnabledPatterns,
+	getModelMatchPreferences,
+	resolveModelRoleValue,
+} from "../../config/model-resolver";
 import { getKnownRoleIds, getRoleInfo, MODEL_ROLE_IDS, MODEL_ROLES } from "../../config/model-roles";
 import type { Settings } from "../../config/settings";
 import { type ThemeColor, theme } from "../../modes/theme/theme";
@@ -465,7 +469,12 @@ export class ModelSelectorComponent extends Container {
 
 			try {
 				const availableModels = this.#modelRegistry.getAvailable();
-				models = availableModels.map((model: Model) => ({
+				const enabledPatterns = this.#settings.get("enabledModels");
+				const visibleAvailableModels =
+					!enabledPatterns || enabledPatterns.length === 0
+						? availableModels
+						: filterAvailableModelsByEnabledPatterns(availableModels, enabledPatterns, this.#modelRegistry);
+				models = visibleAvailableModels.map((model: Model) => ({
 					kind: "provider",
 					provider: model.provider,
 					id: model.id,
@@ -552,12 +561,20 @@ export class ModelSelectorComponent extends Container {
 		for (const item of this.#allModels) {
 			providerSet.add(item.provider);
 		}
-		for (const provider of this.#modelRegistry.getDiscoverableProviders()) {
-			providerSet.add(provider);
+		if (this.#scopedModels.length === 0) {
+			for (const provider of this.#modelRegistry.getDiscoverableProviders()) {
+				providerSet.add(provider);
+			}
 		}
-		const sortedProviderIds = Array.from(providerSet).sort((left, right) =>
-			formatProviderTabLabel(left).localeCompare(formatProviderTabLabel(right)),
+		const providerOrder = new Map(
+			this.#settings.get("modelProviderOrder").map((provider, index) => [provider, index]),
 		);
+		const sortedProviderIds = Array.from(providerSet).sort((left, right) => {
+			const leftRank = providerOrder.get(left) ?? Number.MAX_SAFE_INTEGER;
+			const rightRank = providerOrder.get(right) ?? Number.MAX_SAFE_INTEGER;
+			if (leftRank !== rightRank) return leftRank - rightRank;
+			return formatProviderTabLabel(left).localeCompare(formatProviderTabLabel(right));
+		});
 		this.#providers = [...STATIC_PROVIDER_TABS, ...sortedProviderIds.map(createProviderTab)];
 		const activeIndex = this.#providers.findIndex(tab => tab.id === activeTabId);
 		this.#activeTabIndex =

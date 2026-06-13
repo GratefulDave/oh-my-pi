@@ -731,9 +731,12 @@ function discoverAppendSystemPromptFile(): string | undefined {
 	return undefined;
 }
 
+type ModelScopeSource = "cli" | "settings" | "none";
+
 async function buildSessionOptions(
 	parsed: Args,
 	scopedModels: ScopedModel[],
+	scopeSource: ModelScopeSource,
 	sessionManager: SessionManager | undefined,
 	modelRegistry: ModelRegistry,
 	activeSettings: Settings,
@@ -825,6 +828,7 @@ async function buildSessionOptions(
 	if (parsed.thinking) {
 		options.thinkingLevel = parsed.thinking;
 	} else if (
+		scopeSource === "cli" &&
 		scopedModels.length > 0 &&
 		scopedModels[0].explicitThinkingLevel === true &&
 		!parsed.continue &&
@@ -834,7 +838,7 @@ async function buildSessionOptions(
 	}
 
 	// Scoped models for Ctrl+P cycling - fill in default thinking levels when not explicit
-	if (scopedModels.length > 0) {
+	if (scopeSource === "cli" && scopedModels.length > 0) {
 		// `auto` is a session-level concept only; per-scoped-model (Ctrl+P) thinking
 		// overrides stay concrete, so coerce the auto default to "unset" here.
 		const defaultThinkingLevelSetting = activeSettings.get("defaultThinkingLevel");
@@ -1059,7 +1063,15 @@ export async function runRootCommand(
 	);
 
 	let scopedModels: ScopedModel[] = [];
-	const modelPatterns = parsedArgs.models ?? settingsInstance.get("enabledModels");
+	const explicitModelPatterns = parsedArgs.models;
+	const settingsModelPatterns = settingsInstance.get("enabledModels");
+	const scopeSource: ModelScopeSource =
+		explicitModelPatterns && explicitModelPatterns.length > 0
+			? "cli"
+			: settingsModelPatterns && settingsModelPatterns.length > 0
+				? "settings"
+				: "none";
+	const modelPatterns = scopeSource === "cli" ? explicitModelPatterns : settingsModelPatterns;
 	const modelMatchPreferences = getModelMatchPreferences(settingsInstance);
 	if (modelPatterns && modelPatterns.length > 0) {
 		scopedModels = await logger.time(
@@ -1159,6 +1171,7 @@ export async function runRootCommand(
 		buildSessionOptions,
 		parsedArgs,
 		scopedModels,
+		scopeSource,
 		sessionManager,
 		modelRegistry,
 		settingsInstance,
@@ -1296,10 +1309,7 @@ export async function runRootCommand(
 			const changelogMarkdown = await logger.time("main:getChangelogForDisplay", getChangelogForDisplay, parsedArgs);
 
 			const modelScopeNotification = parsedArgs.models
-				? buildModelScopeNotification(
-					scopedModels,
-					settingsInstance.get("startup.quiet"),
-				)
+				? buildModelScopeNotification(scopedModels, settingsInstance.get("startup.quiet"))
 				: null;
 			if (modelScopeNotification) {
 				// Routed through the TUI (not stdout): the startup capture owns the
