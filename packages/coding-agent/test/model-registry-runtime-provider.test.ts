@@ -193,6 +193,57 @@ describe("ModelRegistry runtime provider registration", () => {
 		expect(model?.api).toBe("openai-completions");
 	});
 
+	test("runtime provider with static models also refreshes dynamic models without dropping static fallback", async () => {
+		const registry = new ModelRegistry(authStorage, modelsJsonPath);
+		const staticModel = { ...baseModel, id: "static-model", name: "Static Model" };
+		const dynamicModel = { ...baseModel, id: "dynamic-model", name: "Dynamic Model" };
+
+		registry.registerProvider(
+			"runtime-provider",
+			{
+				baseUrl: "https://runtime.example.com/v1",
+				apiKey: "RUNTIME_KEY",
+				api: "openai-completions",
+				models: [staticModel],
+				fetchDynamicModels: async apiKey => {
+					expect(apiKey).toBe("RUNTIME_KEY");
+					return [dynamicModel];
+				},
+			},
+			"ext://runtime",
+		);
+
+		expect(registry.find("runtime-provider", "static-model")).toBeDefined();
+		expect(registry.getDiscoverableProviders()).toContain("runtime-provider");
+		await registry.refreshRuntimeProviders("online");
+
+		expect(registry.find("runtime-provider", "static-model")).toBeDefined();
+		expect(registry.find("runtime-provider", "dynamic-model")).toBeDefined();
+	});
+
+	test("runtime provider keeps static models when dynamic refresh returns empty", async () => {
+		const registry = new ModelRegistry(authStorage, modelsJsonPath);
+		const staticModel = { ...baseModel, id: "static-model", name: "Static Model" };
+
+		registry.registerProvider(
+			"runtime-provider",
+			{
+				baseUrl: "https://runtime.example.com/v1",
+				apiKey: "RUNTIME_KEY",
+				api: "openai-completions",
+				models: [staticModel],
+				fetchDynamicModels: async () => [],
+			},
+			"ext://runtime",
+		);
+
+		expect(registry.find("runtime-provider", "static-model")).toBeDefined();
+		await registry.refreshRuntimeProviders("online");
+
+		expect(registry.find("runtime-provider", "static-model")).toBeDefined();
+		expect(registry.find("runtime-provider", "dynamic-model")).toBeUndefined();
+	});
+
 	test("extension-registered models survive refresh('online') cycle", async () => {
 		// ModelRegistry has no fetch injection seam; refresh("online") may hit real
 		// network. The contract under test is overlay survival, not discovery success —

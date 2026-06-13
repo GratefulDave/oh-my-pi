@@ -63,6 +63,21 @@ function createContextTestModel(id: string, contextWindow: number): Model {
 	});
 }
 
+function createProviderTestModel(provider: string, id: string, api: Model["api"], baseUrl: string): Model {
+	return buildModel({
+		id,
+		name: id,
+		api,
+		baseUrl,
+		reasoning: false,
+		provider,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128_000,
+		maxTokens: 8192,
+	});
+}
+
 function createScopedSelector(
 	models: Model[],
 	settings: Settings,
@@ -274,6 +289,134 @@ describe("ModelSelector role badge thinking display", () => {
 
 		selector.handleInput("\n");
 		expect(onSelect).toHaveBeenCalledWith("cc-model");
+	});
+
+	test("filters settings enabledModels against live extension and discovery providers", async () => {
+		installTestTheme();
+		const settings = Settings.isolated({
+			enabledModels: ["antigravity/*", "omlx/*"],
+			modelProviderOrder: ["omlx", "antigravity", "openai"],
+		});
+		const openaiModel = createProviderTestModel("openai", "gpt-5.5", "openai-responses", "https://api.openai.com/v1");
+		const antigravityModel = createProviderTestModel(
+			"antigravity",
+			"claude-sonnet-4-6",
+			"antigravity-google",
+			"https://generativelanguage.googleapis.com/v1beta",
+		);
+		const omlxModel = createProviderTestModel(
+			"omlx",
+			"Nex-N2-mini-oQ6",
+			"openai-completions",
+			"http://127.0.0.1:18790/v1",
+		);
+		let availableModels: Model[] = [openaiModel];
+		const refreshGate = Promise.withResolvers<void>();
+		const modelRegistry = {
+			getAll: () => availableModels,
+			refresh: vi.fn(async () => {
+				await refreshGate.promise;
+				availableModels = [openaiModel, antigravityModel, omlxModel];
+			}),
+			refreshProvider: vi.fn(async () => {}),
+			getError: () => undefined,
+			getAvailable: () => availableModels,
+			getDiscoverableProviders: () => ["omlx"],
+			getCanonicalModelSelections: () => [],
+			getProviderDiscoveryState: () => ({
+				provider: "omlx",
+				status: "ok",
+				optional: false,
+				stale: false,
+				models: ["Nex-N2-mini-oQ6"],
+			}),
+		} as unknown as ModelRegistry;
+		const ui = {
+			requestRender: vi.fn(),
+		} as unknown as TUI;
+
+		const selector = new ModelSelectorComponent(
+			ui,
+			undefined,
+			settings,
+			modelRegistry,
+			[],
+			() => {},
+			() => {},
+		);
+		refreshGate.resolve();
+		await Bun.sleep(0);
+		installTestTheme();
+
+		const rendered = normalizeRenderedText(selector.render(220).join("\n"));
+		expect(rendered).toContain("ANTIGRAVITY");
+		expect(rendered).toContain("OMLX");
+		expect(rendered).toContain("claude-sonnet-4-6");
+		expect(rendered).toContain("Nex-N2-mini-oQ6");
+		expect(rendered).not.toContain("gpt-5.5");
+		expect(rendered.indexOf("OMLX")).toBeLessThan(rendered.indexOf("ANTIGRAVITY"));
+	});
+
+	test("keeps explicit --models scope isolated from registry refresh", async () => {
+		installTestTheme();
+		const settings = Settings.isolated({
+			enabledModels: ["antigravity/*", "omlx/*"],
+			modelProviderOrder: ["antigravity", "omlx", "openai"],
+		});
+		const openaiModel = createProviderTestModel("openai", "gpt-5.5", "openai-responses", "https://api.openai.com/v1");
+		const antigravityModel = createProviderTestModel(
+			"antigravity",
+			"claude-sonnet-4-6",
+			"antigravity-google",
+			"https://generativelanguage.googleapis.com/v1beta",
+		);
+		const omlxModel = createProviderTestModel(
+			"omlx",
+			"Nex-N2-mini-oQ6",
+			"openai-completions",
+			"http://127.0.0.1:18790/v1",
+		);
+		let availableModels: Model[] = [openaiModel];
+		const modelRegistry = {
+			getAll: () => availableModels,
+			refresh: vi.fn(async () => {
+				availableModels = [openaiModel, antigravityModel, omlxModel];
+			}),
+			refreshProvider: vi.fn(async () => {}),
+			getError: () => undefined,
+			getAvailable: () => availableModels,
+			getDiscoverableProviders: () => ["omlx"],
+			getCanonicalModelSelections: () => [],
+			getProviderDiscoveryState: () => ({
+				provider: "omlx",
+				status: "ok",
+				optional: false,
+				stale: false,
+				models: ["Nex-N2-mini-oQ6"],
+			}),
+		} as unknown as ModelRegistry;
+		const ui = {
+			requestRender: vi.fn(),
+		} as unknown as TUI;
+
+		const selector = new ModelSelectorComponent(
+			ui,
+			undefined,
+			settings,
+			modelRegistry,
+			[{ model: openaiModel }],
+			() => {},
+			() => {},
+		);
+		await Bun.sleep(0);
+		installTestTheme();
+
+		const rendered = normalizeRenderedText(selector.render(220).join("\n"));
+		expect(rendered).toContain("gpt-5.5");
+		expect(rendered).not.toContain("ANTIGRAVITY");
+		expect(rendered).not.toContain("OMLX");
+		expect(rendered).not.toContain("claude-sonnet-4-6");
+		expect(rendered).not.toContain("Nex-N2-mini-oQ6");
 	});
 
 	test("refreshes Ollama Cloud using provider id instead of tab label", async () => {

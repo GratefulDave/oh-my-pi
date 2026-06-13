@@ -274,6 +274,42 @@ describe("ModelRegistry runtime discovery", () => {
 		expect(await registry.getApiKey(available[0])).toBe(kNoAuth);
 	});
 
+	test("discovers omlx models from OpenAI-compatible models endpoint", async () => {
+		writeRawModelsJson({
+			omlx: {
+				baseUrl: "http://127.0.0.1:18790/v1",
+				api: "openai-completions",
+				auth: "none",
+				discovery: { type: "openai-models-list" },
+			},
+		});
+
+		const fetchMock: FetchImpl = async input => {
+			const url = String(input);
+			expect(url).toBe("http://127.0.0.1:18790/v1/models");
+			return new Response(
+				JSON.stringify({
+					object: "list",
+					data: [
+						{ id: "Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-mlx-8bit", object: "model" },
+						{ id: "Nex-N2-mini-oQ6", object: "model" },
+					],
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		};
+
+		const registry = new ModelRegistry(authStorage, modelsJsonPath, { fetch: fetchMock });
+		await registry.refreshProvider("omlx", "online");
+
+		expect(registry.find("omlx", "Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-mlx-8bit")).toBeDefined();
+		expect(registry.find("omlx", "Nex-N2-mini-oQ6")).toBeDefined();
+		expect(registry.getAvailable().some(model => model.provider === "omlx")).toBe(true);
+		expect(registry.getProviderDiscoveryState("omlx")?.status).toBe("ok");
+		expect(registry.find("omlx", "Nex-N2-mini-oQ6")?.api).toBe("openai-completions");
+		expect(registry.find("omlx", "Nex-N2-mini-oQ6")?.baseUrl).toBe("http://127.0.0.1:18790/v1");
+	});
+
 	test("normalizes cached ollama completions rows to responses on load", () => {
 		writeRawModelsJson({
 			ollama: {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { SubagentStatusWidget } from "../../../src/modes/components/subagent-status-widget";
-import { getThemeByName, setThemeInstance } from "../../../src/modes/theme/theme";
 import type { ObservableSession, SessionObserverRegistry } from "../../../src/modes/session-observer-registry";
+import { getThemeByName, setThemeInstance } from "../../../src/modes/theme/theme";
 import type { AgentSession } from "../../../src/session/agent-session";
 import type { AgentProgress } from "../../../src/task";
 
@@ -17,6 +17,7 @@ function activeSession(id: string, overrides: Partial<ObservableSession> = {}): 
 		recentTools: [],
 		recentOutput: [],
 		toolCount: 0,
+		requests: 0,
 		tokens: 0,
 		cost: 0,
 		durationMs: 1700,
@@ -105,9 +106,3 @@ describe("SubagentStatusWidget", () => {
 		expect(renderWidget([], 0)).toBe("");
 	});
 });
-
-
-
-
-
-

@@ -3,6 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { stripVTControlCharacters } from "node:util";
+import type { Model } from "@oh-my-pi/pi-ai";
+import { buildModel } from "@oh-my-pi/pi-catalog/build";
 import type { ModelRegistry, ProviderDiscoveryState } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { ModelRegistry as ModelRegistryImpl } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
@@ -52,6 +54,52 @@ async function createSelector(state: ProviderDiscoveryState): Promise<ModelSelec
 	selector.handleInput("\x1b[C");
 	await Bun.sleep(0);
 	return selector;
+}
+
+async function createSelectorWithModels(models: Model[]): Promise<ModelSelectorComponent> {
+	const modelRegistry = {
+		refresh: async () => {},
+		refreshProvider: async () => {},
+		getError: () => undefined,
+		getAvailable: () => models,
+		getAll: () => models,
+		getDiscoverableProviders: () => [],
+		getCanonicalModelSelections: () => [],
+		getProviderDiscoveryState: () => undefined,
+	} as unknown as ModelRegistry;
+	installTestTheme();
+	const ui = { requestRender: vi.fn() } as unknown as TUI;
+	const selector = new ModelSelectorComponent(
+		ui,
+		undefined,
+		Settings.isolated({}),
+		modelRegistry,
+		[],
+		() => {},
+		() => {},
+	);
+	await Bun.sleep(0);
+	return selector;
+}
+
+function selectorModel(
+	provider: string,
+	id: string,
+	api: "antigravity-google" | "openai-completions",
+	baseUrl: string,
+): Model {
+	return buildModel({
+		provider,
+		id,
+		name: id,
+		api,
+		baseUrl,
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128000,
+		maxTokens: 8192,
+	});
 }
 
 describe("issue #970 custom provider discovery", () => {
@@ -170,5 +218,30 @@ describe("issue #970 custom provider discovery", () => {
 		const rendered = normalizeRenderedText(selector.render(200).join("\n"));
 		expect(rendered).toContain("http://192.168.5.3:8085/v1/models returned 404");
 		expect(rendered).toContain("baseUrl");
+	});
+
+	test("renders ANTIGRAVITY tab and not stale Antigravity provider tabs", async () => {
+		const selector = await createSelectorWithModels([
+			selectorModel(
+				"antigravity",
+				"gemini-3.1-pro",
+				"antigravity-google",
+				"https://generativelanguage.googleapis.com/v1beta",
+			),
+		]);
+
+		const rendered = normalizeRenderedText(selector.render(200).join("\n"));
+		expect(rendered).toContain("ANTIGRAVITY");
+		expect(rendered).not.toContain("OPENCODE ANTIGRAVITY");
+		expect(rendered).not.toContain("GOOGLE ANTIGRAVITY");
+	});
+
+	test("renders OMLX tab when omlx models are available", async () => {
+		const selector = await createSelectorWithModels([
+			selectorModel("omlx", "Nex-N2-mini-oQ6", "openai-completions", "http://127.0.0.1:18790/v1"),
+		]);
+
+		const rendered = normalizeRenderedText(selector.render(200).join("\n"));
+		expect(rendered).toContain("OMLX");
 	});
 });

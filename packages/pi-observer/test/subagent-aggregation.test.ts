@@ -8,10 +8,10 @@
 // full wiring through the extension's default export.
 // ---------------------------------------------------------------------------
 
+import { beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { beforeEach, describe, expect, test } from "bun:test";
 import observer from "../src/extension";
 import { stripAnsi } from "../src/renderer";
 import {
