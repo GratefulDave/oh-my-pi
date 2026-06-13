@@ -14,7 +14,7 @@
     "google-antigravity",
     "opencode-antigravity"
   ],
-  "activeModelProfile": "antigravity",
+  "activeModelProfile": "omlx",
   "cycleOrder": [
     "smol",
     "default",
@@ -33,7 +33,7 @@
     "perplexity/*",
     "omlx/*",
     "nvidia/*",
-    "lm-studio/*",
+    "lmstudio/*",
     "ollama/*",
     "llama.cpp/*"
   ],
@@ -48,7 +48,7 @@
     "perplexity",
     "nvidia",
     "omlx",
-    "lm-studio",
+    "lmstudio",
     "ollama",
     "llama.cpp"
   ],
