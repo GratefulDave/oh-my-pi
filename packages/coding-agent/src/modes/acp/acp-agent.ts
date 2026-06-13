@@ -1,4 +1,6 @@
+import * as syncFs from "node:fs";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import {
 	type Agent,
@@ -46,6 +48,7 @@ import {
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import type { AssistantMessage, Model } from "@oh-my-pi/pi-ai";
 import { isEnoent, logger, VERSION } from "@oh-my-pi/pi-utils";
+import { YAML } from "bun";
 import { disableProvider, enableProvider, reset as resetCapabilities } from "../../capability";
 import { Settings } from "../../config/settings";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../../discovery/helpers";
@@ -73,7 +76,7 @@ import {
 } from "../../session/session-manager";
 import { executeAcpBuiltinSlashCommand } from "../../slash-commands/acp-builtins";
 import { buildAvailableSlashCommands, toAcpAvailableCommands } from "../../slash-commands/available-commands";
-import { AUTO_THINKING, parseConfiguredThinkingLevel } from "../../thinking";
+import { AUTO_THINKING, parseConfiguredThinkingLevel, parseEffort } from "../../thinking";
 import { normalizeLocalScheme } from "../../tools/path-utils";
 import { runResolveInvocation } from "../../tools/resolve";
 import { ToolError } from "../../tools/tool-errors";
@@ -93,6 +96,8 @@ const REFINE_OPTION = "Refine plan";
 const MODE_CONFIG_ID = "mode";
 const MODEL_CONFIG_ID = "model";
 const THINKING_CONFIG_ID = "thinking";
+const PROFILE_CONFIG_ID = "profile";
+const DEFAULT_PROFILE_ID = "default";
 const THINKING_OFF = "off";
 const SESSION_PAGE_SIZE = 50;
 /**
@@ -562,6 +567,9 @@ export class AcpAgent implements Agent {
 				break;
 			case THINKING_CONFIG_ID:
 				this.#setThinkingLevelById(record.session, params.value);
+				break;
+			case PROFILE_CONFIG_ID:
+				await this.#applyProfileById(record.session, params.value);
 				break;
 			default:
 				throw new Error(`Unknown ACP config option: ${params.configId}`);
@@ -1367,8 +1375,20 @@ export class AcpAgent implements Agent {
 				options: models.map(model => ({
 					value: this.#toModelId(model),
 					name: model.name,
-					description: `${model.provider}/${model.id}`,
+					description: this.#toModelDescription(model, session),
 				})),
+			});
+		}
+
+		const profileOptions = this.#buildProfileOptions(session);
+		if (profileOptions.length > 1) {
+			configOptions.push({
+				id: PROFILE_CONFIG_ID,
+				name: "Profile",
+				category: "profile",
+				type: "select",
+				currentValue: this.#getCurrentProfileId(session),
+				options: profileOptions,
 			});
 		}
 
@@ -1386,25 +1406,39 @@ export class AcpAgent implements Agent {
 	}
 
 	#buildModelState(session: AgentSession): SessionModelState | undefined {
-		const models = session.getAvailableModels();
-		if (models.length === 0) {
-			return undefined;
-		}
-
-		const availableModels = models.map(model => ({
-			modelId: this.#toModelId(model),
-			name: model.name,
-			description: `${model.provider}/${model.id}`,
-		}));
-		const currentModelId = session.model ? this.#toModelId(session.model) : availableModels[0]?.modelId;
-		if (!currentModelId) {
-			return undefined;
-		}
-
+		// Prefer full unfiltered list so Zed's initial picker shows all models;
+		// the profile-filtered subset lives in configOptions[model].options which
+		// Zed re-reads on every config_option_update. Fall back to getAvailableModels()
+		// when the registry stub (tests) doesn't implement getAvailable().
+		const registry = session.modelRegistry as { getAvailable?: () => Model[] } | undefined | null;
+		const registryGetAvailable = registry != null ? registry.getAvailable : undefined;
+		const all =
+			typeof registryGetAvailable === "function"
+				? registryGetAvailable.call(session.modelRegistry)
+				: session.getAvailableModels();
+		if (all.length === 0) return undefined;
+		const currentModelId = session.model
+			? this.#toModelId(session.model)
+			: all[0]
+				? this.#toModelId(all[0])
+				: undefined;
+		if (!currentModelId) return undefined;
 		return {
-			availableModels,
+			availableModels: all.map(model => ({
+				modelId: this.#toModelId(model),
+				name: model.name,
+				description: this.#toModelDescription(model, session),
+			})),
 			currentModelId,
 		};
+	}
+
+	#toModelDescription(model: Model, session: AgentSession): string {
+		const registry = session.modelRegistry as { isUsingOAuth?: (m: Model) => boolean } | undefined | null;
+		const isOAuth =
+			registry != null && typeof registry.isUsingOAuth === "function" ? registry.isUsingOAuth(model) : false;
+		const authTag = isOAuth ? "oauth" : "api-key";
+		return `${model.provider}/${model.id} · ${authTag}`;
 	}
 
 	#buildThinkingOptions(session: AgentSession): Array<{ value: string; name: string; description?: string }> {
@@ -1427,6 +1461,105 @@ export class AcpAgent implements Agent {
 
 	#toThinkingConfigValue(value: string | undefined): string {
 		return value && value !== "inherit" ? value : THINKING_OFF;
+	}
+
+	#readRawConfig(): Record<string, unknown> {
+		const configPath = path.join(os.homedir(), ".omp", "agent", "config.yml");
+		try {
+			const raw = syncFs.readFileSync(configPath, "utf8");
+			const parsed = YAML.parse(raw);
+			return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+				? (parsed as Record<string, unknown>)
+				: {};
+		} catch {
+			return {};
+		}
+	}
+
+	#getRawProfile(profileId: string): Record<string, unknown> | undefined {
+		if (profileId === DEFAULT_PROFILE_ID) return undefined;
+		const config = this.#readRawConfig();
+		const profiles = config.modelProfiles;
+		if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) return undefined;
+		const profile = (profiles as Record<string, unknown>)[profileId];
+		return profile && typeof profile === "object" && !Array.isArray(profile)
+			? (profile as Record<string, unknown>)
+			: undefined;
+	}
+
+	#asStringArray(value: unknown): string[] | undefined {
+		return Array.isArray(value) && value.every(item => typeof item === "string") ? value : undefined;
+	}
+
+	#asStringRecord(value: unknown): Record<string, string> | undefined {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+		const entries = Object.entries(value);
+		if (!entries.every(([, entryValue]) => typeof entryValue === "string")) return undefined;
+		return Object.fromEntries(entries) as Record<string, string>;
+	}
+
+	#buildProfileOptions(_session: AgentSession): Array<{ value: string; name: string; description?: string }> {
+		const config = this.#readRawConfig();
+		const profiles = (config.modelProfiles ?? {}) as Record<string, unknown>;
+		const names = Object.keys(profiles).sort();
+		if (names.length === 0) return [];
+		return [
+			{ value: DEFAULT_PROFILE_ID, name: "Default" },
+			...names.map(name => {
+				const profile = this.#getRawProfile(name);
+				const roles = this.#asStringRecord(profile?.modelRoles);
+				return {
+					value: name,
+					name,
+					description: roles?.default,
+				};
+			}),
+		];
+	}
+
+	#getCurrentProfileId(_session: AgentSession): string {
+		const config = this.#readRawConfig();
+		return (config.activeModelProfile as string | undefined) ?? DEFAULT_PROFILE_ID;
+	}
+
+	#applyProfileSettingsOverrides(session: AgentSession, profileId: string): void {
+		if (profileId === DEFAULT_PROFILE_ID) {
+			session.settings.clearOverride("enabledModels");
+			session.settings.clearOverride("modelProviderOrder");
+			session.settings.clearOverride("cycleOrder");
+			session.settings.clearOverride("modelRoles");
+			session.settings.clearOverride("defaultThinkingLevel");
+			return;
+		}
+
+		const profile = this.#getRawProfile(profileId);
+		if (!profile) {
+			throw new Error(`Unknown ACP profile: ${profileId}`);
+		}
+
+		const enabledModels = this.#asStringArray(profile.enabledModels);
+		if (enabledModels) session.settings.override("enabledModels", enabledModels);
+
+		const providerOrder = this.#asStringArray(profile.modelProviderOrder);
+		if (providerOrder) session.settings.override("modelProviderOrder", providerOrder);
+
+		const cycleOrder = this.#asStringArray(profile.cycleOrder);
+		if (cycleOrder) session.settings.override("cycleOrder", cycleOrder);
+
+		const modelRoles = this.#asStringRecord(profile.modelRoles);
+		if (modelRoles) session.settings.override("modelRoles", modelRoles);
+
+		if (typeof profile.defaultThinkingLevel === "string") {
+			const thinkingLevel =
+				profile.defaultThinkingLevel === AUTO_THINKING ? AUTO_THINKING : parseEffort(profile.defaultThinkingLevel);
+			if (thinkingLevel) session.settings.override("defaultThinkingLevel", thinkingLevel);
+		}
+	}
+
+	async #applyProfileById(session: AgentSession, profileId: string): Promise<void> {
+		this.#applyProfileSettingsOverrides(session, profileId);
+		await session.prompt(`/pm use ${profileId}`);
+		this.#applyProfileSettingsOverrides(session, this.#getCurrentProfileId(session));
 	}
 
 	async #setModelById(session: AgentSession, modelId: string): Promise<void> {

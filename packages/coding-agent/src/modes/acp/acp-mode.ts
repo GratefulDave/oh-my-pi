@@ -14,9 +14,9 @@ export function createAcpConnection(
 }
 
 export async function runAcpMode(createSession: AcpSessionFactory, initialSession?: AgentSession): Promise<never> {
-	const input = stream.Writable.toWeb(process.stdout);
-	const output = stream.Readable.toWeb(process.stdin);
-	const transport = ndJsonStream(input, output);
+	const toClient = stream.Writable.toWeb(process.stdout);
+	const fromClient = stream.Readable.toWeb(process.stdin);
+	const transport = ndJsonStream(toClient, fromClient);
 	const connection = createAcpConnection(transport, createSession, initialSession);
 	await connection.closed;
 	process.exit(0);
