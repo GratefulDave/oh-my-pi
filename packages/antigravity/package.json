@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/antigravity",
-	"version": "15.12.3-lex",
+	"version": "15.12.5-lex",
 	"description": "Self-contained Antigravity OAuth provider extension for OMP/Lex",
 	"homepage": "https://omp.sh",
 	"author": "Derek Rynd",
@@ -29,8 +29,8 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-ai": "^15.12.3-lex",
-		"@oh-my-pi/pi-utils": "^15.12.3-lex"
+		"@oh-my-pi/pi-ai": "^15.12.5-lex",
+		"@oh-my-pi/pi-utils": "^15.12.5-lex"
 	},
 	"devDependencies": {
 		"@types/bun": "^1.3.14"

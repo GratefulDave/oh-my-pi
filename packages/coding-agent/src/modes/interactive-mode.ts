@@ -385,8 +385,6 @@ export class InteractiveMode implements InteractiveModeContext {
 	get #defaultWorkingMessage(): string {
 		return `Working…${interruptHint()}`;
 	}
-	autoCompactionEscapeHandler?: () => void;
-	retryEscapeHandler?: () => void;
 	unsubscribe?: () => void;
 	onInputCallback?: (input: SubmittedUserInput) => void;
 	optimisticUserMessageSignature: string | undefined = undefined;
@@ -822,8 +820,24 @@ export class InteractiveMode implements InteractiveModeContext {
 			name: cmd.name,
 			description: cmd.description,
 		}));
+		// Surface discovered prompt templates in the picker. AgentSession.prompt() expands
+		// `expandSlashCommand` before `expandPromptTemplate`, so a file-based slash command
+		// of the same name shadows the template at runtime — mirror that here by skipping
+		// templates whose names already appear in builtins/hooks/custom/skill/file commands.
+		const reservedNames = new Set<string>([
+			...this.#pendingSlashCommands.map(cmd => cmd.name),
+			...fileSlashCommands.map(cmd => cmd.name),
+		]);
+		const promptTemplateCommands: SlashCommand[] = this.session.promptTemplates
+			.filter(template => !reservedNames.has(template.name))
+			.map(template => ({
+				name: template.name,
+				// `PromptTemplate.description` from `loadTemplatesFromDir` already includes the
+				// source suffix (e.g. "Review code (project)"), so pass it through verbatim.
+				description: template.description,
+			}));
 		const autocompleteProvider = this.#inputController.createAutocompleteProvider(
-			[...this.#pendingSlashCommands, ...fileSlashCommands],
+			[...this.#pendingSlashCommands, ...fileSlashCommands, ...promptTemplateCommands],
 			basePath,
 		);
 		this.editor.setAutocompleteProvider(autocompleteProvider);
@@ -2447,7 +2461,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	async #startGoalFromObjective(objective: string): Promise<void> {
 		await this.#enterGoalMode({ objective, silent: true });
 		this.#resetGoalContinuationSuppression();
-		if (this.onInputCallback) {
+		if (!this.session.isStreaming && this.onInputCallback) {
 			this.onInputCallback(this.startPendingSubmission({ text: objective }));
 		}
 	}
@@ -2462,7 +2476,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		if (this.session.isStreaming) {
 			await this.session.sendGoalModeContext({ deliverAs: "steer" });
 		}
-		if (this.onInputCallback) {
+		if (!this.session.isStreaming && this.onInputCallback) {
 			this.onInputCallback(this.startPendingSubmission({ text: objective }));
 		}
 	}
@@ -3048,10 +3062,6 @@ export class InteractiveMode implements InteractiveModeContext {
 		const message = this.#pendingWorkingMessage;
 		this.#pendingWorkingMessage = undefined;
 		this.setWorkingMessage(message);
-	}
-
-	notifyInterrupting(): void {
-		this.#eventController.notifyInterrupting();
 	}
 
 	showNewVersionNotification(newVersion: string): void {
