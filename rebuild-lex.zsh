@@ -157,8 +157,8 @@ bun --cwd=packages/pi-minimizer-gain run smoke:bundle
 # Antigravity extension must be loaded by the rebuilt binary from outside the repo
 # and expose its self-contained provider models for BOTH command names.
 print_step "Extension load smoke test"
-lex_models_out="$(cd /tmp && lex --list-models antigravity 2>&1 || true)"
-omp_models_out="$(cd /tmp && omp --list-models antigravity 2>&1 || true)"
+lex_models_out="$(cd /tmp && lex models antigravity 2>&1 || true)"
+omp_models_out="$(cd /tmp && omp models antigravity 2>&1 || true)"
 if [[ "$lex_models_out" == *"Failed to load extension"* ]]; then
 	printf 'error: lex still reports an extension load failure after rebuild:\n%s\n' "$lex_models_out" >&2
 	exit 1
