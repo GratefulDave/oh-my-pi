@@ -133,4 +133,18 @@ describe("HistoryStorage.search", () => {
 		const results = storage.search("go mit", 10);
 		expect(results.map(r => r.prompt)).toEqual(["go commit changes"]);
 	});
+
+	it("scopes recent prompts and search matches to cwd when provided", async () => {
+		const storage = await freshStorage();
+		const writes = [
+			storage.add("fix auth flow", "/repo/api"),
+			storage.add("fix marketing copy", "/repo/web"),
+			storage.add("review auth migration", "/repo/api"),
+		];
+		vi.advanceTimersByTime(100);
+		await Promise.all(writes);
+
+		expect(storage.getRecent(10, "/repo/api").map(r => r.prompt)).toEqual(["review auth migration", "fix auth flow"]);
+		expect(storage.search("fix", 10, "/repo/web").map(r => r.prompt)).toEqual(["fix marketing copy"]);
+	});
 });

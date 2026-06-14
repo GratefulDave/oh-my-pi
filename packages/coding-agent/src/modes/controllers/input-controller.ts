@@ -1123,6 +1123,7 @@ export class InputController {
 		return createPromptActionAutocompleteProvider({
 			commands,
 			basePath,
+			historyStorage: this.ctx.historyStorage,
 			keybindings: this.ctx.keybindings,
 			copyCurrentLine: () => this.handleCopyCurrentLine(),
 			copyPrompt: () => this.handleCopyPrompt(),

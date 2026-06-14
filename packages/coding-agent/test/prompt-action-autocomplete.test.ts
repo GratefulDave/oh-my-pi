@@ -146,4 +146,59 @@ describe("prompt action autocomplete", () => {
 
 		expect(provider.trySyncSlashCompletion("hello")).toBeNull();
 	});
+
+	it("offers cwd-scoped prompt history for ordinary typing", async () => {
+		let receivedCwd = "";
+		const provider = createPromptActionAutocompleteProvider({
+			commands: [],
+			basePath: "/tmp",
+			keybindings: AppKeybindingsManager.inMemory(),
+			historyStorage: {
+				search: (_query, _limit, cwd) => {
+					receivedCwd = cwd ?? "";
+					return [{ prompt: "fix cmux zsh completion", cwd: "/repo" }];
+				},
+			},
+			copyCurrentLine: () => {},
+			copyPrompt: () => {},
+			undo: () => {},
+			moveCursorToMessageEnd: () => {},
+			moveCursorToMessageStart: () => {},
+			moveCursorToLineStart: () => {},
+			moveCursorToLineEnd: () => {},
+		});
+
+		const suggestions = await provider.getSuggestions(["fix cm"], 0, 6);
+		expect(receivedCwd).toBeTruthy();
+		expect(suggestions?.prefix).toBe("fix cm");
+		expect(suggestions?.items[0]?.label).toBe("fix cmux zsh completion");
+		expect(suggestions?.items[0]?.hint).toBe("ux zsh completion");
+	});
+
+	it("applies prompt-history suggestions as the full prompt", async () => {
+		const provider = createPromptActionAutocompleteProvider({
+			commands: [],
+			basePath: "/tmp",
+			keybindings: AppKeybindingsManager.inMemory(),
+			historyStorage: {
+				search: () => [{ prompt: "first line\nsecond line" }],
+			},
+			copyCurrentLine: () => {},
+			copyPrompt: () => {},
+			undo: () => {},
+			moveCursorToMessageEnd: () => {},
+			moveCursorToMessageStart: () => {},
+			moveCursorToLineStart: () => {},
+			moveCursorToLineEnd: () => {},
+		});
+
+		const suggestions = await provider.getSuggestions(["fir"], 0, 3);
+		const item = suggestions?.items[0];
+		if (!item || !suggestions) throw new Error("expected history suggestion");
+
+		const result = provider.applyCompletion(["fir"], 0, 3, item, suggestions.prefix);
+		expect(result.lines).toEqual(["first line", "second line"]);
+		expect(result.cursorLine).toBe(1);
+		expect(result.cursorCol).toBe("second line".length);
+	});
 });

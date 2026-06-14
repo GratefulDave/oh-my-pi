@@ -22,7 +22,6 @@
 //! - Hook installation is idempotent across repeated module loads.
 
 use std::{
-	alloc::Layout,
 	backtrace::Backtrace,
 	ffi::OsStr,
 	fmt::Write as _,
@@ -30,10 +29,7 @@ use std::{
 	io::Write as _,
 	path::{Path, PathBuf},
 	process,
-	sync::{
-		Once,
-		atomic::{AtomicBool, Ordering},
-	},
+	sync::Once,
 	thread,
 	time::{SystemTime, UNIX_EPOCH},
 };
@@ -47,7 +43,6 @@ const DEFAULT_CONFIG_DIR: &str = ".omp";
 const APP_NAME: &str = "omp";
 
 static INSTALL: Once = Once::new();
-static ALLOC_HOOK_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// Install the panic and allocation-error hooks. Idempotent.
 pub fn install() {
@@ -59,33 +54,18 @@ pub fn install() {
 			prev_panic(info);
 		}));
 
-		std::alloc::set_alloc_error_hook(|layout| {
-			// Print the canonical line before doing anything allocation-prone.
-			// If this is genuine process-wide OOM, report formatting/path work may
-			// recursively enter this hook; the secondary entry writes the same
-			// stack-only fallback and aborts immediately.
-			write_alloc_failure_line(std::io::stderr(), layout.size());
-			if ALLOC_HOOK_ACTIVE.swap(true, Ordering::AcqRel) {
-				process::abort();
-			}
-			let report = format_alloc_report(layout);
-			persist(&report, CrashKind::Alloc);
-			process::abort();
-		});
 	});
 }
 
 #[derive(Clone, Copy)]
 enum CrashKind {
 	Panic,
-	Alloc,
 }
 
 impl CrashKind {
 	const fn as_str(self) -> &'static str {
 		match self {
 			Self::Panic => "panic",
-			Self::Alloc => "alloc",
 		}
 	}
 }
@@ -103,20 +83,6 @@ fn format_panic_report(info: &std::panic::PanicHookInfo<'_>) -> String {
 	out
 }
 
-fn format_alloc_report(layout: Layout) -> String {
-	// Capturing a backtrace allocates. If the global allocator is in a state
-	// where small allocations keep failing this will recurse into the hook —
-	// `Backtrace::force_capture` swallows the secondary failure internally and
-	// returns an empty backtrace, which is still strictly more useful than the
-	// nothing the default handler prints.
-	let bt = Backtrace::force_capture();
-	let mut out = report_header(CrashKind::Alloc);
-	let _ = writeln!(out, "size:      {} bytes", layout.size());
-	let _ = writeln!(out, "alignment: {} bytes", layout.align());
-	let _ = writeln!(out, "backtrace:\n{bt}");
-	out
-}
-
 fn report_header(kind: CrashKind) -> String {
 	let thread_name = thread::current().name().unwrap_or("<unnamed>").to_owned();
 	let now_ms = unix_millis();
@@ -126,24 +92,6 @@ fn report_header(kind: CrashKind) -> String {
 		kind = kind.as_str(),
 		pid = process::id(),
 	)
-}
-fn write_alloc_failure_line(mut out: impl std::io::Write, size: usize) {
-	let _ = out.write_all(b"memory allocation of ");
-	let mut digits = [0u8; usize::MAX.ilog10() as usize + 1];
-	let mut pos = digits.len();
-	let mut value = size;
-	if value == 0 {
-		pos -= 1;
-		digits[pos] = b'0';
-	} else {
-		while value > 0 {
-			pos -= 1;
-			digits[pos] = b'0' + (value % 10) as u8;
-			value /= 10;
-		}
-	}
-	let _ = out.write_all(&digits[pos..]);
-	let _ = out.write_all(b" bytes failed\n");
 }
 
 fn panic_payload(payload: &(dyn std::any::Any + Send)) -> String {

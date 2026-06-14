@@ -5,6 +5,7 @@ import {
 	getKeybindings,
 	type SlashCommand,
 } from "@oh-my-pi/pi-tui";
+import { getProjectDir } from "@oh-my-pi/pi-utils";
 import { formatKeyHints, type KeybindingsManager } from "../config/keybindings";
 import { isSettingsInitialized, settings } from "../config/settings";
 import { applyEmojiCompletion, getEmojiSuggestions, isEmojiPrefix, tryEmojiInlineReplace } from "./emoji-autocomplete";
@@ -26,11 +27,24 @@ interface PromptActionAutocompleteItem extends AutocompleteItem {
 	actionId: string;
 	execute: (prefix: string) => void;
 }
+interface PromptHistoryEntry {
+	prompt: string;
+	cwd?: string;
+}
+
+interface PromptHistoryStorage {
+	search(query: string, limit: number, cwd?: string): PromptHistoryEntry[];
+}
+
+interface PromptHistoryAutocompleteItem extends AutocompleteItem {
+	historyPrompt: string;
+}
 
 interface PromptActionAutocompleteOptions {
 	commands: SlashCommand[];
 	basePath: string;
 	keybindings: KeybindingsManager;
+	historyStorage?: PromptHistoryStorage;
 	copyCurrentLine: () => void;
 	copyPrompt: () => void;
 	undo: (prefix: string) => void;
@@ -80,6 +94,43 @@ function fuzzyScore(query: string, target: string): number {
 function isPromptActionItem(item: AutocompleteItem): item is PromptActionAutocompleteItem {
 	return "actionId" in item && "execute" in item && typeof item.execute === "function";
 }
+function isPromptHistoryItem(item: AutocompleteItem): item is PromptHistoryAutocompleteItem {
+	return "historyPrompt" in item && typeof (item as PromptHistoryAutocompleteItem).historyPrompt === "string";
+}
+
+function promptHistoryQuery(lines: string[], cursorLine: number, cursorCol: number): string | null {
+	if (cursorLine !== lines.length - 1) return null;
+	const currentLine = lines[cursorLine] || "";
+	if (cursorCol !== currentLine.length) return null;
+	const text = lines.join("\n").trimStart();
+	const query = text.trim();
+	if (query.length < 2) return null;
+	if (query.startsWith("/") || query.startsWith("#") || query.startsWith("@")) return null;
+	return query;
+}
+
+function promptHistoryItems(entries: PromptHistoryEntry[], query: string): AutocompleteItem[] {
+	const seen = new Set<string>();
+	const lowerQuery = query.toLowerCase();
+	const items: AutocompleteItem[] = [];
+	for (const entry of entries) {
+		const prompt = entry.prompt.trim();
+		if (!prompt || prompt === query || seen.has(prompt)) continue;
+		seen.add(prompt);
+		const lowerPrompt = prompt.toLowerCase();
+		if (!lowerPrompt.includes(lowerQuery) && !fuzzyMatch(lowerQuery, lowerPrompt)) continue;
+		const hint = lowerPrompt.startsWith(lowerQuery) ? prompt.slice(query.length) : undefined;
+		const item: PromptHistoryAutocompleteItem = {
+			value: prompt,
+			label: prompt.split("\n", 1)[0] || prompt,
+			description: entry.cwd ? `history · ${entry.cwd}` : "history",
+			hint,
+			historyPrompt: prompt,
+		};
+		items.push(item);
+	}
+	return items;
+}
 
 function getPromptActionPrefix(textBeforeCursor: string): string | null {
 	const hashIndex = textBeforeCursor.lastIndexOf("#");
@@ -96,10 +147,17 @@ function getPromptActionPrefix(textBeforeCursor: string): string | null {
 export class PromptActionAutocompleteProvider implements AutocompleteProvider {
 	#baseProvider: CombinedAutocompleteProvider;
 	#actions: PromptActionDefinition[];
+	#historyStorage?: PromptHistoryStorage;
 
-	constructor(commands: SlashCommand[], basePath: string, actions: PromptActionDefinition[]) {
+	constructor(
+		commands: SlashCommand[],
+		basePath: string,
+		actions: PromptActionDefinition[],
+		historyStorage?: PromptHistoryStorage,
+	) {
 		this.#baseProvider = new CombinedAutocompleteProvider(commands, basePath);
 		this.#actions = actions;
+		this.#historyStorage = historyStorage;
 	}
 
 	async getSuggestions(
@@ -141,7 +199,13 @@ export class PromptActionAutocompleteProvider implements AutocompleteProvider {
 			if (emojiSuggestions) return emojiSuggestions;
 		}
 
-		return this.#baseProvider.getSuggestions(lines, cursorLine, cursorCol);
+		const baseSuggestions = await this.#baseProvider.getSuggestions(lines, cursorLine, cursorCol);
+		if (baseSuggestions) return baseSuggestions;
+
+		const query = promptHistoryQuery(lines, cursorLine, cursorCol);
+		if (!query || !this.#historyStorage) return null;
+		const items = promptHistoryItems(this.#historyStorage.search(query, 8, getProjectDir()), query);
+		return items.length > 0 ? { items, prefix: query } : null;
 	}
 
 	applyCompletion(
@@ -156,6 +220,16 @@ export class PromptActionAutocompleteProvider implements AutocompleteProvider {
 		cursorCol: number;
 		onApplied?: () => void;
 	} {
+		if (isPromptHistoryItem(item)) {
+			const newLines = item.historyPrompt.split("\n");
+			const lastLine = newLines[newLines.length - 1] ?? "";
+			return {
+				lines: newLines,
+				cursorLine: newLines.length - 1,
+				cursorCol: lastLine.length,
+			};
+		}
+
 		if (prefix.startsWith("#") && isPromptActionItem(item)) {
 			if (item.actionId === "undo") {
 				return {
@@ -256,5 +330,5 @@ export function createPromptActionAutocompleteProvider(
 		},
 	];
 
-	return new PromptActionAutocompleteProvider(options.commands, options.basePath, actions);
+	return new PromptActionAutocompleteProvider(options.commands, options.basePath, actions, options.historyStorage);
 }

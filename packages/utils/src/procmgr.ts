@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { Process, ProcessStatus } from "@oh-my-pi/pi-natives";
 import type { Subprocess } from "bun";
@@ -57,9 +58,52 @@ function getShellPrefix(): string | undefined {
 	return $env.PI_SHELL_PREFIX || $env.CLAUDE_CODE_SHELL_PREFIX;
 }
 
-/**
- * Build full shell config from a shell path.
- */
+/** Detect the login shell when GUI apps were launched without $SHELL. */
+function isSupportedUnixShell(shell: string | undefined): shell is string {
+	return Boolean(shell && (shell.includes("bash") || shell.includes("zsh")));
+}
+function cleanShell(shell: string | null | undefined): string | undefined {
+	const trimmed = shell?.trim();
+	return trimmed ? trimmed : undefined;
+}
+
+function getMacLoginShell(username: string): string | undefined {
+	if (process.platform !== "darwin") return undefined;
+	try {
+		const proc = Bun.spawnSync(["dscl", ".", "-read", `/Users/${username}`, "UserShell"], {
+			stdout: "pipe",
+			stderr: "ignore",
+		});
+		if (proc.exitCode !== 0) return undefined;
+		const text = new TextDecoder().decode(proc.stdout);
+		return cleanShell(text.match(/^UserShell:\s*(.+)$/m)?.[1]);
+	} catch {
+		return undefined;
+	}
+}
+
+function getPasswdLoginShell(username: string): string | undefined {
+	try {
+		const passwd = fs.readFileSync("/etc/passwd", "utf8");
+		for (const line of passwd.split("\n")) {
+			const fields = line.split(":");
+			if (fields[0] === username) return cleanShell(fields[6]);
+		}
+	} catch {
+		return undefined;
+	}
+	return undefined;
+}
+
+function getLoginShell(): string | undefined {
+	try {
+		const info = os.userInfo();
+		return cleanShell(info.shell) ?? getMacLoginShell(info.username) ?? getPasswdLoginShell(info.username);
+	} catch {
+		return undefined;
+	}
+}
+
 function buildConfig(shell: string): ShellConfig {
 	return {
 		shell,
@@ -98,7 +142,7 @@ export function resolveBasicShell(): string | undefined {
  * Resolution order:
  * 1. User-specified shellPath in settings.json
  * 2. On Windows: Git Bash in known locations, then bash on PATH
- * 3. On Unix: $SHELL if bash/zsh, then fallback paths
+ * 3. On Unix: $SHELL if bash/zsh, then OS login shell if bash/zsh
  * 4. Fallback: sh
  */
 export function getShellConfig(customShellPath?: string): ShellConfig {
@@ -152,12 +196,13 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 		);
 	}
 
-	// Unix: prefer user's shell from $SHELL if it's bash/zsh and executable
-	const userShell = Bun.env.SHELL;
-	const isValidShell = userShell && (userShell.includes("bash") || userShell.includes("zsh"));
-	if (isValidShell && isExecutable(userShell)) {
-		cachedShellConfig = buildConfig(userShell);
-		return cachedShellConfig;
+	// Unix: prefer $SHELL, but GUI apps launched by launchd may omit it. Fall
+	// back to the account login shell before dropping to a generic bash/sh.
+	for (const shell of [Bun.env.SHELL, getLoginShell()]) {
+		if (isSupportedUnixShell(shell) && isExecutable(shell)) {
+			cachedShellConfig = buildConfig(shell);
+			return cachedShellConfig;
+		}
 	}
 
 	// 4. Fallback: use basic shell

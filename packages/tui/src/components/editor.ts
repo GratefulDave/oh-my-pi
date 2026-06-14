@@ -361,7 +361,7 @@ interface HistoryEntry {
 
 interface HistoryStorage {
 	add(prompt: string, cwd?: string): Promise<void>;
-	getRecent(limit: number): HistoryEntry[];
+	getRecent(limit: number, cwd?: string): HistoryEntry[];
 }
 
 type HistoryCursorAnchor = "start" | "end";
@@ -532,7 +532,7 @@ export class Editor implements Component, Focusable {
 
 	setHistoryStorage(storage: HistoryStorage): void {
 		this.#historyStorage = storage;
-		const recent = storage.getRecent(100);
+		const recent = storage.getRecent(100, getProjectDir());
 		this.#history = recent.map(entry => entry.prompt);
 		this.#historyIndex = -1;
 	}
@@ -1673,9 +1673,11 @@ export class Editor implements Component, Focusable {
 				// Check if we're in a :emoji shortcode context
 				else if (textBeforeCursor.match(/(?:^|[\s([{>]):[a-zA-Z0-9_+-]*$/)) {
 					this.#tryTriggerAutocomplete();
+				} else if (this.#textTriggersUrlAutocomplete(textBeforeCursor)) {
+					this.#tryTriggerAutocomplete();
 				}
-				// Check if we're typing an internal URL scheme (e.g. local://, skill://)
-				else if (this.#textTriggersUrlAutocomplete(textBeforeCursor)) {
+				// General prompt-history completion after a short typed prefix.
+				else if (textBeforeCursor.trim().length >= 2) {
 					this.#tryTriggerAutocomplete();
 				}
 			}
