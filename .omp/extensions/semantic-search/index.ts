@@ -62,7 +62,7 @@ export default function semanticSearchExtension(pi: {
 	setLabel: (label: string) => void;
 	logger: { error(message: string, context?: Record<string, unknown>): void };
 }): void {
-	const { z } = pi.zod;
+	const z = pi.zod;
 	const service = new SemanticSearchService();
 	pi.setLabel("Local Semantic Search");
 

@@ -540,7 +540,7 @@ export async function discoverProxyModels(
 				// we successfully recover the upstream model identity.
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 				contextWindow,
-				maxTokens: resolveOpenAICompatibleMaxTokens(item, api, contextWindow, reference?.maxTokens),
+				maxTokens: resolveOpenAICompatibleMaxTokens(item, api, contextWindow, reference?.maxTokens ?? undefined),
 				headers,
 				// OpenAI-compat fields are no-ops on anthropic models; the
 				// Anthropic SDK ignores them. Provider-level disableStrictTools

@@ -51,7 +51,7 @@ describe("generateCompletion — bash", () => {
 	const out = generateCompletion("bash", spec);
 
 	it("registers the dispatcher and resolves alias arms to the canonical handler", () => {
-		expect(out).toContain("complete -F _omp omp");
+		expect(out).toContain("complete -o bashdefault -o default -F _omp omp");
 		expect(out).toContain("_omp_cmd_commit");
 		// worktree + its alias dispatch to the same function
 		expect(out).toContain("worktree|wt)");

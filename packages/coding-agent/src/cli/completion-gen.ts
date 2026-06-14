@@ -300,7 +300,7 @@ ${dispatch.join("\n")}
 		*) _omp_root ;;
 	esac
 }
-complete -F _omp ${bin}`);
+complete -o bashdefault -o default -F _omp ${bin}`);
 	parts.push("");
 	return `${parts.join("\n")}\n`;
 }
