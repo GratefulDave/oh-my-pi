@@ -91,7 +91,8 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 				if (action === "create") return await handleCreate(pi, ctx, tokens.slice(1));
 				if (action === "use") return await handleUse(pi, ctx, tokens[1]);
 				if (action === "delete") return await handleDelete(pi, ctx, tokens[1]);
-				notify(pi, "Usage: /pm [list|show|create|use|delete] [name]");
+				// Treat unknown token as a bare profile name → `/pm use <name>`
+				return await handleUse(pi, ctx, action);
 			} catch (err) {
 				notify(pi, `Error: ${err instanceof Error ? err.message : String(err)}`);
 			}
@@ -321,11 +322,16 @@ async function handleNoArg(pi: ExtensionAPI, ctx: ExtensionCommandContext): Prom
 function printList(pi: ExtensionAPI, ctx: ExtensionCommandContext): void {
 	const settings = readSettings(ctx);
 	const active = settings.activeModelProfile;
+	const isDefault = !active || active === DEFAULT_PROFILE_NAME;
+	const names = profileNames(settings);
+	const all = names.includes(DEFAULT_PROFILE_NAME)
+		? names
+		: [DEFAULT_PROFILE_NAME, ...names];
+
 	let out = "Model profiles:\n";
-	out += `  ${!active || active === DEFAULT_PROFILE_NAME ? "*" : " "} ${DEFAULT_PROFILE_NAME}\n`;
-	for (const name of profileNames(settings)) {
-		if (name === DEFAULT_PROFILE_NAME) continue;
-		out += `  ${active === name ? "*" : " "} ${name}\n`;
+	for (const name of all) {
+		const marker = (name === DEFAULT_PROFILE_NAME ? isDefault : active === name) ? "*" : " ";
+		out += `  ${marker} ${name}\n`;
 	}
 	notify(pi, out);
 }

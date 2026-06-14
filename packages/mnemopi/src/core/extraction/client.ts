@@ -3,12 +3,12 @@ import { type ApiKey, type FetchImpl, withAuth } from "@oh-my-pi/pi-ai";
 import { getDiagnostics } from "./diagnostics";
 import { EXTRACTION_SYSTEM_PROMPT, EXTRACTION_USER_TEMPLATE } from "./prompts";
 
-export const DEFAULT_EXTRACTION_MODEL = process.env.MNEMOPI_EXTRACTION_MODEL || "google/gemini-2.5-flash";
+export const DEFAULT_EXTRACTION_MODEL = process.env.MNEMOPI_EXTRACTION_MODEL || "google/gemini-3.5-flash";
 export const OPENROUTER_BASE_URL = (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(
 	/\/+$/,
 	"",
 );
-export const FALLBACK_MODELS = ["google/gemini-flash-latest"] as const;
+export const FALLBACK_MODELS = ["google/gemini-3-flash"] as const;
 const RATE_LIMIT_BACKOFF_BASE_MS = 1_000;
 const RATE_LIMIT_BACKOFF_MAX_MS = 30_000;
 const FALLBACK_MODEL_DELAY_MS = 1_000;

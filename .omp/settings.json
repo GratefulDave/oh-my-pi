@@ -14,7 +14,7 @@
     "google-antigravity",
     "opencode-antigravity"
   ],
-  "activeModelProfile": "omlx",
+  "activeModelProfile": "antigravity",
   "cycleOrder": [
     "smol",
     "default",
@@ -33,7 +33,7 @@
     "perplexity/*",
     "omlx/*",
     "nvidia/*",
-    "lmstudio/*",
+    "lm-studio/*",
     "ollama/*",
     "llama.cpp/*"
   ],
@@ -48,7 +48,7 @@
     "perplexity",
     "nvidia",
     "omlx",
-    "lmstudio",
+    "lm-studio",
     "ollama",
     "llama.cpp"
   ],
@@ -114,14 +114,14 @@
     },
     "omlx": {
       "modelRoles": {
-        "commit": "antigravity/gemini-3.5-flash-extra-low:low",
-        "default": "antigravity/claude-sonnet-4-6:medium",
-        "designer": "antigravity/gemini-pro-agent:high",
-        "plan": "antigravity/claude-opus-4-6-thinking:high",
-        "slow": "antigravity/claude-opus-4-6-thinking:high",
-        "smol": "antigravity/gemini-3.5-flash-extra-low:low",
-        "task": "antigravity/claude-sonnet-4-6:medium",
-        "vision": "antigravity/gemini-3.5-flash-low"
+        "default": "omlx/Qwen3-Coder-Next-MLX-4bit",
+        "task": "omlx/Qwen3-Coder-Next-MLX-4bit",
+        "slow": "omlx/Qwen3-Coder-Next-MLX-4bit",
+        "plan": "omlx/Qwen3-Coder-Next-MLX-4bit",
+        "smol": "omlx/Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-mlx-8bit",
+        "commit": "omlx/Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-mlx-8bit",
+        "designer": "omlx/Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-mlx-8bit",
+        "vision": "omlx/Qwen2.5-VL-72B-Instruct-4bit"
       },
       "defaultThinkingLevel": "medium",
       "enabledModels": [

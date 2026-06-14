@@ -1,6 +1,6 @@
 const PRICING: Readonly<Record<string, number>> = {
 	"claude-sonnet-4": 3.0,
-	"claude-haiku": 0.8,
+	"deepseek-v4-flash": 0.14,
 	"gpt-4o": 2.5,
 	"gpt-4o-mini": 0.15,
 	default: 3.0,
