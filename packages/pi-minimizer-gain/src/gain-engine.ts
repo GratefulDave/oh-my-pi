@@ -134,6 +134,12 @@ export interface MinimizerGainJsonlExportOptions {
 	includeDailyTotals?: boolean;
 	includeCommandTotals?: boolean;
 }
+function timestampAtOrAfterIso(timestamp: string, cutoff: string | undefined): boolean {
+	if (cutoff === undefined) return false;
+	const time = Date.parse(timestamp);
+	const cutoffTime = Date.parse(cutoff);
+	return Number.isFinite(time) && Number.isFinite(cutoffTime) && time >= cutoffTime;
+}
 
 export async function loadMinimizerGainContext(input: {
 	cwd: string;
@@ -141,6 +147,7 @@ export async function loadMinimizerGainContext(input: {
 	days?: number;
 	agentDir?: string;
 	activeSessionFile?: string;
+	activeSessionStartedAt?: string;
 	activeSessionCommands?: Iterable<ActiveSessionCommand>;
 	ignoredMissedCommands?: Iterable<string>;
 }): Promise<MinimizerGainContext> {
@@ -153,7 +160,9 @@ export async function loadMinimizerGainContext(input: {
 	}
 	let records = await readMinimizerGain({ sinceDays: days, scope, agentDir: input.agentDir });
 	if (cwd !== undefined) {
-		if (input.activeSessionCommands !== undefined) {
+		if (input.activeSessionStartedAt !== undefined) {
+			records = filterActiveSessionRecordsByStart(records, input.activeSessionStartedAt);
+		} else if (input.activeSessionCommands !== undefined) {
 			records = await filterActiveSessionRecordsByCommands(records, input.activeSessionCommands);
 		} else if (input.activeSessionFile !== undefined) {
 			records = await filterActiveSessionRecords(records, input.activeSessionFile, cwd);
@@ -460,6 +469,7 @@ export interface BuildMinimizerGainDiagnosticInput {
 	recordsFilePath?: string;
 	agentDir?: string;
 	activeSessionFile?: string;
+	activeSessionStartedAt?: string;
 	activeSessionCommands?: Iterable<ActiveSessionCommand>;
 }
 
@@ -522,12 +532,14 @@ export async function buildMinimizerGainDiagnostic(
 	const currentSessionRecordCount =
 		scope === undefined
 			? 0
-			: input.activeSessionCommands !== undefined
-				? (await filterActiveSessionRecordsByCommands(scopedRecords, input.activeSessionCommands)).length
-				: input.activeSessionFile !== undefined
-					? (await filterActiveSessionRecords(scopedRecords, input.activeSessionFile, scopeCwd)).length
-					: allRecords.filter(r => matchesCwd(r, scope) && timestampAtOrAfter(r.timestamp, MODULE_STARTED_AT))
-							.length;
+			: input.activeSessionStartedAt !== undefined
+				? filterActiveSessionRecordsByStart(scopedRecords, input.activeSessionStartedAt).length
+				: input.activeSessionCommands !== undefined
+					? (await filterActiveSessionRecordsByCommands(scopedRecords, input.activeSessionCommands)).length
+					: input.activeSessionFile !== undefined
+						? (await filterActiveSessionRecords(scopedRecords, input.activeSessionFile, scopeCwd)).length
+						: allRecords.filter(r => matchesCwd(r, scope) && timestampAtOrAfter(r.timestamp, MODULE_STARTED_AT))
+								.length;
 
 	let savedCount = 0;
 	let missedCount = 0;
@@ -770,6 +782,13 @@ async function buildActiveSessionCommandCounts(commands: Iterable<ActiveSessionC
 		result.set(key, (result.get(key) ?? 0) + 1);
 	}
 	return result;
+}
+
+function filterActiveSessionRecordsByStart(
+	records: MinimizerGainRecord[],
+	activeSessionStartedAt: string,
+): MinimizerGainRecord[] {
+	return records.filter(record => timestampAtOrAfterIso(record.timestamp, activeSessionStartedAt));
 }
 
 function filterActiveSessionRecordsByCounts(

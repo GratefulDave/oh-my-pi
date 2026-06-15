@@ -202,6 +202,63 @@ describe("minimizer gain records", () => {
 		expect(context.summary.savedBytes).toBe(1500);
 		expect(diagnostic.currentSessionRecordCount).toBe(1);
 	});
+	test("active session scope survives plugin reload by session start timestamp", async () => {
+		const agentDir = path.join(tempDir, "agent");
+		const recordsPath = getMinimizerGainPath(agentDir);
+		fs.mkdirSync(agentDir, { recursive: true });
+		const sessionStartedAt = "2026-06-15T10:00:00.000Z";
+		const command = "bun check";
+		fs.writeFileSync(
+			recordsPath,
+			[
+				JSON.stringify({
+					schemaVersion: 2,
+					timestamp: "2026-06-15T09:59:59.000Z",
+					cwd,
+					sessionCwd: cwd,
+					command: "stale command",
+					filter: "stale",
+					inputBytes: 2000,
+					outputBytes: 500,
+					savedBytes: 1500,
+					exitCode: 0,
+					kind: "saved",
+				}),
+				JSON.stringify({
+					schemaVersion: 2,
+					timestamp: "2026-06-15T10:00:01.000Z",
+					cwd,
+					sessionCwd: cwd,
+					command,
+					filter: "bun",
+					inputBytes: 2000,
+					outputBytes: 500,
+					savedBytes: 1500,
+					exitCode: 0,
+					kind: "saved",
+				}),
+			].join("\n"),
+		);
+
+		const context = await loadMinimizerGainContext({
+			agentDir,
+			cwd,
+			all: false,
+			activeSessionStartedAt: sessionStartedAt,
+			activeSessionCommands: [],
+		});
+		const diagnostic = await buildMinimizerGainDiagnostic({
+			agentDir,
+			cwd,
+			activeSessionStartedAt: sessionStartedAt,
+			activeSessionCommands: [],
+		});
+
+		expect(context.records.map(record => record.command)).toEqual([command]);
+		expect(context.summary.savedBytes).toBe(1500);
+		expect(diagnostic.currentSessionRecordCount).toBe(1);
+	});
+
 	test("active session scope can use live session command entries", async () => {
 		const agentDir = path.join(tempDir, "agent");
 		const recordsPath = getMinimizerGainPath(agentDir);

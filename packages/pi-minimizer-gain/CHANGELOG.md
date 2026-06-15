@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Fixed Active scope staying empty after plugin reloads by matching live session bash calls and writing bash minimizer telemetry again.
+- Fixed Active scope staying empty after plugin reloads by filtering from the session start timestamp and writing bash minimizer telemetry again.
 
 ### Added
 

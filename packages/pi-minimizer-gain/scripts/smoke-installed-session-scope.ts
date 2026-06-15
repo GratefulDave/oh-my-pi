@@ -32,6 +32,7 @@ interface CommandContext {
 	cwd: string;
 	ui: Ui;
 	sessionManager: {
+		getHeader(): { timestamp?: string } | null;
 		getSessionFile(): string | undefined;
 	};
 }
@@ -93,8 +94,22 @@ async function main(): Promise<void> {
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		process.env.OMP_AGENT_DIR = agentDir;
 
+		const sessionStartedAt = "2026-06-15T10:00:00.000Z";
 		const recordsFile = path.join(agentDir, "minimizer-gain.jsonl");
-		const now = new Date().toISOString();
+		const now = "2026-06-15T10:00:01.000Z";
+		const staleScopedRecord = {
+			timestamp: "2026-06-15T09:59:59.000Z",
+			cwd: siblingCwd,
+			sessionCwd: rootCwd,
+			command: "smoke stale command",
+			filter: "smoke",
+			inputBytes: 1200,
+			outputBytes: 200,
+			savedBytes: 1000,
+			savedTokens: 250,
+			exitCode: 0,
+			kind: "saved",
+		};
 		const scopedSiblingRecord = {
 			timestamp: now,
 			cwd: siblingCwd,
@@ -121,13 +136,16 @@ async function main(): Promise<void> {
 			exitCode: 0,
 			kind: "saved",
 		};
-		await fs.writeFile(recordsFile, `${JSON.stringify(scopedSiblingRecord)}\n${JSON.stringify(outOfScopeRecord)}\n`);
+		await fs.writeFile(
+			recordsFile,
+			`${JSON.stringify(staleScopedRecord)}\n${JSON.stringify(scopedSiblingRecord)}\n${JSON.stringify(outOfScopeRecord)}\n`,
+		);
 		const sessionFile = path.join(agentDir, "sessions", "root", "active.jsonl");
 		await fs.mkdir(path.dirname(sessionFile), { recursive: true });
 		await fs.writeFile(
 			sessionFile,
 			[
-				JSON.stringify({ type: "session", cwd: rootCwd }),
+				JSON.stringify({ type: "session", cwd: rootCwd, timestamp: sessionStartedAt }),
 				JSON.stringify({
 					type: "message",
 					message: {
@@ -202,6 +220,9 @@ async function main(): Promise<void> {
 						},
 					];
 				},
+				getHeader() {
+					return { timestamp: sessionStartedAt };
+				},
 			},
 		});
 		if (!overlay) fail("gain command did not create an overlay");
@@ -209,18 +230,18 @@ async function main(): Promise<void> {
 		if (!activeRendered.includes("Token Savings (Active Session)")) {
 			fail(`active session scope was not the default /gain view:\n${activeRendered}`);
 		}
-		if (!activeRendered.includes("Total commands") || !activeRendered.includes("1")) {
-			fail(`active session scope did not include exactly the active transcript record:\n${activeRendered}`);
+		if (!activeRendered.includes("Total commands: 1")) {
+			fail(`active session scope did not include exactly the active timestamp-window record:\n${activeRendered}`);
 		}
 		overlay.act("tab");
 		overlay.act("tab");
 		const rendered = overlay.render(WIDTH).join("\n");
 
-		if (!rendered.includes("Records (file-wide): 2")) {
-			fail(`diagnostic did not read both smoke records:\n${rendered}`);
+		if (!rendered.includes("Records (file-wide): 3")) {
+			fail(`diagnostic did not read all smoke records:\n${rendered}`);
 		}
-		if (!rendered.includes("Records (in scope): 1")) {
-			fail(`diagnostic scoped to ${rootCwd} did not include exactly the sibling session record:\n${rendered}`);
+		if (!rendered.includes("Records (in scope): 2")) {
+			fail(`diagnostic scoped to ${rootCwd} did not include exactly the sibling session records:\n${rendered}`);
 		}
 		if (!rendered.includes(`Scope filter: ${rootCwd}`)) {
 			fail(`diagnostic did not scope to the session root:\n${rendered}`);
