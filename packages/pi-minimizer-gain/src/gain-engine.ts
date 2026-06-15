@@ -70,6 +70,7 @@ export interface MinimizerGainRecord {
 	timestamp: string;
 	cwd?: string;
 	sessionCwd?: string;
+	sessionId?: string;
 	command: string;
 	filter: string;
 	inputBytes: number;
@@ -147,6 +148,7 @@ export async function loadMinimizerGainContext(input: {
 	days?: number;
 	agentDir?: string;
 	activeSessionFile?: string;
+	activeSessionId?: string;
 	activeSessionStartedAt?: string;
 	activeSessionCommands?: Iterable<ActiveSessionCommand>;
 	ignoredMissedCommands?: Iterable<string>;
@@ -160,8 +162,8 @@ export async function loadMinimizerGainContext(input: {
 	}
 	let records = await readMinimizerGain({ sinceDays: days, scope, agentDir: input.agentDir });
 	if (cwd !== undefined) {
-		if (input.activeSessionStartedAt !== undefined) {
-			records = filterActiveSessionRecordsByStart(records, input.activeSessionStartedAt);
+		if (input.activeSessionId !== undefined || input.activeSessionStartedAt !== undefined) {
+			records = filterActiveSessionRecordsByIdentity(records, input.activeSessionId, input.activeSessionStartedAt);
 		} else if (input.activeSessionCommands !== undefined) {
 			records = await filterActiveSessionRecordsByCommands(records, input.activeSessionCommands);
 		} else if (input.activeSessionFile !== undefined) {
@@ -231,6 +233,7 @@ type ParsedRecordFields = {
 	timestamp: string | Invalid;
 	cwd: string | undefined | Invalid;
 	sessionCwd: string | undefined | Invalid;
+	sessionId: string | undefined | Invalid;
 	command: string | Invalid;
 	filter: string | Invalid;
 	inputBytes: number | Invalid;
@@ -246,6 +249,7 @@ type ValidRecordFields = {
 	timestamp: string;
 	cwd: string | undefined;
 	sessionCwd: string | undefined;
+	sessionId: string | undefined;
 	command: string;
 	filter: string;
 	inputBytes: number;
@@ -469,6 +473,7 @@ export interface BuildMinimizerGainDiagnosticInput {
 	recordsFilePath?: string;
 	agentDir?: string;
 	activeSessionFile?: string;
+	activeSessionId?: string;
 	activeSessionStartedAt?: string;
 	activeSessionCommands?: Iterable<ActiveSessionCommand>;
 }
@@ -532,8 +537,9 @@ export async function buildMinimizerGainDiagnostic(
 	const currentSessionRecordCount =
 		scope === undefined
 			? 0
-			: input.activeSessionStartedAt !== undefined
-				? filterActiveSessionRecordsByStart(scopedRecords, input.activeSessionStartedAt).length
+			: input.activeSessionId !== undefined || input.activeSessionStartedAt !== undefined
+				? filterActiveSessionRecordsByIdentity(scopedRecords, input.activeSessionId, input.activeSessionStartedAt)
+						.length
 				: input.activeSessionCommands !== undefined
 					? (await filterActiveSessionRecordsByCommands(scopedRecords, input.activeSessionCommands)).length
 					: input.activeSessionFile !== undefined
@@ -784,11 +790,16 @@ async function buildActiveSessionCommandCounts(commands: Iterable<ActiveSessionC
 	return result;
 }
 
-function filterActiveSessionRecordsByStart(
+function filterActiveSessionRecordsByIdentity(
 	records: MinimizerGainRecord[],
-	activeSessionStartedAt: string,
+	activeSessionId: string | undefined,
+	activeSessionStartedAt: string | undefined,
 ): MinimizerGainRecord[] {
-	return records.filter(record => timestampAtOrAfterIso(record.timestamp, activeSessionStartedAt));
+	return records.filter(record => {
+		if (activeSessionId !== undefined && record.sessionId === activeSessionId) return true;
+		if (record.sessionId !== undefined) return false;
+		return timestampAtOrAfterIso(record.timestamp, activeSessionStartedAt);
+	});
 }
 
 function filterActiveSessionRecordsByCounts(
@@ -1065,6 +1076,7 @@ function parseRecordFields(value: JsonObject): MinimizerGainRecord | null {
 		timestamp: requiredString(value.timestamp),
 		cwd: optionalString(value.cwd),
 		sessionCwd: optionalString(value.sessionCwd),
+		sessionId: optionalString(value.sessionId),
 		command: requiredString(value.command),
 		filter: requiredString(value.filter),
 		inputBytes: requiredNumber(value.inputBytes),
@@ -1079,12 +1091,13 @@ function parseRecordFields(value: JsonObject): MinimizerGainRecord | null {
 }
 
 function toMinimizerGainRecord(fields: ValidRecordFields): MinimizerGainRecord {
-	const { schemaVersion, cwd, sessionCwd, kind, sourcePaths, ...record } = fields;
+	const { schemaVersion, cwd, sessionCwd, sessionId, kind, sourcePaths, ...record } = fields;
 	return {
 		...(schemaVersion === undefined ? {} : { schemaVersion }),
 		...record,
 		...(cwd === undefined ? {} : { cwd }),
 		...(sessionCwd === undefined ? {} : { sessionCwd }),
+		...(sessionId === undefined ? {} : { sessionId }),
 		...(kind === undefined ? {} : { kind }),
 		...(sourcePaths === undefined ? {} : { sourcePaths }),
 	};

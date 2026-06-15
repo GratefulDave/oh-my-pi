@@ -32,7 +32,8 @@ interface CommandContext {
 	cwd: string;
 	ui: Ui;
 	sessionManager: {
-		getHeader(): { timestamp?: string } | null;
+		getHeader(): { id?: string; timestamp?: string } | null;
+		getEntries(): readonly unknown[];
 		getSessionFile(): string | undefined;
 	};
 }
@@ -95,6 +96,7 @@ async function main(): Promise<void> {
 		process.env.OMP_AGENT_DIR = agentDir;
 
 		const sessionStartedAt = "2026-06-15T10:00:00.000Z";
+		const sessionId = "smoke-session";
 		const recordsFile = path.join(agentDir, "minimizer-gain.jsonl");
 		const now = "2026-06-15T10:00:01.000Z";
 		const staleScopedRecord = {
@@ -114,6 +116,7 @@ async function main(): Promise<void> {
 			timestamp: now,
 			cwd: siblingCwd,
 			sessionCwd: rootCwd,
+			sessionId,
 			command: "smoke sibling command",
 			filter: "smoke",
 			inputBytes: 1200,
@@ -221,7 +224,7 @@ async function main(): Promise<void> {
 					];
 				},
 				getHeader() {
-					return { timestamp: sessionStartedAt };
+					return { id: sessionId, timestamp: sessionStartedAt };
 				},
 			},
 		});

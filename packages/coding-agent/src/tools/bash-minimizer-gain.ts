@@ -16,6 +16,7 @@ export interface AppendBashMinimizerGainRecordInput {
 	exitCode: number | null;
 	kind?: BashMinimizerGainKind;
 	agentDir?: string;
+	sessionId?: string;
 }
 
 const BYTES_PER_TOKEN_ESTIMATE = 4;
@@ -56,6 +57,7 @@ export async function appendBashMinimizerGainRecord(input: AppendBashMinimizerGa
 				timestamp: new Date().toISOString(),
 				cwd,
 				...(sessionCwd === undefined ? {} : { sessionCwd }),
+				...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
 				command: input.command,
 				filter: input.filter,
 				inputBytes: input.inputBytes,

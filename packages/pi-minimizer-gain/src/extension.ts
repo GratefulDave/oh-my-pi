@@ -16,8 +16,14 @@ type JsonObject = Record<string, unknown>;
 function asJsonObject(value: unknown): JsonObject | undefined {
 	return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : undefined;
 }
-function getActiveSessionStartedAt(header: { timestamp?: string } | null): string | undefined {
-	return typeof header?.timestamp === "string" ? header.timestamp : undefined;
+function getActiveSessionHeader(header: { id?: string; timestamp?: string } | null): {
+	id: string | undefined;
+	startedAt: string | undefined;
+} {
+	return {
+		id: typeof header?.id === "string" ? header.id : undefined,
+		startedAt: typeof header?.timestamp === "string" ? header.timestamp : undefined,
+	};
 }
 
 function extractActiveSessionBashCommands(entries: readonly unknown[], sessionCwd: string): ActiveSessionCommand[] {
@@ -67,6 +73,7 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 			const buildDiagnosticForCwd = async (
 				scopeCwd: string | undefined,
 				sessionFile: string | undefined,
+				sessionId: string | undefined,
 				sessionStartedAt: string | undefined,
 				sessionCommands: ActiveSessionCommand[] | undefined,
 			): Promise<DualContext["diagnostic"]> => {
@@ -75,8 +82,10 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 						cwd: scopeCwd,
 						days: parsed.days,
 						activeSessionFile: sessionFile,
+						activeSessionId: sessionId,
 						activeSessionStartedAt: sessionStartedAt,
-						activeSessionCommands: sessionStartedAt === undefined ? sessionCommands : undefined,
+						activeSessionCommands:
+							sessionId === undefined && sessionStartedAt === undefined ? sessionCommands : undefined,
 					});
 				} catch (err) {
 					return { buildError: err instanceof Error ? err.message : String(err) };
@@ -84,7 +93,7 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 			};
 
 			const loadDualContext = async (): Promise<DualContext> => {
-				const activeSessionStartedAt = getActiveSessionStartedAt(ctx.sessionManager.getHeader());
+				const activeSession = getActiveSessionHeader(ctx.sessionManager.getHeader());
 				const activeSessionCommands = extractActiveSessionBashCommands(ctx.sessionManager.getEntries(), cwd);
 				return {
 					active: await loadMinimizerGainContext({
@@ -92,16 +101,23 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 						all: false,
 						days: parsed.days,
 						activeSessionFile,
-						activeSessionStartedAt,
-						activeSessionCommands: activeSessionStartedAt === undefined ? activeSessionCommands : undefined,
+						activeSessionId: activeSession.id,
+						activeSessionStartedAt: activeSession.startedAt,
+						activeSessionCommands:
+							activeSession.id === undefined && activeSession.startedAt === undefined
+								? activeSessionCommands
+								: undefined,
 					}),
 					current: await loadMinimizerGainContext({ cwd, all: false, days: parsed.days }),
 					all: await loadMinimizerGainContext({ cwd, all: true, days: parsed.days }),
 					diagnostic: await buildDiagnosticForCwd(
 						initialScope === 2 ? undefined : cwd,
 						initialScope === 0 ? activeSessionFile : undefined,
-						initialScope === 0 ? activeSessionStartedAt : undefined,
-						initialScope === 0 && activeSessionStartedAt === undefined ? activeSessionCommands : undefined,
+						initialScope === 0 ? activeSession.id : undefined,
+						initialScope === 0 ? activeSession.startedAt : undefined,
+						initialScope === 0 && activeSession.id === undefined && activeSession.startedAt === undefined
+							? activeSessionCommands
+							: undefined,
 					),
 				};
 			};

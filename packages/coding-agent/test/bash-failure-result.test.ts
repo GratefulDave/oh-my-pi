@@ -11,6 +11,7 @@ function makeSession(): ToolSession {
 		hasUI: false,
 		skills: [],
 		getSessionFile: () => null,
+		getSessionId: () => "session-test-id",
 		settings: {
 			get(key: string) {
 				if (key === "async.enabled") return false;
@@ -88,6 +89,7 @@ describe("BashTool non-zero exit", () => {
 			command: "printf hi",
 			cwd: realTmp,
 			sessionCwd: realTmp,
+			sessionId: "session-test-id",
 			filter: "printf",
 			inputBytes: 2,
 			outputBytes: 2,
