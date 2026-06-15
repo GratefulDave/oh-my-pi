@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the unconfigured `pi/smol` fallback chain to try `opencode-antigravity/gemini-3.5-flash:low`, then `deepseek-v4-flash`, and never select Claude Haiku as the final fallback.
+
 ## [15.13.2] - 2026-06-15
 
 ### Added

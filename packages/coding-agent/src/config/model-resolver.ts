@@ -1510,6 +1510,12 @@ export async function restoreModelFromSession(
 	return { model: undefined, fallbackMessage: undefined };
 }
 
+function isClaudeHaikuModel(model: Model<Api>): boolean {
+	return (
+		/haiku/i.test(model.id) && (/claude|anthropic/i.test(model.id) || /anthropic|openrouter/i.test(model.provider))
+	);
+}
+
 /**
  * Find a smol/fast model using the priority chain.
  * Tries exact matches first, then fuzzy matches.
@@ -1546,8 +1552,9 @@ export async function findSmolModel(
 		if (fuzzyMatch) return fuzzyMatch;
 	}
 
-	// 3. Fallback to first available (same as default)
-	return availableModels[0];
+	// 3. Fall back to the first non-Haiku model. Haiku is valid when configured
+	// explicitly, but it must not be selected by an unconfigured smol fallback.
+	return availableModels.find(model => !isClaudeHaikuModel(model));
 }
 
 /**

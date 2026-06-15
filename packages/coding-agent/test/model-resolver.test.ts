@@ -5,6 +5,7 @@ import type { CanonicalModelVariant } from "@oh-my-pi/pi-coding-agent/config/mod
 import {
 	expandRoleAlias,
 	filterAvailableModelsByEnabledPatterns,
+	findSmolModel,
 	parseModelPattern,
 	parseModelString,
 	resolveAgentModelPatterns,
@@ -1196,5 +1197,106 @@ describe("effort-tier variant aliases", () => {
 	test("consumed X-thinking twins resolve via the grammar fallback", () => {
 		expect(parseModelPattern("venice/kimi-k2-thinking", variantModels).model?.id).toBe("kimi-k2");
 		expect(parseModelPattern("kimi-k2-thinking", variantModels).model?.id).toBe("kimi-k2");
+	});
+
+	test("unconfigured smol fallback prefers Antigravity Gemini Flash low over Haiku", () => {
+		const models: Model<Api>[] = [
+			buildModel({
+				id: "claude-haiku-4-5",
+				name: "Claude Haiku 4.5",
+				api: "anthropic-messages",
+				provider: "anthropic",
+				baseUrl: "https://api.anthropic.com",
+				reasoning: true,
+				thinking: { mode: "budget", efforts: [Effort.Minimal, Effort.Low, Effort.Medium, Effort.High] },
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 200_000,
+				maxTokens: 8_192,
+			}),
+			buildModel({
+				id: "gemini-3.5-flash",
+				name: "Gemini 3.5 Flash",
+				api: "google-gemini-cli",
+				provider: "opencode-antigravity",
+				baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+				reasoning: true,
+				thinking: { mode: "google-level", efforts: [Effort.Minimal, Effort.Low, Effort.Medium, Effort.High] },
+				input: ["text", "image"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 1_048_576,
+				maxTokens: 65_535,
+			}),
+		];
+
+		const result = resolveModelRoleValue("pi/smol", models, { settings: Settings.isolated() });
+		expect(result.model?.provider).toBe("opencode-antigravity");
+		expect(result.model?.id).toBe("gemini-3.5-flash");
+		expect(result.thinkingLevel).toBe(Effort.Low);
+	});
+
+	test("unconfigured smol fallback uses DeepSeek Flash before OpenRouter Haiku when Gemini is unavailable", () => {
+		const models: Model<Api>[] = [
+			buildModel({
+				id: "anthropic/claude-haiku-4-5",
+				name: "Claude Haiku 4.5",
+				api: "openai-completions",
+				provider: "openrouter",
+				baseUrl: "https://openrouter.ai/api/v1",
+				reasoning: true,
+				thinking: { mode: "budget", efforts: [Effort.Minimal, Effort.Low, Effort.Medium, Effort.High] },
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 200_000,
+				maxTokens: 8_192,
+			}),
+			buildModel({
+				id: "deepseek-v4-flash",
+				name: "DeepSeek V4 Flash",
+				api: "openai-completions",
+				provider: "deepseek",
+				baseUrl: "https://api.deepseek.com",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 128_000,
+				maxTokens: 8_192,
+			}),
+		];
+
+		const result = resolveModelRoleValue("pi/smol", models, { settings: Settings.isolated() });
+		expect(result.model?.provider).toBe("deepseek");
+		expect(result.model?.id).toBe("deepseek-v4-flash");
+	});
+
+	test("legacy smol lookup does not fall back to Claude Haiku", async () => {
+		const haiku = buildModel({
+			id: "anthropic/claude-haiku-4-5",
+			name: "Claude Haiku 4.5",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 200_000,
+			maxTokens: 8_192,
+		});
+		const local = buildModel({
+			id: "generic-small",
+			name: "Generic Small",
+			api: "openai-completions",
+			provider: "local",
+			baseUrl: "http://127.0.0.1:11434/v1",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 32_000,
+			maxTokens: 4_096,
+		});
+
+		const result = await findSmolModel({ getAvailable: () => [haiku, local] });
+		expect(result?.provider).toBe("local");
+		expect(result?.id).toBe("generic-small");
 	});
 });

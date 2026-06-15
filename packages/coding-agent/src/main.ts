@@ -244,6 +244,7 @@ export interface InteractiveModeNotify {
 	message: string;
 }
 
+const MAX_DISPLAYED_MODELS = 5;
 export function buildModelScopeNotification(
 	scopedModelsForDisplay: readonly Pick<ScopedModel, "model" | "thinkingLevel" | "explicitThinkingLevel">[],
 	startupQuiet: boolean,
@@ -251,14 +252,29 @@ export function buildModelScopeNotification(
 	if (startupQuiet || scopedModelsForDisplay.length === 0) {
 		return null;
 	}
+	if (scopedModelsForDisplay.length <= MAX_DISPLAYED_MODELS) {
+		const modelList = scopedModelsForDisplay
+			.map(scopedModel => {
+				const thinkingStr =
+					scopedModel.explicitThinkingLevel && scopedModel.thinkingLevel ? `:${scopedModel.thinkingLevel}` : "";
+				return `${scopedModel.model.id}${thinkingStr}`;
+			})
+			.join(", ");
+		return { kind: "info", message: `Model scope: ${modelList} (Ctrl+P to cycle)` };
+	}
+	// Truncate display for many models
 	const modelList = scopedModelsForDisplay
+		.slice(0, MAX_DISPLAYED_MODELS)
 		.map(scopedModel => {
 			const thinkingStr =
 				scopedModel.explicitThinkingLevel && scopedModel.thinkingLevel ? `:${scopedModel.thinkingLevel}` : "";
 			return `${scopedModel.model.id}${thinkingStr}`;
 		})
 		.join(", ");
-	return { kind: "info", message: `Model scope: ${modelList} (Ctrl+P to cycle)` };
+	return {
+		kind: "info",
+		message: `Model scope: ${modelList}, ... (+${scopedModelsForDisplay.length - MAX_DISPLAYED_MODELS} more) (Ctrl+P to cycle)`,
+	};
 }
 export async function submitInteractiveInput(
 	mode: Pick<
