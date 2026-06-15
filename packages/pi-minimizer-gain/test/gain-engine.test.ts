@@ -202,6 +202,52 @@ describe("minimizer gain records", () => {
 		expect(context.summary.savedBytes).toBe(1500);
 		expect(diagnostic.currentSessionRecordCount).toBe(1);
 	});
+	test("active session scope can use live session command entries", async () => {
+		const agentDir = path.join(tempDir, "agent");
+		const recordsPath = getMinimizerGainPath(agentDir);
+		fs.mkdirSync(agentDir, { recursive: true });
+		const command = "bun test live-active.test.ts";
+		const now = new Date().toISOString();
+		fs.writeFileSync(
+			recordsPath,
+			[
+				JSON.stringify({
+					schemaVersion: 2,
+					timestamp: now,
+					cwd,
+					sessionCwd: cwd,
+					command,
+					filter: "bun-test",
+					inputBytes: 2000,
+					outputBytes: 500,
+					savedBytes: 1500,
+					exitCode: 0,
+					kind: "saved",
+				}),
+				JSON.stringify({
+					schemaVersion: 2,
+					timestamp: now,
+					cwd,
+					sessionCwd: cwd,
+					command: "bun test stale-active.test.ts",
+					filter: "bun-test",
+					inputBytes: 2000,
+					outputBytes: 500,
+					savedBytes: 1500,
+					exitCode: 0,
+					kind: "saved",
+				}),
+			].join("\n"),
+		);
+
+		const activeSessionCommands = [{ command, cwd }];
+		const context = await loadMinimizerGainContext({ agentDir, cwd, all: false, activeSessionCommands });
+		const diagnostic = await buildMinimizerGainDiagnostic({ agentDir, cwd, activeSessionCommands });
+
+		expect(context.records.map(record => record.command)).toEqual([command]);
+		expect(context.summary.savedBytes).toBe(1500);
+		expect(diagnostic.currentSessionRecordCount).toBe(1);
+	});
 
 	test("upstream clone scope falls back to the sibling base repo path", async () => {
 		const agentDir = path.join(tempDir, "agent");

@@ -35,10 +35,13 @@ export interface BashExecutorOptions {
 	 * the sink output as `artifact://<id>` so the agent can retrieve the raw
 	 * bytes. Return `undefined` to skip the footer.
 	 */
-	onMinimizedSave?: (
-		originalText: string,
-		info: { filter: string; inputBytes: number; outputBytes: number },
-	) => Promise<string | undefined>;
+	onMinimizedSave?: (originalText: string, info: BashMinimizerTelemetry) => Promise<string | undefined>;
+}
+
+export interface BashMinimizerTelemetry {
+	filter: string;
+	inputBytes: number;
+	outputBytes: number;
 }
 
 export interface BashResult {
@@ -51,6 +54,7 @@ export interface BashResult {
 	outputLines: number;
 	outputBytes: number;
 	artifactId?: string;
+	minimized?: BashMinimizerTelemetry;
 }
 
 const shellSessions = new Map<string, Shell>();
@@ -271,6 +275,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		abortCurrentExecution();
 		timeoutDeferred.resolve("timeout");
 	}, baseTimeoutMs);
+	let resultTelemetry: BashMinimizerTelemetry | undefined;
 
 	let resetSession = false;
 
@@ -376,12 +381,14 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		const minimized = winner.result.minimized;
 		if (minimized && minimized.text !== minimized.originalText) {
 			sink.replace(minimized.text);
+			const telemetry = {
+				filter: minimized.filter,
+				inputBytes: minimized.inputBytes,
+				outputBytes: minimized.outputBytes,
+			};
+			resultTelemetry = telemetry;
 			if (options?.onMinimizedSave) {
-				const artifactId = await options.onMinimizedSave(minimized.originalText, {
-					filter: minimized.filter,
-					inputBytes: minimized.inputBytes,
-					outputBytes: minimized.outputBytes,
-				});
+				const artifactId = await options.onMinimizedSave(minimized.originalText, telemetry);
 				if (artifactId) {
 					const sep = minimized.text.endsWith("\n") ? "" : "\n";
 					sink.push(`${sep}[raw output: artifact://${artifactId}]\n`);
@@ -393,6 +400,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		return {
 			exitCode: winner.result.exitCode,
 			cancelled: false,
+			minimized: resultTelemetry,
 			...(await sink.dump()),
 		};
 	} catch (err) {

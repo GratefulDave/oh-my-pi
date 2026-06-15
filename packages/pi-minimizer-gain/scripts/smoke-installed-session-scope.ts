@@ -186,6 +186,22 @@ async function main(): Promise<void> {
 				getSessionFile() {
 					return sessionFile;
 				},
+				getEntries() {
+					return [
+						{
+							type: "message",
+							message: {
+								content: [
+									{
+										type: "toolCall",
+										name: "bash",
+										arguments: { command: scopedSiblingRecord.command, cwd: siblingCwd },
+									},
+								],
+							},
+						},
+					];
+				},
 			},
 		});
 		if (!overlay) fail("gain command did not create an overlay");

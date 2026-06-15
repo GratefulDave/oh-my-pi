@@ -1,10 +1,42 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { buildMinimizerGainDiagnostic, exportMinimizerGainJsonl, loadMinimizerGainContext } from "./gain-engine";
+import {
+	type ActiveSessionCommand,
+	buildMinimizerGainDiagnostic,
+	exportMinimizerGainJsonl,
+	loadMinimizerGainContext,
+} from "./gain-engine";
 import { type DualContext, type GainTheme, MinimizerGainOverlayComponent, type ScopeIndex } from "./overlay";
 
 export { buildMinimizerGainDiagnostic, exportMinimizerGainJsonl, loadMinimizerGainContext } from "./gain-engine";
+
+type JsonObject = Record<string, unknown>;
+
+function asJsonObject(value: unknown): JsonObject | undefined {
+	return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : undefined;
+}
+
+function extractActiveSessionBashCommands(entries: readonly unknown[], sessionCwd: string): ActiveSessionCommand[] {
+	const commands: ActiveSessionCommand[] = [];
+	for (const entry of entries) {
+		const event = asJsonObject(entry);
+		const message = asJsonObject(event?.message);
+		const content = message?.content;
+		const parts = Array.isArray(content) ? content : [content];
+		for (const part of parts) {
+			const toolCall = asJsonObject(part);
+			if (!toolCall) continue;
+			if (toolCall.name !== "bash") continue;
+			if (toolCall.type !== "toolCall" && toolCall.type !== "tool_use") continue;
+			const input = asJsonObject(toolCall.arguments) ?? asJsonObject(toolCall.input);
+			if (!input || typeof input.command !== "string") continue;
+			const commandCwd = typeof input.cwd === "string" ? path.resolve(sessionCwd, input.cwd) : sessionCwd;
+			commands.push({ command: input.command, cwd: commandCwd });
+		}
+	}
+	return commands;
+}
 
 // ---------------------------------------------------------------------------
 // Extension entry point
@@ -32,32 +64,39 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 			const buildDiagnosticForCwd = async (
 				scopeCwd: string | undefined,
 				sessionFile: string | undefined,
+				sessionCommands: ActiveSessionCommand[] | undefined,
 			): Promise<DualContext["diagnostic"]> => {
 				try {
 					return await buildMinimizerGainDiagnostic({
 						cwd: scopeCwd,
 						days: parsed.days,
 						activeSessionFile: sessionFile,
+						activeSessionCommands: sessionCommands,
 					});
 				} catch (err) {
 					return { buildError: err instanceof Error ? err.message : String(err) };
 				}
 			};
 
-			const loadDualContext = async (): Promise<DualContext> => ({
-				active: await loadMinimizerGainContext({
-					cwd,
-					all: false,
-					days: parsed.days,
-					activeSessionFile,
-				}),
-				current: await loadMinimizerGainContext({ cwd, all: false, days: parsed.days }),
-				all: await loadMinimizerGainContext({ cwd, all: true, days: parsed.days }),
-				diagnostic: await buildDiagnosticForCwd(
-					initialScope === 2 ? undefined : cwd,
-					initialScope === 0 ? activeSessionFile : undefined,
-				),
-			});
+			const loadDualContext = async (): Promise<DualContext> => {
+				const activeSessionCommands = extractActiveSessionBashCommands(ctx.sessionManager.getEntries(), cwd);
+				return {
+					active: await loadMinimizerGainContext({
+						cwd,
+						all: false,
+						days: parsed.days,
+						activeSessionFile,
+						activeSessionCommands,
+					}),
+					current: await loadMinimizerGainContext({ cwd, all: false, days: parsed.days }),
+					all: await loadMinimizerGainContext({ cwd, all: true, days: parsed.days }),
+					diagnostic: await buildDiagnosticForCwd(
+						initialScope === 2 ? undefined : cwd,
+						initialScope === 0 ? activeSessionFile : undefined,
+						initialScope === 0 ? activeSessionCommands : undefined,
+					),
+				};
+			};
 
 			const dualContext = await loadDualContext();
 

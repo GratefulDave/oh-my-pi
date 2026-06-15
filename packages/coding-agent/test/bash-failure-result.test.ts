@@ -1,4 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { BashTool } from "@oh-my-pi/pi-coding-agent/tools/bash";
 
@@ -24,10 +27,27 @@ function makeSession(): ToolSession {
 			getBashInterceptorRules() {
 				return [];
 			},
+			getAgentDir() {
+				return Bun.env.OMP_AGENT_DIR ?? "";
+			},
 		},
 		getClientBridge: () => undefined,
 	} as unknown as ToolSession;
 }
+let tempDir: string;
+let originalAgentDir: string | undefined;
+
+beforeEach(() => {
+	originalAgentDir = Bun.env.OMP_AGENT_DIR;
+	tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-bash-gain-"));
+	Bun.env.OMP_AGENT_DIR = path.join(tempDir, "agent");
+});
+
+afterEach(() => {
+	if (originalAgentDir === undefined) delete Bun.env.OMP_AGENT_DIR;
+	else Bun.env.OMP_AGENT_DIR = originalAgentDir;
+	fs.rmSync(tempDir, { recursive: true, force: true });
+});
 
 describe("BashTool non-zero exit", () => {
 	it("resolves with an error result carrying execution details instead of throwing", async () => {
@@ -55,5 +75,25 @@ describe("BashTool non-zero exit", () => {
 		const text = result.content.find(c => c.type === "text")?.text ?? "";
 		expect(text).toContain("hi");
 		expect(text).not.toContain("Command exited with code");
+		const gainPath = path.join(Bun.env.OMP_AGENT_DIR ?? "", "minimizer-gain.jsonl");
+		expect(fs.existsSync(gainPath)).toBe(true);
+		const records = fs
+			.readFileSync(gainPath, "utf8")
+			.trim()
+			.split("\n")
+			.map(line => JSON.parse(line) as Record<string, unknown>);
+		expect(records).toHaveLength(1);
+		const realTmp = fs.realpathSync("/tmp");
+		expect(records[0]).toMatchObject({
+			command: "printf hi",
+			cwd: realTmp,
+			sessionCwd: realTmp,
+			filter: "printf",
+			inputBytes: 2,
+			outputBytes: 2,
+			savedBytes: 0,
+			exitCode: 0,
+			kind: "missed",
+		});
 	});
 });

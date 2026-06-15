@@ -141,6 +141,7 @@ export async function loadMinimizerGainContext(input: {
 	days?: number;
 	agentDir?: string;
 	activeSessionFile?: string;
+	activeSessionCommands?: Iterable<ActiveSessionCommand>;
 	ignoredMissedCommands?: Iterable<string>;
 }): Promise<MinimizerGainContext> {
 	const days = input.days ?? 30;
@@ -151,8 +152,12 @@ export async function loadMinimizerGainContext(input: {
 		await migrateLegacySessionCwds({ agentDir: input.agentDir, recordsFilePath, scopeCwd: cwd });
 	}
 	let records = await readMinimizerGain({ sinceDays: days, scope, agentDir: input.agentDir });
-	if (input.activeSessionFile !== undefined && cwd !== undefined) {
-		records = await filterActiveSessionRecords(records, input.activeSessionFile, cwd);
+	if (cwd !== undefined) {
+		if (input.activeSessionCommands !== undefined) {
+			records = await filterActiveSessionRecordsByCommands(records, input.activeSessionCommands);
+		} else if (input.activeSessionFile !== undefined) {
+			records = await filterActiveSessionRecords(records, input.activeSessionFile, cwd);
+		}
 	}
 	const config = await loadMinimizerGainConfig(input.agentDir, input.ignoredMissedCommands);
 	return {
@@ -191,6 +196,11 @@ export interface MinimizerMissedItem {
 export interface MinimizerMissedSummary {
 	commands: MinimizerMissedItem[];
 	potentialTokenSavings: MinimizerMissedItem[];
+}
+
+export interface ActiveSessionCommand {
+	command: string;
+	cwd: string;
 }
 
 interface MinimizerGainScope {
@@ -450,6 +460,7 @@ export interface BuildMinimizerGainDiagnosticInput {
 	recordsFilePath?: string;
 	agentDir?: string;
 	activeSessionFile?: string;
+	activeSessionCommands?: Iterable<ActiveSessionCommand>;
 }
 
 const RECENT_MISSED_WINDOW = 50;
@@ -511,9 +522,12 @@ export async function buildMinimizerGainDiagnostic(
 	const currentSessionRecordCount =
 		scope === undefined
 			? 0
-			: input.activeSessionFile !== undefined
-				? (await filterActiveSessionRecords(scopedRecords, input.activeSessionFile, scopeCwd)).length
-				: allRecords.filter(r => matchesCwd(r, scope) && timestampAtOrAfter(r.timestamp, MODULE_STARTED_AT)).length;
+			: input.activeSessionCommands !== undefined
+				? (await filterActiveSessionRecordsByCommands(scopedRecords, input.activeSessionCommands)).length
+				: input.activeSessionFile !== undefined
+					? (await filterActiveSessionRecords(scopedRecords, input.activeSessionFile, scopeCwd)).length
+					: allRecords.filter(r => matchesCwd(r, scope) && timestampAtOrAfter(r.timestamp, MODULE_STARTED_AT))
+							.length;
 
 	let savedCount = 0;
 	let missedCount = 0;
@@ -747,13 +761,21 @@ async function readActiveSessionTranscriptCommandCounts(
 	}
 	return result;
 }
+async function buildActiveSessionCommandCounts(commands: Iterable<ActiveSessionCommand>): Promise<Map<string, number>> {
+	const result = new Map<string, number>();
+	for (const command of commands) {
+		const cwd = await resolveMinimizerGainCwd(command.cwd);
+		if (cwd === undefined) continue;
+		const key = `${cwd}\0${command.command}`;
+		result.set(key, (result.get(key) ?? 0) + 1);
+	}
+	return result;
+}
 
-async function filterActiveSessionRecords(
+function filterActiveSessionRecordsByCounts(
 	records: MinimizerGainRecord[],
-	activeSessionFile: string,
-	scopeCwd: string,
-): Promise<MinimizerGainRecord[]> {
-	const remaining = await readActiveSessionTranscriptCommandCounts(activeSessionFile, scopeCwd);
+	remaining: Map<string, number>,
+): MinimizerGainRecord[] {
 	if (remaining.size === 0) return [];
 	const active: MinimizerGainRecord[] = [];
 	for (let index = records.length - 1; index >= 0; index--) {
@@ -767,6 +789,22 @@ async function filterActiveSessionRecords(
 	}
 	active.reverse();
 	return active;
+}
+
+async function filterActiveSessionRecordsByCommands(
+	records: MinimizerGainRecord[],
+	commands: Iterable<ActiveSessionCommand>,
+): Promise<MinimizerGainRecord[]> {
+	return filterActiveSessionRecordsByCounts(records, await buildActiveSessionCommandCounts(commands));
+}
+
+async function filterActiveSessionRecords(
+	records: MinimizerGainRecord[],
+	activeSessionFile: string,
+	scopeCwd: string,
+): Promise<MinimizerGainRecord[]> {
+	const remaining = await readActiveSessionTranscriptCommandCounts(activeSessionFile, scopeCwd);
+	return filterActiveSessionRecordsByCounts(records, remaining);
 }
 
 function extractBashTranscriptCommands(event: JsonObject, sessionCwd: string): BashTranscriptCommand[] {
