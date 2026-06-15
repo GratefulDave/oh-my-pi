@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+## [16.0.0] - 2026-06-15
+
+### Breaking Changes
+
+- Renamed the public dialect entrypoint from `@oh-my-pi/pi-ai/grammar` to `@oh-my-pi/pi-ai/dialect`.
+- Renamed grammar dialect identifiers from `ToolCallSyntax` to `Dialect`, renamed the `Grammar` interface to `DialectDefinition`, and renamed `Grammar.syntax` to `DialectDefinition.dialect`.
+- Added `DialectDefinition.renderThinking` and `DialectDefinition.renderTranscript` so dialect implementations serialize complete native chat transcripts, not just tool call/result blocks.
+
+### Added
+
+- Added `renderTranscript` method to dialect definitions for serializing complete native chat transcripts
+- Added `renderThinking` method to dialect definitions for rendering thinking/reasoning blocks
+- Added support for 11 dialect implementations: Anthropic, DeepSeek, Gemini, Gemma, GLM, Harmony, Hermes, Kimi, Pi-native, Qwen3, and XML
+- Added `createInbandScanner` factory function to instantiate dialect-specific scanners
+- Added `getDialectDefinition` function to retrieve dialect implementations by name
+- Added `renderToolCatalog` and `renderInbandToolPrompt` functions for tool catalog rendering
+- Added `renderToolInventory` function to generate human-readable per-tool documentation with examples
+- Added `renderToolExamples` function to render tool usage examples in the model's native dialect
+- Added `encodeInbandToolHistory` function to encode tool call history in dialect-specific format
+- Added `wrapInbandToolStream` function to process streaming responses with in-band tool call parsing
+- Added `ThinkingInbandScanner` for parsing thinking/reasoning blocks across dialects
+- Added `OwnedStream` class for managing dialect-aware streaming with tool call events
+- Added in-band thinking channels to every dialect that was missing one: `gemini` (a ```` ```thinking ```` fence mirroring ```` ```tool_code ````), `gemma` (its native `<|channel>thought…<channel|>` reasoning channel), `kimi` (`<think>…</think>`), and `pi` (`<thinking>…</thinking>`). Each scanner now parses reasoning into thinking events instead of leaking chain-of-thought into the visible reply, and every dialect's `renderThinking` is a real channel that round-trips back through its scanner (no passthrough renderers).
+
+### Changed
+
+- Moved public dialect entrypoint from `@oh-my-pi/pi-ai/grammar` to `@oh-my-pi/pi-ai/dialect` in package exports
+- Updated internal imports in `stream-markup-healing.ts` to use new dialect module path
+- Changed `renderToolInventory` to demote a tool description's own markdown headers by one level when it contains a top-level `# ` header, so they nest under the wrapping `# Tool: <name>` heading instead of reading as sibling sections. Descriptions that already start at `##` and headers inside fenced code blocks are left untouched.
+
+### Fixed
+
+- Fixed Gemini, Gemma, Kimi, and Pi in-band scanners to respect `parseThinking: false`, leaving private reasoning markers in visible text when parsing is disabled
+- Fixed thinking-channel parsing for streaming Gemini, Gemma, Kimi, and Pi outputs so split or partial `<thinking>` blocks no longer leak into visible replies
+- Fixed in-band thinking finalization and Kimi stream-healing interactions so leaked `<think>` blocks are preserved when structured tool calls are present, not duplicated when explicit reasoning is present, and closed on stream flush.
+
+### Removed
+
+- Removed `src/grammar/factory.ts` (replaced by `src/dialect/factory.ts`)
+- Removed `src/grammar/rendering.ts` (functionality moved to `src/dialect/rendering.ts`)
+- Removed `src/grammar/xml.ts` (replaced by `src/dialect/xml.ts`)
+
 ## [15.13.3] - 2026-06-15
 
 ### Added

@@ -106,7 +106,7 @@ export const TAB_METADATA: Record<SettingTab, { label: string; icon: `tab.${stri
  */
 export const TAB_GROUPS: Record<SettingTab, readonly string[]> = {
 	appearance: ["Theme", "Status Line", "Display", "Images"],
-	model: ["Thinking", "Sampling", "Prompt", "Retry & Fallback"],
+	model: ["Thinking", "Sampling", "Prompt", "Retry & Fallback", "Advisor"],
 	interaction: [
 		"Input",
 		"Approvals",
@@ -379,6 +379,39 @@ export const SETTINGS_SCHEMA = {
 			group: "Power (macOS)",
 			label: "Prevent Display Sleep",
 			description: "Keep the display from idle-sleeping while a session is open (caffeinate -d)",
+		},
+	},
+	"advisor.enabled": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "model",
+			group: "Advisor",
+			label: "Enable Advisor",
+			description:
+				"Pair a second model (assigned to the 'advisor' role) that passively reviews each turn and injects notes.",
+		},
+	},
+	"advisor.subagents": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "model",
+			group: "Advisor",
+			label: "Advisor for Subagents",
+			description: "Also enable the advisor on spawned task/eval subagents.",
+		},
+	},
+	"advisor.syncBacklog": {
+		type: "enum",
+		values: ["off", "1", "3", "5"] as const,
+		default: "off",
+		ui: {
+			tab: "model",
+			group: "Advisor",
+			label: "Advisor Sync Backlog",
+			description:
+				"Pause the main agent for up to 30 seconds if the advisor falls behind by this many turns. Off disables catch-up delays.",
 		},
 	},
 	shellPath: { type: "string", default: undefined },
@@ -1734,14 +1767,16 @@ export const SETTINGS_SCHEMA = {
 			"harmony",
 			"pi",
 			"qwen3",
+			"gemini",
+			"gemma",
 		] as const,
 		default: "auto",
 		ui: {
 			tab: "context",
 			group: "Experimental",
-			label: "Tool Call Format",
+			label: "Tool Calling Mode",
 			description:
-				"Controls how tools are exposed to the model. Auto uses native tool calls unless the selected model is marked as not supporting tools, then falls back to GLM-style in-band tool calls. Native forces provider-native tools; the other values force the named in-band syntax. Applies on session start.",
+				"Controls how tools are exposed to the model. Auto uses provider-native tool calls unless the selected model is marked as not supporting them, then falls back to the GLM owned dialect. Native forces provider-native tools; the other values force the named owned dialect. Applies on session start.",
 			options: [
 				{
 					value: "auto",
@@ -1756,8 +1791,10 @@ export const SETTINGS_SCHEMA = {
 				{ value: "anthropic", label: "Anthropic", description: "Use Anthropic-style in-band tool calls." },
 				{ value: "deepseek", label: "DeepSeek", description: "Use DeepSeek-style in-band tool calls." },
 				{ value: "harmony", label: "Harmony", description: "Use Harmony-style in-band tool calls." },
-				{ value: "pi", label: "Pi", description: "Use Pi-style in-band tool calls." },
-				{ value: "qwen3", label: "Qwen3", description: "Use Qwen3-style in-band tool calls." },
+				{ value: "pi", label: "Pi", description: "Use the Pi owned dialect." },
+				{ value: "qwen3", label: "Qwen3", description: "Use the Qwen3 owned dialect." },
+				{ value: "gemini", label: "Gemini", description: "Use the Gemini owned dialect." },
+				{ value: "gemma", label: "Gemma", description: "Use the Gemma owned dialect." },
 			],
 		},
 	},
