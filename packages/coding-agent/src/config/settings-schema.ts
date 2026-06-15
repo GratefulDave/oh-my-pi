@@ -34,7 +34,7 @@ import {
 	TTS_LOCAL_VOICE_VALUES,
 } from "../tts/models";
 import { EDIT_MODES } from "../utils/edit-mode";
-import { SEARCH_PROVIDER_OPTIONS, SEARCH_PROVIDER_PREFERENCES } from "../web/search/types";
+import { SEARCH_PROVIDER_OPTIONS, SEARCH_PROVIDER_PREFERENCES, type SearchProviderId } from "../web/search/types";
 
 /** Unified settings schema - single source of truth for all settings.
  *
@@ -3454,6 +3454,18 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"plan.defaultOnStartup": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "tasks",
+			group: "Modes",
+			label: "Start in Plan Mode",
+			description: "Automatically enter plan mode at the start of every new session",
+			condition: "planModeEnabled",
+		},
+	},
+
 	"goal.enabled": {
 		type: "boolean",
 		default: true,
@@ -3844,6 +3856,16 @@ export const SETTINGS_SCHEMA = {
 			label: "Web Search Provider",
 			description: "Preferred provider for the web_search tool",
 			options: SEARCH_PROVIDER_OPTIONS,
+		},
+	},
+	"providers.webSearchExclude": {
+		type: "array",
+		default: [] as SearchProviderId[],
+		ui: {
+			tab: "providers",
+			group: "Services",
+			label: "Excluded Web Search Providers",
+			description: "Providers that web_search should never use, even as fallbacks",
 		},
 	},
 	"providers.image": {

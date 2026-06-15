@@ -32,6 +32,7 @@ import {
 	type AsideMessage,
 	type CompactionSummaryMessage,
 	resolveTelemetry,
+	STREAM_INTERRUPTED_AFTER_CONTENT_STOP_DETAIL,
 	ThinkingLevel,
 } from "@oh-my-pi/pi-agent-core";
 
@@ -277,6 +278,7 @@ import {
 	SILENT_ABORT_MARKER,
 	SKILL_PROMPT_MESSAGE_TYPE,
 	stripImagesFromMessage,
+	USER_INTERRUPT_LABEL,
 } from "./messages";
 import type { SessionContext } from "./session-context";
 import { getLatestCompactionEntry, getRestorableSessionModels } from "./session-context";
@@ -496,6 +498,12 @@ export interface PromptOptions {
 	toolChoice?: ToolChoice;
 	/** Send as developer/system message instead of user. Providers that support it use the developer role; others fall back to user. */
 	synthetic?: boolean;
+	/** Marks this prompt as a deliberate user action (typed message, `.`/`c`
+	 *  continue). Clears advisor auto-resume suppression that a user interrupt set.
+	 *  Defaults to `!synthetic`; manual-continue is synthetic yet user-initiated, so
+	 *  it sets this explicitly. Agent-initiated synthetic prompts (auto-continue,
+	 *  plan re-prime, reminders) leave it unset and keep suppression latched. */
+	userInitiated?: boolean;
 	/** Explicit billing/initiator attribution for the prompt. Defaults to user prompts as `user` and synthetic prompts as `agent`. */
 	attribution?: MessageAttribution;
 	/** Skip pre-send compaction checks for this prompt (internal use for maintenance flows). */
@@ -941,6 +949,10 @@ function isDisplayableQueuedMessage(message: AgentMessage): boolean {
 	return !(message.role === "custom" && message.display === false);
 }
 
+function isAdvisorCard(message: AgentMessage): message is CustomMessage {
+	return message.role === "custom" && message.customType === "advisor";
+}
+
 function queueChipText(message: AgentMessage): string {
 	if (message.role === "custom") {
 		return readQueueChipText(message.details) ?? queuedTextContent(message) ?? "";
@@ -988,10 +1000,15 @@ export class AgentSession {
 	#pendingNextTurnMessages: CustomMessage[] = [];
 	#scheduledHiddenNextTurnGeneration: number | undefined = undefined;
 	#queuedMessageDrainScheduled = false;
+	/** Latched true when the user deliberately interrupts (USER_INTERRUPT_LABEL);
+	 *  suppresses advisor concern/blocker auto-resume until the user next resumes.
+	 *  Advisor advice is still recorded into the transcript, just not auto-run. */
+	#advisorAutoResumeSuppressed = false;
 	#planModeState: PlanModeState | undefined;
 	#goalModeState: GoalModeState | undefined;
 	#goalRuntime: GoalRuntime;
 	#advisorRuntime?: AdvisorRuntime;
+	#advisorEnabled = false;
 	/** The advisor's own agent, retained so `/dump advisor` can serialize its transcript. Undefined when no advisor is active. */
 	#advisorAgent?: Agent;
 	#advisorReadOnlyTools?: AgentTool[];
@@ -1244,6 +1261,39 @@ export class AgentSession {
 		this.#scheduleQueuedMessageDrain();
 	}
 
+	/** Remove advisor concern/blocker cards from the agent-core steer/follow-up
+	 *  queues and return them. Used on a deliberate user interrupt so the post-abort
+	 *  stranded-message drain cannot auto-resume the run on an advisor card that was
+	 *  steered in just before the user stopped; real user follow-ups stay queued.
+	 *  Synchronous and await-free so it runs before the abort path polls the queue. */
+	#extractQueuedAdvisorCards(): CustomMessage[] {
+		const steering = this.agent.peekSteeringQueue();
+		const followUp = this.agent.peekFollowUpQueue();
+		const cards = [...steering, ...followUp].filter(isAdvisorCard);
+		if (cards.length === 0) return [];
+		this.agent.replaceQueues(
+			steering.filter(m => !isAdvisorCard(m)),
+			followUp.filter(m => !isAdvisorCard(m)),
+		);
+		return cards;
+	}
+
+	/** Record a suppressed advisor concern as visible, persisted advice without
+	 *  triggering a turn. When the agent is idle (the normal post-interrupt case),
+	 *  emit message_start/message_end like #flushPendingIrcAsides so
+	 *  #handleAgentEvent renders it live (TUI/ACP) and persists it as a
+	 *  CustomMessageEntry. While a turn is still tearing down (mid-abort), park it
+	 *  hidden so abort's settle step replays it once idle — never appended into a
+	 *  live streamMessage. */
+	#preserveAdvisorCard(card: CustomMessage): void {
+		if (this.isStreaming) {
+			this.#pendingNextTurnMessages.push(card);
+			return;
+		}
+		this.agent.emitExternalEvent({ type: "message_start", message: card });
+		this.agent.emitExternalEvent({ type: "message_end", message: card });
+	}
+
 	#resetInFlight(): void {
 		this.#promptInFlightCount = 0;
 		this.#releasePowerAssertion();
@@ -1443,7 +1493,8 @@ export class AgentSession {
 			},
 		});
 
-		if (this.settings.get("advisor.enabled")) this.#buildAdvisorRuntime();
+		this.#advisorEnabled = this.settings.get("advisor.enabled") as boolean;
+		if (this.#advisorEnabled) this.#buildAdvisorRuntime();
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, hooks, auto-compaction, retry logic)
@@ -1457,7 +1508,7 @@ export class AgentSession {
 	#buildAdvisorRuntime(seedToCurrent = false): boolean {
 		if (this.#isDisposed) return false;
 		if (this.#advisorRuntime) return true;
-		if (!this.settings.get("advisor.enabled")) return false;
+		if (!this.#advisorEnabled) return false;
 		if (this.#agentKind !== "main" && !this.settings.get("advisor.subagents")) return false;
 
 		const advisorSel = resolveRoleSelection(
@@ -1472,23 +1523,33 @@ export class AgentSession {
 		}
 
 		// Concern and blocker interrupt the running agent through the steering
-		// channel (aborting in-flight tools at the next steering boundary); when
-		// the loop has already yielded, triggerTurn resumes it so the advice is
-		// acted on immediately rather than waiting for the next user prompt. A
-		// plain nit rides the non-interrupting YieldQueue aside.
+		// channel (aborting in-flight tools at the next steering boundary); when the
+		// loop has already yielded, triggerTurn resumes it so the advice is acted on
+		// immediately rather than waiting for the next user prompt. After a deliberate
+		// user interrupt that auto-resume is suppressed: the concern is recorded as
+		// visible advice and re-enters context only when the user resumes. A plain nit
+		// rides the non-interrupting YieldQueue aside.
 		const enqueueAdvice = (note: string, severity?: AdvisorSeverity) => {
 			if (isInterruptingSeverity(severity)) {
 				const notes: AdvisorNote[] = [{ note, severity }];
-				void this.sendCustomMessage(
-					{
+				const content = formatAdvisorBatchContent(notes);
+				const details = { notes } satisfies AdvisorMessageDetails;
+				if (this.#advisorAutoResumeSuppressed) {
+					this.#preserveAdvisorCard({
+						role: "custom",
 						customType: "advisor",
-						content: formatAdvisorBatchContent(notes),
+						content,
 						display: true,
 						attribution: "agent",
-						details: { notes } satisfies AdvisorMessageDetails,
-					},
+						details,
+						timestamp: Date.now(),
+					});
+					return;
+				}
+				void this.sendCustomMessage(
+					{ customType: "advisor", content, display: true, attribution: "agent", details },
 					{ deliverAs: "steer", triggerTurn: true },
-				).catch(err => logger.debug("advisor steer failed", { err: String(err) }));
+				).catch(err => logger.debug("advisor delivery failed", { err: String(err) }));
 				return;
 			}
 			this.yieldQueue.enqueue("advisor", { note, severity });
@@ -5034,6 +5095,13 @@ export class AgentSession {
 		// agent-initiated turns never trigger them.
 		const keywordNotices = options?.synthetic ? [] : this.#createMagicKeywordNotices(expandedText);
 
+		// A user-initiated prompt (typed message or the `.`/`c` continue shortcut)
+		// re-enables advisor auto-resume that a prior user interrupt suppressed.
+		// Agent-initiated synthetic prompts (auto-continue, plan, reminders) do not.
+		if (options?.userInitiated ?? !options?.synthetic) {
+			this.#advisorAutoResumeSuppressed = false;
+		}
+
 		// If streaming, queue via steer() or followUp() based on option
 		if (this.isStreaming) {
 			if (!options?.streamingBehavior) {
@@ -5494,6 +5562,10 @@ export class AgentSession {
 		images: ImageContent[] | undefined,
 		mode: "steer" | "followUp",
 	): Promise<void> {
+		// A queued user message (RPC/SDK/collab steer or follow-up, or a typed message
+		// while streaming) is a deliberate resume; re-enable advisor auto-resume that
+		// a user interrupt suppressed.
+		this.#advisorAutoResumeSuppressed = false;
 		const normalizedImages = await this.#normalizeImagesForModel(images);
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (normalizedImages?.length) {
@@ -5872,6 +5944,12 @@ export class AgentSession {
 	 * abort. Omit it for internal/lifecycle aborts.
 	 */
 	async abort(options?: { goalReason?: "interrupted" | "internal"; reason?: string }): Promise<void> {
+		const userInterrupt = options?.reason === USER_INTERRUPT_LABEL;
+		if (userInterrupt) this.#advisorAutoResumeSuppressed = true;
+		// Pull advisor concerns out of the steer/follow-up queues before any await so
+		// the post-abort stranded-message drain can't auto-resume the run on them.
+		// They are re-recorded as visible advice once the agent settles (below).
+		const strandedAdvisorCards = userInterrupt ? this.#extractQueuedAdvisorCards() : [];
 		// Session switch/compact paths disconnect first; explicit aborts should
 		// leave any queued steer/follow-up visible for the user rather than
 		// auto-starting a fresh turn during cleanup.
@@ -5899,6 +5977,19 @@ export class AgentSession {
 			// so any requeue callback still fires and the queue stays consistent.
 			if (this.#toolChoiceQueue.hasInFlight) {
 				this.#toolChoiceQueue.reject("aborted");
+			}
+			// Re-record advisor concerns the interrupt would otherwise strand, as
+			// visible/persisted advice without triggering a turn (the agent is idle
+			// now): cards steered into the queue before the user stopped, plus any
+			// that arrived via enqueueAdvice mid-abort and were parked hidden in
+			// #pendingNextTurnMessages while the turn was still tearing down. Other
+			// deferred next-turn context (non-advisor) stays queued, in order.
+			const parkedAdvisorCards = this.#pendingNextTurnMessages.filter(isAdvisorCard);
+			if (parkedAdvisorCards.length > 0) {
+				this.#pendingNextTurnMessages = this.#pendingNextTurnMessages.filter(m => !isAdvisorCard(m));
+			}
+			for (const card of [...strandedAdvisorCards, ...parkedAdvisorCards]) {
+				this.#preserveAdvisorCard(card);
 			}
 		} finally {
 			this.#abortInProgress = false;
@@ -9058,10 +9149,21 @@ export class AgentSession {
 		if (isContextOverflow(message, contextWindow)) return false;
 
 		if (this.#isClassifierRefusal(message)) return true;
+		if (this.#streamInterruptedAfterObservableOutput(message)) return false;
 		if (this.#isStaleOpenAIResponsesReplayError(message)) return true;
 
 		const err = message.errorMessage;
 		return this.#isTransientErrorMessage(err) || isUsageLimitError(err);
+	}
+	#streamInterruptedAfterObservableOutput(message: AssistantMessage): boolean {
+		if (message.stopDetails?.type === STREAM_INTERRUPTED_AFTER_CONTENT_STOP_DETAIL) return true;
+		for (const block of message.content) {
+			if (block.type === "toolCall") return true;
+			if (block.type === "text" && block.text.length > 0) return true;
+			if (block.type === "thinking" && block.thinking.length > 0) return true;
+			if (block.type === "redactedThinking" && block.data.length > 0) return true;
+		}
+		return false;
 	}
 
 	#isStaleOpenAIResponsesReplayError(message: AssistantMessage): boolean {
@@ -11193,18 +11295,16 @@ export class AgentSession {
 	}
 
 	/**
-	 * Enable or disable the advisor for this session. The setting is persisted,
+	 * Enable or disable the advisor for this session. The setting is overridden for the session,
 	 * and the runtime is started or stopped to match.
 	 *
 	 * @returns true when the advisor is actively running after the call.
 	 */
 	setAdvisorEnabled(enabled: boolean): boolean {
+		this.#advisorEnabled = enabled;
 		if (enabled) {
-			this.settings.clearOverride("advisor.enabled");
-			this.settings.set("advisor.enabled", true);
 			return this.#buildAdvisorRuntime(true);
 		}
-		this.settings.set("advisor.enabled", false);
 		this.#stopAdvisorRuntime();
 		return false;
 	}
@@ -11215,7 +11315,14 @@ export class AgentSession {
 	 * @returns true when the advisor is actively running after the call.
 	 */
 	toggleAdvisorEnabled(): boolean {
-		return this.setAdvisorEnabled(!this.settings.get("advisor.enabled"));
+		return this.setAdvisorEnabled(!this.#advisorEnabled);
+	}
+
+	/**
+	 * Whether the advisor setting is enabled for this session.
+	 */
+	isAdvisorEnabled(): boolean {
+		return this.#advisorEnabled;
 	}
 
 	/**
@@ -11232,7 +11339,7 @@ export class AgentSession {
 	 * Return structured advisor stats for the status command and TUI panel.
 	 */
 	getAdvisorStats(): AdvisorStats {
-		const configured = this.settings.get("advisor.enabled") as boolean;
+		const configured = this.#advisorEnabled;
 		const advisor = this.#advisorAgent;
 		if (!advisor) {
 			return {

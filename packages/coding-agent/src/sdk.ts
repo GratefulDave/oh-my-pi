@@ -129,6 +129,7 @@ import {
 	type CustomMessage,
 	convertToLlm,
 	LSP_LATE_DIAGNOSTIC_MESSAGE_TYPE,
+	USER_INTERRUPT_LABEL,
 	wrapSteeringForModel,
 } from "./session/messages";
 import { getRestorableSessionModels } from "./session/session-context";
@@ -177,6 +178,7 @@ import {
 	getSearchTools,
 	HIDDEN_TOOLS,
 	isImageProviderPreference,
+	isSearchProviderId,
 	isSearchProviderPreference,
 	type LspStartupServerInfo,
 	loadSshTool,
@@ -185,6 +187,7 @@ import {
 	renderSearchToolBm25Description,
 	SearchTool,
 	SearchToolBm25Tool,
+	setExcludedSearchProviders,
 	setPreferredImageProvider,
 	setPreferredSearchProvider,
 	type Tool,
@@ -1164,6 +1167,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	discoveredSkillsPromise?.catch(() => {});
 
 	// Initialize provider preferences from settings
+	const excludedWebSearchProviders = settings.get("providers.webSearchExclude");
+	if (Array.isArray(excludedWebSearchProviders)) {
+		setExcludedSearchProviders(excludedWebSearchProviders.filter(isSearchProviderId));
+	}
+
 	const webSearchProvider = settings.get("providers.webSearch");
 	if (typeof webSearchProvider === "string" && isSearchProviderPreference(webSearchProvider)) {
 		setPreferredSearchProvider(webSearchProvider);
@@ -1998,7 +2006,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			isIdle: () => !session.isStreaming,
 			hasQueuedMessages: () => session.queuedMessageCount > 0,
 			abort: () => {
-				session.abort();
+				session.abort({ reason: USER_INTERRUPT_LABEL });
 			},
 			settings,
 			autoApprove: options.autoApprove ?? false,
