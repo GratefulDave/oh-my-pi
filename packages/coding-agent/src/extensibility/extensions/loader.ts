@@ -284,10 +284,11 @@ async function loadExtension(
 	cwd: string,
 	eventBus: EventBus,
 	runtime: IExtensionRuntime,
+	forceFresh = false,
 ): Promise<{ extension: Extension | null; error: string | null }> {
 	const resolvedPath = resolvePath(extensionPath, cwd);
 	try {
-		const module = (await loadLegacyPiModule(resolvedPath)) as LoadedExtensionModule;
+		const module = (await loadLegacyPiModule(resolvedPath, { forceFresh })) as LoadedExtensionModule;
 		const factory = getExtensionFactory(module);
 
 		if (typeof factory !== "function") {
@@ -327,14 +328,19 @@ export async function loadExtensionFromFactory(
 /**
  * Load extensions from paths.
  */
-export async function loadExtensions(paths: string[], cwd: string, eventBus?: EventBus): Promise<LoadExtensionsResult> {
+export async function loadExtensions(
+	paths: string[],
+	cwd: string,
+	eventBus?: EventBus,
+	runtime: IExtensionRuntime = new ExtensionRuntime(),
+	options: { forceFresh?: boolean } = {},
+): Promise<LoadExtensionsResult> {
 	const extensions: Extension[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
 	const resolvedEventBus = eventBus ?? new EventBus();
-	const runtime = new ExtensionRuntime();
 
 	for (const extPath of paths) {
-		const { extension, error } = await loadExtension(extPath, cwd, resolvedEventBus, runtime);
+		const { extension, error } = await loadExtension(extPath, cwd, resolvedEventBus, runtime, options.forceFresh);
 
 		if (error) {
 			errors.push({ path: extPath, error });

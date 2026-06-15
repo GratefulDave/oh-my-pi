@@ -10,6 +10,8 @@ import type { Settings } from "../../config/settings";
 import type { MemoryRuntimeContext } from "../../memory-backend";
 import { type Theme, theme } from "../../modes/theme/theme";
 import type { SessionManager } from "../../session/session-manager";
+import type { EventBus } from "../../utils/event-bus";
+import { loadExtensions } from "./loader";
 import { createExtensionModelQuery } from "./model-api";
 import type {
 	AfterProviderResponseEvent,
@@ -232,6 +234,7 @@ export class ExtensionRunner {
 		private readonly modelRegistry: ModelRegistry,
 		getMemory?: () => MemoryRuntimeContext | undefined,
 		private readonly settings?: Settings,
+		private readonly eventBus?: EventBus,
 	) {
 		this.#uiContext = noOpUIContext;
 		this.#getMemoryFn = getMemory;
@@ -332,6 +335,19 @@ export class ExtensionRunner {
 
 	getExtensionPaths(): string[] {
 		return this.extensions.map(e => e.path);
+	}
+
+	async reloadExtensions(paths: string[] = this.getExtensionPaths()): Promise<void> {
+		const retainedInline = this.extensions.filter(extension => extension.resolvedPath.startsWith("<inline"));
+		const sourcePaths = paths.filter(extensionPath => !extensionPath.startsWith("<inline"));
+		if (sourcePaths.length === 0) return;
+
+		const result = await loadExtensions(sourcePaths, this.cwd, this.eventBus, this.runtime, { forceFresh: true });
+		this.extensions.splice(0, this.extensions.length, ...result.extensions, ...retainedInline);
+		this.#commandDiagnostics = [];
+		for (const { path, error } of result.errors) {
+			this.emitError({ extensionPath: path, event: "reload", error });
+		}
 	}
 
 	/** Get all registered tools from all extensions. */

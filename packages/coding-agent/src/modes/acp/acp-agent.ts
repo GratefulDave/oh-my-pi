@@ -1712,6 +1712,7 @@ export class AcpAgent implements Agent {
 		const projectPath = await resolveActiveProjectRegistryPath(cwd);
 		clearPluginRootsAndCaches(projectPath ? [projectPath] : undefined);
 		resetCapabilities();
+		await record.session.extensionRunner?.reloadExtensions();
 		const fileCommands = await loadSlashCommands({ cwd });
 		record.session.setSlashCommands(fileCommands);
 		await record.session.refreshSshTool({ activateIfAvailable: true });

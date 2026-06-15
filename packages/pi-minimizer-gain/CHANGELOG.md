@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Fixed Active scope staying empty after plugin reloads by matching exact session IDs, falling back to the session start timestamp for legacy records, and writing bash minimizer telemetry again.
+- Fixed Active scope staying empty after plugin reloads by matching exact session IDs, falling back to the session start timestamp for legacy records, writing bash minimizer telemetry again, and keeping diagnostics usable after extension hot reloads.
 
 ### Added
 

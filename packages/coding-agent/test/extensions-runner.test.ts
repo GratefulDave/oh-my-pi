@@ -291,6 +291,41 @@ describe("ExtensionRunner", () => {
 			expect(missing).toBeUndefined();
 		});
 
+		it("reloads command definitions from extension files", async () => {
+			const extensionPath = path.join(extensionsDir, "hot.js");
+			const writeCommand = (description: string) => {
+				fs.writeFileSync(
+					extensionPath,
+					`
+						export default function(pi) {
+							pi.registerCommand("hot", {
+								description: "${description}",
+								handler: async () => {},
+							});
+						}
+					`,
+				);
+			};
+			writeCommand("old handler");
+
+			const result = await loadTestExtensions();
+			const runner = new ExtensionRunner(
+				result.extensions,
+				result.runtime,
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+			);
+
+			expect(runner.getCommand("hot")?.description).toBe("old handler");
+
+			await Bun.sleep(1);
+			writeCommand("reloaded handler");
+			await runner.reloadExtensions();
+
+			expect(runner.getCommand("hot")?.description).toBe("reloaded handler");
+		});
+
 		it("prefers later-loaded explicit extensions for conflicting commands", async () => {
 			const deployCommand = (description: string) => `
 				export default function(pi) {

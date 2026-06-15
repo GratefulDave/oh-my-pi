@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed the unconfigured `pi/smol` fallback chain to try `opencode-antigravity/gemini-3.5-flash:low`, then `deepseek-v4-flash`, and never select Claude Haiku as the final fallback.
+- Fixed `/reload-plugins` to reload extension modules instead of only refreshing slash-command file caches, so updated extension command handlers take effect in the active session.
 
 ## [16.0.0] - 2026-06-15
 

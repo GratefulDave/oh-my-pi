@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as url from "node:url";
 import { isCompiledBinary } from "@oh-my-pi/pi-utils";
@@ -633,15 +634,35 @@ async function ensureExtensionGraphHook(entryRealPath: string): Promise<void> {
  * entry's source graph rewrites only host-resolved compatibility imports in the
  * extension's own source; everything else resolves natively.
  */
-export async function loadLegacyPiModule(resolvedPath: string): Promise<unknown> {
+export async function loadLegacyPiModule(
+	resolvedPath: string,
+	options: { forceFresh?: boolean } = {},
+): Promise<unknown> {
 	// Bun reports the realpath of a loaded module to `onLoad` and exposes it as
 	// `import.meta.url`. Resolve symlinks here too (macOS `/var`→`/private/var`,
 	// `bun link`/pnpm installs) so the rewrite filter matches the path Bun
 	// actually hands the hook.
 	const entryRealPath = await realpathOrSelf(path.resolve(resolvedPath));
+	if (options.forceFresh) {
+		const raw = await Bun.file(entryRealPath).text();
+		const rewritten = await rewriteLegacyExtensionSource(raw, entryRealPath);
+		const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "omp-extension-reload-"));
+		const ext = path.extname(entryRealPath) || ".js";
+		const tmpPath = path.join(tmpDir, `${path.basename(entryRealPath, ext)}-${Date.now()}${ext}`);
+		await fs.promises.writeFile(
+			tmpPath,
+			`${rewritten}\n//# sourceURL=${toImportSpecifier(entryRealPath)}?fresh=${Date.now()}`,
+			"utf8",
+		);
+		try {
+			return await import(toImportSpecifier(tmpPath));
+		} finally {
+			await fs.promises.rm(tmpDir, { recursive: true, force: true });
+		}
+	}
 	await ensureExtensionGraphHook(entryRealPath);
-	// `?mtime` busts Bun's module cache so repeat loads pick up edited source.
-	return import(`${toImportSpecifier(entryRealPath)}?mtime=${Date.now()}`);
+	// Keep normal startup in-place so extension-relative imports and assets keep their original paths.
+	return import(toImportSpecifier(entryRealPath));
 }
 
 function getLoader(path: string): "js" | "jsx" | "ts" | "tsx" {

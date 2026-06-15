@@ -487,12 +487,16 @@ export async function buildMinimizerGainDiagnostic(
 ): Promise<MinimizerGainDiagnostic> {
 	const start = Date.now();
 	const recordsFilePath = input.recordsFilePath ?? getMinimizerGainPath(input.agentDir);
-	const extensionBundlePath = url.fileURLToPath(import.meta.url);
+	const extensionBundlePath = import.meta.url.startsWith("file:")
+		? url.fileURLToPath(import.meta.url)
+		: import.meta.url;
 
 	let extensionBundleMtime: string | null = null;
 	try {
-		const stat = await fs.stat(extensionBundlePath);
-		extensionBundleMtime = stat.mtime.toISOString();
+		if (import.meta.url.startsWith("file:")) {
+			const stat = await fs.stat(extensionBundlePath);
+			extensionBundleMtime = stat.mtime.toISOString();
+		}
 	} catch {
 		extensionBundleMtime = null;
 	}
