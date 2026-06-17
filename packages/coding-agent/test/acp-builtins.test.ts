@@ -350,6 +350,23 @@ describe("ACP builtin slash commands", () => {
 		expect(output[0]).toContain("anthropic/claude-opus-4-5");
 	});
 
+	it("model: shows configured role assignments alongside the current model", async () => {
+		const { output, runtime } = createRuntime();
+		runtime.session.model = { provider: "openai", id: "gpt-5.4" } as never;
+		runtime.settings.set("modelRoles", {
+			default: "anthropic/claude-opus-4-5",
+			task: "openai/gpt-5.4-codex:medium",
+		});
+
+		const result = await executeAcpBuiltinSlashCommand("/model", runtime);
+
+		expect(result).toEqual({ consumed: true });
+		expect(output[0]).toContain("Current model: openai/gpt-5.4");
+		expect(output[0]).toContain("Assigned roles:");
+		expect(output[0]).toContain("- default: anthropic/claude-opus-4-5");
+		expect(output[0]).toContain("- task: openai/gpt-5.4-codex:medium");
+	});
+
 	it("model: returns no-selection message when undefined", async () => {
 		const { output, runtime } = createRuntime();
 
@@ -357,6 +374,17 @@ describe("ACP builtin slash commands", () => {
 
 		expect(result).toEqual({ consumed: true });
 		expect(output[0]).toContain("No model");
+	});
+
+	it("model: still shows configured roles when no model is selected", async () => {
+		const { output, runtime } = createRuntime();
+		runtime.settings.set("modelRoles", { default: "anthropic/claude-sonnet-4-5" });
+
+		const result = await executeAcpBuiltinSlashCommand("/model", runtime);
+
+		expect(result).toEqual({ consumed: true });
+		expect(output[0]).toContain("No model is currently selected.");
+		expect(output[0]).toContain("- default: anthropic/claude-sonnet-4-5");
 	});
 
 	it("model: returns ACP usage message when args provided", async () => {

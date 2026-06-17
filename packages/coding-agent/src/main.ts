@@ -867,8 +867,8 @@ async function buildSessionOptions(
 		options.thinkingLevel = scopedModels[0].thinkingLevel;
 	}
 
-	// Scoped models for Ctrl+P cycling - fill in default thinking levels when not explicit
-	if (scopedModels.length > 0) {
+	// Scoped models for Ctrl+P cycling only apply to explicit CLI --models.
+	if (parsed.models && scopedModels.length > 0) {
 		// `auto` is a session-level concept only; per-scoped-model (Ctrl+P) thinking
 		// overrides stay concrete, so coerce the auto default to "unset" here.
 		const defaultThinkingLevelSetting = activeSettings.get("defaultThinkingLevel");

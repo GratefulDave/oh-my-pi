@@ -6,6 +6,11 @@
 
 - Fixed the unconfigured `pi/smol` fallback chain to try `opencode-antigravity/gemini-3.5-flash:low`, then `deepseek-v4-flash`, and never select Claude Haiku as the final fallback.
 - Fixed `/reload-plugins` to reload extension modules instead of only refreshing slash-command file caches, so updated extension command handlers take effect in the active session.
+- Fixed the model selector to keep configured role-assigned models visible, even when they fall outside the current `--models` scope or are unavailable under the active credentials, so `/model` and `/models` still show the effective role assignments after profile changes.
+- Fixed `/pm use` profile switches to replace `modelRoles` and `enabledModels` live, and made `/model` `/models` read the current `enabledModels` scope instead of a stale startup snapshot, so switching profiles no longer leaves the previous profile's assigned models stuck as `assigned outside scope`.
+- Fixed `/pm` startup profile loading to resolve the active agent directory through the profile-aware path helper instead of only `PI_CODING_AGENT_DIR`, so named OMP profiles no longer accidentally boot with another profile's saved model profile.
+- Fixed `/pm` startup to prefer a same-named model profile from the active OMP profile and to skip applying a stale saved profile when its default model is absent from the current registry, preventing unavailable OMLX assignments from overriding startup model settings.
+- Fixed the bundled `/pm` extension to import profile directory helpers from the root `@oh-my-pi/pi-utils` export instead of a subpath, restoring `/pm` command registration in rebuilt/runtime installs where the subpath import could fail.
 
 ## [16.0.3] - 2026-06-16
 

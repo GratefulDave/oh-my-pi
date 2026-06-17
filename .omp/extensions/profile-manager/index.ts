@@ -22,6 +22,7 @@ import { YAML } from "bun";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { getAgentDir, resolveProfileEnv } from "@oh-my-pi/pi-utils";
 import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { Effort, Model } from "@oh-my-pi/pi-ai";
 import type {
@@ -35,6 +36,7 @@ import type {
 interface ModelProfile {
 	modelRoles?: Record<string, string>;
 	defaultThinkingLevel?: string;
+	enabledModels?: string[];
 	cycleOrder?: string[];
 	modelProviderOrder?: string[];
 }
@@ -56,8 +58,7 @@ const DEFAULT_PROFILE_NAME = "default";
 /** Valid ThinkingLevel suffixes (mirrors @oh-my-pi/pi-agent-core ThinkingLevel). */
 const THINKING_LEVELS = new Set(["inherit", "off", "auto", "minimal", "low", "medium", "high", "xhigh"]);
 
-/** Profile config keys snapshotted from top-level settings by `create`. */
-const PROFILE_KEYS = ["modelRoles", "defaultThinkingLevel", "cycleOrder", "modelProviderOrder"] as const;
+const PROFILE_KEYS = ["modelRoles", "defaultThinkingLevel", "enabledModels", "cycleOrder", "modelProviderOrder"] as const;
 
 // ── extension entry ───────────────────────────────────────────────────────────
 
@@ -70,12 +71,16 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		try {
 			const settings = readSettings(ctx);
-			const active = settings.activeModelProfile;
+			const active = getEffectiveActiveProfileName(settings);
 			if (!active || active === DEFAULT_PROFILE_NAME) return;
 			const profile = getProfiles(settings)[active];
 			if (!profile) return;
+			const startupSkip = preflightProfileStartup(ctx, profile);
+			if (startupSkip) {
+				notify(pi, `[pm] startup: profile "${active}" — ${startupSkip}`);
+				return;
+			}
 			const status = await applyProfile(pi, ctx, profile);
-			// Surface startup result so failures are visible (not swallowed).
 			notify(pi, `[pm] startup: profile "${active}" — ${status}`);
 		} catch (err) {
 			notify(pi, `[pm] startup error: ${err instanceof Error ? err.message : String(err)}`);
@@ -87,10 +92,11 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 	pi.on("session_switch", async (_event, ctx) => {
 		try {
 			const settings = readSettings(ctx);
-			const active = settings.activeModelProfile;
+			const active = getEffectiveActiveProfileName(settings);
 			if (!active || active === DEFAULT_PROFILE_NAME) return;
 			const profile = getProfiles(settings)[active];
-			if (profile) await applyProfile(pi, ctx, profile);
+			if (!profile || preflightProfileStartup(ctx, profile)) return;
+			await applyProfile(pi, ctx, profile);
 		} catch {
 			// Profile application is best-effort; swallow to protect page switch.
 		}
@@ -130,7 +136,7 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 // profile changes to settings.json silently fails for current Lex/OMP sessions.
 
 function activeAgentDir(): string {
-	return process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".omp", "agent");
+	return process.env.PI_CODING_AGENT_DIR || getAgentDir() || path.join(os.homedir(), ".omp", "agent");
 }
 
 function userConfigPath(): string {
@@ -173,11 +179,14 @@ function readSettings(_ctx: ExtensionContext): OmpSettings {
 function copyProfileKeys(target: OmpSettings, source: OmpSettings): void {
 	if (source.modelRoles !== undefined) target.modelRoles = { ...source.modelRoles };
 	if (source.defaultThinkingLevel !== undefined) target.defaultThinkingLevel = source.defaultThinkingLevel;
+	if (source.enabledModels !== undefined) target.enabledModels = [...source.enabledModels];
 	if (source.cycleOrder !== undefined) target.cycleOrder = [...source.cycleOrder];
 	if (source.modelProviderOrder !== undefined) target.modelProviderOrder = [...source.modelProviderOrder];
 }
 
 function applyProfileToSettings(settings: OmpSettings, profile: ModelProfile): void {
+	settings.modelRoles = profile.modelRoles ? { ...profile.modelRoles } : {};
+	settings.enabledModels = profile.enabledModels ? [...profile.enabledModels] : [];
 	copyProfileKeys(settings, profile);
 }
 
@@ -227,6 +236,27 @@ function splitModelSelector(selector: string): { id: string; thinkingLevel?: str
 	return { id: selector };
 }
 
+function resolvePinnedOmpProfileName(settings: OmpSettings): string | undefined {
+	const profileName = resolveProfileEnv(process.env.OMP_PROFILE, process.env.PI_PROFILE);
+	if (!profileName) return undefined;
+	return getProfiles(settings)[profileName] ? profileName : undefined;
+}
+
+function getEffectiveActiveProfileName(settings: OmpSettings): string | undefined {
+	return resolvePinnedOmpProfileName(settings) ?? settings.activeModelProfile;
+}
+
+function preflightProfileStartup(ctx: ExtensionContext, profile: ModelProfile): string | undefined {
+	const selector = profile.modelRoles?.default;
+	if (!selector) return undefined;
+	const { id } = splitModelSelector(selector);
+	if (resolveModel(ctx, id)) return undefined;
+	const allRegistryModels = ctx.modelRegistry.getAll();
+	const provider = id.split("/")[0];
+	const providerCount = allRegistryModels.filter(model => model.provider === provider).length;
+	return `Skipped startup apply. Model "${id}" not in registry (${allRegistryModels.length} total; ${providerCount} from "${provider}").`;
+}
+
 function resolveModel(ctx: ExtensionContext, id: string): Model | undefined {
 	const slashIdx = id.indexOf("/");
 	if (slashIdx > 0) {
@@ -258,8 +288,10 @@ async function applyProfile(
 	profile: ModelProfile,
 	{ switchModel = true }: { switchModel?: boolean } = {},
 ): Promise<string> {
-	const patch: Parameters<ExtensionAPI["applySettings"]>[0] = {};
-	if (profile.modelRoles !== undefined) patch.modelRoles = profile.modelRoles;
+	const patch: Parameters<ExtensionAPI["applySettings"]>[0] = {
+		modelRoles: profile.modelRoles ?? {},
+		enabledModels: profile.enabledModels ?? [],
+	};
 	if (profile.modelProviderOrder !== undefined) patch.modelProviderOrder = profile.modelProviderOrder;
 	if (profile.cycleOrder !== undefined) patch.cycleOrder = profile.cycleOrder;
 	if (profile.defaultThinkingLevel !== undefined) patch.defaultThinkingLevel = profile.defaultThinkingLevel as Effort | "auto";
@@ -330,12 +362,18 @@ async function handleNoArg(pi: ExtensionAPI, ctx: ExtensionCommandContext): Prom
 	if (!ctx.hasUI) return printList(pi, ctx);
 
 	const settings = readSettings(ctx);
-	const active = settings.activeModelProfile ?? DEFAULT_PROFILE_NAME;
+	const active = getEffectiveActiveProfileName(settings) ?? DEFAULT_PROFILE_NAME;
+	const persistedActive = settings.activeModelProfile;
 	const names = profileNames(settings);
 	const allNames = [DEFAULT_PROFILE_NAME, ...names.filter(n => n !== DEFAULT_PROFILE_NAME)];
 	const profileOptions = allNames.map(n => ({
-		label: `${active === n || (n === DEFAULT_PROFILE_NAME && !settings.activeModelProfile) ? "* " : "  "}${n}`,
-		description: n === DEFAULT_PROFILE_NAME ? "Global settings (no profile)" : undefined,
+		label: `${active === n || (n === DEFAULT_PROFILE_NAME && !active) ? "* " : "  "}${n}`,
+		description:
+			n === DEFAULT_PROFILE_NAME
+				? "Global settings (no profile)"
+				: n === active && persistedActive && persistedActive !== active
+					? `Pinned by active OMP profile; saved /pm profile is ${persistedActive}`
+					: undefined,
 	}));
 	const CREATE_LABEL = "  Create new profile...";
 	const choices = [...profileOptions, { label: CREATE_LABEL, description: "Snapshot current model config" }];
@@ -363,9 +401,13 @@ async function handleNoArg(pi: ExtensionAPI, ctx: ExtensionCommandContext): Prom
 
 function printList(pi: ExtensionAPI, ctx: ExtensionCommandContext): void {
 	const settings = readSettings(ctx);
-	const active = settings.activeModelProfile;
+	const active = getEffectiveActiveProfileName(settings);
+	const persistedActive = settings.activeModelProfile;
 	let out = "Model profiles:\n";
 	out += `  ${!active || active === DEFAULT_PROFILE_NAME ? "*" : " "} ${DEFAULT_PROFILE_NAME}\n`;
+	if (active && persistedActive && persistedActive !== active) {
+		out += `  (active OMP profile pins /pm to "${active}"; saved /pm profile is "${persistedActive}")\n`;
+	}
 	for (const name of profileNames(settings)) {
 		if (name === DEFAULT_PROFILE_NAME) continue;
 		out += `  ${active === name ? "*" : " "} ${name}\n`;
@@ -471,7 +513,7 @@ async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName
 async function handleModel(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawRole: string | undefined): Promise<void> {
 	const role = rawRole?.trim() || "smol";
 	const settings = readSettings(ctx);
-	const active = settings.activeModelProfile;
+	const active = getEffectiveActiveProfileName(settings);
 	if (!active || active === DEFAULT_PROFILE_NAME) {
 		notify(pi, "No named profile active. Use /pm use <name> first.");
 		return;
@@ -491,8 +533,9 @@ async function handleModel(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawRo
 		return;
 	}
 
-	// Build model list. All authenticated models shown — no enabledModels filter
-	// (that field no longer exists on profiles; it was causing antigravity to disappear).
+	// Build model list from all authenticated models. Profiles may carry
+	// enabledModels again, but this picker stays broad so reassignment can escape
+	// an over-tight scope.
 	const allModels = ctx.models.list();
 	const filtered = allModels;
 

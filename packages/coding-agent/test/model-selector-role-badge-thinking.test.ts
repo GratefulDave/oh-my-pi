@@ -88,6 +88,34 @@ function createScopedSelector(
 		options,
 	);
 }
+
+function createRegistrySelector(
+	allModels: Model[],
+	availableModels: Model[],
+	scopedModels: Model[] | undefined,
+	settings: Settings,
+): ModelSelectorComponent {
+	const modelRegistry = {
+		getAll: () => allModels,
+		getAvailable: () => availableModels,
+		getError: () => undefined,
+		refresh: vi.fn(async () => {}),
+		getDiscoverableProviders: () => [],
+		getCanonicalModelSelections: () => [],
+	} as unknown as ModelRegistry;
+	const ui = {
+		requestRender: vi.fn(),
+	} as unknown as TUI;
+	return new ModelSelectorComponent(
+		ui,
+		undefined,
+		settings,
+		modelRegistry,
+		(scopedModels ?? []).map(model => ({ model })),
+		() => {},
+		() => {},
+	);
+}
 let testTheme = await getThemeByName("dark");
 
 function installTestTheme(): void {
@@ -140,18 +168,56 @@ describe("ModelSelector role badge thinking display", () => {
 	test("shows compact auto badges for unconfigured role defaults", async () => {
 		installTestTheme();
 		const settings = Settings.isolated({});
-		const haiku = createContextTestModel("claude-haiku-4.5", 128_000);
+		const mini = createContextTestModel("gpt-4.1-mini", 128_000);
 		const codex = createContextTestModel("gpt-5.1-codex", 128_000);
 
-		const selector = createScopedSelector([codex, haiku], settings, () => {});
+		const selector = createScopedSelector([codex, mini], settings, () => {});
 		await Bun.sleep(0);
 		installTestTheme();
 
 		const rendered = normalizeRenderedText(selector.render(220).join("\n"));
-		expect(rendered).toContain("claude-haiku-4.5");
+		expect(rendered).toContain("gpt-4.1-mini");
 		expect(rendered).toContain("gpt-5.1-codex");
 		expect(rendered).toContain("[SMOL auto]");
 		expect(rendered).toContain("[SLOW auto]");
+	});
+
+	test("pins configured assigned models even when unavailable", async () => {
+		installTestTheme();
+		const available = createContextTestModel("available-fast", 128_000);
+		const assigned = createContextTestModel("assigned-task", 128_000);
+		const settings = Settings.isolated({
+			modelRoles: {
+				task: `${assigned.provider}/${assigned.id}`,
+			},
+		});
+		const selector = createRegistrySelector([available, assigned], [available], undefined, settings);
+		await Bun.sleep(0);
+		installTestTheme();
+
+		const rendered = normalizeRenderedText(selector.render(220).join("\n"));
+		expect(rendered).toContain("assigned-task");
+		expect(rendered).toContain("TASK (inherit)");
+		expect(rendered).toContain("assigned unavailable");
+	});
+
+	test("pins configured assigned models outside the active scope", async () => {
+		installTestTheme();
+		const inScope = createContextTestModel("scope-fast", 128_000);
+		const assigned = createContextTestModel("scope-task", 128_000);
+		const settings = Settings.isolated({
+			modelRoles: {
+				task: `${assigned.provider}/${assigned.id}`,
+			},
+		});
+		const selector = createRegistrySelector([inScope, assigned], [inScope, assigned], [inScope], settings);
+		await Bun.sleep(0);
+		installTestTheme();
+
+		const rendered = normalizeRenderedText(selector.render(220).join("\n"));
+		expect(rendered).toContain("scope-task");
+		expect(rendered).toContain("TASK (inherit)");
+		expect(rendered).toContain("assigned outside scope");
 	});
 
 	test("dims and disables models below the current context size", async () => {

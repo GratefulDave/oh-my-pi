@@ -7,8 +7,8 @@ import type { AutocompleteItem } from "@oh-my-pi/pi-tui";
 import { APP_NAME, setProjectDir } from "@oh-my-pi/pi-utils";
 import { COLLAB_GUEST_ALLOWED_COMMANDS, CollabGuestLink } from "../collab/guest";
 import { CollabHost } from "../collab/host";
-import type { SettingPath, SettingValue } from "../config/settings";
-import { settings } from "../config/settings";
+import { getKnownRoleIds } from "../config/model-roles";
+import { type SettingPath, type SettingValue, settings } from "../config/settings";
 import {
 	clearPluginRootsAndCaches,
 	resolveActiveProjectRegistryPath,
@@ -102,6 +102,28 @@ function collabLinkHint(host: CollabHost, heading: string, view = false): string
 function formatFreshSessionResult(result: FreshSessionResult): string {
 	const stateLabel = result.closedProviderSessions === 1 ? "provider state" : "provider states";
 	return `Fresh provider session started (${result.closedProviderSessions} ${stateLabel} pruned).`;
+}
+
+function formatModelStatus(runtime: SlashCommandRuntime): string {
+	const lines: string[] = [];
+	const model = runtime.session.model;
+	lines.push(model ? `Current model: ${model.provider}/${model.id}` : "No model is currently selected.");
+
+	const thinkingLevel = runtime.session.configuredThinkingLevel?.();
+	if (thinkingLevel) {
+		lines.push(`Thinking level: ${thinkingLevel}`);
+	}
+
+	const configuredRoles = runtime.settings.getModelRoles();
+	const assignedRoles = getKnownRoleIds(runtime.settings).filter(role => configuredRoles[role]);
+	if (assignedRoles.length > 0) {
+		lines.push("", "Assigned roles:");
+		for (const role of assignedRoles) {
+			lines.push(`- ${role}: ${configuredRoles[role]}`);
+		}
+	}
+
+	return lines.join("\n");
 }
 
 const shutdownHandlerTui = (_command: ParsedSlashCommand, runtime: TuiSlashCommandRuntime): SlashCommandResult => {
@@ -334,10 +356,7 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 				}
 			}
 
-			const model = runtime.session.model;
-			await runtime.output(
-				model ? `Current model: ${model.provider}/${model.id}` : "No model is currently selected.",
-			);
+			await runtime.output(formatModelStatus(runtime));
 			return commandConsumed();
 		},
 		handleTui: (_command, runtime) => {

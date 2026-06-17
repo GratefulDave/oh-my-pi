@@ -6566,7 +6566,7 @@ export class AgentSession {
 
 	async #cycleAvailableModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
 		const previousEditMode = this.#resolveActiveEditMode();
-		const availableModels = this.#modelRegistry.getAvailable();
+		const availableModels = this.getAvailableModels();
 		if (availableModels.length <= 1) return undefined;
 
 		const currentModel = this.model;

@@ -444,13 +444,25 @@ export class SelectorController {
 
 	showModelSelector(options?: { temporaryOnly?: boolean }): void {
 		const currentContextTokens = computeContextBreakdown(this.ctx.session).usedTokens;
+		const enabledModels = this.ctx.settings.get("enabledModels");
+		const hasCliScope = this.ctx.session.scopedModels.length > 0;
+		const scopedModels = hasCliScope
+			? this.ctx.session.scopedModels
+			: enabledModels.length > 0
+				? this.ctx.session.getAvailableModels().map(model => ({ model }))
+				: [];
+		const scopeHint = hasCliScope
+			? "Showing models from --models scope"
+			: enabledModels.length > 0
+				? "Showing models from enabledModels scope"
+				: undefined;
 		this.showSelector(done => {
 			const selector = new ModelSelectorComponent(
 				this.ctx.ui,
 				this.ctx.session.model,
 				this.ctx.settings,
 				this.ctx.session.modelRegistry,
-				this.ctx.session.scopedModels,
+				scopedModels,
 				async (model, role, thinkingLevel, selector) => {
 					// `auto` is session-global: never baked into a per-role model value
 					// (it can't round-trip through `model:<level>`). Apply it to the session
@@ -507,7 +519,7 @@ export class SelectorController {
 					done();
 					this.ctx.ui.requestRender();
 				},
-				{ ...options, currentContextTokens },
+				{ ...options, currentContextTokens, scopeHint },
 			);
 			return { component: selector, focus: selector };
 		});

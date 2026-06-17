@@ -86,6 +86,7 @@ interface ModelItem {
 	id: string;
 	model: Model;
 	selector: string;
+	disabledReason?: string;
 }
 
 interface CanonicalModelItem {
@@ -97,6 +98,7 @@ interface CanonicalModelItem {
 	searchText: string;
 	normalizedSearchText: string;
 	compactSearchText: string;
+	disabledReason?: string;
 }
 
 interface ScopedModelItem {
@@ -170,6 +172,7 @@ export class ModelSelectorComponent extends Container {
 	#errorMessage?: unknown;
 	#tui: TUI;
 	#scopedModels: ReadonlyArray<ScopedModelItem>;
+	#scopeHint?: string;
 	#temporaryOnly: boolean;
 	#currentContextTokens: number;
 
@@ -197,7 +200,12 @@ export class ModelSelectorComponent extends Container {
 		scopedModels: ReadonlyArray<ScopedModelItem>,
 		onSelect: RoleSelectCallback,
 		onCancel: () => void,
-		options?: { temporaryOnly?: boolean; initialSearchInput?: string; currentContextTokens?: number },
+		options?: {
+			temporaryOnly?: boolean;
+			initialSearchInput?: string;
+			currentContextTokens?: number;
+			scopeHint?: string;
+		},
 	) {
 		super();
 
@@ -208,6 +216,7 @@ export class ModelSelectorComponent extends Container {
 		this.#onSelectCallback = onSelect;
 		this.#onCancelCallback = onCancel;
 		this.#temporaryOnly = options?.temporaryOnly ?? false;
+		this.#scopeHint = options?.scopeHint;
 		const currentContextTokens = options?.currentContextTokens ?? 0;
 		this.#currentContextTokens =
 			Number.isFinite(currentContextTokens) && currentContextTokens > 0 ? Math.floor(currentContextTokens) : 0;
@@ -226,7 +235,7 @@ export class ModelSelectorComponent extends Container {
 		// Add hint about model filtering
 		const hintText =
 			scopedModels.length > 0
-				? "Showing models from --models scope"
+				? (this.#scopeHint ?? "Showing models from --models scope")
 				: "Only showing models with configured API keys (see README for details)";
 		this.addChild(new Text(theme.fg("warning", hintText), 0, 0));
 		this.addChild(new Spacer(1));
@@ -446,15 +455,11 @@ export class ModelSelectorComponent extends Container {
 	}
 
 	#loadModelsFromCurrentRegistryState(): void {
+		const allRegistryModels = this.#modelRegistry.getAll();
+
 		let models: ModelItem[];
 		if (this.#scopedModels.length > 0) {
-			models = this.#scopedModels.map(scoped => ({
-				kind: "provider",
-				provider: scoped.model.provider,
-				id: scoped.model.id,
-				model: scoped.model,
-				selector: `${scoped.model.provider}/${scoped.model.id}`,
-			}));
+			models = this.#scopedModels.map(scoped => this.#createModelItem(scoped.model));
 		} else {
 			const loadError = this.#modelRegistry.getError();
 			if (loadError) {
@@ -464,14 +469,7 @@ export class ModelSelectorComponent extends Container {
 			}
 
 			try {
-				const availableModels = this.#modelRegistry.getAvailable();
-				models = availableModels.map((model: Model) => ({
-					kind: "provider",
-					provider: model.provider,
-					id: model.id,
-					model,
-					selector: `${model.provider}/${model.id}`,
-				}));
+				models = this.#modelRegistry.getAvailable().map((model: Model) => this.#createModelItem(model));
 			} catch (error) {
 				this.#allModels = [];
 				this.#filteredModels = [];
@@ -483,11 +481,19 @@ export class ModelSelectorComponent extends Container {
 		}
 
 		const candidates = models.map(item => item.model);
-		this.#loadRoleModels(candidates);
+		this.#loadRoleModels(candidates.length > 0 ? candidates : allRegistryModels);
+		const pinnedAssignedModels = this.#collectPinnedAssignedModels(models);
+		if (pinnedAssignedModels.length > 0) {
+			models = [...models, ...pinnedAssignedModels];
+		}
+		const canonicalCandidates = models.map(item => item.model);
 		const canonicalSelections = this.#modelRegistry.getCanonicalModelSelections({
-			availableOnly: this.#scopedModels.length === 0,
-			candidates,
+			availableOnly: this.#scopedModels.length === 0 && pinnedAssignedModels.length === 0,
+			candidates: canonicalCandidates,
 		});
+		const pinnedCanonicalReasons = new Map(
+			pinnedAssignedModels.map(item => [item.selector.toLowerCase(), item.disabledReason]),
+		);
 		const canonicalModels = canonicalSelections.map(({ record, model: selectedModel }): CanonicalModelItem => {
 			const searchText = [
 				record.id,
@@ -506,6 +512,7 @@ export class ModelSelectorComponent extends Container {
 				searchText,
 				normalizedSearchText: normalizeSearchText(searchText),
 				compactSearchText: compactSearchText(searchText),
+				disabledReason: pinnedCanonicalReasons.get(`${selectedModel.provider}/${selectedModel.id}`.toLowerCase()),
 			};
 		});
 
@@ -704,14 +711,58 @@ export class ModelSelectorComponent extends Container {
 	}
 
 	#isItemDisabled(item: ModelItem | CanonicalModelItem): boolean {
-		return this.#isModelOverContextLimit(item.model);
+		return item.disabledReason !== undefined || this.#isModelOverContextLimit(item.model);
 	}
 
-	#formatContextLimitSuffix(model: Model): string {
-		if (!this.#isModelOverContextLimit(model)) {
-			return "";
+	#createModelItem(model: Model, disabledReason?: string): ModelItem {
+		return {
+			kind: "provider",
+			provider: model.provider,
+			id: model.id,
+			model,
+			selector: `${model.provider}/${model.id}`,
+			disabledReason,
+		};
+	}
+
+	#collectPinnedAssignedModels(models: ReadonlyArray<ModelItem>): ModelItem[] {
+		const present = new Set(models.map(item => item.selector.toLowerCase()));
+		const pinned: ModelItem[] = [];
+		const disabledReason = this.#scopedModels.length > 0 ? "assigned outside scope" : "assigned unavailable";
+		for (const assigned of Object.values(this.#roles)) {
+			if (!assigned || assigned.autoSelected) continue;
+			const selector = `${assigned.model.provider}/${assigned.model.id}`;
+			const key = selector.toLowerCase();
+			if (present.has(key)) continue;
+			present.add(key);
+			pinned.push(this.#createModelItem(assigned.model, disabledReason));
 		}
-		return ` ${theme.status.disabled} context>${formatNumber(model.contextWindow ?? 0).toLowerCase()}`;
+
+		return pinned;
+	}
+
+	#formatDisabledSuffix(item: ModelItem | CanonicalModelItem): string {
+		const parts: string[] = [];
+		if (item.disabledReason) {
+			parts.push(item.disabledReason);
+		}
+		if (this.#isModelOverContextLimit(item.model)) {
+			parts.push(`context>${formatNumber(item.model.contextWindow ?? 0).toLowerCase()}`);
+		}
+		return parts.length > 0 ? ` ${theme.status.disabled} ${parts.join(" · ")}` : "";
+	}
+
+	#formatDisabledWarning(item: ModelItem | CanonicalModelItem): string {
+		const parts: string[] = [];
+		if (item.disabledReason) {
+			parts.push(item.disabledReason);
+		}
+		if (this.#isModelOverContextLimit(item.model)) {
+			parts.push(
+				`current context ${formatNumber(this.#currentContextTokens).toLowerCase()} > ${formatNumber(item.model.contextWindow ?? 0).toLowerCase()} limit`,
+			);
+		}
+		return parts.length > 0 ? theme.fg("dim", ` — ${parts.join(" · ")}`) : "";
 	}
 
 	#getVisibleItems(): ReadonlyArray<ModelItem | CanonicalModelItem> {
@@ -931,7 +982,7 @@ export class ModelSelectorComponent extends Container {
 
 			const isSelected = i === this.#selectedIndex;
 			const isDisabled = this.#isItemDisabled(item);
-			const disabledSuffix = this.#formatContextLimitSuffix(item.model);
+			const disabledSuffix = this.#formatDisabledSuffix(item);
 
 			// Build role badges. Solid badges are configured; outlined badges are auto-selected defaults.
 			const roleBadgeTokens: string[] = [];
@@ -1014,14 +1065,9 @@ export class ModelSelectorComponent extends Container {
 			const suffix = isCanonicalTab
 				? ` (${selected.model.provider}/${selected.model.id}, ${(selected as CanonicalModelItem).variantCount} variants)`
 				: "";
-			const limitWarning = this.#isItemDisabled(selected)
-				? theme.fg(
-						"dim",
-						` — current context ${formatNumber(this.#currentContextTokens).toLowerCase()} > ${formatNumber(selected.model.contextWindow ?? 0).toLowerCase()} limit`,
-					)
-				: "";
+			const disabledWarning = this.#isItemDisabled(selected) ? this.#formatDisabledWarning(selected) : "";
 			this.#listContainer.addChild(
-				new Text(theme.fg("muted", `  Model Name: ${selected.model.name}${suffix}`) + limitWarning, 0, 0),
+				new Text(theme.fg("muted", `  Model Name: ${selected.model.name}${suffix}`) + disabledWarning, 0, 0),
 			);
 		}
 	}

@@ -260,6 +260,20 @@ describe("AgentSession model persistence", () => {
 		expect(created.settings.getModelRole("default")).toBe(defaultRoleValue);
 	});
 
+	it("limits cycling to the live enabledModels scope", async () => {
+		const defaultModel = getAnthropicModelOrThrow("claude-sonnet-4-5");
+		const created = await createSession({
+			initialModel: defaultModel,
+			modelRoles: { default: modelValue(defaultModel) },
+		});
+		created.settings.set("enabledModels", [modelValue(defaultModel)]);
+
+		const result = await created.session.cycleModel();
+
+		expect(result).toBeUndefined();
+		expect(created.session.model?.id).toBe(defaultModel.id);
+	});
+
 	it("restores the last active role model when switching sessions", async () => {
 		const defaultModel = getAnthropicModelOrThrow("claude-sonnet-4-5");
 		const smolModel = getAnthropicModelOrThrow("claude-sonnet-4-6");
