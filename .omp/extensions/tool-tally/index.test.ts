@@ -15,6 +15,8 @@ const nerdTheme = {
 				"tool.todo": "[todo]",
 				"tool.edit": "[edit]",
 				"icon.folder": "[find]",
+				"icon.rewind": "[rewind]",
+				"icon.warning": "[warn]",
 				"tool.mcp": "[mcp]",
 			} as Record<string, string>
 		)[key] ?? `[${key}]`,
@@ -35,13 +37,15 @@ describe("tool tally widget", () => {
 		).toBe("tools:108  read:38  search:36  bash:17");
 	});
 
-	test("uses nerd glyph prefixes and plain fallback for unknown tools", () => {
+	test("uses nerd glyph prefixes for mapped tools including rewind and report_tool_issue", () => {
 		expect(
 			formatWidgetLine(
 				new Map([
 					["read", 38],
 					["search", 36],
 					["bash", 17],
+					["rewind", 9],
+					["report_tool_issue", 4],
 					["edit", 5],
 					["find", 2],
 					["search_tool_bm25", 1],
@@ -51,9 +55,7 @@ describe("tool tally widget", () => {
 				108,
 				nerdTheme,
 			),
-		).toBe(
-			"[tools]108  [read]38  [search]36  [bash]17  [edit]5  [find]2  [search]1  [mcp]1  unknown_tool:1",
-		);
+		).toBe("[tools]108  [read]38  [search]36  [bash]17  [rewind]9  [edit]5  [warn]4  [find]2  [search]1");
 	});
 
 	test("bundled helper stays in sync with source helper", () => {
