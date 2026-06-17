@@ -101,7 +101,7 @@ export class SwarmDashboard {
 
 	layout(_width: number, _height: number): void {}
 
-	render(_width: number, _height: number): string[] {
+	render(_width: number): readonly string[] {
 		const cfg = getConfig();
 		const lines: string[] = [];
 		const { fg, bold, dim } = this.theme;
@@ -169,5 +169,9 @@ export class SwarmDashboard {
 			clearInterval(this.#refreshHandle);
 			this.#refreshHandle = undefined;
 		}
+	}
+
+	dispose(): void {
+		this.destroy();
 	}
 }

@@ -551,14 +551,20 @@ function cleanFeedText(text: string): string {
  */
 async function parseFeedToMarkdown(content: string, maxItems = 10): Promise<string> {
 	const { parseHTML } = await import("linkedom");
+	type FeedNode = {
+		querySelector(selector: string): FeedNode | null;
+		querySelectorAll(selector: string): ArrayLike<FeedNode>;
+		getAttribute(name: string): string | null;
+		text?: string;
+	};
 	try {
-		const doc = parseHTML(content).document;
+		const doc = parseHTML(content).document as unknown as FeedNode;
 
 		// Try RSS
 		const channel = doc.querySelector("channel");
 		if (channel) {
 			const title = cleanFeedText(channel.querySelector("title")?.text || "RSS Feed");
-			const items = channel.querySelectorAll("item").slice(0, maxItems);
+			const items = Array.from(channel.querySelectorAll("item")).slice(0, maxItems);
 
 			let md = `# ${title}\n\n`;
 			for (const item of items) {
@@ -580,7 +586,7 @@ async function parseFeedToMarkdown(content: string, maxItems = 10): Promise<stri
 		const feed = doc.querySelector("feed");
 		if (feed) {
 			const title = cleanFeedText(feed.querySelector("title")?.text || "Atom Feed");
-			const entries = feed.querySelectorAll("entry").slice(0, maxItems);
+			const entries = Array.from(feed.querySelectorAll("entry")).slice(0, maxItems);
 
 			let md = `# ${title}\n\n`;
 			for (const entry of entries) {

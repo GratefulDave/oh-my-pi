@@ -547,7 +547,7 @@ export async function buildMinimizerGainDiagnostic(
 				: input.activeSessionCommands !== undefined
 					? (await filterActiveSessionRecordsByCommands(scopedRecords, input.activeSessionCommands)).length
 					: input.activeSessionFile !== undefined
-						? (await filterActiveSessionRecords(scopedRecords, input.activeSessionFile, scopeCwd)).length
+						? (await filterActiveSessionRecords(scopedRecords, input.activeSessionFile, scope.cwd)).length
 						: allRecords.filter(r => matchesCwd(r, scope) && timestampAtOrAfter(r.timestamp, MODULE_STARTED_AT))
 								.length;
 

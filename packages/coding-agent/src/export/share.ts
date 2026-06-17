@@ -247,10 +247,14 @@ async function tryCreateGist(sealed: Uint8Array): Promise<{ id: string; url: str
 async function uploadToServer(sealed: Uint8Array, base: string): Promise<string> {
 	let res: Response;
 	try {
+		const requestBody =
+			sealed.buffer instanceof ArrayBuffer
+				? new Uint8Array(sealed.buffer, sealed.byteOffset, sealed.byteLength)
+				: Uint8Array.from(sealed);
 		res = await fetch(base, {
 			method: "POST",
 			headers: { "Content-Type": "application/octet-stream" },
-			body: sealed,
+			body: requestBody,
 		});
 	} catch (err) {
 		throw new Error(`Share upload to ${base} failed: ${err instanceof Error ? err.message : String(err)}`);

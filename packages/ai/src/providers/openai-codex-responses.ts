@@ -2694,13 +2694,21 @@ class CodexWebSocketConnection {
 			this.#push(null);
 		};
 		socket.onmessage = event => {
+			const messageEvent = event as unknown as MessageEvent<string | ArrayBuffer | Uint8Array>;
 			// Stamp inbound activity before parsing so even malformed frames refresh
 			// the liveness clock — what matters for reuse health is that the upstream
 			// is still talking to us, not that every frame is well-formed.
 			this.#lastInboundAt = Date.now();
-			this.#writeDebugWebSocketFrame(event.data);
+			this.#writeDebugWebSocketFrame(messageEvent.data);
 			try {
-				const text = typeof event.data === "string" ? event.data : Buffer.from(event.data).toString("utf-8");
+				const text =
+					typeof messageEvent.data === "string"
+						? messageEvent.data
+						: Buffer.from(
+								messageEvent.data instanceof ArrayBuffer
+									? new Uint8Array(messageEvent.data)
+									: messageEvent.data,
+							).toString("utf-8");
 				if (!text) return;
 				const parsed = JSON.parse(text) as Record<string, unknown>;
 				if (parsed.type === "error" && typeof parsed.error === "object" && parsed.error) {
@@ -2715,7 +2723,7 @@ class CodexWebSocketConnection {
 				notifyCodexWebSocketInbound(this.#streamObserver, parsed, text);
 				this.#push(parsed);
 			} catch (error) {
-				notifyCodexWebSocketMalformed(this.#streamObserver, event.data, error);
+				notifyCodexWebSocketMalformed(this.#streamObserver, messageEvent.data, error);
 				this.#push(createCodexWebSocketTransportError(String(error)));
 			}
 		};

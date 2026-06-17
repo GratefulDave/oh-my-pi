@@ -1,6 +1,7 @@
 {
 	"extends": "../tsconfig.base.json",
 	"include": [
+		"workspace-assets.d.ts",
 		"*/src",
 		"*/test",
 		"*/tests",

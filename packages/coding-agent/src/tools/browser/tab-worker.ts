@@ -3,7 +3,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { Snowflake, untilAborted } from "@oh-my-pi/pi-utils";
-import type { HTMLElement } from "linkedom";
 import type {
 	Browser,
 	Dialog,
@@ -44,14 +43,35 @@ import type {
 	WorkerInitPayload,
 } from "./tab-protocol";
 
-declare global {
-	interface Element extends HTMLElement {}
-	function getComputedStyle(element: Element): Record<string, unknown>;
-	var innerWidth: number;
-	var innerHeight: number;
-	var document: {
-		elementFromPoint(x: number, y: number): Element | null;
+interface BrowserRectLike {
+	left: number;
+	right: number;
+	top: number;
+	bottom: number;
+	width: number;
+	height: number;
+}
+
+interface BrowserElementLike {
+	closest(selector: string): BrowserElementLike | null;
+	contains(other: BrowserElementLike): boolean;
+	getBoundingClientRect(): BrowserRectLike;
+}
+
+interface BrowserStyleLike {
+	display?: string;
+	visibility?: string;
+	pointerEvents?: string;
+	opacity?: string | number;
+}
+
+interface BrowserGlobalsLike {
+	innerWidth: number;
+	innerHeight: number;
+	document: {
+		elementFromPoint(x: number, y: number): BrowserElementLike | null;
 	};
+	getComputedStyle(element: BrowserElementLike): BrowserStyleLike;
 }
 
 const INTERACTIVE_AX_ROLES = new Set([
@@ -310,7 +330,7 @@ async function resolveActionableQueryHandlerClickTarget(handles: ElementHandle[]
 		try {
 			const proxy = await handle.evaluateHandle(el => {
 				const target =
-					(el as Element).closest(
+					(el as unknown as BrowserElementLike).closest(
 						'a,button,[role="button"],[role="link"],input[type="button"],input[type="submit"]',
 					) ?? el;
 				return target;
@@ -322,7 +342,7 @@ async function resolveActionableQueryHandlerClickTarget(handles: ElementHandle[]
 			const intersecting = await clickable.isIntersectingViewport();
 			if (!intersecting) continue;
 			const rect = (await clickable.evaluate(el => {
-				const r = (el as Element).getBoundingClientRect();
+				const r = (el as unknown as BrowserElementLike).getBoundingClientRect();
 				return { x: r.left, y: r.top, w: r.width, h: r.height };
 			})) as { x: number; y: number; w: number; h: number };
 			if (rect.w < 1 || rect.h < 1) continue;
@@ -346,24 +366,25 @@ async function resolveActionableQueryHandlerClickTarget(handles: ElementHandle[]
 
 async function isClickActionable(handle: ElementHandle): Promise<ActionabilityResult> {
 	return (await handle.evaluate(el => {
-		const element = el as HTMLElement;
-		const style = globalThis.getComputedStyle(element);
+		const browser = globalThis as typeof globalThis & BrowserGlobalsLike;
+		const element = el as unknown as BrowserElementLike;
+		const style = browser.getComputedStyle(element);
 		if (style.display === "none") return { ok: false as const, reason: "display:none" };
 		if (style.visibility === "hidden") return { ok: false as const, reason: "visibility:hidden" };
 		if (style.pointerEvents === "none") return { ok: false as const, reason: "pointer-events:none" };
 		if (Number(style.opacity) === 0) return { ok: false as const, reason: "opacity:0" };
 		const r = element.getBoundingClientRect();
 		if (r.width < 1 || r.height < 1) return { ok: false as const, reason: "zero-size" };
-		const left = Math.max(0, Math.min(globalThis.innerWidth, r.left));
-		const right = Math.max(0, Math.min(globalThis.innerWidth, r.right));
-		const top = Math.max(0, Math.min(globalThis.innerHeight, r.top));
-		const bottom = Math.max(0, Math.min(globalThis.innerHeight, r.bottom));
+		const left = Math.max(0, Math.min(browser.innerWidth, r.left));
+		const right = Math.max(0, Math.min(browser.innerWidth, r.right));
+		const top = Math.max(0, Math.min(browser.innerHeight, r.top));
+		const bottom = Math.max(0, Math.min(browser.innerHeight, r.bottom));
 		if (right - left < 1 || bottom - top < 1) return { ok: false as const, reason: "off-viewport" };
 		const x = Math.floor((left + right) / 2);
 		const y = Math.floor((top + bottom) / 2);
-		const topEl = globalThis.document.elementFromPoint(x, y);
-		if (!topEl) return { ok: false as const, reason: "elementFromPoint-null" };
-		if (topEl === element || element.contains(topEl) || (topEl as Element).contains(element))
+		const topElement = browser.document.elementFromPoint(x, y) as BrowserElementLike | null;
+		if (!topElement) return { ok: false as const, reason: "elementFromPoint-null" };
+		if (topElement === element || element.contains(topElement) || topElement.contains(element))
 			return { ok: true as const, x, y };
 		return { ok: false as const, reason: "obscured" };
 	})) as ActionabilityResult;

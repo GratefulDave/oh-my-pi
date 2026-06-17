@@ -1,4 +1,3 @@
-import type { HTMLElement } from "linkedom";
 import { ToolAbortError } from "../../tools/tool-errors";
 import type { RenderResult, SpecialHandler } from "./types";
 import { buildResult, loadPage } from "./types";
@@ -50,7 +49,12 @@ export const handleTwitter: SpecialHandler = async (
 					if (stats) md += `---\n${stats.replace(/\s+/g, " ")}\n`;
 
 					// Check for replies/thread
-					const replies = Array.from(doc.querySelectorAll(".timeline-item .tweet-content")) as HTMLElement[];
+					const replies = Array.from(
+						doc.querySelectorAll(".timeline-item .tweet-content") as ArrayLike<{
+							parentElement?: { querySelector(selector: string): { textContent?: string | null } | null } | null;
+							textContent?: string | null;
+						}>,
+					);
 					if (replies.length > 1) {
 						md += `\n---\n\n## Thread/Replies\n\n`;
 						for (const reply of replies.slice(1, 10)) {

@@ -1,3 +1,4 @@
+/// <reference path="../../ambient-assets.d.ts" />
 /**
  * Subprocess-backed Python runner.
  *

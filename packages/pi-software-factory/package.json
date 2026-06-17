@@ -26,7 +26,8 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-utils": "^15.10.3-lex"
+		"@oh-my-pi/pi-utils": "^15.10.3-lex",
+		"handlebars": "^4.7.9"
 	},
 	"peerDependencies": {
 		"@oh-my-pi/pi-coding-agent": "workspace:*"

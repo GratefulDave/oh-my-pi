@@ -48,7 +48,7 @@ export class CollabSocket {
 	/** Serializes open() so frames are delivered in arrival order. */
 	#recvChain: Promise<void> = Promise.resolve();
 	/** Envelopes sealed while disconnected, flushed on the next open. */
-	#pendingSends: Uint8Array[] = [];
+	#pendingSends: Uint8Array<ArrayBuffer>[] = [];
 
 	constructor(opts: CollabSocketOptions) {
 		this.#opts = opts;
@@ -74,16 +74,20 @@ export class CollabSocket {
 				}
 				const sealed = await seal(this.#opts.key, frame);
 				const envelope = packEnvelope(targetPeer, sealed);
+				const envelopeBytes: Uint8Array<ArrayBuffer> =
+					envelope.buffer instanceof ArrayBuffer
+						? new Uint8Array(envelope.buffer, envelope.byteOffset, envelope.byteLength)
+						: Uint8Array.from(envelope);
 				const ws = this.#ws;
 				if (ws && ws.readyState === WebSocket.OPEN) {
-					ws.send(envelope);
+					ws.send(envelopeBytes);
 					return;
 				}
 				if (this.#pendingSends.length >= MAX_PENDING_SENDS) {
 					logger.debug("collab: dropping frame, reconnect buffer full", { t: frame.t });
 					return;
 				}
-				this.#pendingSends.push(envelope);
+				this.#pendingSends.push(envelopeBytes);
 			})
 			.catch((err: unknown) => {
 				logger.debug("collab: send failed", { error: String(err) });

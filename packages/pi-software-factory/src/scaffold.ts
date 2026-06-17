@@ -3,13 +3,20 @@ import * as path from "node:path";
 
 import { isEnoent } from "@oh-my-pi/pi-utils";
 
-/** Embedded template manifest — file content inlined for standalone deployment. */
+import claudeMainOrchestratorTemplate from "./templates/claude-main-orchestrator.md" with { type: "text" };
+import factoryVerifierTemplate from "./templates/factory-verifier.md" with { type: "text" };
+import metaPromptTemplate from "./templates/meta-prompt.md" with { type: "text" };
+import ompMainOrchestratorTemplate from "./templates/omp-main-orchestrator.md" with { type: "text" };
+import stravPaneWorkflowTemplate from "./templates/strav-pane-workflow.md" with { type: "text" };
+import verifyOnStopTemplate from "./templates/verify-on-stop.md" with { type: "text" };
+
 interface TemplateFile {
 	target: string;
 	content: string;
+	presets?: readonly FactoryPreset[];
 }
 
-export const FACTORY_PRESETS = ["standard", "minimal"] as const;
+export const FACTORY_PRESETS = ["standard", "minimal", "pane-factory", "strav"] as const;
 
 export type FactoryPreset = (typeof FACTORY_PRESETS)[number];
 
@@ -34,6 +41,13 @@ const FACTORY_TEMPLATES: TemplateFile[] = [
 				metaPrompt: { enabled: true, prompt: "prompts/meta-prompt.md" },
 				workflow: { enabled: false, default: "piter" },
 				memory: { captureCandidates: true, recommendedBackend: "hindsight" },
+				paneWorker: {
+					enabled: true,
+					backend: "cmux",
+					orchestratorDefault: "omp",
+					workerRuntime: "claude",
+					claudeCommand: "claude",
+				},
 			},
 			null,
 			2,
@@ -77,39 +91,45 @@ echo "[factory-verifier] PASS"
 	},
 	{
 		target: ".omp/factory/prompts/meta-prompt.md",
-		content: `# Factory Meta-Prompt
-
-You are operating in a software-factory environment with safety enforcement and a verifier loop.
-
-- Safety rules are enforced before tool execution. Do not attempt to bypass them.
-- The verifier may run after your turn to validate your changes.
-- Remember important decisions for future sessions.
-`,
+		content: metaPromptTemplate,
 	},
 	{
 		target: ".omp/factory/prompts/verify-on-stop.md",
-		content: `# Verify on Stop
-
-The agent has completed its turn. Validate the following:
-
-1. All changed files pass type checking (\`bun check\`)
-2. All tests pass (\`bun test\`)
-3. No linter errors introduced
-4. Any new files follow project conventions
-`,
+		content: verifyOnStopTemplate,
 	},
 	{
 		target: ".omp/agents/factory-verifier.md",
-		content: `# Factory Verifier
-
-You are a code verifier. Your job is to check that code changes are correct, safe, and follow project conventions.
-
-## Process
-1. Read the diff of changed files
-2. Run the verify oracle (verify.sh)
-3. Report any issues with specific file:line references
-4. Suggest fixes for any issues found
-`,
+		content: factoryVerifierTemplate,
+	},
+	{
+		target: ".omp/factory/prompts/claude-main-orchestrator.md",
+		content: claudeMainOrchestratorTemplate,
+		presets: ["pane-factory", "strav"],
+	},
+	{
+		target: ".omp/factory/prompts/omp-main-orchestrator.md",
+		content: ompMainOrchestratorTemplate,
+		presets: ["pane-factory", "strav"],
+	},
+	{
+		target: ".omp/factory/workflows/strav-pane-factory.md",
+		content: stravPaneWorkflowTemplate,
+		presets: ["strav"],
+	},
+	{
+		target: ".omp/factory/model-roles.json",
+		content: `${JSON.stringify(
+			{
+				roles: {
+					orchestrator: "current-session",
+					worker: "claude-code-pane",
+					reviewer: "claude-code-pane",
+				},
+			},
+			null,
+			2,
+		)}\n`,
+		presets: ["strav"],
 	},
 	{
 		target: ".omp/extensions/software-factory/index.ts",
@@ -130,7 +150,7 @@ export default function softwareFactoryRuntime(pi: ExtensionAPI): void {
 	// Verifier: run after agent completes a turn
 	pi.on("agent_end", async (_event, ctx) => {
 		const factoryJson = await ctx.sessionManager.getCwd()
-			? Bun.file(\`\${ctx.sessionManager.getCwd()}/.omp/factory/factory.json\`).json().catch(() => null)
+			? Bun.file(ctx.sessionManager.getCwd() + "/.omp/factory/factory.json").json().catch(() => null)
 			: null;
 		if (!factoryJson?.verifier?.enabled) return;
 		ctx.ui.notify("Factory verifier would run here (trigger: manual)", "info");
@@ -140,14 +160,14 @@ export default function softwareFactoryRuntime(pi: ExtensionAPI): void {
 	},
 	{
 		target: ".omp/settings.json",
-		content: JSON.stringify(
+		content: `${JSON.stringify(
 			{
 				memory: { backend: "hindsight" },
 				extensions: ["./.omp/extensions/software-factory"],
 			},
 			null,
 			2,
-		),
+		)}\n`,
 	},
 ];
 
@@ -186,7 +206,9 @@ export function getFactoryPresets(): readonly FactoryPreset[] {
 
 export function getPlannedFactoryTemplates(options: ScaffoldOptions): PlannedTemplateFile[] {
 	const repoName = path.basename(options.cwd);
-	return FACTORY_TEMPLATES.map(template => ({
+	return FACTORY_TEMPLATES.filter(
+		template => !template.presets || template.presets.includes(options.preset as FactoryPreset),
+	).map(template => ({
 		target: template.target,
 		content: template.content
 			.replace("__PRESET__", options.preset)
@@ -199,53 +221,44 @@ async function exists(filePath: string): Promise<boolean> {
 	try {
 		await fs.access(filePath);
 		return true;
-	} catch (err) {
-		if (isEnoent(err)) return false;
-		throw err;
+	} catch (error) {
+		if (isEnoent(error)) return false;
+		throw error;
 	}
 }
 
 async function writeFile(targetPath: string, content: string, overwrite: boolean): Promise<boolean> {
-	const dir = path.dirname(targetPath);
-	await fs.mkdir(dir, { recursive: true });
-
+	await fs.mkdir(path.dirname(targetPath), { recursive: true });
 	if (!overwrite && (await exists(targetPath))) {
-		return false; // skip existing files when not overwriting
+		return false;
 	}
-
 	await Bun.write(targetPath, content);
-
-	// Make shell scripts executable
 	if (targetPath.endsWith(".sh")) {
 		await fs.chmod(targetPath, 0o755);
 	}
-
 	return true;
 }
 
 export async function scaffoldFactory(options: ScaffoldOptions): Promise<ScaffoldResult> {
 	const result: ScaffoldResult = { filesWritten: [], errors: [] };
-
 	for (const template of getPlannedFactoryTemplates(options)) {
 		const targetPath = path.join(options.cwd, template.target);
 		try {
 			if (await writeFile(targetPath, template.content, false)) {
 				result.filesWritten.push(template.target);
 			}
-		} catch (err) {
+		} catch (error) {
 			result.errors.push({
 				target: template.target,
-				error: err instanceof Error ? err.message : String(err),
+				error: error instanceof Error ? error.message : String(error),
 			});
 		}
 	}
-
 	return result;
 }
 
 export async function dryRunScaffoldFactory(options: ScaffoldOptions): Promise<ScaffoldDryRunResult> {
 	const result: ScaffoldDryRunResult = { filesToWrite: [], filesSkipped: [], errors: [] };
-
 	for (const template of getPlannedFactoryTemplates(options)) {
 		const targetPath = path.join(options.cwd, template.target);
 		try {
@@ -254,14 +267,13 @@ export async function dryRunScaffoldFactory(options: ScaffoldOptions): Promise<S
 			} else {
 				result.filesToWrite.push(template.target);
 			}
-		} catch (err) {
+		} catch (error) {
 			result.errors.push({
 				target: template.target,
-				error: err instanceof Error ? err.message : String(err),
+				error: error instanceof Error ? error.message : String(error),
 			});
 		}
 	}
-
 	return result;
 }
 
@@ -270,7 +282,6 @@ export async function dryRunUpgradeFactory(options: ScaffoldOptions): Promise<Up
 	const templates = getPlannedFactoryTemplates(options).filter(template =>
 		template.target.startsWith(".omp/factory/"),
 	);
-
 	for (const template of templates) {
 		const targetPath = path.join(options.cwd, template.target);
 		try {
@@ -278,20 +289,18 @@ export async function dryRunUpgradeFactory(options: ScaffoldOptions): Promise<Up
 				result.create.push(template.target);
 				continue;
 			}
-
 			const current = await Bun.file(targetPath).text();
 			if (current === template.content) {
 				result.unchanged.push(template.target);
 			} else {
 				result.update.push(template.target);
 			}
-		} catch (err) {
+		} catch (error) {
 			result.conflict.push({
 				target: template.target,
-				error: err instanceof Error ? err.message : String(err),
+				error: error instanceof Error ? error.message : String(error),
 			});
 		}
 	}
-
 	return result;
 }

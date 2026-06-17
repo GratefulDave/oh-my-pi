@@ -1,3 +1,4 @@
+/// <reference path="../../ambient-assets.d.ts" />
 /**
  * Shared types and utilities for web-fetch handlers
  */
@@ -255,7 +256,7 @@ function getTurndown(): Promise<TurndownService> {
 }
 
 async function initTurndown(): Promise<TurndownService> {
-	const [{ default: TurndownService }, { gfm }] = await Promise.all([
+	const [{ default: TurndownService }, gfmPlugin] = await Promise.all([
 		import("turndown"),
 		import("turndown-plugin-gfm"),
 	]);
@@ -264,9 +265,11 @@ async function initTurndown(): Promise<TurndownService> {
 		codeBlockStyle: "fenced",
 		bulletListMarker: "-",
 	});
-	turndown.use(gfm);
+	turndown.use(gfmPlugin.gfm);
 	turndown.addRule("strikethrough", {
-		filter: ["del", "s", "strike"],
+		filter(node) {
+			return ["DEL", "S", "STRIKE"].includes(node.nodeName);
+		},
 		replacement(content) {
 			return `~~${content}~~`;
 		},

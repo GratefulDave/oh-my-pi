@@ -171,7 +171,7 @@ export default function actorSwarm(pi: ExtensionAPI): void {
 			await ctx.ui.custom<void>(
 				(tui, theme, _keybindings, done) => {
 					const dashboard = new SwarmDashboard(
-						normalizeTheme(theme),
+						normalizeTheme(theme as CustomTheme),
 						() => tui.requestRender(),
 						() => done(undefined),
 					);
