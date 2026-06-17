@@ -2,6 +2,7 @@ import type { Component, OverlayHandle, TUI } from "@oh-my-pi/pi-tui";
 import { Container, Spacer, Text } from "@oh-my-pi/pi-tui";
 import { KeybindingsManager } from "../../config/keybindings";
 import type {
+	ApplySettingsPatch,
 	CompactOptions,
 	ExtensionActions,
 	ExtensionCommandContextActions,
@@ -120,6 +121,7 @@ export class ExtensionUiController {
 			getCommands: () => getSessionSlashCommands(this.ctx.session),
 			getSessionName: () => this.ctx.sessionManager.getSessionName(),
 			setSessionName: name => this.#updateSessionName(name),
+			applySettings: (patch: ApplySettingsPatch) => this.#applySettingsPatch(patch),
 		};
 		const contextActions: ExtensionContextActions = {
 			getModel: () => this.ctx.session.model,
@@ -135,6 +137,7 @@ export class ExtensionUiController {
 			getContextUsage: () => this.ctx.session.getContextUsage(),
 			compact: instructionsOrOptions => this.#compactSession(instructionsOrOptions),
 			getSystemPrompt: () => this.ctx.session.systemPrompt,
+			setThinkingLevel: (level, persist) => this.ctx.session.setThinkingLevel(level, persist),
 		};
 		const commandActions: ExtensionCommandContextActions = {
 			getContextUsage: () => this.ctx.session.getContextUsage(),
@@ -356,6 +359,7 @@ export class ExtensionUiController {
 			getCommands: () => getSessionSlashCommands(this.ctx.session),
 			getSessionName: () => this.ctx.sessionManager.getSessionName(),
 			setSessionName: name => this.#updateSessionName(name),
+			applySettings: (patch: ApplySettingsPatch) => this.#applySettingsPatch(patch),
 		};
 		const contextActions: ExtensionContextActions = {
 			getModel: () => this.ctx.session.model,
@@ -371,6 +375,7 @@ export class ExtensionUiController {
 			getContextUsage: () => this.ctx.session.getContextUsage(),
 			compact: instructionsOrOptions => this.#compactSession(instructionsOrOptions),
 			getSystemPrompt: () => this.ctx.session.systemPrompt,
+			setThinkingLevel: (level, persist) => this.ctx.session.setThinkingLevel(level, persist),
 		};
 		const commandActions: ExtensionCommandContextActions = {
 			getContextUsage: () => this.ctx.session.getContextUsage(),
@@ -800,6 +805,15 @@ export class ExtensionUiController {
 	async #updateSessionName(name: string): Promise<void> {
 		await this.ctx.sessionManager.setSessionName(name, "user");
 		setSessionTerminalTitle(this.ctx.sessionManager.getSessionName(), this.ctx.sessionManager.getCwd());
+	}
+
+	#applySettingsPatch(patch: ApplySettingsPatch): void {
+		const s = this.ctx.session.settings;
+		if (patch.modelRoles !== undefined) s.set("modelRoles", patch.modelRoles);
+		if (patch.enabledModels !== undefined) s.set("enabledModels", patch.enabledModels);
+		if (patch.modelProviderOrder !== undefined) s.set("modelProviderOrder", patch.modelProviderOrder);
+		if (patch.cycleOrder !== undefined) s.set("cycleOrder", patch.cycleOrder);
+		if (patch.defaultThinkingLevel !== undefined) s.set("defaultThinkingLevel", patch.defaultThinkingLevel);
 	}
 
 	#sendExtensionUserMessage: SendUserMessageHandler = (content, options) => {

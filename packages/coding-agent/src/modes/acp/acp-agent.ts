@@ -2094,6 +2094,14 @@ export class AcpAgent implements Agent {
 				setSessionName: async name => {
 					await record.session.sessionManager.setSessionName(name, "user");
 				},
+				applySettings: patch => {
+					const s = record.session.settings;
+					if (patch.modelRoles !== undefined) s.set("modelRoles", patch.modelRoles);
+					if (patch.enabledModels !== undefined) s.set("enabledModels", patch.enabledModels);
+					if (patch.modelProviderOrder !== undefined) s.set("modelProviderOrder", patch.modelProviderOrder);
+					if (patch.cycleOrder !== undefined) s.set("cycleOrder", patch.cycleOrder);
+					if (patch.defaultThinkingLevel !== undefined) s.set("defaultThinkingLevel", patch.defaultThinkingLevel);
+				},
 			},
 			{
 				getModel: () => record.session.model,
@@ -2105,6 +2113,7 @@ export class AcpAgent implements Agent {
 				shutdown: () => {},
 				getContextUsage: () => record.session.getContextUsage(),
 				getSystemPrompt: () => record.session.systemPrompt,
+				setThinkingLevel: (level, persist) => record.session.setThinkingLevel(level, persist),
 				compact: instructionsOrOptions => runExtensionCompact(record.session, instructionsOrOptions),
 			},
 			{

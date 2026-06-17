@@ -112,6 +112,10 @@ export class ExtensionRuntime implements IExtensionRuntime {
 	setSessionName(): Promise<void> {
 		throw new ExtensionRuntimeNotInitializedError();
 	}
+
+	applySettings(): void {
+		throw new ExtensionRuntimeNotInitializedError();
+	}
 }
 
 /**
@@ -255,6 +259,10 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 
 	setSessionName(name: string): Promise<void> {
 		return this.runtime.setSessionName(name);
+	}
+
+	applySettings(patch: Parameters<ExtensionAPI["applySettings"]>[0]): void {
+		this.runtime.applySettings(patch);
 	}
 
 	registerProvider(name: string, config: ProviderConfig): void {

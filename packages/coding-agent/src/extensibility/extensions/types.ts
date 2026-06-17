@@ -20,6 +20,7 @@ import type {
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
 	Context,
+	Effort,
 	ImageContent,
 	Model,
 	ModelSpec,
@@ -1107,6 +1108,13 @@ export interface ExtensionAPI {
 	/** Set thinking level for the current session. */
 	setThinkingLevel(level: ThinkingLevel): void;
 
+	/**
+	 * Apply a settings patch to the live session.
+	 * Updates model roles, enabled models, provider order, and cycle order
+	 * immediately — no reload required. Changes are persisted to the user config.
+	 */
+	applySettings(patch: ApplySettingsPatch): void;
+
 	/** Get the current session name. */
 	getSessionName(): string | undefined;
 
@@ -1280,6 +1288,22 @@ export type GetCommandsHandler = () => SlashCommandInfo[];
 
 export type SetActiveToolsHandler = (toolNames: string[]) => Promise<void>;
 
+/**
+ * Subset of session-scoped settings an extension may update live.
+ * All fields are optional; only provided keys are applied.
+ * Changes take effect immediately in the live session and are persisted
+ * to the user's global config (equivalent to `Settings.set`).
+ */
+export interface ApplySettingsPatch {
+	modelRoles?: Record<string, string>;
+	enabledModels?: string[];
+	modelProviderOrder?: string[];
+	cycleOrder?: string[];
+	defaultThinkingLevel?: Effort | "auto";
+}
+
+export type ApplySettingsHandler = (patch: ApplySettingsPatch) => void;
+
 export type SetModelHandler = (model: Model) => Promise<boolean>;
 
 export type GetThinkingLevelHandler = () => ThinkingLevel | undefined;
@@ -1308,6 +1332,7 @@ export interface ExtensionActions {
 	setThinkingLevel: SetThinkingLevelHandler;
 	getSessionName: () => string | undefined;
 	setSessionName: (name: string) => Promise<void>;
+	applySettings: ApplySettingsHandler;
 }
 
 /** Actions for ExtensionContext (ctx.* in event handlers). */
@@ -1320,6 +1345,7 @@ export interface ExtensionContextActions {
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (instructionsOrOptions?: string | CompactOptions) => Promise<void>;
 	getSystemPrompt: () => string[];
+	setThinkingLevel: SetThinkingLevelHandler;
 }
 
 /** Actions for ExtensionCommandContext (ctx.* in command handlers). */

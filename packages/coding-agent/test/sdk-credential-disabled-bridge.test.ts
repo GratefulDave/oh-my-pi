@@ -62,6 +62,7 @@ const initializeRunnerForTest = (runner: ExtensionRunner | undefined): void => {
 			setThinkingLevel: () => {},
 			getSessionName: () => undefined,
 			setSessionName: async () => {},
+			applySettings: () => {},
 		},
 		{
 			getModel: () => undefined,
@@ -72,6 +73,7 @@ const initializeRunnerForTest = (runner: ExtensionRunner | undefined): void => {
 			getContextUsage: () => undefined,
 			compact: async () => {},
 			getSystemPrompt: () => [],
+			setThinkingLevel: () => {},
 		},
 	);
 };
@@ -529,6 +531,7 @@ describe("createAgentSession credential_disabled subscription", () => {
 					setThinkingLevel: () => {},
 					getSessionName: () => undefined,
 					setSessionName: async () => {},
+					applySettings: () => {},
 				},
 				{
 					getModel: () => undefined,
@@ -539,6 +542,7 @@ describe("createAgentSession credential_disabled subscription", () => {
 					getContextUsage: () => undefined,
 					compact: async () => {},
 					getSystemPrompt: () => [],
+					setThinkingLevel: () => {},
 				},
 				undefined,
 				undefined,

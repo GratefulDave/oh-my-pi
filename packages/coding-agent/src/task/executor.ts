@@ -2140,6 +2140,15 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 						setSessionName: async name => {
 							await session.sessionManager.setSessionName(name, "user");
 						},
+						applySettings: patch => {
+							const s = session.settings;
+							if (patch.modelRoles !== undefined) s.set("modelRoles", patch.modelRoles);
+							if (patch.enabledModels !== undefined) s.set("enabledModels", patch.enabledModels);
+							if (patch.modelProviderOrder !== undefined) s.set("modelProviderOrder", patch.modelProviderOrder);
+							if (patch.cycleOrder !== undefined) s.set("cycleOrder", patch.cycleOrder);
+							if (patch.defaultThinkingLevel !== undefined)
+								s.set("defaultThinkingLevel", patch.defaultThinkingLevel);
+						},
 					},
 					{
 						getModel: () => session.model,
@@ -2149,6 +2158,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 						shutdown: () => {},
 						getContextUsage: () => session.getContextUsage(),
 						getSystemPrompt: () => session.systemPrompt,
+						setThinkingLevel: (level, persist) => session.setThinkingLevel(level, persist),
 						compact: instructionsOrOptions => runExtensionCompact(session, instructionsOrOptions),
 					},
 				);

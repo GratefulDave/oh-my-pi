@@ -94,6 +94,14 @@ export async function initializeExtensions(session: AgentSession, options: Initi
 			setSessionName: async name => {
 				await session.sessionManager.setSessionName(name, "user");
 			},
+			applySettings: patch => {
+				const s = session.settings;
+				if (patch.modelRoles !== undefined) s.set("modelRoles", patch.modelRoles);
+				if (patch.enabledModels !== undefined) s.set("enabledModels", patch.enabledModels);
+				if (patch.modelProviderOrder !== undefined) s.set("modelProviderOrder", patch.modelProviderOrder);
+				if (patch.cycleOrder !== undefined) s.set("cycleOrder", patch.cycleOrder);
+				if (patch.defaultThinkingLevel !== undefined) s.set("defaultThinkingLevel", patch.defaultThinkingLevel);
+			},
 		},
 		// ExtensionContextActions
 		{
@@ -104,6 +112,7 @@ export async function initializeExtensions(session: AgentSession, options: Initi
 			shutdown,
 			getContextUsage: () => session.getContextUsage(),
 			getSystemPrompt: () => session.systemPrompt,
+			setThinkingLevel: (level, persist) => session.setThinkingLevel(level, persist),
 			compact: instructionsOrOptions => runExtensionCompact(session, instructionsOrOptions),
 		},
 		// ExtensionCommandContextActions — commands invokable via prompt("/command")

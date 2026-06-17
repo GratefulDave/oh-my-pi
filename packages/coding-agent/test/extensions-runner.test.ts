@@ -856,6 +856,7 @@ describe("ExtensionRunner", () => {
 					setThinkingLevel: () => {},
 					getSessionName: () => undefined,
 					setSessionName: async () => {},
+					applySettings: () => {},
 				},
 				{
 					getModel: () => undefined,
@@ -866,6 +867,7 @@ describe("ExtensionRunner", () => {
 					getContextUsage: () => undefined,
 					compact: async () => {},
 					getSystemPrompt: () => [],
+					setThinkingLevel: () => {},
 				},
 			);
 
@@ -920,6 +922,7 @@ describe("ExtensionRunner", () => {
 					setSessionName: async name => {
 						await sessionManager.setSessionName(name);
 					},
+					applySettings: () => {},
 				},
 				{
 					getModel: () => undefined,
@@ -930,6 +933,7 @@ describe("ExtensionRunner", () => {
 					getContextUsage: () => undefined,
 					compact: async () => {},
 					getSystemPrompt: () => [],
+					setThinkingLevel: () => {},
 				},
 			);
 
@@ -976,6 +980,7 @@ describe("ExtensionRunner", () => {
 					setThinkingLevel: () => {},
 					getSessionName: () => undefined,
 					setSessionName: async () => {},
+					applySettings: () => {},
 				},
 				{
 					getModel: () => undefined,
@@ -986,6 +991,7 @@ describe("ExtensionRunner", () => {
 					getContextUsage: () => undefined,
 					compact: async () => {},
 					getSystemPrompt: () => [],
+					setThinkingLevel: () => {},
 				},
 				undefined,
 				{
@@ -1410,6 +1416,7 @@ describe("ExtensionRunner", () => {
 					setThinkingLevel: () => {},
 					getSessionName: () => sessionManager.getSessionName(),
 					setSessionName: async () => {},
+					applySettings: () => {},
 				},
 				{
 					getModel: () => undefined,
@@ -1420,6 +1427,7 @@ describe("ExtensionRunner", () => {
 					getContextUsage: () => undefined,
 					compact: async () => {},
 					getSystemPrompt: () => [],
+					setThinkingLevel: () => {},
 				},
 			);
 

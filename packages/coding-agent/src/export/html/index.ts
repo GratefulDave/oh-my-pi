@@ -1,3 +1,5 @@
+/// <reference path="./assets.d.ts" />
+/// <reference path="../../ambient-assets.d.ts" />
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { AgentState } from "@oh-my-pi/pi-agent-core";
