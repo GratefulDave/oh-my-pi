@@ -9,13 +9,13 @@
  * switched through the public ExtensionAPI (`setModel` / `setThinkingLevel`).
  * No LEX fork binary or fork-only imports are required.
  *
- * Subcommands:
- *   /pm              — interactive selector
+ *   /pm              — interactive selector (profile list with * on active)
  *   /pm list         — list all profiles
  *   /pm show [name]  — show active (or named) profile settings
  *   /pm create <name> — snapshot current model config as a named profile
  *   /pm use <name>    — switch to a profile (applies model + thinking level)
  *   /pm delete <name> — delete a profile
+ *   /pm model [role]  — pick a model for a role in the active profile (default: "smol")
  */
 
 import { YAML } from "bun";
@@ -23,7 +23,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
-import type { Model } from "@oh-my-pi/pi-ai";
+import type { Effort, Model } from "@oh-my-pi/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -107,7 +107,8 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 				if (action === "create") return await handleCreate(pi, ctx, tokens.slice(1));
 				if (action === "use") return await handleUse(pi, ctx, tokens[1]);
 				if (action === "delete") return await handleDelete(pi, ctx, tokens[1]);
-				notify(pi, "Usage: /pm [list|show|create|use|delete] [name]");
+				if (action === "model") return await handleModel(pi, ctx, tokens[1]);
+				notify(pi, "Usage: /pm [list|show|create|use|delete|model] [name]");
 			} catch (err) {
 				notify(pi, `Error: ${err instanceof Error ? err.message : String(err)}`);
 			}
@@ -214,20 +215,6 @@ function normalizeProfileName(name: string): string {
 	return normalized;
 }
 
-function notify(pi: ExtensionAPI, message: string): void {
-	pi.sendMessage({ customType: "text", content: message, display: true });
-}
-
-async function reloadAfterProfileWrite(ctx: ExtensionContext): Promise<void> {
-	try {
-		await ctx.reload();
-	} catch {
-		// Older/non-interactive extension harnesses may not provide a usable reload.
-		// The profile is still persisted, and the default model is applied below.
-	}
-}
-
-/** Strip a trailing `:thinkingLevel` suffix from a model selector string. */
 function splitModelSelector(selector: string): { id: string; thinkingLevel?: string } {
 	const colonIdx = selector.lastIndexOf(":");
 	if (colonIdx !== -1) {
@@ -239,7 +226,6 @@ function splitModelSelector(selector: string): { id: string; thinkingLevel?: str
 	return { id: selector };
 }
 
-/** Resolve a model selector ("provider/id" or canonical id) via the public registry. */
 function resolveModel(ctx: ExtensionContext, id: string): Model | undefined {
 	const slashIdx = id.indexOf("/");
 	if (slashIdx > 0) {
@@ -250,25 +236,53 @@ function resolveModel(ctx: ExtensionContext, id: string): Model | undefined {
 	}
 	const canonical = ctx.modelRegistry.resolveCanonicalModel(id);
 	if (canonical) return canonical;
-	// Fallback: scan all models for an exact "provider/id" match.
 	return ctx.modelRegistry.getAll().find(m => `${m.provider}/${m.id}` === id || m.id === id);
 }
 
+function notify(pi: ExtensionAPI, message: string): void {
+	pi.sendMessage({ customType: "text", content: message, display: true });
+}
+
 /**
- * Apply a profile's active model + thinking level via the public ExtensionAPI.
- * This gives the current turn the selected default model immediately; ctx.reload
- * then makes persisted role/provider/cycle defaults visible to subsequent work.
+ * Apply a profile to the live session via pi.applySettings (updates Settings
+ * singleton immediately — no reload required) then switch the active model to
+ * the profile's default role.
+ *
+ * subagents spawned after this call inherit the updated modelRoles,
+ * enabledModels, and modelProviderOrder unless they declare their own
+ * agent-type model override.
  */
 async function applyProfile(pi: ExtensionAPI, ctx: ExtensionContext, profile: ModelProfile): Promise<string> {
+	const patch: Parameters<ExtensionAPI["applySettings"]>[0] = {};
+	if (profile.modelRoles !== undefined) patch.modelRoles = profile.modelRoles;
+	if (profile.enabledModels !== undefined) patch.enabledModels = profile.enabledModels;
+	if (profile.modelProviderOrder !== undefined) patch.modelProviderOrder = profile.modelProviderOrder;
+	if (profile.cycleOrder !== undefined) patch.cycleOrder = profile.cycleOrder;
+	if (profile.defaultThinkingLevel !== undefined) patch.defaultThinkingLevel = profile.defaultThinkingLevel as Effort | "auto";
+
+	// Check if applySettings is available before calling — guard against stale binary.
+	if (typeof pi.applySettings !== "function") {
+		return "applySettings not available (binary needs rebuild)";
+	}
+	pi.applySettings(patch);
+
 	const selector = profile.modelRoles?.default;
-	if (!selector) return "Applied model roles; no 'default' role to set as the active model.";
+	if (!selector) return "Settings applied. No 'default' role — model unchanged.";
 
 	const { id, thinkingLevel: selectorThinkingLevel } = splitModelSelector(selector);
+	const allRegistryModels = ctx.modelRegistry.getAll();
 	const resolvedModel = resolveModel(ctx, id);
-	if (!resolvedModel) return `Model selector "${id}" not found in registry.`;
+	if (!resolvedModel) {
+		const providerModels = allRegistryModels.filter(m => m.provider === id.split("/")[0]);
+		return `Settings applied. Model "${id}" not in registry (${allRegistryModels.length} total; ${providerModels.length} from provider "${id.split("/")[0]}").`;
+	}
 
 	const ok = await pi.setModel(resolvedModel);
-	if (!ok) return `Cannot switch to ${id}: no credentials configured.`;
+	if (!ok) {
+		const allAuth = ctx.models.list();
+		const providerAuth = allAuth.filter(m => m.provider === resolvedModel.provider);
+		return `Settings applied. setModel returned false for "${id}" (${providerAuth.length} authenticated models from this provider; total authenticated: ${allAuth.length}).`;
+	}
 
 	const thinkingLevel = selectorThinkingLevel ?? profile.defaultThinkingLevel;
 	if (thinkingLevel && thinkingLevel !== "inherit") {
@@ -310,24 +324,35 @@ async function handleNoArg(pi: ExtensionAPI, ctx: ExtensionCommandContext): Prom
 	if (!ctx.hasUI) return printList(pi, ctx);
 
 	const settings = readSettings(ctx);
-	const active = settings.activeModelProfile;
+	const active = settings.activeModelProfile ?? DEFAULT_PROFILE_NAME;
 	const names = profileNames(settings);
-	const choices = [DEFAULT_PROFILE_NAME, ...names.filter(n => n !== DEFAULT_PROFILE_NAME), "Create new profile..."];
-	const choice = await ctx.ui.select("Model profiles", choices);
+	const allNames = [DEFAULT_PROFILE_NAME, ...names.filter(n => n !== DEFAULT_PROFILE_NAME)];
+	const profileOptions = allNames.map(n => ({
+		label: `${active === n || (n === DEFAULT_PROFILE_NAME && !settings.activeModelProfile) ? "* " : "  "}${n}`,
+		description: n === DEFAULT_PROFILE_NAME ? "Global settings (no profile)" : undefined,
+	}));
+	const CREATE_LABEL = "  Create new profile...";
+	const choices = [...profileOptions, { label: CREATE_LABEL, description: "Snapshot current model config" }];
+	const choice = await ctx.ui.select("Model profiles", choices, {
+		helpText: "Type to filter · Enter to select · * = active",
+	});
 	if (!choice) return;
 
-	if (choice === "Create new profile...") {
+	// Strip the leading "* " or "  " marker that was added for visual indication.
+	const chosenName = choice.replace(/^\*?\s+/, "").trim();
+
+	if (chosenName === "Create new profile...") {
 		const name = await ctx.ui.input("Create model profile", "Profile name");
 		if (!name) return;
 		return handleCreate(pi, ctx, [name]);
 	}
 
-	if (choice === DEFAULT_PROFILE_NAME) return handleUse(pi, ctx, DEFAULT_PROFILE_NAME);
-	if (active === choice) {
-		notify(pi, `Already on profile: ${choice}`);
+	if (chosenName === DEFAULT_PROFILE_NAME) return handleUse(pi, ctx, DEFAULT_PROFILE_NAME);
+	if (active === chosenName) {
+		notify(pi, `Already on profile: ${chosenName}`);
 		return;
 	}
-	return handleUse(pi, ctx, choice);
+	return handleUse(pi, ctx, chosenName);
 }
 
 function printList(pi: ExtensionAPI, ctx: ExtensionCommandContext): void {
@@ -388,7 +413,6 @@ async function handleCreate(pi: ExtensionAPI, ctx: ExtensionCommandContext, args
 		applyProfileToSettings(settings, profiles[name]);
 		writeSettings(ctx, settings);
 		const status = await applyProfile(pi, ctx, profiles[name]);
-		await reloadAfterProfileWrite(ctx);
 		notify(pi, `Created and switched to profile: ${name}. ${status}`);
 	} else {
 		writeSettings(ctx, settings);
@@ -410,7 +434,6 @@ async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName
 			applyProfileToSettings(settings, profile);
 			writeSettings(ctx, settings);
 			const status = await applyProfile(pi, ctx, profile);
-			await reloadAfterProfileWrite(ctx);
 			notify(pi, `Active profile: ${DEFAULT_PROFILE_NAME}. ${status}`);
 			return;
 		}
@@ -429,8 +452,123 @@ async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName
 	applyProfileToSettings(settings, profile);
 	writeSettings(ctx, settings);
 	const status = await applyProfile(pi, ctx, profile);
-	await reloadAfterProfileWrite(ctx);
 	notify(pi, `Active profile: ${name}. ${status}`);
+}
+
+/**
+ * /pm model [role] — show available models filtered by the active profile's
+ * enabledModels, mark the current role assignment with *, allow the user to
+ * pick a new one. Saves the new role to the active profile and calls applyProfile.
+ *
+ * Role defaults to "smol" when omitted (the most common adjustment).
+ */
+async function handleModel(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawRole: string | undefined): Promise<void> {
+	const role = rawRole?.trim() || "smol";
+	const settings = readSettings(ctx);
+	const active = settings.activeModelProfile;
+	if (!active || active === DEFAULT_PROFILE_NAME) {
+		notify(pi, "No named profile active. Use /pm use <name> first.");
+		return;
+	}
+	const profiles = getProfiles(settings);
+	const profile = profiles[active];
+	if (!profile) {
+		notify(pi, `Profile "${active}" not found in settings.`);
+		return;
+	}
+
+	const currentSelector = profile.modelRoles?.[role];
+
+	if (!ctx.hasUI) {
+		// Non-interactive: just print the current value.
+		notify(pi, `Profile "${active}" — role "${role}": ${currentSelector ?? "(not set)"}`);
+		return;
+	}
+
+	// Build model list, pre-filtered by the profile's enabledModels if set.
+	const allModels = ctx.models.list();
+	const enabledGlobs = profile.enabledModels;
+	const filtered = enabledGlobs
+		? allModels.filter(m => {
+				const full = `${m.provider}/${m.id}`;
+				return enabledGlobs.some(glob => {
+					if (glob.endsWith("/*")) return m.provider === glob.slice(0, -2);
+					return full === glob || m.id === glob;
+				});
+		  })
+		: allModels;
+
+	if (filtered.length === 0) {
+		notify(pi, `No models available for profile "${active}" (check enabledModels).`);
+		return;
+	}
+
+	// Sort: current role model first, then alphabetically by provider/id.
+	const currentBase = currentSelector?.split(":")[0]; // strip :level suffix
+	const sorted = [...filtered].sort((a, b) => {
+		const aFull = `${a.provider}/${a.id}`;
+		const bFull = `${b.provider}/${b.id}`;
+		if (currentBase && aFull === currentBase) return -1;
+		if (currentBase && bFull === currentBase) return 1;
+		return aFull.localeCompare(bFull);
+	});
+
+	const options = sorted.map(m => {
+		const full = `${m.provider}/${m.id}`;
+		const isCurrent = currentBase === full;
+		return {
+			label: `${isCurrent ? "* " : "  "}${full}`,
+			description: m.name ?? m.id,
+		};
+	});
+
+	const chosen = await ctx.ui.select(
+		`Set "${role}" model for profile "${active}"`,
+		options,
+		{ initialIndex: 0, helpText: "Type to filter · Enter to select · Esc to cancel" },
+	);
+	if (!chosen) return;
+
+	// Strip the leading "* " or "  " marker to recover provider/id.
+	const chosenFull = chosen.replace(/^\*?\s+/, "");
+
+	// Build selector: keep existing thinking level suffix if the model matches.
+	let newSelector = chosenFull;
+	if (currentSelector && currentBase === chosenFull) {
+		// Same model re-selected — keep existing selector unchanged (preserves :level).
+		newSelector = currentSelector;
+	} else {
+		// Ask for thinking level if the model supports it.
+		const chosenModel = filtered.find(m => `${m.provider}/${m.id}` === chosenFull);
+		if (chosenModel) {
+			const thinkingLevel = await promptThinkingLevel(ctx, chosenFull);
+			if (thinkingLevel) newSelector = `${chosenFull}:${thinkingLevel}`;
+		}
+	}
+
+	// Persist to profile and apply live.
+	profile.modelRoles = { ...(profile.modelRoles ?? {}), [role]: newSelector };
+	settings.modelProfiles = { ...profiles, [active]: profile };
+	if (settings.activeModelProfile === active) {
+		// Keep top-level modelRoles in sync.
+		settings.modelRoles = { ...(settings.modelRoles ?? {}), [role]: newSelector };
+	}
+	writeSettings(ctx, settings);
+	const status = await applyProfile(pi, ctx, profile);
+	notify(pi, `Profile "${active}" — role "${role}" → ${newSelector}. ${status}`);
+}
+
+async function promptThinkingLevel(ctx: ExtensionCommandContext, modelFull: string): Promise<string | undefined> {
+	const options = [
+		{ label: "(none)", description: "No thinking level suffix" },
+		{ label: "low", description: ":low" },
+		{ label: "medium", description: ":medium" },
+		{ label: "high", description: ":high" },
+		{ label: "xhigh", description: ":xhigh" },
+	];
+	const chosen = await ctx.ui.select(`Thinking level for ${modelFull}`, options, { initialIndex: 0 });
+	if (!chosen || chosen === "(none)") return undefined;
+	return chosen;
 }
 
 async function handleDelete(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName: string | undefined): Promise<void> {
