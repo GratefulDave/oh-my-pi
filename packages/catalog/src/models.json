@@ -17726,7 +17726,7 @@
 			"name": "Claude Opus 4.5",
 			"api": "google-gemini-cli",
 			"provider": "google-antigravity",
-			"baseUrl": "https://daily-cloudcode-pa.sandbox.googleapis.com",
+			"baseUrl": "https://daily-cloudcode-pa.googleapis.com",
 			"reasoning": true,
 			"input": [
 				"text",
@@ -17749,6 +17749,7 @@
 					"high"
 				],
 				"effortRouting": {
+					"off": "claude-opus-4-5",
 					"minimal": "claude-opus-4-5-thinking",
 					"low": "claude-opus-4-5-thinking",
 					"medium": "claude-opus-4-5-thinking",
@@ -17762,7 +17763,7 @@
 			"name": "Claude Opus 4.6",
 			"api": "google-gemini-cli",
 			"provider": "google-antigravity",
-			"baseUrl": "https://daily-cloudcode-pa.sandbox.googleapis.com",
+			"baseUrl": "https://daily-cloudcode-pa.googleapis.com",
 			"reasoning": true,
 			"input": [
 				"text",
@@ -17785,6 +17786,7 @@
 					"high"
 				],
 				"effortRouting": {
+					"off": "claude-opus-4-6",
 					"minimal": "claude-opus-4-6-thinking",
 					"low": "claude-opus-4-6-thinking",
 					"medium": "claude-opus-4-6-thinking",
@@ -17798,7 +17800,7 @@
 			"name": "Claude Sonnet 4.5",
 			"api": "google-gemini-cli",
 			"provider": "google-antigravity",
-			"baseUrl": "https://daily-cloudcode-pa.sandbox.googleapis.com",
+			"baseUrl": "https://daily-cloudcode-pa.googleapis.com",
 			"reasoning": true,
 			"input": [
 				"text",
@@ -17835,7 +17837,7 @@
 			"name": "Claude Sonnet 4.6",
 			"api": "google-gemini-cli",
 			"provider": "google-antigravity",
-			"baseUrl": "https://daily-cloudcode-pa.sandbox.googleapis.com",
+			"baseUrl": "https://daily-cloudcode-pa.googleapis.com",
 			"reasoning": true,
 			"input": [
 				"text",
@@ -17872,7 +17874,7 @@
 			"name": "Gemini 2.5 Flash",
 			"api": "google-gemini-cli",
 			"provider": "google-antigravity",
-			"baseUrl": "https://daily-cloudcode-pa.sandbox.googleapis.com",
+			"baseUrl": "https://daily-cloudcode-pa.googleapis.com",
 			"reasoning": true,
 			"input": [
 				"text",
@@ -17908,7 +17910,7 @@
 			"name": "Gemini 2.5 Pro",
 			"api": "google-gemini-cli",
 			"provider": "google-antigravity",
-			"baseUrl": "https://daily-cloudcode-pa.sandbox.googleapis.com",
+			"baseUrl": "https://daily-cloudcode-pa.googleapis.com",
 			"reasoning": true,
 			"input": [
 				"text",
@@ -17938,7 +17940,7 @@
 			"name": "Gemini 3 Flash",
 			"api": "google-gemini-cli",
 			"provider": "google-antigravity",
-			"baseUrl": "https://daily-cloudcode-pa.sandbox.googleapis.com",
+			"baseUrl": "https://daily-cloudcode-pa.googleapis.com",
 			"reasoning": true,
 			"input": [
 				"text",
@@ -17953,22 +17955,36 @@
 			"contextWindow": 1048576,
 			"maxTokens": 65536,
 			"thinking": {
-				"mode": "google-level",
+				"mode": "budget",
 				"efforts": [
 					"minimal",
 					"low",
 					"medium",
 					"high"
 				],
-				"requiresEffort": true
-			}
+				"effortBudgets": {
+					"minimal": 1000,
+					"low": 1000,
+					"medium": 4000,
+					"high": 10000
+				},
+				"effortRouting": {
+					"off": "gemini-3.5-flash-extra-low",
+					"minimal": "gemini-3.5-flash-extra-low",
+					"low": "gemini-3.5-flash-extra-low",
+					"medium": "gemini-3.5-flash-low",
+					"high": "gemini-3-flash-agent"
+				},
+				"suppressWhenOff": true
+			},
+			"requestModelId": "gemini-3.5-flash-extra-low"
 		},
 		"gemini-3-pro": {
 			"id": "gemini-3-pro",
 			"name": "Gemini 3 Pro",
 			"api": "google-gemini-cli",
 			"provider": "google-antigravity",
-			"baseUrl": "https://daily-cloudcode-pa.sandbox.googleapis.com",
+			"baseUrl": "https://daily-cloudcode-pa.googleapis.com",
 			"reasoning": true,
 			"input": [
 				"text",
@@ -18002,7 +18018,7 @@
 			"name": "Gemini 3.1 Pro Preview",
 			"api": "google-gemini-cli",
 			"provider": "google-antigravity",
-			"baseUrl": "https://daily-cloudcode-pa.sandbox.googleapis.com",
+			"baseUrl": "https://daily-cloudcode-pa.googleapis.com",
 			"reasoning": true,
 			"input": [
 				"text",
@@ -18017,11 +18033,15 @@
 			"contextWindow": 1048576,
 			"maxTokens": 65535,
 			"thinking": {
-				"mode": "google-level",
+				"mode": "budget",
 				"efforts": [
 					"low",
 					"high"
 				],
+				"effortBudgets": {
+					"low": 1001,
+					"high": 10001
+				},
 				"effortRouting": {
 					"off": "gemini-3.1-pro-low",
 					"low": "gemini-3.1-pro-low",
@@ -18036,7 +18056,7 @@
 			"name": "GPT OSS 120B",
 			"api": "google-gemini-cli",
 			"provider": "google-antigravity",
-			"baseUrl": "https://daily-cloudcode-pa.sandbox.googleapis.com",
+			"baseUrl": "https://daily-cloudcode-pa.googleapis.com",
 			"reasoning": true,
 			"input": [
 				"text"
@@ -18110,7 +18130,11 @@
 					"high"
 				],
 				"effortRouting": {
-					"off": "gemini-2.5-flash"
+					"off": "gemini-2.5-flash",
+					"minimal": "gemini-2.5-flash-thinking",
+					"low": "gemini-2.5-flash-thinking",
+					"medium": "gemini-2.5-flash-thinking",
+					"high": "gemini-2.5-flash-thinking"
 				}
 			}
 		},
@@ -69307,7 +69331,7 @@
 				"cacheRead": 0,
 				"cacheWrite": 0
 			},
-			"contextWindow": null,
+			"contextWindow": 1000000,
 			"maxTokens": null,
 			"compat": {
 				"supportsUsageInStreaming": false

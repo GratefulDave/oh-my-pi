@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [16.0.5] - 2026-06-17
+
+### Fixed
+
+- Preserved assistant soft line breaks and Markdown paragraph/list indentation in the collab web transcript renderer so tree-shaped prose no longer collapses into one paragraph.
+- Changed collab web transcript wrapping to keep Korean/CJK words intact before falling back to emergency breaks for long URLs or identifiers.
+
 ## [16.0.3] - 2026-06-16
 
 ### Removed

@@ -3,7 +3,7 @@ import { PASTE_CODE_LOGIN_PROVIDERS } from "@oh-my-pi/pi-ai";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import type { OAuthProvider } from "@oh-my-pi/pi-ai/oauth/types";
 import type { Component, OverlayHandle } from "@oh-my-pi/pi-tui";
-import { Input, Loader, Spacer, Text } from "@oh-my-pi/pi-tui";
+import { Input, Loader, Spacer, setTuiTight, Text } from "@oh-my-pi/pi-tui";
 import { getAgentDbPath, getProjectDir, normalizePathForComparison } from "@oh-my-pi/pi-utils";
 import { formatModelSelectorValue } from "../../config/model-resolver";
 import { getRoleInfo } from "../../config/model-roles";
@@ -67,7 +67,6 @@ import { TranscriptBlock } from "../components/transcript-container";
 import { TreeSelectorComponent } from "../components/tree-selector";
 import { UserMessageSelectorComponent } from "../components/user-message-selector";
 import type { SessionObserverRegistry } from "../session-observer-registry";
-import { computeContextBreakdown } from "../utils/context-usage";
 import { buildCopyTargets } from "../utils/copy-targets";
 
 const MANUAL_LOGIN_TIP = "Tip: You can complete pairing with /login <redirect URL>.";
@@ -325,6 +324,13 @@ export class SelectorController {
 					}
 				}
 				break;
+			case "tui.tight":
+				setTuiTight(value as boolean);
+				this.ctx.ui.invalidate();
+				this.ctx.updateEditorTopBorder();
+				this.ctx.ui.requestRender();
+				break;
+
 			case "theme": {
 				setTheme(value as string, true).then(result => {
 					this.ctx.statusLine.invalidate();
@@ -380,6 +386,7 @@ export class SelectorController {
 				this.ctx.session.agent.repetitionPenalty = repetitionPenalty >= 0 ? repetitionPenalty : undefined;
 				break;
 			}
+			case "git.enabled":
 			case "statusLinePreset":
 			case "statusLine.preset":
 			case "statusLineSeparator":
@@ -443,7 +450,7 @@ export class SelectorController {
 	}
 
 	showModelSelector(options?: { temporaryOnly?: boolean }): void {
-		const currentContextTokens = computeContextBreakdown(this.ctx.session).usedTokens;
+		const currentContextTokens = this.ctx.session.getContextUsage()?.tokens ?? 0;
 		const enabledModels = this.ctx.settings.get("enabledModels");
 		const hasCliScope = this.ctx.session.scopedModels.length > 0;
 		const scopedModels = hasCliScope
