@@ -12,6 +12,14 @@
 - Fixed `/pm` startup to prefer a same-named model profile from the active OMP profile and to skip applying a stale saved profile when its default model is absent from the current registry, preventing unavailable OMLX assignments from overriding startup model settings.
 - Fixed the bundled `/pm` extension to import profile directory helpers from the root `@oh-my-pi/pi-utils` export instead of a subpath, restoring `/pm` command registration in rebuilt/runtime installs where the subpath import could fail.
 
+## [16.0.4] - 2026-06-17
+
+### Fixed
+
+- Fixed RPC/ACP startup forcing todo settings back to host defaults, so project-level `todo.enabled`, `todo.reminders`, and `todo.eager` opt-outs now suppress protocol-mode todo prompt injection; enabled todo reminders are now persisted to the JSONL transcript so the log matches the model-visible context ([#2824](https://github.com/can1357/oh-my-pi/issues/2824)).
+- Fixed default prompts to instruct the agent to read applicable `skill://<name>` content before starting work, so discovered skills influence broad task requests like frontend generation ([#2829](https://github.com/can1357/oh-my-pi/issues/2829)).
+- Fixed hashline visible-line validation for ACP editor reads so `INS.POST` anchors displayed by bridge-backed range and multi-range `read` output are merged into the session snapshot before `edit` validates them ([#2773](https://github.com/can1357/oh-my-pi/issues/2773)).
+
 ## [16.0.3] - 2026-06-16
 
 ### Added
