@@ -35,7 +35,6 @@ import type {
 interface ModelProfile {
 	modelRoles?: Record<string, string>;
 	defaultThinkingLevel?: string;
-	enabledModels?: string[];
 	cycleOrder?: string[];
 	modelProviderOrder?: string[];
 }
@@ -58,7 +57,7 @@ const DEFAULT_PROFILE_NAME = "default";
 const THINKING_LEVELS = new Set(["inherit", "off", "auto", "minimal", "low", "medium", "high", "xhigh"]);
 
 /** Profile config keys snapshotted from top-level settings by `create`. */
-const PROFILE_KEYS = ["modelRoles", "defaultThinkingLevel", "enabledModels", "cycleOrder", "modelProviderOrder"] as const;
+const PROFILE_KEYS = ["modelRoles", "defaultThinkingLevel", "cycleOrder", "modelProviderOrder"] as const;
 
 // ── extension entry ───────────────────────────────────────────────────────────
 
@@ -74,9 +73,12 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 			const active = settings.activeModelProfile;
 			if (!active || active === DEFAULT_PROFILE_NAME) return;
 			const profile = getProfiles(settings)[active];
-			if (profile) await applyProfile(pi, ctx, profile);
-		} catch {
-			// Profile application is best-effort; swallow to protect session start.
+			if (!profile) return;
+			const status = await applyProfile(pi, ctx, profile);
+			// Surface startup result so failures are visible (not swallowed).
+			notify(pi, `[pm] startup: profile "${active}" — ${status}`);
+		} catch (err) {
+			notify(pi, `[pm] startup error: ${err instanceof Error ? err.message : String(err)}`);
 		}
 	});
 
@@ -171,7 +173,6 @@ function readSettings(_ctx: ExtensionContext): OmpSettings {
 function copyProfileKeys(target: OmpSettings, source: OmpSettings): void {
 	if (source.modelRoles !== undefined) target.modelRoles = { ...source.modelRoles };
 	if (source.defaultThinkingLevel !== undefined) target.defaultThinkingLevel = source.defaultThinkingLevel;
-	if (source.enabledModels !== undefined) target.enabledModels = [...source.enabledModels];
 	if (source.cycleOrder !== undefined) target.cycleOrder = [...source.cycleOrder];
 	if (source.modelProviderOrder !== undefined) target.modelProviderOrder = [...source.modelProviderOrder];
 }
@@ -248,23 +249,27 @@ function notify(pi: ExtensionAPI, message: string): void {
  * singleton immediately — no reload required) then switch the active model to
  * the profile's default role.
  *
- * subagents spawned after this call inherit the updated modelRoles,
- * enabledModels, and modelProviderOrder unless they declare their own
- * agent-type model override.
+ * subagents spawned after this call inherit the updated modelRoles and
+ * modelProviderOrder unless they declare their own agent-type model override.
  */
-async function applyProfile(pi: ExtensionAPI, ctx: ExtensionContext, profile: ModelProfile): Promise<string> {
+async function applyProfile(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	profile: ModelProfile,
+	{ switchModel = true }: { switchModel?: boolean } = {},
+): Promise<string> {
 	const patch: Parameters<ExtensionAPI["applySettings"]>[0] = {};
 	if (profile.modelRoles !== undefined) patch.modelRoles = profile.modelRoles;
-	if (profile.enabledModels !== undefined) patch.enabledModels = profile.enabledModels;
 	if (profile.modelProviderOrder !== undefined) patch.modelProviderOrder = profile.modelProviderOrder;
 	if (profile.cycleOrder !== undefined) patch.cycleOrder = profile.cycleOrder;
 	if (profile.defaultThinkingLevel !== undefined) patch.defaultThinkingLevel = profile.defaultThinkingLevel as Effort | "auto";
 
-	// Check if applySettings is available before calling — guard against stale binary.
 	if (typeof pi.applySettings !== "function") {
 		return "applySettings not available (binary needs rebuild)";
 	}
 	pi.applySettings(patch);
+
+	if (!switchModel) return "Settings applied.";
 
 	const selector = profile.modelRoles?.default;
 	if (!selector) return "Settings applied. No 'default' role — model unchanged.";
@@ -273,15 +278,16 @@ async function applyProfile(pi: ExtensionAPI, ctx: ExtensionContext, profile: Mo
 	const allRegistryModels = ctx.modelRegistry.getAll();
 	const resolvedModel = resolveModel(ctx, id);
 	if (!resolvedModel) {
-		const providerModels = allRegistryModels.filter(m => m.provider === id.split("/")[0]);
-		return `Settings applied. Model "${id}" not in registry (${allRegistryModels.length} total; ${providerModels.length} from provider "${id.split("/")[0]}").`;
+		const provider = id.split("/")[0];
+		const providerCount = allRegistryModels.filter(m => m.provider === provider).length;
+		return `Settings applied. Model "${id}" not in registry (${allRegistryModels.length} total; ${providerCount} from "${provider}") — start the local server and use /pm use to switch.`;
 	}
 
 	const ok = await pi.setModel(resolvedModel);
 	if (!ok) {
 		const allAuth = ctx.models.list();
 		const providerAuth = allAuth.filter(m => m.provider === resolvedModel.provider);
-		return `Settings applied. setModel returned false for "${id}" (${providerAuth.length} authenticated models from this provider; total authenticated: ${allAuth.length}).`;
+		return `Settings applied. setModel returned false for "${id}" (${providerAuth.length} authenticated from this provider; ${allAuth.length} total).`;
 	}
 
 	const thinkingLevel = selectorThinkingLevel ?? profile.defaultThinkingLevel;
@@ -485,21 +491,13 @@ async function handleModel(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawRo
 		return;
 	}
 
-	// Build model list, pre-filtered by the profile's enabledModels if set.
+	// Build model list. All authenticated models shown — no enabledModels filter
+	// (that field no longer exists on profiles; it was causing antigravity to disappear).
 	const allModels = ctx.models.list();
-	const enabledGlobs = profile.enabledModels;
-	const filtered = enabledGlobs
-		? allModels.filter(m => {
-				const full = `${m.provider}/${m.id}`;
-				return enabledGlobs.some(glob => {
-					if (glob.endsWith("/*")) return m.provider === glob.slice(0, -2);
-					return full === glob || m.id === glob;
-				});
-		  })
-		: allModels;
+	const filtered = allModels;
 
 	if (filtered.length === 0) {
-		notify(pi, `No models available for profile "${active}" (check enabledModels).`);
+		notify(pi, `No authenticated models available.`);
 		return;
 	}
 
