@@ -4,8 +4,8 @@
  * Provides `/pm` (profile-manager) as a profile management slash command
  * that lives outside the OMP source tree and survives upstream pulls.
  *
- * Runs on stock OMP: profiles are persisted directly to `.omp/settings.json`
- * (the `activeModelProfile` + `modelProfiles` schema) and the active model is
+ * Runs on stock OMP: profiles are persisted directly to the active agent-dir
+ * `config.yml` (`activeModelProfile` + `modelProfiles`). The active model is
  * switched through the public ExtensionAPI (`setModel` / `setThinkingLevel`).
  * No LEX fork binary or fork-only imports are required.
  *
@@ -14,6 +14,7 @@
  *   /pm show [name]  — show active (or named) profile settings
  *   /pm create <name> — snapshot current model config as a named profile
  *   /pm use <name>    — switch to a profile (applies model + thinking level)
+ *   /pm <name> [profile] — switch to a profile using the shorthand form
  *   /pm delete <name> — delete a profile
  *   /pm model [role]  — pick a model for a role in the active profile (default: "smol")
  */
@@ -65,10 +66,14 @@ const PROFILE_KEYS = ["modelRoles", "defaultThinkingLevel", "enabledModels", "cy
 export default function profileManagerExtension(pi: ExtensionAPI): void {
 	pi.setLabel("Profile Manager");
 
+	let startupApplied = false;
+
 	// Auto-apply the active profile when a session starts so model roles
 	// (default + smol/plan/slow) take effect on launch in EVERY directory,
 	// not only after a manual `/pm use`. Best-effort: never block startup.
 	pi.on("session_start", async (_event, ctx) => {
+		if (startupApplied) return;
+		startupApplied = true;
 		try {
 			const settings = readSettings(ctx);
 			const active = getEffectiveActiveProfileName(settings);
@@ -77,13 +82,13 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 			if (!profile) return;
 			const startupSkip = preflightProfileStartup(ctx, profile);
 			if (startupSkip) {
-				notify(pi, `[pm] startup: profile "${active}" — ${startupSkip}`);
+				notifyStartup(ctx, pi, `[pm] startup: profile "${active}" — ${startupSkip}`, "warning");
 				return;
 			}
 			const status = await applyProfile(pi, ctx, profile);
-			notify(pi, `[pm] startup: profile "${active}" — ${status}`);
+			notifyStartup(ctx, pi, `[pm] startup: profile "${active}" — ${status}`);
 		} catch (err) {
-			notify(pi, `[pm] startup error: ${err instanceof Error ? err.message : String(err)}`);
+			notifyStartup(ctx, pi, `[pm] startup error: ${err instanceof Error ? err.message : String(err)}`, "error");
 		}
 	});
 
@@ -116,6 +121,7 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 				if (action === "use") return await handleUse(pi, ctx, tokens[1]);
 				if (action === "delete") return await handleDelete(pi, ctx, tokens[1]);
 				if (action === "model") return await handleModel(pi, ctx, tokens[1]);
+				if (await handleProfileAlias(pi, ctx, tokens)) return;
 				notify(pi, "Usage: /pm [list|show|create|use|delete|model] [name]");
 			} catch (err) {
 				notify(pi, `Error: ${err instanceof Error ? err.message : String(err)}`);
@@ -272,6 +278,19 @@ function resolveModel(ctx: ExtensionContext, id: string): Model | undefined {
 
 function notify(pi: ExtensionAPI, message: string): void {
 	pi.sendMessage({ customType: "text", content: message, display: true });
+}
+
+function notifyStartup(
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	message: string,
+	type: "info" | "warning" | "error" = "info",
+): void {
+	if (ctx.hasUI) {
+		ctx.ui.notify(message, type);
+		return;
+	}
+	notify(pi, message);
 }
 
 /**
@@ -466,6 +485,17 @@ async function handleCreate(pi: ExtensionAPI, ctx: ExtensionCommandContext, args
 		writeSettings(ctx, settings);
 		notify(pi, `Created profile: ${name}`);
 	}
+}
+
+async function handleProfileAlias(pi: ExtensionAPI, ctx: ExtensionCommandContext, tokens: string[]): Promise<boolean> {
+	if (tokens.length === 0) return false;
+	const settings = readSettings(ctx);
+	const name = normalizeProfileName(tokens[0]);
+	const profile = getProfiles(settings)[name];
+	if (!profile) return false;
+	if (tokens.length > 1 && tokens[1] !== "profile" && tokens[1] !== "use") return false;
+	await handleUse(pi, ctx, name);
+	return true;
 }
 
 async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName: string | undefined): Promise<void> {
