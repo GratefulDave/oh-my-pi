@@ -19,14 +19,17 @@ export default async function opencodeAntigravityBridge(pi: ExtensionAPI): Promi
 
 	const upstream = await AntigravityCLIOAuthPlugin({
 		client,
-		directory: process.cwd(),
+		directory: pi.cwd,
 	});
 	const oauthMethod = findUpstreamOAuthMethod(upstream.auth.methods);
+	const streamSimple = createOpencodeAntigravityStream(upstream.auth, client) as unknown as NonNullable<
+		Parameters<ExtensionAPI["registerProvider"]>[1]["streamSimple"]
+	>;
 
 	pi.registerProvider(PROVIDER_ID, {
 		baseUrl: GOOGLE_GENERATIVE_LANGUAGE_BASE,
 		api: BRIDGE_API,
-		streamSimple: createOpencodeAntigravityStream(upstream.auth, client),
+		streamSimple,
 		models: OPENCODE_ANTIGRAVITY_MODELS,
 		oauth: {
 			name: "OpenCode Antigravity",

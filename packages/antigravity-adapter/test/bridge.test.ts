@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "bun:test";
+import { afterEach, describe, expect, it, spyOn, vi } from "bun:test";
 import type { Api, Context, Model, Tool } from "@oh-my-pi/pi-ai";
 import type { OAuthLoginCallbacks } from "@oh-my-pi/pi-ai/registry/oauth/types";
 import type { ExtensionAPI, ProviderConfig } from "@oh-my-pi/pi-coding-agent";
 import * as pluginStorage from "opencode-antigravity-auth/dist/src/plugin/storage";
 import * as pluginToken from "opencode-antigravity-auth/dist/src/plugin/token";
+import * as pluginModule from "opencode-antigravity-auth/dist/src/plugin";
 import type { AuthMethod, PluginResult } from "opencode-antigravity-auth/dist/src/plugin/types";
 import {
 	checkBridgeQuotaExhaustion,
@@ -578,19 +579,21 @@ describe("OpenCode Antigravity fetch bridge", () => {
 });
 
 describe("OpenCode Antigravity extension registration", () => {
+	function makePI(cwd = "/test/project"): ExtensionAPI {
+		return {
+			cwd,
+			setLabel: () => {},
+			registerProvider: () => {},
+			logger: { debug: () => {}, warn: () => {}, error: () => {} },
+		} as unknown as ExtensionAPI;
+	}
+
 	it("registers only the opencode-antigravity provider namespace, never google or google-antigravity", async () => {
 		const registered: Array<{ name: string; config: ProviderConfig }> = [];
-		const pi = {
-			setLabel: () => {},
-			registerProvider: (name: string, config: ProviderConfig) => {
-				registered.push({ name, config });
-			},
-			logger: {
-				debug: () => {},
-				warn: () => {},
-				error: () => {},
-			},
-		} as unknown as ExtensionAPI;
+		const pi = makePI();
+		(pi as unknown as Record<string, unknown>).registerProvider = (name: string, config: ProviderConfig) => {
+			registered.push({ name, config });
+		};
 
 		await opencodeAntigravityBridge(pi);
 
@@ -607,17 +610,10 @@ describe("OpenCode Antigravity extension registration", () => {
 
 	it("extension refreshToken uses plugin-compatible refresh (not google-antigravity native)", async () => {
 		const registered: Array<{ name: string; config: ProviderConfig }> = [];
-		const pi = {
-			setLabel: () => {},
-			registerProvider: (name: string, config: ProviderConfig) => {
-				registered.push({ name, config });
-			},
-			logger: {
-				debug: () => {},
-				warn: () => {},
-				error: () => {},
-			},
-		} as unknown as ExtensionAPI;
+		const pi = makePI();
+		(pi as unknown as Record<string, unknown>).registerProvider = (name: string, config: ProviderConfig) => {
+			registered.push({ name, config });
+		};
 
 		await opencodeAntigravityBridge(pi);
 
@@ -628,5 +624,38 @@ describe("OpenCode Antigravity extension registration", () => {
 		await expect(
 			config!.oauth!.refreshToken!({ refresh: "|proj|managed", access: "stale", expires: 1 }),
 		).rejects.toThrow();
+	});
+
+	it("passes pi.cwd as directory to the plugin — never process.cwd() at load time", async () => {
+		// This regression test guards against extension.ts using process.cwd() instead of pi.cwd.
+		// process.cwd() at extension load time is always the lex repo dir, not the user's project.
+		const capturedDirs: string[] = [];
+		const stub = spyOn(pluginModule, "AntigravityCLIOAuthPlugin").mockImplementation(
+			async ({ directory }: { client: unknown; directory: string }) => {
+				capturedDirs.push(directory);
+				// Return a minimal valid PluginResult shape.
+				return {
+					auth: {
+						methods: [
+							{
+								type: "oauth",
+								url: "https://example.com/oauth",
+								provider: "opencode-antigravity",
+								authorize: async () => ({ code: "stub", state: "stub" }),
+							},
+						],
+					},
+				} as unknown as Awaited<ReturnType<typeof pluginModule.AntigravityCLIOAuthPlugin>>;
+			},
+		);
+
+		const sentinelCwd = "/sentinel/project/repo";
+		await opencodeAntigravityBridge(makePI(sentinelCwd));
+
+		expect(capturedDirs).toHaveLength(1);
+		expect(capturedDirs[0]).toBe(sentinelCwd);
+		expect(capturedDirs[0]).not.toBe(process.cwd());
+
+		stub.mockRestore();
 	});
 });

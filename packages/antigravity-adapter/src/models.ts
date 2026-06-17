@@ -1,18 +1,23 @@
-import { Effort } from "@oh-my-pi/pi-ai";
 import type { ProviderModelConfig } from "@oh-my-pi/pi-coding-agent";
 
 export const PROVIDER_ID = "opencode-antigravity";
 export const BRIDGE_API = "opencode-antigravity-google";
 export const GOOGLE_GENERATIVE_LANGUAGE_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
+type ModelThinking = NonNullable<ProviderModelConfig["thinking"]>;
+type ThinkingEfforts = ModelThinking["efforts"];
+
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+const LOW_HIGH_EFFORTS = ["low", "high"] as unknown as ThinkingEfforts;
+const MINIMAL_TO_HIGH_EFFORTS = ["minimal", "low", "medium", "high"] as unknown as ThinkingEfforts;
+const LOW_TO_HIGH_EFFORTS = ["low", "medium", "high"] as unknown as ThinkingEfforts;
 
 export const OPENCODE_ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 	{
 		id: "antigravity-gemini-3.1-pro",
 		name: "Antigravity Gemini 3.1 Pro",
 		reasoning: true,
-		thinking: { mode: "google-level", efforts: [Effort.Low, Effort.High] },
+		thinking: { mode: "google-level", efforts: LOW_HIGH_EFFORTS },
 		input: ["text", "image"],
 		cost: ZERO_COST,
 		contextWindow: 1_000_000,
@@ -22,7 +27,7 @@ export const OPENCODE_ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		id: "antigravity-gemini-3-flash",
 		name: "Antigravity Gemini 3 Flash",
 		reasoning: true,
-		thinking: { mode: "google-level", efforts: [Effort.Minimal, Effort.Low, Effort.Medium, Effort.High] },
+		thinking: { mode: "google-level", efforts: MINIMAL_TO_HIGH_EFFORTS },
 		input: ["text", "image"],
 		cost: ZERO_COST,
 		contextWindow: 1_000_000,
@@ -32,7 +37,7 @@ export const OPENCODE_ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		id: "gemini-2.5-flash",
 		name: "Gemini 2.5 Flash (Antigravity Bridge)",
 		reasoning: true,
-		thinking: { mode: "budget", efforts: [Effort.Minimal, Effort.Low, Effort.Medium, Effort.High] },
+		thinking: { mode: "budget", efforts: MINIMAL_TO_HIGH_EFFORTS },
 		input: ["text", "image"],
 		cost: ZERO_COST,
 		contextWindow: 1_000_000,
@@ -42,7 +47,7 @@ export const OPENCODE_ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		id: "gemini-2.5-flash-lite",
 		name: "Gemini 2.5 Flash Lite (Antigravity Bridge)",
 		reasoning: true,
-		thinking: { mode: "budget", efforts: [Effort.Minimal, Effort.Low, Effort.Medium, Effort.High] },
+		thinking: { mode: "budget", efforts: MINIMAL_TO_HIGH_EFFORTS },
 		input: ["text", "image"],
 		cost: ZERO_COST,
 		contextWindow: 1_000_000,
@@ -52,7 +57,7 @@ export const OPENCODE_ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		id: "gemini-2.5-pro",
 		name: "Gemini 2.5 Pro (Antigravity Bridge)",
 		reasoning: true,
-		thinking: { mode: "budget", efforts: [Effort.Low, Effort.Medium, Effort.High] },
+		thinking: { mode: "budget", efforts: LOW_TO_HIGH_EFFORTS },
 		input: ["text", "image"],
 		cost: ZERO_COST,
 		contextWindow: 1_000_000,
@@ -62,7 +67,7 @@ export const OPENCODE_ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		id: "gemini-3-flash-preview",
 		name: "Gemini 3 Flash Preview (Antigravity Bridge)",
 		reasoning: true,
-		thinking: { mode: "google-level", efforts: [Effort.Minimal, Effort.Low, Effort.Medium, Effort.High] },
+		thinking: { mode: "google-level", efforts: MINIMAL_TO_HIGH_EFFORTS },
 		input: ["text", "image"],
 		cost: ZERO_COST,
 		contextWindow: 1_000_000,
@@ -72,7 +77,7 @@ export const OPENCODE_ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		id: "gemini-3.1-pro-preview",
 		name: "Gemini 3.1 Pro Preview (Antigravity Bridge)",
 		reasoning: true,
-		thinking: { mode: "google-level", efforts: [Effort.Low, Effort.High] },
+		thinking: { mode: "google-level", efforts: LOW_HIGH_EFFORTS },
 		input: ["text", "image"],
 		cost: ZERO_COST,
 		contextWindow: 1_000_000,
@@ -82,7 +87,7 @@ export const OPENCODE_ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		id: "gemini-3.5-flash",
 		name: "Gemini 3.5 Flash (Antigravity Bridge)",
 		reasoning: true,
-		thinking: { mode: "google-level", efforts: [Effort.Low, Effort.Medium, Effort.High] },
+		thinking: { mode: "google-level", efforts: LOW_TO_HIGH_EFFORTS },
 		input: ["text", "image"],
 		cost: ZERO_COST,
 		contextWindow: 1_048_576,
@@ -101,7 +106,7 @@ export const OPENCODE_ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		id: "antigravity-claude-opus-4-6-thinking",
 		name: "Antigravity Claude Opus 4.6 Thinking",
 		reasoning: true,
-		thinking: { mode: "anthropic-adaptive", efforts: [Effort.Low, Effort.Medium, Effort.High] },
+		thinking: { mode: "anthropic-adaptive", efforts: LOW_TO_HIGH_EFFORTS },
 		input: ["text", "image"],
 		cost: ZERO_COST,
 		contextWindow: 200_000,
