@@ -60,11 +60,15 @@ function effortToUpstreamTier(effort: string): string {
  * user's effort level as a tier suffix so the upstream plugin's
  * `resolveModelWithTier` applies the correct thinking configuration.
  *
- * Also strips `-preview` / `-preview-customtools` suffixes — all bridge
- * requests route through the Antigravity endpoint which expects bare names.
+ * Also strips the `antigravity-` quota prefix plus `-preview` /
+ * `-preview-customtools` suffixes — all bridge requests route through the
+ * upstream Antigravity endpoint which expects bare model names here.
  */
 function buildUpstreamModelId(model: Model<Api>, reasoning?: string): string {
-	let id = model.id.replace(/-preview-customtools$/i, "").replace(/-preview$/i, "");
+	let id = model.id
+		.replace(/^antigravity-/i, "")
+		.replace(/-preview-customtools$/i, "")
+		.replace(/-preview$/i, "");
 
 	if (reasoning && model.reasoning && supportsUpstreamThinkingTier(id)) {
 		id = `${id}-${effortToUpstreamTier(reasoning)}`;

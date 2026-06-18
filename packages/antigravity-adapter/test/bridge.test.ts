@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, spyOn, vi } from "bun:test";
-import type { Api, Context, Model, Tool } from "@oh-my-pi/pi-ai";
+import type { Api, AssistantMessageEventStream, Context, Model, Tool } from "@oh-my-pi/pi-ai";
 import type { OAuthLoginCallbacks } from "@oh-my-pi/pi-ai/registry/oauth/types";
 import type { ExtensionAPI, ProviderConfig } from "@oh-my-pi/pi-coding-agent";
 import * as pluginStorage from "opencode-antigravity-auth/dist/src/plugin/storage";
@@ -537,6 +537,96 @@ describe("OpenCode Antigravity fetch bridge", () => {
 		expect(JSON.stringify(declaration?.parameters)).not.toContain("propertyNames");
 	});
 
+	it("strips the antigravity quota prefix before invoking the Google stream", async () => {
+		const credentials = { refresh: "refresh", access: "access", expires: Date.now() + 60_000 };
+		let seenModelId = "";
+		const googleStream = ((modelArg: Model<Api>) => {
+			seenModelId = modelArg.id;
+			return {
+				async result() {
+					return { stopReason: "stop", content: "ok" };
+				},
+				async *[Symbol.asyncIterator]() {},
+			} as unknown as AssistantMessageEventStream;
+		}) as Parameters<typeof createOpencodeAntigravityStream>[1];
+
+		const streamSimple = createOpencodeAntigravityStream(
+			{
+				provider: "google",
+				methods: [] as AuthMethod[],
+				loader: async () => ({
+					apiKey: "",
+					fetch: async () => new Response(""),
+				}),
+			},
+			googleStream,
+		);
+
+		await streamSimple(
+			model("antigravity-claude-sonnet-4-6"),
+			context(),
+			{
+				apiKey: serializeBridgeCredentials(credentials),
+			},
+		).result();
+
+		expect(seenModelId).toBe("claude-sonnet-4-6");
+	});
+	it("routes Claude bridge requests through the legacy parameters path with CCA-safe schemas", async () => {
+		const credentials = { refresh: "refresh", access: "access", expires: Date.now() + 60_000 };
+		let requestedBody: unknown;
+		const auth: PluginResult["auth"] = {
+			provider: "google",
+			methods: [] as AuthMethod[],
+			loader: async () => ({
+				apiKey: "",
+				fetch: async (_input, init) => {
+					requestedBody = JSON.parse(String(init?.body));
+					return new Response(
+						'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}\n\n',
+						{ headers: { "content-type": "text/event-stream" } },
+					);
+				},
+			}),
+		};
+		const tools: Tool[] = [
+			{
+				name: "bash",
+				description: "Run bash",
+				parameters: {
+					type: "object",
+					properties: {
+						name: {
+							anyOf: [{ type: "string", minLength: 1 }, { type: "null" }],
+						},
+						env: {
+							type: "object",
+							propertyNames: { type: "string", pattern: "^[A-Z_]+$" },
+							additionalProperties: { type: "string" },
+						},
+					},
+					required: ["env"],
+					additionalProperties: false,
+				},
+			},
+		];
+		const streamSimple = createOpencodeAntigravityStream(auth);
+
+		await streamSimple(
+			model("antigravity-claude-sonnet-4-6"),
+			{ ...context(), tools },
+			{
+				apiKey: serializeBridgeCredentials(credentials),
+			},
+		).result();
+
+		const body = requestedBody as { tools?: Array<{ functionDeclarations?: Array<Record<string, unknown>> }> };
+		const declaration = body.tools?.[0]?.functionDeclarations?.[0];
+		expect(declaration?.parametersJsonSchema).toBeUndefined();
+		expect(declaration?.parameters).toBeDefined();
+		expect(JSON.stringify(declaration?.parameters)).not.toContain("propertyNames");
+	});
+
 	it("routes OMP Google streaming through the upstream loader fetch", async () => {
 		const credentials = { refresh: "refresh", access: "access", expires: Date.now() + 60_000 };
 		let requestedUrl = "";
@@ -571,7 +661,7 @@ describe("OpenCode Antigravity fetch bridge", () => {
 			apiKey: serializeBridgeCredentials(credentials),
 		}).result();
 
-		expect(requestedUrl).toContain(`${GOOGLE_GENERATIVE_LANGUAGE_BASE}/models/antigravity-gemini-3.1-pro`);
+		expect(requestedUrl).toContain(`${GOOGLE_GENERATIVE_LANGUAGE_BASE}/models/gemini-3.1-pro`);
 		expect(strippedHeader).toBeNull();
 		expect(upstreamAuthRefresh).toBe("refresh");
 		expect(result.content).toEqual([{ type: "text", text: "hello", textSignature: undefined }]);
