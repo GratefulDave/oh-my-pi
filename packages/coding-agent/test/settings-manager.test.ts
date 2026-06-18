@@ -89,6 +89,11 @@ describe("Settings", () => {
 			]);
 		});
 
+		it("keeps the normal startup splash disabled by default", async () => {
+			const settings = await Settings.init({ cwd: projectDir, agentDir });
+			expect(settings.get("startup.showSplash")).toBe(false);
+			expect(getDefault("startup.showSplash")).toBe(false);
+		});
 		it("exposes all tool calling mode options", () => {
 			const values = getEnumValues("tools.format");
 			expect(values).toEqual([
