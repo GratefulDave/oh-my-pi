@@ -55,6 +55,9 @@ interface OmpSettings {
 }
 
 const DEFAULT_PROFILE_NAME = "default";
+const PM_PROFILE_FLAG = "pm-profile";
+const PM_MODEL_FLAG = "pm-model";
+const PM_THINKING_FLAG = "pm-thinking";
 
 /** Valid ThinkingLevel suffixes (mirrors @oh-my-pi/pi-agent-core ThinkingLevel). */
 const THINKING_LEVELS = new Set(["inherit", "off", "auto", "minimal", "low", "medium", "high", "xhigh"]);
@@ -65,6 +68,18 @@ const PROFILE_KEYS = ["modelRoles", "defaultThinkingLevel", "enabledModels", "cy
 
 export default function profileManagerExtension(pi: ExtensionAPI): void {
 	pi.setLabel("Profile Manager");
+	pi.registerFlag(PM_PROFILE_FLAG, {
+		description: "Temporarily apply a named /pm profile for this launch",
+		type: "string",
+	});
+	pi.registerFlag(PM_MODEL_FLAG, {
+		description: "Temporarily override the active /pm default model selector for this launch",
+		type: "string",
+	});
+	pi.registerFlag(PM_THINKING_FLAG, {
+		description: "Temporarily override the active /pm thinking level for this launch",
+		type: "string",
+	});
 
 	let startupApplied = false;
 
@@ -76,17 +91,15 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 		startupApplied = true;
 		try {
 			const settings = readSettings(ctx);
-			const active = getEffectiveActiveProfileName(settings);
-			if (!active || active === DEFAULT_PROFILE_NAME) return;
-			const profile = getProfiles(settings)[active];
-			if (!profile) return;
-			const startupSkip = preflightProfileStartup(ctx, profile);
+			const selection = resolveStartupSelection(pi, settings);
+			if (!selection) return;
+			const startupSkip = preflightProfileStartup(ctx, selection.profile);
 			if (startupSkip) {
-				notifyStartup(ctx, pi, `[pm] startup: profile "${active}" — ${startupSkip}`, "warning");
+				notifyStartup(ctx, pi, `[pm] startup: ${selection.label} — ${startupSkip}`, "warning");
 				return;
 			}
-			const status = await applyProfile(pi, ctx, profile);
-			notifyStartup(ctx, pi, `[pm] startup: profile "${active}" — ${status}`);
+			const status = await applyProfile(pi, ctx, selection.profile);
+			notifyStartup(ctx, pi, `[pm] startup: ${selection.label} — ${status}`);
 		} catch (err) {
 			notifyStartup(ctx, pi, `[pm] startup error: ${err instanceof Error ? err.message : String(err)}`, "error");
 		}
@@ -97,11 +110,9 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 	pi.on("session_switch", async (_event, ctx) => {
 		try {
 			const settings = readSettings(ctx);
-			const active = getEffectiveActiveProfileName(settings);
-			if (!active || active === DEFAULT_PROFILE_NAME) return;
-			const profile = getProfiles(settings)[active];
-			if (!profile || preflightProfileStartup(ctx, profile)) return;
-			await applyProfile(pi, ctx, profile);
+			const selection = resolveStartupSelection(pi, settings);
+			if (!selection || preflightProfileStartup(ctx, selection.profile)) return;
+			await applyProfile(pi, ctx, selection.profile);
 		} catch {
 			// Profile application is best-effort; swallow to protect page switch.
 		}
@@ -182,7 +193,7 @@ function readSettings(_ctx: ExtensionContext): OmpSettings {
 	return readJsonSettingsFile(legacySettingsPath());
 }
 
-function copyProfileKeys(target: OmpSettings, source: OmpSettings): void {
+function copyProfileKeys(target: OmpSettings | ModelProfile, source: OmpSettings | ModelProfile): void {
 	if (source.modelRoles !== undefined) target.modelRoles = { ...source.modelRoles };
 	if (source.defaultThinkingLevel !== undefined) target.defaultThinkingLevel = source.defaultThinkingLevel;
 	if (source.enabledModels !== undefined) target.enabledModels = [...source.enabledModels];
@@ -242,14 +253,110 @@ function splitModelSelector(selector: string): { id: string; thinkingLevel?: str
 	return { id: selector };
 }
 
+function readStringFlag(pi: ExtensionAPI, name: string): string | undefined {
+	const value = pi.getFlag(name);
+	if (typeof value !== "string") return undefined;
+	const normalized = value.trim();
+	return normalized.length > 0 ? normalized : undefined;
+}
+
+function validateThinkingLevel(level: string, source: string): string {
+	if (!THINKING_LEVELS.has(level)) {
+		throw new Error(`${source} must be one of: ${Array.from(THINKING_LEVELS).join(", ")}`);
+	}
+	return level;
+}
+
+function resolveCliProfileName(pi: ExtensionAPI, settings: OmpSettings): string | undefined {
+	const profileName = readStringFlag(pi, PM_PROFILE_FLAG);
+	if (!profileName) return undefined;
+	const normalized = normalizeProfileName(profileName);
+	if (normalized === DEFAULT_PROFILE_NAME) return DEFAULT_PROFILE_NAME;
+	if (!getProfiles(settings)[normalized]) {
+		throw new Error(`Unknown profile passed via --${PM_PROFILE_FLAG}: ${normalized}`);
+	}
+	return normalized;
+}
+
 function resolvePinnedOmpProfileName(settings: OmpSettings): string | undefined {
 	const profileName = resolveProfileEnv(process.env.OMP_PROFILE, process.env.PI_PROFILE);
 	if (!profileName) return undefined;
 	return getProfiles(settings)[profileName] ? profileName : undefined;
 }
 
-function getEffectiveActiveProfileName(settings: OmpSettings): string | undefined {
-	return resolvePinnedOmpProfileName(settings) ?? settings.activeModelProfile;
+function getEffectiveActiveProfileName(settings: OmpSettings, pi: ExtensionAPI): string | undefined {
+	return resolveCliProfileName(pi, settings) ?? resolvePinnedOmpProfileName(settings) ?? settings.activeModelProfile;
+}
+
+function currentSettingsProfile(settings: OmpSettings): ModelProfile {
+	const profile: ModelProfile = {};
+	if (settings.modelRoles !== undefined) profile.modelRoles = structuredClone(settings.modelRoles);
+	if (settings.defaultThinkingLevel !== undefined) profile.defaultThinkingLevel = settings.defaultThinkingLevel;
+	if (settings.enabledModels !== undefined) profile.enabledModels = structuredClone(settings.enabledModels);
+	if (settings.cycleOrder !== undefined) profile.cycleOrder = structuredClone(settings.cycleOrder);
+	if (settings.modelProviderOrder !== undefined) profile.modelProviderOrder = structuredClone(settings.modelProviderOrder);
+	return profile;
+}
+
+function applyLaunchOverrides(pi: ExtensionAPI, profile: ModelProfile): ModelProfile {
+	const modelSelector = readStringFlag(pi, PM_MODEL_FLAG);
+	const thinkingOverride = readStringFlag(pi, PM_THINKING_FLAG);
+	if (!modelSelector && !thinkingOverride) return profile;
+
+	const nextProfile: ModelProfile = {
+		...profile,
+		modelRoles: profile.modelRoles ? { ...profile.modelRoles } : {},
+	};
+
+	if (modelSelector) {
+		const { id, thinkingLevel } = splitModelSelector(modelSelector);
+		nextProfile.modelRoles ??= {};
+		nextProfile.modelRoles.default = modelSelector;
+		if (thinkingOverride === undefined && thinkingLevel !== undefined) {
+			nextProfile.defaultThinkingLevel = thinkingLevel;
+		} else if (thinkingLevel === undefined) {
+			nextProfile.modelRoles.default = id;
+		}
+	}
+
+	if (thinkingOverride !== undefined) {
+		const level = validateThinkingLevel(thinkingOverride, `--${PM_THINKING_FLAG}`);
+		nextProfile.defaultThinkingLevel = level;
+		const modelRoles = nextProfile.modelRoles;
+		if (modelRoles?.default) {
+			const { id } = splitModelSelector(modelRoles.default);
+			modelRoles.default = `${id}:${level}`;
+		}
+	}
+
+	return nextProfile;
+}
+
+function describeLaunchOverrides(pi: ExtensionAPI): string[] {
+	const parts: string[] = [];
+	const profileName = readStringFlag(pi, PM_PROFILE_FLAG);
+	const modelSelector = readStringFlag(pi, PM_MODEL_FLAG);
+	const thinkingLevel = readStringFlag(pi, PM_THINKING_FLAG);
+	if (profileName) parts.push(`profile "${normalizeProfileName(profileName)}"`);
+	if (modelSelector) parts.push(`model "${modelSelector}"`);
+	if (thinkingLevel) parts.push(`thinking "${validateThinkingLevel(thinkingLevel, `--${PM_THINKING_FLAG}`)}"`);
+	return parts;
+}
+
+function resolveStartupSelection(
+	pi: ExtensionAPI,
+	settings: OmpSettings,
+): { label: string; profile: ModelProfile } | undefined {
+	const active = getEffectiveActiveProfileName(settings, pi);
+	const baseProfile = active && active !== DEFAULT_PROFILE_NAME ? getProfiles(settings)[active] : undefined;
+	const overrides = describeLaunchOverrides(pi);
+	if (!baseProfile && !overrides.length && (!active || active === DEFAULT_PROFILE_NAME)) return undefined;
+
+	const profile = applyLaunchOverrides(pi, baseProfile ?? currentSettingsProfile(settings));
+	const labelBase = active && active !== DEFAULT_PROFILE_NAME ? `profile "${active}"` : "current settings";
+	if (!overrides.length) return { label: labelBase, profile };
+	const suffix = overrides.filter(part => part !== labelBase).join(", ");
+	return { label: suffix ? `${labelBase} with ${suffix}` : labelBase, profile };
 }
 
 function preflightProfileStartup(ctx: ExtensionContext, profile: ModelProfile): string | undefined {
@@ -381,7 +488,7 @@ async function handleNoArg(pi: ExtensionAPI, ctx: ExtensionCommandContext): Prom
 	if (!ctx.hasUI) return printList(pi, ctx);
 
 	const settings = readSettings(ctx);
-	const active = getEffectiveActiveProfileName(settings) ?? DEFAULT_PROFILE_NAME;
+	const active = getEffectiveActiveProfileName(settings, pi) ?? DEFAULT_PROFILE_NAME;
 	const persistedActive = settings.activeModelProfile;
 	const names = profileNames(settings);
 	const allNames = [DEFAULT_PROFILE_NAME, ...names.filter(n => n !== DEFAULT_PROFILE_NAME)];
@@ -420,7 +527,7 @@ async function handleNoArg(pi: ExtensionAPI, ctx: ExtensionCommandContext): Prom
 
 function printList(pi: ExtensionAPI, ctx: ExtensionCommandContext): void {
 	const settings = readSettings(ctx);
-	const active = getEffectiveActiveProfileName(settings);
+	const active = getEffectiveActiveProfileName(settings, pi);
 	const persistedActive = settings.activeModelProfile;
 	let out = "Model profiles:\n";
 	out += `  ${!active || active === DEFAULT_PROFILE_NAME ? "*" : " "} ${DEFAULT_PROFILE_NAME}\n`;
@@ -543,7 +650,7 @@ async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName
 async function handleModel(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawRole: string | undefined): Promise<void> {
 	const role = rawRole?.trim() || "smol";
 	const settings = readSettings(ctx);
-	const active = getEffectiveActiveProfileName(settings);
+	const active = getEffectiveActiveProfileName(settings, pi);
 	if (!active || active === DEFAULT_PROFILE_NAME) {
 		notify(pi, "No named profile active. Use /pm use <name> first.");
 		return;

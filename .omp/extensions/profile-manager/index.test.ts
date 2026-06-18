@@ -31,6 +31,7 @@ type EventHandler = (event: unknown, ctx: CommandContext) => void | Promise<void
 
 const tempDirs: string[] = [];
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+const originalOmpProfile = process.env.OMP_PROFILE;
 const originalPiProfile = process.env.PI_PROFILE;
 
 afterEach(async () => {
@@ -38,6 +39,11 @@ afterEach(async () => {
 		delete process.env.PI_CODING_AGENT_DIR;
 	} else {
 		process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+	}
+	if (originalOmpProfile === undefined) {
+		delete process.env.OMP_PROFILE;
+	} else {
+		process.env.OMP_PROFILE = originalOmpProfile;
 	}
 	if (originalPiProfile === undefined) {
 		delete process.env.PI_PROFILE;
@@ -54,9 +60,11 @@ async function createHarness() {
 
 	const commands = new Map<string, RegisteredCommand>();
 	const events = new Map<string, EventHandler>();
+	const flags = new Map<string, boolean | string | undefined>();
 	const notifications: string[] = [];
 	const uiNotifications: Array<{ message: string; type?: "info" | "warning" | "error" }> = [];
 	const appliedSettings: Array<Record<string, unknown>> = [];
+	const thinkingLevels: string[] = [];
 	const model: Model = {
 		provider: "nvidia",
 		id: "moonshotai/kimi-k2.6",
@@ -73,6 +81,12 @@ async function createHarness() {
 		on(event: string, handler: EventHandler) {
 			events.set(event, handler);
 		},
+		registerFlag(name: string, config: { default?: boolean | string }) {
+			flags.set(name, config.default);
+		},
+		getFlag(name: string) {
+			return flags.get(name);
+		},
 		registerCommand(name: string, command: RegisteredCommand) {
 			commands.set(name, command);
 		},
@@ -87,6 +101,9 @@ async function createHarness() {
 		},
 		getThinkingLevel() {
 			return undefined;
+		},
+		setThinkingLevel(level: string) {
+			thinkingLevels.push(level);
 		},
 	};
 
@@ -109,7 +126,20 @@ async function createHarness() {
 		},
 	};
 
-	return { agentDir, commands, events, notifications, uiNotifications, appliedSettings, ctx, model };
+	return {
+		agentDir,
+		commands,
+		events,
+		notifications,
+		uiNotifications,
+		appliedSettings,
+		thinkingLevels,
+		ctx,
+		model,
+		setFlag(name: string, value: boolean | string | undefined) {
+			flags.set(name, value);
+		},
+	};
 }
 
 describe("profile manager extension", () => {
@@ -254,6 +284,75 @@ describe("profile manager extension", () => {
 		expect(harness.notifications.at(-1)).toContain("Active profile: omlx");
 	});
 
+	test("startup CLI pm-profile flag overrides the saved active profile", async () => {
+		const harness = await createHarness();
+		harness.setFlag("pm-profile", "openai-performance");
+		await Bun.write(
+			path.join(harness.agentDir, "config.yml"),
+			YAML.stringify({
+				activeModelProfile: "omlx",
+				modelProfiles: {
+					omlx: {
+						modelRoles: {
+							default: "omlx/Qwen3-Coder-Next-MLX-4bit",
+						},
+					},
+					"openai-performance": {
+						modelRoles: {
+							default: `${harness.model.provider}/${harness.model.id}`,
+						},
+					},
+				},
+			}),
+		);
+
+		const onStart = harness.events.get("session_start");
+		expect(onStart).toBeDefined();
+		await onStart?.({}, harness.ctx);
+
+		expect(harness.appliedSettings.at(-1)).toEqual({
+			modelRoles: {
+				default: `${harness.model.provider}/${harness.model.id}`,
+			},
+			enabledModels: [],
+		});
+		expect(harness.notifications.at(-1)).toContain('startup: profile "openai-performance"');
+	});
+
+	test("startup CLI pm-model and pm-thinking flags override the launch model", async () => {
+		const harness = await createHarness();
+		harness.setFlag("pm-profile", "openai-performance");
+		harness.setFlag("pm-model", `${harness.model.provider}/${harness.model.id}`);
+		harness.setFlag("pm-thinking", "xhigh");
+		await Bun.write(
+			path.join(harness.agentDir, "config.yml"),
+			YAML.stringify({
+				modelProfiles: {
+					"openai-performance": {
+						defaultThinkingLevel: "low",
+						modelRoles: {
+							default: "openai-codex/gpt-5.4:low",
+						},
+					},
+				},
+			}),
+		);
+
+		const onStart = harness.events.get("session_start");
+		expect(onStart).toBeDefined();
+		await onStart?.({}, harness.ctx);
+
+		expect(harness.appliedSettings.at(-1)).toEqual({
+			defaultThinkingLevel: "xhigh",
+			modelRoles: {
+				default: `${harness.model.provider}/${harness.model.id}:xhigh`,
+			},
+			enabledModels: [],
+		});
+		expect(harness.thinkingLevels.at(-1)).toBe("xhigh");
+		expect(harness.notifications.at(-1)).toContain(`model "${harness.model.provider}/${harness.model.id}"`);
+	});
+
 	test("built bundle uses UI notifications for startup banners", async () => {
 		const harness = await createHarness();
 		const bundleModule = await import(`./dist/index.js?ts=${Date.now()}`);
@@ -263,10 +362,17 @@ describe("profile manager extension", () => {
 		const events = new Map<string, EventHandler>();
 		const bundleNotifications: string[] = [];
 		const bundleUiNotifications: Array<{ message: string; type?: "info" | "warning" | "error" }> = [];
+		const bundleFlags = new Map<string, boolean | string | undefined>();
 		bundleModule.default({
 			setLabel(_value: string) {},
 			on(event: string, handler: EventHandler) {
 				events.set(event, handler);
+			},
+			registerFlag(name: string, config: { default?: boolean | string }) {
+				bundleFlags.set(name, config.default);
+			},
+			getFlag(name: string) {
+				return bundleFlags.get(name);
 			},
 			registerCommand(name: string, command: RegisteredCommand) {
 				commands.set(name, command);
