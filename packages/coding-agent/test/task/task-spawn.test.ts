@@ -146,6 +146,39 @@ describe("task spawn routing", () => {
 		expect(runSpy).toHaveBeenCalledTimes(1);
 	});
 
+	it("executeInline waits for completion even when async jobs are enabled", async () => {
+		vi.spyOn(discoveryModule, "discoverAgents").mockResolvedValue({
+			agents: [taskAgent],
+			projectAgentsDir: null,
+		});
+		const gate = deferred();
+		const runSpy = vi.spyOn(executorModule, "runSubprocess").mockImplementation(async options => {
+			await gate.promise;
+			return makeResult(options.id ?? "?");
+		});
+
+		const manager = createManager();
+		const tool = await TaskTool.create(createSession({ manager, settings: { "async.enabled": true } }));
+		let resolved = false;
+		const inlineResult = tool
+			.executeInline("tc-inline", { agent: "task", id: "Inline", assignment: "Do the thing." } as TaskParams)
+			.then(result => {
+				resolved = true;
+				return result;
+			});
+
+		await pollUntil(() => runSpy.mock.calls.length === 1);
+		expect(resolved).toBe(false);
+		expect(manager.getAllJobs()).toHaveLength(0);
+
+		gate.resolve();
+		const result = await inlineResult;
+
+		expect(getFirstText(result)).toContain("All done.");
+		expect(manager.getAllJobs()).toHaveLength(0);
+		expect(runSpy).toHaveBeenCalledTimes(1);
+	});
+
 	it("bounds concurrent job bodies with the session spawn semaphore", async () => {
 		vi.spyOn(discoveryModule, "discoverAgents").mockResolvedValue({
 			agents: [taskAgent],

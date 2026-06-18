@@ -66,6 +66,29 @@ describe("Settings", () => {
 			expect(settings.get("tui.maxInlineImages")).toBe(8);
 		});
 
+		it("defaults the symbol preset to nerd font", async () => {
+			const settings = await Settings.init({ cwd: projectDir, agentDir });
+			expect(getDefault("symbolPreset")).toBe("nerd");
+			expect(settings.get("symbolPreset")).toBe("nerd");
+		});
+
+		it("keeps global disabled extensions when project settings declare their own list", async () => {
+			await writeSettings({
+				disabledExtensions: ["extension-module:purpose-gate", "extension-module:semantic-search"],
+			});
+			await Bun.write(
+				path.join(getProjectAgentDir(projectDir), "settings.json"),
+				JSON.stringify({ disabledExtensions: ["extension-module:local-only"] }),
+			);
+
+			const settings = await Settings.init({ cwd: projectDir, agentDir });
+			expect(settings.get("disabledExtensions")).toEqual([
+				"extension-module:purpose-gate",
+				"extension-module:semantic-search",
+				"extension-module:local-only",
+			]);
+		});
+
 		it("exposes all tool calling mode options", () => {
 			const values = getEnumValues("tools.format");
 			expect(values).toEqual([

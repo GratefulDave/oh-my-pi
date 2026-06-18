@@ -199,6 +199,20 @@
         "@oh-my-pi/pi-tui": "workspace:*",
       },
     },
+    "packages/pi-agent-chain": {
+      "name": "pi-agent-chain",
+      "version": "15.10.3-lex",
+      "dependencies": {
+        "handlebars": "catalog:",
+        "yaml": "^2.9.0",
+      },
+      "devDependencies": {
+        "zod": "catalog:",
+      },
+      "peerDependencies": {
+        "@oh-my-pi/pi-coding-agent": "workspace:*",
+      },
+    },
     "packages/pi-distill": {
       "name": "pi-distill",
       "version": "15.10.3-lex",
@@ -1379,6 +1393,8 @@
     "path-is-absolute": ["path-is-absolute@1.0.1", "", {}, "sha512-AVbw3UJ2e9bq64vSaS9Am0fje1Pa8pbGqTTsmXfaIiMpnr5DlDhfJOuLj9Sf95ZPVDAUerDfEk88MPmPe7UCQg=="],
 
     "pi-actor-swarm": ["pi-actor-swarm@workspace:packages/pi-actor-swarm"],
+
+    "pi-agent-chain": ["pi-agent-chain@workspace:packages/pi-agent-chain"],
 
     "pi-distill": ["pi-distill@workspace:packages/pi-distill"],
 

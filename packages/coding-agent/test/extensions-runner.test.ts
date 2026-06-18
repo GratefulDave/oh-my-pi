@@ -13,6 +13,7 @@ import {
 	ExtensionRunner,
 	testSetExtensionHandlerTimeoutMs,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/runner";
+import { EXTENSION_TASK_UNAVAILABLE_ERROR } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/task-runner";
 import { ExtensionToolWrapper } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/wrapper";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
@@ -233,6 +234,112 @@ describe("ExtensionRunner", () => {
 
 			expect(tools.length).toBe(2);
 			expect(tools.map(t => t.definition.name).sort()).toEqual(["tool_a", "tool_b"]);
+		});
+	});
+
+	describe("runTask context action", () => {
+		it("passes task params and toolCallId into the session_start context", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("session_start", async (_event, ctx) => {
+						await ctx.runTask({ agent: "task", assignment: "hello" }, { toolCallId: "ctx-run-task" });
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "run-task.ts"), extCode);
+
+			const result = await loadTestExtensions();
+			const runner = new ExtensionRunner(
+				result.extensions,
+				result.runtime,
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+			);
+			const runTask = vi.fn().mockResolvedValue({
+				content: [{ type: "text", text: "task-ok" }],
+				details: { projectAgentsDir: null, results: [], totalDurationMs: 0 },
+			});
+
+			runner.initialize(
+				{
+					sendMessage: () => {},
+					sendUserMessage: () => {},
+					appendEntry: () => {},
+					setLabel: () => {},
+					getActiveTools: () => [],
+					getAllTools: () => [],
+					setActiveTools: async () => {},
+					getCommands: () => [],
+					setModel: async () => false,
+					getThinkingLevel: () => undefined,
+					setThinkingLevel: () => {},
+					getSessionName: () => undefined,
+					setSessionName: async () => {},
+					applySettings: () => {},
+				},
+				{
+					getModel: () => undefined,
+					isIdle: () => true,
+					abort: () => {},
+					hasPendingMessages: () => false,
+					shutdown: () => {},
+					getContextUsage: () => undefined,
+					compact: async () => {},
+					getSystemPrompt: () => [],
+					setThinkingLevel: () => {},
+					runTask,
+				},
+			);
+
+			await runner.emit({ type: "session_start" });
+
+			expect(runTask).toHaveBeenCalledWith({ agent: "task", assignment: "hello" }, { toolCallId: "ctx-run-task" });
+		});
+
+		it("rejects ctx.runTask when the task tool is unavailable", async () => {
+			const result = await loadTestExtensions();
+			const runner = new ExtensionRunner(
+				result.extensions,
+				result.runtime,
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+			);
+
+			runner.initialize(
+				{
+					sendMessage: () => {},
+					sendUserMessage: () => {},
+					appendEntry: () => {},
+					setLabel: () => {},
+					getActiveTools: () => [],
+					getAllTools: () => [],
+					setActiveTools: async () => {},
+					getCommands: () => [],
+					setModel: async () => false,
+					getThinkingLevel: () => undefined,
+					setThinkingLevel: () => {},
+					getSessionName: () => undefined,
+					setSessionName: async () => {},
+					applySettings: () => {},
+				},
+				{
+					getModel: () => undefined,
+					isIdle: () => true,
+					abort: () => {},
+					hasPendingMessages: () => false,
+					shutdown: () => {},
+					getContextUsage: () => undefined,
+					compact: async () => {},
+					getSystemPrompt: () => [],
+					setThinkingLevel: () => {},
+				},
+			);
+
+			await expect(runner.createContext().runTask({ agent: "task", assignment: "hello" })).rejects.toThrow(
+				EXTENSION_TASK_UNAVAILABLE_ERROR,
+			);
 		});
 	});
 

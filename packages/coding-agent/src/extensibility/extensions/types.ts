@@ -46,6 +46,7 @@ import type { CustomEditor } from "../../modes/components/custom-editor";
 import type { Theme } from "../../modes/theme/theme";
 import type { CustomMessage } from "../../session/messages";
 import type { ReadonlySessionManager, SessionManager } from "../../session/session-manager";
+import type { TaskParams, TaskToolDetails } from "../../task/types";
 import type {
 	BashToolDetails,
 	BashToolInput,
@@ -352,6 +353,8 @@ export interface ExtensionContext {
 	shutdown(): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string[];
+	/** Run the task tool inline and wait for the result. */
+	runTask(params: TaskParams, options?: ExtensionTaskRunOptions): Promise<AgentToolResult<TaskToolDetails>>;
 	/** Structured memory runtime for status/search/save across the configured backend. */
 	memory?: MemoryRuntimeContext;
 }
@@ -1321,6 +1324,17 @@ export type GetThinkingLevelHandler = () => ThinkingLevel | undefined;
 
 export type SetThinkingLevelHandler = (level: ThinkingLevel, persist?: boolean) => void;
 
+export interface ExtensionTaskRunOptions {
+	toolCallId?: string;
+	signal?: AbortSignal;
+	onUpdate?: AgentToolUpdateCallback<TaskToolDetails>;
+}
+
+export type RunTaskHandler = (
+	params: TaskParams,
+	options?: ExtensionTaskRunOptions,
+) => Promise<AgentToolResult<TaskToolDetails>>;
+
 /** Shared state created by loader, used during registration and runtime. */
 export interface ExtensionRuntimeState {
 	flagValues: Map<string, boolean | string>;
@@ -1357,6 +1371,7 @@ export interface ExtensionContextActions {
 	compact: (instructionsOrOptions?: string | CompactOptions) => Promise<void>;
 	getSystemPrompt: () => string[];
 	setThinkingLevel: SetThinkingLevelHandler;
+	runTask?: RunTaskHandler;
 }
 
 /** Actions for ExtensionCommandContext (ctx.* in command handlers). */

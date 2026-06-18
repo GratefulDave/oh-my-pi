@@ -1016,6 +1016,11 @@ export class Settings {
 
 			if (override === undefined) continue;
 
+			if (key === "disabledExtensions" && Array.isArray(baseVal) && Array.isArray(override)) {
+				result[key] = [...new Set([...baseVal, ...override])];
+				continue;
+			}
+
 			if (
 				typeof override === "object" &&
 				override !== null &&

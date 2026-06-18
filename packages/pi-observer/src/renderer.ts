@@ -149,23 +149,20 @@ export class SubagentRenderer {
 		options: Required<Pick<RenderOptions, "width" | "now">> & RenderOptions,
 		selected: boolean,
 	): string[] {
+		if (options.compact) {
+			return renderCompactAgentLines(agent, options);
+		}
+
 		const label = formatLabel(agent);
 		const role = formatRole(agent);
 		const elapsedMs = resolveDurationMs(agent, options.now);
 		if (agent.status === "running") {
-			const frame = SPINNER_FRAMES[(options.spinnerFrame ?? Math.floor(options.now / 120)) % SPINNER_FRAMES.length];
 			const header = `▶ [${role}] ${label}`;
-			const live = `${frame} [${agent.agent}] ${label} · ${Math.floor(elapsedMs / 1000)}s`;
-			return options.compact
-				? [
-						truncateVisible(live, options.width),
-						truncateVisible(`${CHILD_PREFIX}${describeState(agent)}`, options.width),
-					]
-				: [
-						padTintedLine(header, options.width, selected ? SELECT_TINT : CYAN_TINT),
-						truncateVisible(`${CHILD_PREFIX}Running in background (ID: ${agent.id})`, options.width),
-						truncateVisible(`${CHILD_PREFIX}${describeState(agent)}`, options.width),
-					];
+			return [
+				padTintedLine(header, options.width, selected ? SELECT_TINT : CYAN_TINT),
+				truncateVisible(`${CHILD_PREFIX}Running in background (ID: ${agent.id})`, options.width),
+				truncateVisible(`${CHILD_PREFIX}${describeState(agent)}`, options.width),
+			];
 		}
 		if (agent.status === "completed") {
 			const header = `✔ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`;
@@ -302,7 +299,40 @@ function formatRole(agent: SubagentActivity): string {
 	return agent.resolvedModel ? `${agent.agent} ${agent.resolvedModel}` : agent.agent;
 }
 
-function describeState(agent: SubagentActivity): string {
+export function renderCompactAgentLines(
+	agent: SubagentActivity,
+	options: Required<Pick<RenderOptions, "width" | "now">> & Pick<RenderOptions, "spinnerFrame">,
+): string[] {
+	const label = formatLabel(agent);
+	const role = formatRole(agent);
+	const elapsedMs = resolveDurationMs(agent, options.now);
+	if (agent.status === "running") {
+		const frame = SPINNER_FRAMES[(options.spinnerFrame ?? Math.floor(options.now / 120)) % SPINNER_FRAMES.length];
+		return [
+			truncateVisible(`${frame} [${agent.agent}] ${label} · ${Math.floor(elapsedMs / 1000)}s`, options.width),
+			truncateVisible(`${CHILD_PREFIX}${describeState(agent)}`, options.width),
+		];
+	}
+	if (agent.status === "completed") {
+		return [
+			color(
+				GREEN_FG,
+				`✔ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`,
+			),
+		];
+	}
+	if (agent.status === "failed" || agent.status === "aborted") {
+		const header = color(
+			RED_FG,
+			`✗ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`,
+		);
+		const state = agent.failureReason ?? agent.retryFailure?.errorMessage;
+		return state ? [header, truncateVisible(`${CHILD_PREFIX}${state}`, options.width)] : [header];
+	}
+	return [`◇ [${role}] ${label}`];
+}
+
+export function describeState(agent: SubagentActivity): string {
 	if (agent.retryState)
 		return `retry ${agent.retryState.attempt}/${agent.retryState.maxAttempts}: ${agent.retryState.errorMessage}`;
 	if (agent.currentTool)

@@ -436,7 +436,7 @@ describe("ObserverDashboard", () => {
 		dashboard.act("enter");
 		dashboard.act("enter");
 		let text = renderText(dashboard);
-		expect(text).toContain("filter=\"reviewer\"");
+		expect(text).toContain('filter="reviewer"');
 		expect(text).toContain("Run B");
 		expect(text).not.toContain("Run A");
 

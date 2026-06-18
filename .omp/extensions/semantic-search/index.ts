@@ -18,6 +18,14 @@ export default function semanticSearchExtension(pi: {
 			};
 		}) => Promise<void>;
 	}) => void;
+	on?: (event: "session_start", handler: (_event: unknown, ctx: {
+		cwd: string;
+		ui: {
+			notify(message: string, type?: "info" | "warning" | "error"): void;
+			setStatus?(key: string, text: string | undefined): void;
+			setWidget?(key: string, content: string[] | undefined, options?: { placement?: "aboveEditor" | "belowEditor" }): void;
+		};
+	}) => Promise<void>) => void;
 	registerMessageRenderer: (
 		customType: string,
 		renderer: (
@@ -74,6 +82,28 @@ export default function semanticSearchExtension(pi: {
 	) => {
 		pi.sendMessage({ customType, content: text, display: true, details }, options);
 	};
+	pi.on?.("session_start", async (_event, ctx) => {
+		try {
+			const status = await service.readStatus(ctx.cwd);
+			if (status.files > 0) return;
+			ctx.ui.setStatus?.("semantic-search-index", "semantic:auto-index");
+			ctx.ui.setWidget?.("semantic-search-index", ["semantic-search: auto-indexing project"], { placement: "belowEditor" });
+			await service.buildIndex(ctx.cwd, {
+				computeEmbeddings: false,
+				onProgress(progress) {
+					ctx.ui.setStatus?.("semantic-search-index", progress.message);
+				},
+			});
+			ctx.ui.notify("Semantic index auto-build complete", "info");
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			pi.logger.error("semantic-search auto-index failed", { error: message });
+		} finally {
+			ctx.ui.setStatus?.("semantic-search-index", undefined);
+			ctx.ui.setWidget?.("semantic-search-index", undefined, { placement: "belowEditor" });
+		}
+	});
+
 
 
 

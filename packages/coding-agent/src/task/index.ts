@@ -560,6 +560,23 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		return new TaskTool(session, agents);
 	}
 
+	async executeInline(
+		toolCallId: string,
+		rawParams: unknown,
+		signal?: AbortSignal,
+		onUpdate?: AgentToolUpdateCallback<TaskToolDetails>,
+	): Promise<AgentToolResult<TaskToolDetails>> {
+		const params = repairTaskParams(rawParams as TaskParams);
+		const batchEnabled = this.#isBatchEnabled();
+		const validationError = validateShapeParams(batchEnabled, params) ?? validateSpawnParams(params, batchEnabled);
+		if (validationError) {
+			return createTaskModeError(validationError);
+		}
+
+		const spawnItems = resolveSpawnItems(params);
+		return await this.#executeSyncFanout(toolCallId, params, spawnItems, signal, onUpdate);
+	}
+
 	async execute(
 		toolCallId: string,
 		rawParams: unknown,
@@ -619,7 +636,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			if (asyncEnabled && !manager) {
 				logger.warn("task: no AsyncJobManager registered; falling back to sync execution");
 			}
-			return withAdvisory(await this.#executeSyncFanout(toolCallId, params, spawnItems, signal, onUpdate));
+			return withAdvisory(await this.executeInline(toolCallId, params, signal, onUpdate));
 		}
 
 		// Resolve agent ids up front so the immediate result can name them.

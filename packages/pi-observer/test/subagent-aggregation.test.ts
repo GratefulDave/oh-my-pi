@@ -8,10 +8,10 @@
 // full wiring through the extension's default export.
 // ---------------------------------------------------------------------------
 
+import { beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { beforeEach, describe, expect, test } from "bun:test";
 import observer from "../src/extension";
 import { stripAnsi } from "../src/renderer";
 import {
@@ -35,6 +35,13 @@ type FakeCustomTheme = {
 type FakeCustomView = {
 	render(width: number, height: number): string[];
 	destroy(): void;
+};
+
+type FakeObserverContext = {
+	hasUI?: boolean;
+	ui: {
+		setWidget?(key: string, content: string[] | undefined): void;
+	};
 };
 
 type FakeCommandContext = {
@@ -75,12 +82,12 @@ class FakeEventBus {
 /** Minimal ExtensionAPI stub exposing just what observer() touches. */
 function makeFakePi() {
 	const events = new FakeEventBus();
-	const sessionHandlers = new Map<string, (event: unknown) => void>();
+	const sessionHandlers = new Map<string, (event: unknown, ctx?: FakeObserverContext) => void>();
 	const commands = new Map<string, FakeCommand>();
 	const pi = {
 		events,
 		setLabel() {},
-		on(event: string, handler: (event: unknown) => void) {
+		on(event: string, handler: (event: unknown, ctx?: FakeObserverContext) => void) {
 			sessionHandlers.set(event, handler);
 		},
 		registerCommand(name: string, command: FakeCommand) {
@@ -242,6 +249,64 @@ describe("pi-observer subagent fan-in", () => {
 		const after = getSubagentTotals();
 		expect(after.activeCount).toBe(0);
 		expect(after.tokens).toBe(1234);
+	});
+
+	test("observer live widget refreshes on session and fan-in events", () => {
+		const { pi, events, sessionHandlers } = makeFakePi();
+		observer(pi);
+
+		const widgetCalls: Array<{ key: string; content: string[] | undefined }> = [];
+		const ctx: FakeObserverContext = {
+			hasUI: true,
+			ui: {
+				setWidget(key, content) {
+					widgetCalls.push({ key, content });
+				},
+			},
+		};
+
+		sessionHandlers.get("session_start")?.({}, ctx);
+		expect(widgetCalls.at(-1)).toEqual({ key: "observer-live", content: undefined });
+
+		events.emit(PROGRESS_CHANNEL, {
+			agent: "explore",
+			task: "trace bug",
+			progress: {
+				id: "sub-1",
+				agent: "explore",
+				status: "running",
+				tokens: 12,
+				toolCount: 1,
+				cost: 0.01,
+				currentTool: "read",
+			},
+		});
+		expect(widgetCalls.at(-1)?.content?.some(line => stripAnsi(line).includes("trace bug"))).toBe(true);
+
+		sessionHandlers.get("turn_start")?.({}, ctx);
+		const afterTurnStart = widgetCalls.length;
+		expect(afterTurnStart).toBeGreaterThan(1);
+
+		events.emit(LIFECYCLE_CHANNEL, { id: "sub-1", agent: "explore", status: "completed", task: "trace bug" });
+		expect(widgetCalls.length).toBeGreaterThan(afterTurnStart);
+
+		events.emit(IRC_CHANNEL, {
+			timestamp: Date.now(),
+			channel: "#agents",
+			from: "Main",
+			to: "#agents",
+			body: "status?",
+			kind: "message",
+			delivered: ["explore"],
+			failed: [],
+		});
+		expect(widgetCalls.at(-1)?.content?.some(line => stripAnsi(line).includes("IRC #agents"))).toBe(true);
+
+		sessionHandlers.get("turn_end")?.({}, ctx);
+		expect(widgetCalls.length).toBeGreaterThan(afterTurnStart + 1);
+
+		sessionHandlers.get("session_start")?.({}, ctx);
+		expect(widgetCalls.at(-1)).toEqual({ key: "observer-live", content: undefined });
 	});
 
 	test("observe command tolerates custom UI themes without dim helper", async () => {

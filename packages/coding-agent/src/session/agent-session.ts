@@ -190,6 +190,7 @@ import type {
 	TurnStartEvent,
 } from "../extensibility/extensions";
 import { createExtensionModelQuery } from "../extensibility/extensions/model-api";
+import { createRunTaskAction } from "../extensibility/extensions/task-runner";
 import type { CompactOptions, ContextUsage } from "../extensibility/extensions/types";
 import { ExtensionToolWrapper } from "../extensibility/extensions/wrapper";
 import type { HookCommandContext } from "../extensibility/hooks/types";
@@ -5867,6 +5868,7 @@ export class AgentSession {
 				await this.reload();
 			},
 			getSystemPrompt: () => this.systemPrompt,
+			runTask: createRunTaskAction(this),
 		};
 	}
 

@@ -13,6 +13,7 @@ import type { SessionManager } from "../../session/session-manager";
 import type { EventBus } from "../../utils/event-bus";
 import { loadExtensions } from "./loader";
 import { createExtensionModelQuery } from "./model-api";
+import { EXTENSION_TASK_UNAVAILABLE_ERROR } from "./task-runner";
 import type {
 	AfterProviderResponseEvent,
 	AssistantThinkingRenderer,
@@ -43,6 +44,7 @@ import type {
 	RegisteredTool,
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,
+	RunTaskHandler,
 	SessionBeforeBranchResult,
 	SessionBeforeCompactResult,
 	SessionBeforeSwitchResult,
@@ -212,6 +214,9 @@ export class ExtensionRunner {
 	#getContextUsageFn: () => ContextUsage | undefined = () => undefined;
 	#compactFn: (instructionsOrOptions?: string | CompactOptions) => Promise<void> = async () => {};
 	#getSystemPromptFn: () => string[] = () => [];
+	#runTaskFn: RunTaskHandler = async () => {
+		throw new Error(EXTENSION_TASK_UNAVAILABLE_ERROR);
+	};
 	#newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	#branchHandler: BranchHandler = async () => ({ cancelled: false });
 	#navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
@@ -272,6 +277,7 @@ export class ExtensionRunner {
 		this.#hasPendingMessagesFn = contextActions.hasPendingMessages;
 		this.#shutdownHandler = contextActions.shutdown;
 		this.#getSystemPromptFn = contextActions.getSystemPrompt;
+		if (contextActions.runTask) this.#runTaskFn = contextActions.runTask;
 
 		// Command context actions (optional, only for interactive mode)
 		if (commandContextActions) {
@@ -535,6 +541,7 @@ export class ExtensionRunner {
 			hasPendingMessages: () => this.#hasPendingMessagesFn(),
 			shutdown: () => this.#shutdownHandler(),
 			getSystemPrompt: () => this.#getSystemPromptFn(),
+			runTask: (params, options) => this.#runTaskFn(params, options),
 			memory: this.#getMemoryFn?.(),
 		};
 	}

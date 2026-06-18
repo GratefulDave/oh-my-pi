@@ -12,12 +12,13 @@ const nerdTheme = {
 				"icon.file": "[read]",
 				"icon.search": "[search]",
 				"tool.bash": "[bash]",
-				"tool.todo": "[todo]",
+				"tool.job": "[job]",
+				"tool.lsp": "[lsp]",
+				"tool.memory": "[checkpoint]",
 				"tool.edit": "[edit]",
 				"icon.folder": "[find]",
 				"icon.rewind": "[rewind]",
 				"icon.warning": "[warn]",
-				"tool.mcp": "[mcp]",
 			} as Record<string, string>
 		)[key] ?? `[${key}]`,
 	fg: (_color: string, text: string) => text,
@@ -37,7 +38,7 @@ describe("tool tally widget", () => {
 		).toBe("tools:108  read:38  search:36  bash:17");
 	});
 
-	test("uses nerd glyph prefixes for mapped tools including rewind and report_tool_issue", () => {
+	test("uses nerd glyphs plus text labels for mapped and unmapped tools", () => {
 		expect(
 			formatWidgetLine(
 				new Map([
@@ -45,17 +46,20 @@ describe("tool tally widget", () => {
 					["search", 36],
 					["bash", 17],
 					["rewind", 9],
+					["lsp", 8],
+					["job", 6],
+					["checkpoint", 5],
 					["report_tool_issue", 4],
-					["edit", 5],
+					["edit", 3],
 					["find", 2],
-					["search_tool_bm25", 1],
-					["mcp__auggie_codebase_retrieval", 1],
 					["unknown_tool", 1],
 				]),
 				108,
 				nerdTheme,
 			),
-		).toBe("[tools]108  [read]38  [search]36  [bash]17  [rewind]9  [edit]5  [warn]4  [find]2  [search]1");
+		).toBe(
+			"[tools] tools:108  [read] read:38  [search] search:36  [bash] bash:17  [rewind] rewind:9  [lsp] lsp:8  [job] job:6  [checkpoint] checkpoint:5  [warn] report_tool_issue:4",
+		);
 	});
 
 	test("bundled helper stays in sync with source helper", () => {

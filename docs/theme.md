@@ -168,7 +168,7 @@ Current defaults from settings schema:
 
 - `theme.dark = "titanium"`
 - `theme.light = "light"`
-- `symbolPreset = "unicode"`
+- `symbolPreset = "nerd"`
 - `colorBlindMode = false`
 
 ### Explicit switching (`setTheme`)

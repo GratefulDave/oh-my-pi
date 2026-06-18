@@ -189,9 +189,50 @@ describe("diagnostic renderers", () => {
 
 		const lines = renderLiveObserverWidgetLines(NOW)?.map(stripAnsi);
 		expect(lines?.[0]).toBe("● Agents");
-		expect(lines?.some(line => line.startsWith("⠋ [executor] Build dashboard · "))).toBe(true);
-		expect(lines).toContain("  └ using edit");
-		expect(lines).toContain("▶ IRC #agents");
+		expect(lines).toContain("○ Build dashboard");
+		expect(lines?.some(line => line.startsWith("  ⠋ [executor] Build dashboard · "))).toBe(true);
+		expect(lines).toContain("    └ using edit");
+	});
+
+	test("compact live widget groups agents by chain label and keeps active rows first", () => {
+		onSubagentProgress({
+			id: "run-1",
+			agent: "executor",
+			status: "running",
+			tokens: 1200,
+			toolCount: 2,
+			cost: 0.01,
+			agentSource: "team-alpha",
+			task: "Build dashboard",
+			currentTool: "edit",
+		});
+		onSubagentProgress({
+			id: "run-2",
+			agent: "reviewer",
+			status: "completed",
+			tokens: 400,
+			toolCount: 1,
+			cost: 0.005,
+			agentSource: "team-alpha",
+			task: "Review dashboard",
+		});
+		onSubagentProgress({
+			id: "run-3",
+			agent: "planner",
+			status: "pending",
+			tokens: 50,
+			toolCount: 0,
+			cost: 0,
+			description: "solo-team",
+			task: "Solo follow-up",
+		});
+
+		const lines = renderLiveObserverWidgetLines(NOW)?.map(stripAnsi) ?? [];
+		expect(lines).toContain("○ team-alpha");
+		expect(lines).toContain("○ Solo follow-up");
+		expect(lines.findIndex(line => line.includes("Build dashboard"))).toBeLessThan(
+			lines.findIndex(line => line.includes("Review dashboard")),
+		);
 	});
 
 	test("pure observer hierarchy orders phase groups and nested task nodes", () => {

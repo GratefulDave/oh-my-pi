@@ -25,7 +25,7 @@ export default function swarmExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("swarm", {
 		description: "Run a multi-agent swarm pipeline from YAML",
 		getArgumentCompletions: prefix => {
-			const subcommands = ["run", "status", "help"];
+			const subcommands = ["run", "sub", "status", "template", "help"];
 			if (!prefix) return subcommands.map(s => ({ label: s, value: s }));
 			return subcommands.filter(s => s.startsWith(prefix)).map(s => ({ label: s, value: s }));
 		},
@@ -43,8 +43,16 @@ export default function swarmExtension(pi: ExtensionAPI): void {
 					await handleRun(yamlPath, ctx, pi);
 					return;
 				}
+				case "sub": {
+					await handleSub(parts.slice(1), ctx, pi);
+					return;
+				}
 				case "status": {
 					await handleStatus(parts[1], ctx);
+					return;
+				}
+				case "template": {
+					await handleTemplate(parts[1], ctx);
 					return;
 				}
 				default:
@@ -54,6 +62,8 @@ export default function swarmExtension(pi: ExtensionAPI): void {
 							"",
 							"  /swarm run <file.yaml>     Run a pipeline",
 							"  /swarm status [name]       Show pipeline status",
+							"  /swarm sub <task>         Run one ad-hoc subagent without YAML",
+							"  /swarm template [file]    Write a starter pipeline YAML",
 							"  /swarm help                Show this help",
 						].join("\n"),
 						"info",
@@ -192,6 +202,90 @@ async function handleRun(yamlPath: string, ctx: ExtensionCommandContext, pi: Ext
 		},
 		{ triggerTurn: false },
 	);
+}
+
+// ============================================================================
+// /swarm sub
+// ============================================================================
+
+async function handleSub(args: string[], ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
+	const modelIndex = args.indexOf("--model");
+	const model = modelIndex >= 0 ? args[modelIndex + 1] : undefined;
+	const taskParts = modelIndex >= 0 ? args.slice(0, modelIndex) : args;
+	const task = taskParts.join(" ").trim();
+	if (!task) {
+		ctx.ui.notify("Usage: /swarm sub <task> [--model <model>]", "error");
+		return;
+	}
+	const name = `sub-${Date.now().toString(36)}`;
+	const def: SwarmDefinition = {
+		name,
+		workspace: ctx.cwd,
+		mode: "sequential",
+		targetCount: 1,
+		model,
+		agentOrder: ["worker"],
+		agents: new Map([
+			[
+				"worker",
+				{
+					name: "worker",
+					role: "Ad-hoc swarm subagent",
+					task,
+					reportsTo: [],
+					waitsFor: [],
+					model,
+				},
+			],
+		]),
+	};
+	const stateTracker = new StateTracker(ctx.cwd, name);
+	await stateTracker.init(["worker"], 1, "sequential");
+	const updateWidget = () => ctx.ui.setWidget(`swarm-${name}`, renderSwarmProgress(stateTracker.state));
+	updateWidget();
+	const controller = new PipelineController(def, [["worker"]], stateTracker);
+	const result = await controller.run({
+		workspace: ctx.cwd,
+		onProgress: updateWidget,
+		modelRegistry: ctx.modelRegistry,
+		settings: pi.pi.settings,
+	});
+	ctx.ui.setWidget(`swarm-${name}`, undefined);
+	ctx.ui.notify(`Swarm subagent ${result.status}: ${task}`, result.status === "completed" ? "info" : "error");
+	pi.sendMessage(
+		{
+			customType: "swarm-result",
+			content: [{ type: "text", text: buildSummaryMessage(def, result, stateTracker, ctx.cwd) }],
+			display: true,
+			details: { swarmName: name, status: result.status, iterations: result.iterations, errorCount: result.errors.length },
+		},
+		{ triggerTurn: false },
+	);
+}
+
+// ============================================================================
+// /swarm template
+// ============================================================================
+
+async function handleTemplate(targetPath: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
+	const file = targetPath ? path.resolve(ctx.cwd, targetPath) : path.resolve(ctx.cwd, "swarm.yaml");
+	const template = [
+		"swarm:",
+		"  name: example",
+		"  workspace: .",
+		"  mode: sequential",
+		"  agents:",
+		"    planner:",
+		"      role: Planner",
+		"      task: Define the work and acceptance checks.",
+		"    implementer:",
+		"      role: Implementer",
+		"      waits_for: [planner]",
+		"      task: Execute the plan and report changed files.",
+		"",
+	].join("\n");
+	await fs.writeFile(file, template, "utf8");
+	ctx.ui.notify(`Wrote swarm template: ${file}`, "info");
 }
 
 // ============================================================================

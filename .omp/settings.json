@@ -3,6 +3,7 @@
     "packages/antigravity-adapter/dist/antigravity.bundle.js",
     "packages/pi-minimizer-gain/dist/gaing.bundle.js",
     "packages/pi-observer/dist/observer.bundle.js",
+    "packages/pi-agent-chain/dist/agent-chain.bundle.js",
     "packages/pi-distill/dist/distill.bundle.js",
     "packages/pi-actor-swarm/dist/swarm.bundle.js",
     "packages/pi-omnidelegate/dist/omnidelegate.bundle.js",
@@ -10,6 +11,7 @@
     "packages/swarm-extension/dist/extension.bundle.js"
   ],
   "disabledExtensions": [
-    "extension-module:semantic-search"
+    "extension-module:semantic-search",
+    "extension-module:purpose-gate"
   ]
 }

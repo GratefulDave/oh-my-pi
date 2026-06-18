@@ -10,8 +10,8 @@ import {
 	validateSchemaCompatibility,
 	validateStrictSchemaEnforcement,
 } from "@oh-my-pi/pi-ai/utils/schema";
-import { loadExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import { loadExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 import { createTools, HIDDEN_TOOLS, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 
 export interface ToolSchemaEntry {
@@ -113,7 +113,10 @@ export async function collectCheckedInExtensionEntryPaths(extensionsRoot: string
 
 	for (const dirent of dirents) {
 		const entryPath = path.join(extensionsRoot, dirent.name);
-		if ((dirent.isFile() || dirent.isSymbolicLink()) && (dirent.name.endsWith(".ts") || dirent.name.endsWith(".js"))) {
+		if (
+			(dirent.isFile() || dirent.isSymbolicLink()) &&
+			(dirent.name.endsWith(".ts") || dirent.name.endsWith(".js"))
+		) {
 			extensionEntries.push(entryPath);
 			continue;
 		}

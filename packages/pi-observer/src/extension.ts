@@ -6,6 +6,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { DEFAULT_REFRESH_INTERVAL_MS, ObserverDashboard } from "./dashboard";
 import { type RenderOptions, renderJobResult, type ThemeLike, type ToolResult } from "./job-renderer";
+import { renderLiveObserverWidgetLines } from "./live-widget";
 import {
 	defaultExportPath,
 	onAgentStart,
@@ -18,10 +19,10 @@ import {
 	onTurnEnd,
 	onTurnStart,
 	resetStats,
+	type SubagentStatus,
 	snapshotStats,
 	statsSnapshotToCsv,
 	statsSnapshotToJson,
-	type SubagentStatus,
 } from "./stats-collector";
 
 // ---------------------------------------------------------------------------
@@ -161,9 +162,11 @@ type CustomTheme = {
 };
 
 type ExtensionCommandContext = {
+	hasUI?: boolean;
 	cwd: string;
 	ui: {
 		setEditorText(text: string): void;
+		setWidget?(key: string, content: string[] | undefined): void;
 		custom<T>(
 			factory: (
 				tui: { requestRender(): void; terminal?: { rows: number } },
@@ -342,20 +345,32 @@ export default function observer(pi: ExtensionAPI): void {
 	pi.setLabel("Observer");
 
 	// Hook into agent lifecycle events.
-	pi.on("session_start", () => {
+	const widgetKey = "observer-live";
+	let widgetContext: ExtensionCommandContext | undefined;
+	const refreshLiveWidget = (ctx?: ExtensionCommandContext) => {
+		if (ctx) widgetContext = ctx;
+		if (!widgetContext?.hasUI || !widgetContext.ui.setWidget) return;
+		widgetContext.ui.setWidget(widgetKey, renderLiveObserverWidgetLines());
+	};
+
+	// Hook into agent lifecycle events.
+	pi.on("session_start", (_event, ctx) => {
 		resetStats();
+		refreshLiveWidget(ctx);
 	});
 
 	pi.on("agent_start", () => {
 		onAgentStart();
 	});
 
-	pi.on("turn_start", () => {
+	pi.on("turn_start", (_event, ctx) => {
 		onTurnStart();
+		refreshLiveWidget(ctx);
 	});
 
-	pi.on("turn_end", () => {
+	pi.on("turn_end", (_event, ctx) => {
 		onTurnEnd();
+		refreshLiveWidget(ctx);
 	});
 
 	pi.on("tool_execution_start", event => {
@@ -402,6 +417,7 @@ export default function observer(pi: ExtensionAPI): void {
 			extractedToolData: progress.extractedToolData,
 			inflightTaskDetails: progress.inflightTaskDetails,
 		});
+		refreshLiveWidget();
 	});
 
 	pi.events.on(TASK_SUBAGENT_LIFECYCLE_CHANNEL, data => {
@@ -412,14 +428,17 @@ export default function observer(pi: ExtensionAPI): void {
 			task: payload.task,
 			description: payload.description,
 		});
+		refreshLiveWidget();
 	});
 
 	pi.events.on(IRC_MESSAGE_CHANNEL, data => {
 		recordIrcPayload(data as IrcMessagePayload | undefined);
+		refreshLiveWidget();
 	});
 
 	pi.on("irc_message", event => {
 		recordIrcSessionEvent(event);
+		refreshLiveWidget();
 	});
 
 	// Track token usage from provider responses.

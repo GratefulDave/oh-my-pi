@@ -528,7 +528,7 @@ memory:
 theme:
   dark: titanium
   light: light
-symbolPreset: unicode        # unicode, nerd, ascii
+symbolPreset: nerd           # nerd, unicode, ascii
 colorBlindMode: false
 
 statusLine:
@@ -550,7 +550,7 @@ tui:
 |---|---|---|---|
 | `theme.dark` | string | `titanium` | Theme used on a dark terminal background. |
 | `theme.light` | string | `light` | Theme used on a light terminal background. |
-| `symbolPreset` | enum | `unicode` | `unicode`, `nerd`, `ascii`. |
+| `symbolPreset` | enum | `nerd` | `nerd`, `unicode`, `ascii`. |
 | `colorBlindMode` | boolean | `false` | Use blue instead of green for diff additions. |
 | `showHardwareCursor` | boolean | `true` | Show the terminal hardware cursor. |
 | `statusLine.preset` | enum | `default` | `default`, `minimal`, `compact`, `full`, `nerd`, `ascii`, `custom`. |

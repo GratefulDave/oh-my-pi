@@ -65,6 +65,22 @@ async function pathExists(filePath: string): Promise<boolean> {
 	}
 }
 
+// Managed extension directories must not retain authoritative discovery files
+// from older installs. A stale package.json or source index can override the
+// relinked bundle and force the runtime back onto repo source files.
+const STALE_MANAGED_DISCOVERY_FILES = new Set(["package.json", "index.ts", "index.js", "index.mjs", "index.cjs"]);
+
+export async function removeStaleManagedDiscoveryFiles(destDir: string, keepFile: string): Promise<void> {
+	const entries = await fs.readdir(destDir, { withFileTypes: true }).catch(err => {
+		if (isEnoent(err)) return [];
+		throw err;
+	});
+	for (const entry of entries) {
+		if (!STALE_MANAGED_DISCOVERY_FILES.has(entry.name) || entry.name === keepFile) continue;
+		await fs.rm(path.join(destDir, entry.name), { recursive: true, force: true });
+	}
+}
+
 async function verifyLink(dest: string, src: string): Promise<string | null> {
 	const stat = await fs.lstat(dest).catch(() => null);
 	if (!stat) return `missing installed extension: ${dest}`;
@@ -95,73 +111,80 @@ async function discoverPackageExtensionSources(): Promise<string[]> {
 	return sources;
 }
 
-const repoSettings = (await readJson<RepoSettings>(path.join(REPO, ".omp", "settings.json"))) ?? {};
-const configuredSources = Array.isArray(repoSettings.extensions)
-	? repoSettings.extensions.filter((value): value is string => typeof value === "string")
-	: [];
-const configuredNames = new Set(configuredSources.map(extName));
-const manifestSources = await discoverPackageExtensionSources();
-const sources = [...configuredSources];
-for (const rel of manifestSources) {
-	if (configuredNames.has(extName(rel))) continue;
-	sources.push(rel);
-}
-if (sources.length === 0) {
-	console.error("No extensions found in repo .omp/settings.json#extensions or package manifests");
-	process.exit(1);
-}
-
-const registered: string[] = [];
-const missing: string[] = [];
-for (const rel of sources) {
-	const src = path.resolve(REPO, rel);
-	const name = extName(rel);
-	const file = path.basename(rel);
-	const destDir = path.join(EXT_DIR, name);
-	const dest = path.join(destDir, file);
-	const tildePath = path.join("~/.omp/agent/extensions", name, file);
-
-	if (!(await pathExists(src))) {
-		missing.push(rel);
-		console.warn(`SKIP  ${name}: bundle not built -> ${rel}  (run: bun scripts/rebuild-extensions.ts)`);
-		continue;
+async function main(): Promise<void> {
+	const repoSettings = (await readJson<RepoSettings>(path.join(REPO, ".omp", "settings.json"))) ?? {};
+	const configuredSources = Array.isArray(repoSettings.extensions)
+		? repoSettings.extensions.filter((value): value is string => typeof value === "string")
+		: [];
+	const configuredNames = new Set(configuredSources.map(extName));
+	const manifestSources = await discoverPackageExtensionSources();
+	const sources = [...configuredSources];
+	for (const rel of manifestSources) {
+		if (configuredNames.has(extName(rel))) continue;
+		sources.push(rel);
+	}
+	if (sources.length === 0) {
+		console.error("No extensions found in repo .omp/settings.json#extensions or package manifests");
+		process.exit(1);
 	}
 
-	console.log(`${DRY ? "[dry] " : ""}link  ${rel}  ->  ${tildePath}`);
-	if (!DRY) {
-		await fs.mkdir(destDir, { recursive: true });
-		await fs.rm(dest, { force: true });
-		await fs.symlink(src, dest);
-	}
-	registered.push(tildePath);
-}
-
-const verifyErrors: string[] = [];
-if (!DRY) {
+	const registered: string[] = [];
+	const missing: string[] = [];
 	for (const rel of sources) {
 		const src = path.resolve(REPO, rel);
-		if (!(await pathExists(src))) continue;
 		const name = extName(rel);
 		const file = path.basename(rel);
-		const dest = path.join(EXT_DIR, name, file);
-		const error = await verifyLink(dest, src);
-		if (error) verifyErrors.push(error);
+		const destDir = path.join(EXT_DIR, name);
+		const dest = path.join(destDir, file);
+		const tildePath = path.join("~/.omp/agent/extensions", name, file);
+
+		if (!(await pathExists(src))) {
+			missing.push(rel);
+			console.warn(`SKIP  ${name}: bundle not built -> ${rel}  (run: bun scripts/rebuild-extensions.ts)`);
+			continue;
+		}
+
+		console.log(`${DRY ? "[dry] " : ""}link  ${rel}  ->  ${tildePath}`);
+		if (!DRY) {
+			await fs.mkdir(destDir, { recursive: true });
+			await removeStaleManagedDiscoveryFiles(destDir, file);
+			await fs.rm(dest, { force: true });
+			await fs.symlink(src, dest);
+		}
+		registered.push(tildePath);
 	}
+
+	const verifyErrors: string[] = [];
+	if (!DRY) {
+		for (const rel of sources) {
+			const src = path.resolve(REPO, rel);
+			if (!(await pathExists(src))) continue;
+			const name = extName(rel);
+			const file = path.basename(rel);
+			const dest = path.join(EXT_DIR, name, file);
+			const error = await verifyLink(dest, src);
+			if (error) verifyErrors.push(error);
+		}
+	}
+
+	if (missing.length > 0) {
+		console.error(`\n${missing.length} required extension bundle(s) not built:`);
+		for (const rel of missing) console.error(`  ${rel}`);
+		console.error("Build failed bundles, then re-run:");
+		console.error("  bun scripts/rebuild-extensions.ts && bun scripts/install-user-extensions.ts");
+		process.exit(1);
+	}
+
+	if (verifyErrors.length > 0) {
+		console.error("\nExtension install verification failed:");
+		for (const error of verifyErrors) console.error(`  ${error}`);
+		process.exit(1);
+	}
+
+	console.log(`\nDone. Refreshed ${registered.length} managed extension symlink(s).`);
+	console.log("Left ~/.omp/agent/config.yml and ~/.omp/agent/settings.json unchanged.");
 }
 
-if (missing.length > 0) {
-	console.error(`\n${missing.length} required extension bundle(s) not built:`);
-	for (const rel of missing) console.error(`  ${rel}`);
-	console.error("Build failed bundles, then re-run:");
-	console.error("  bun scripts/rebuild-extensions.ts && bun scripts/install-user-extensions.ts");
-	process.exit(1);
+if (import.meta.main) {
+	await main();
 }
-
-if (verifyErrors.length > 0) {
-	console.error("\nExtension install verification failed:");
-	for (const error of verifyErrors) console.error(`  ${error}`);
-	process.exit(1);
-}
-
-console.log(`\nDone. Refreshed ${registered.length} managed extension symlink(s).`);
-console.log("Left ~/.omp/agent/config.yml and ~/.omp/agent/settings.json unchanged.");

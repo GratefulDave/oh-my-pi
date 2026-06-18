@@ -13,6 +13,9 @@ const TOOL_SYMBOLS: Readonly<Record<string, SymbolKey>> = {
 	write: "tool.write",
 	task: "tool.task",
 	ask: "tool.ask",
+	job: "tool.job",
+	lsp: "tool.lsp",
+	checkpoint: "tool.memory",
 	web_search: "tool.webSearch",
 	search_tool_bm25: "icon.search",
 	rewind: "icon.rewind",
@@ -59,7 +62,7 @@ export function formatWidgetLine(counts: Map<string, number>, total: number, the
 		const top = sorted.map(([name, count]) => `${name}:${count}`).join("  ");
 		return `tools:${total}${top ? `  ${top}` : ""}`;
 	}
-	const parts = [`${theme.styledSymbol("tab.tools", "accent")}${theme.fg("accent", String(total))}`, ...sorted.map(([name, count]) => formatNerdTool(name, count, theme))];
+	const parts = [`${theme.styledSymbol("tab.tools", "accent")} ${theme.fg("accent", `tools:${total}`)}`, ...sorted.map(([name, count]) => formatNerdTool(name, count, theme))];
 	return parts.join("  ");
 }
 
@@ -67,7 +70,7 @@ type ToolTallyTheme = Pick<Theme, "fg" | "getSymbolPreset" | "styledSymbol">;
 
 function formatNerdTool(name: string, count: number, theme: ToolTallyTheme): string {
 	const symbol = toolSymbolFor(name);
-	return symbol ? `${theme.styledSymbol(symbol, "muted")}${theme.fg("muted", String(count))}` : `${name}:${count}`;
+	return symbol ? `${theme.styledSymbol(symbol, "muted")} ${theme.fg("muted", `${name}:${count}`)}` : `${name}:${count}`;
 }
 
 function toolSymbolFor(name: string): SymbolKey | undefined {

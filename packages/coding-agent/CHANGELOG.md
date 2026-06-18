@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `ExtensionContext.runTask`, the `createRunTaskAction` host bridge, and `TaskTool.executeInline()` so extensions can run synchronous `task` fanout without background jobs.
+
 ### Fixed
 
 - Fixed the unconfigured `pi/smol` fallback chain to try `opencode-antigravity/gemini-3.5-flash:low`, then `deepseek-v4-flash`, and never select Claude Haiku as the final fallback.
@@ -11,6 +15,7 @@
 - Fixed `/pm` startup profile loading to resolve the active agent directory through the profile-aware path helper instead of only `PI_CODING_AGENT_DIR`, so named OMP profiles no longer accidentally boot with another profile's saved model profile.
 - Fixed `/pm` startup to prefer a same-named model profile from the active OMP profile and to skip applying a stale saved profile when its default model is absent from the current registry, preventing unavailable OMLX assignments from overriding startup model settings.
 - Fixed the bundled `/pm` extension to import profile directory helpers from the root `@oh-my-pi/pi-utils` export instead of a subpath, restoring `/pm` command registration in rebuilt/runtime installs where the subpath import could fail.
+- Fixed `disabledExtensions` merging to accumulate global and project entries instead of replacing the global list, so globally disabled extensions such as `purpose-gate` now stay disabled in repos that define their own `.omp/settings.json`.
 
 ## [16.0.5] - 2026-06-17
 
@@ -28,6 +33,7 @@
 ### Changed
 
 - Changed google-antigravity usage report lookups to honor the selected antigravity endpoint mode when resolving the reporting base URL
+- Changed the default `symbolPreset` from `unicode` to `nerd`, so fresh sessions prefer Nerd Font glyphs unless the user explicitly selects Unicode or ASCII fallback.
 - Changed context usage reporting to always return numeric token counts and percentages, so status-line and footer now show estimated values instead of `?` immediately after compaction
 - Changed context usage reporting to use anchored snapshots and pending-prompts estimates, which now keeps `/context`, status line, and model selector token counts in sync
 

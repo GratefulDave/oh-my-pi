@@ -9,6 +9,7 @@
 ### Added
 
 - Added a package-local smoke test for `/swarm run <file.yaml>` command registration.
+- Added `/swarm sub <task>` for one-off ad-hoc subagent runs and `/swarm template` for starter pipeline scaffolding.
 
 ## [15.9.0] - 2026-06-04
 
