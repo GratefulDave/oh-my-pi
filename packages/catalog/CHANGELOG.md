@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [16.0.8] - 2026-06-18
+
+### Changed
+
+- Refactored model family ID predicates and capability checkers to use a shared, uniform process-lifetime `memo` utility to eliminate caching boilerplate.
+
+### Fixed
+
+- Fixed LM Studio dynamic discovery to use native `/api/v0/models` metadata so VLM models advertise image input. ([#2945](https://github.com/can1357/oh-my-pi/issues/2945))
+
+## [16.0.7] - 2026-06-18
+
+### Fixed
+
+- Fixed MiniMax Anthropic-compatible M2/M3 thinking metadata to expose the adaptive transport and keep M2 mandatory reasoning floored ([#2928](https://github.com/can1357/oh-my-pi/issues/2928)).
+
 ## [16.0.6] - 2026-06-18
 
 ### Added

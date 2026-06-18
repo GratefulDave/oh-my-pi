@@ -2,9 +2,25 @@
 
 ## [Unreleased]
 
+## [16.0.8] - 2026-06-18
+
+### Fixed
+
+- Improved reliability of auth-broker snapshot loading by implementing a robust manual schema check
+- Fixed MCP tool argument validation to drop optional empty-string parameters before schema validation, matching the existing optional null handling and avoiding pattern/type failures for omitted model-filled fields. ([#2981](https://github.com/can1357/oh-my-pi/issues/2981))
+- Fixed API-key credential replacement to hard-delete superseded disabled `api_key` rows so `auth_credentials` does not grow indefinitely after key rotation. ([#2941](https://github.com/can1357/oh-my-pi/issues/2941))
+- Fixed Cursor provider streaming to close text blocks before tool calls so post-tool text opens a new content block and TUI transcript cards render inline instead of grouped near the bottom. ([#2924](https://github.com/can1357/oh-my-pi/issues/2924))
+
+## [16.0.7] - 2026-06-18
+
 ### Changed
 
 - Switched Google OAuth callback hostname from `localhost` to `127.0.0.1` to prevent IPv6 loopback fallback delays and proxy routing interception.
+
+### Fixed
+
+- Fixed OpenCode Go usage reporting to synthesize `/usage` limits from OMP-observed request costs for the 5h, weekly, and monthly provider caps. ([#2942](https://github.com/can1357/oh-my-pi/issues/2942))
+- Fixed MiniMax Anthropic-compatible requests to serialize adaptive thinking without an invalid Anthropic `output_config.effort` tier ([#2928](https://github.com/can1357/oh-my-pi/issues/2928)).
 
 ## [16.0.6] - 2026-06-18
 
@@ -28,7 +44,6 @@
 
 ### Fixed
 
-- Fixed OpenCode Go usage reporting to synthesize `/usage` limits from OMP-observed request costs for the 5h, weekly, and monthly provider caps. ([#2942](https://github.com/can1357/oh-my-pi/issues/2942))
 - Fixed OpenAI Responses cost accounting to apply standard service-tier pricing multipliers (flex 0.5×, priority 2×) to the calculated cost based on the served (or requested) service tier for provider `"openai"` models.
 - Fixed OpenAI Chat Completions to consume the dedicated `requiresReasoningContentForAllAssistantTurns` compatibility flag, preventing unnecessary reasoning replay on non-tool-call turns for OpenRouter DeepSeek and OpenCode models.
 - Fixed the Kimi Code and Synthetic dual-surface shim (`streamOpenAIAnthropicShim`) to correctly forward caller-supplied `toolChoice`, `serviceTier`, and `disableReasoning` options.

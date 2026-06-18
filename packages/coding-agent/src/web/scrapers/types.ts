@@ -244,60 +244,15 @@ export async function loadPage(url: string, options: LoadPageOptions = {}): Prom
 /** Module-level Turndown instance — built lazily on first use. */
 let turndownPromise: Promise<TurndownService> | undefined;
 
-type TurndownListParent = {
-	nodeName: string;
-	getAttribute(name: string): string | null;
-	children: ArrayLike<unknown>;
-};
-
 function getTurndown(): Promise<TurndownService> {
 	turndownPromise ||= initTurndown();
 	return turndownPromise;
 }
 
+import { createTurndown } from "../../utils/turndown";
+
 async function initTurndown(): Promise<TurndownService> {
-	const [{ default: TurndownService }, gfmPlugin] = await Promise.all([
-		import("turndown"),
-		import("turndown-plugin-gfm"),
-	]);
-	const turndown = new TurndownService({
-		headingStyle: "atx",
-		codeBlockStyle: "fenced",
-		bulletListMarker: "-",
-	});
-	turndown.use(gfmPlugin.gfm);
-	turndown.addRule("strikethrough", {
-		filter(node) {
-			return ["DEL", "S", "STRIKE"].includes(node.nodeName);
-		},
-		replacement(content) {
-			return `~~${content}~~`;
-		},
-	});
-	turndown.addRule("heading", {
-		filter: ["h1", "h2", "h3", "h4", "h5", "h6"],
-		replacement(content, node) {
-			const level = Number(node.nodeName.charAt(1));
-			const prefix = "#".repeat(level);
-			const cleaned = content.replace(/\\([.])/g, "$1").trim();
-			return `\n\n${prefix} ${cleaned}\n\n`;
-		},
-	});
-	turndown.addRule("listItem", {
-		filter: "li",
-		replacement(content, node, options) {
-			content = content.replace(/^\n+/, "").replace(/\n+$/, "\n").replace(/\n/gm, "\n  ");
-			const parent = node.parentNode as unknown as TurndownListParent | null;
-			let prefix = `${options.bulletListMarker} `;
-			if (parent?.nodeName === "OL") {
-				const start = parent.getAttribute("start");
-				const index = Array.prototype.indexOf.call(parent.children, node);
-				prefix = `${(start ? Number(start) : 1) + index}. `;
-			}
-			return prefix + content + (node.nextSibling ? "\n" : "");
-		},
-	});
-	return turndown;
+	return createTurndown();
 }
 
 /**
