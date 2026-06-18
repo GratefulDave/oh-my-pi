@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { AntigravityCLIOAuthPlugin } from "opencode-antigravity-auth";
+import { loadAccounts } from "opencode-antigravity-auth/dist/src/plugin/storage";
 import {
 	fetchBridgeModels,
 	findUpstreamOAuthMethod,
@@ -15,11 +16,12 @@ import { createOpencodeAntigravityStream } from "./stream-adapter";
 export default async function opencodeAntigravityBridge(pi: ExtensionAPI): Promise<void> {
 	pi.setLabel("OpenCode Antigravity Bridge");
 
+	const cwd = (pi as ExtensionAPI & { cwd?: string }).cwd ?? process.cwd();
 	const client = createOpenCodeClientAdapter(pi);
 
 	const upstream = await AntigravityCLIOAuthPlugin({
 		client,
-		directory: pi.cwd,
+		directory: cwd,
 	});
 	const oauthMethod = findUpstreamOAuthMethod(upstream.auth.methods);
 	const streamSimple = createOpencodeAntigravityStream(upstream.auth, client) as unknown as NonNullable<
@@ -43,5 +45,34 @@ export default async function opencodeAntigravityBridge(pi: ExtensionAPI): Promi
 			getApiKey: serializeBridgeCredentials,
 		},
 		fetchDynamicModels: fetchBridgeModels,
+	});
+
+	if (!("registerCommand" in pi) || typeof pi.registerCommand !== "function") return;
+
+	pi.registerCommand("ag", {
+		description: "Inspect OpenCode Antigravity bridge OAuth status",
+		handler: async (args, ctx) => {
+			const action = args.trim() || "status";
+			if (action !== "status") {
+				ctx.ui.notify("Usage: /ag status", "warning");
+				return;
+			}
+			try {
+				const storage = await loadAccounts();
+				const accounts = storage?.accounts ?? [];
+				const active = storage ? accounts[storage.activeIndex] : undefined;
+				const lines = [
+					"Antigravity bridge status:",
+					`  accounts: ${accounts.length}`,
+					`  active: ${active?.email ?? "(none)"}`,
+					`  enabled: ${active?.enabled === false ? "no" : active ? "yes" : "n/a"}`,
+					`  refresh token: ${active?.refreshToken ? "present" : "missing"}`,
+					`  project: ${active?.managedProjectId ?? active?.projectId ?? "(none)"}`,
+				];
+				ctx.ui.notify(lines.join("\n"), active?.refreshToken ? "info" : "warning");
+			} catch (error) {
+				ctx.ui.notify(`Antigravity status failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+			}
+		},
 	});
 }
