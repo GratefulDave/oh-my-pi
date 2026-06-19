@@ -322,15 +322,21 @@ export const antigravityUsageProvider: UsageProvider = {
 	fetchUsage: fetchAntigravityUsage,
 	supports: params => params.provider === "google-antigravity",
 };
+export const agUsageProvider: UsageProvider = {
+	id: "ag",
+	fetchUsage: fetchAntigravityUsage,
+	supports: params => params.provider === "ag",
+};
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 function getAntigravityCounterKeyForModel(context: CredentialRankingContext | undefined): string | undefined {
 	const modelId = context?.modelId?.toLowerCase();
 	if (!modelId) return undefined;
-	if (modelId.startsWith("claude-")) return "anthropic";
-	if (modelId.startsWith("gemini-") || modelId.startsWith("gemma-")) return "google";
-	if (modelId.startsWith("gpt-") || modelId.startsWith("openai/")) return "openai";
+	const normalized = modelId.startsWith("antigravity-") ? modelId.slice("antigravity-".length) : modelId;
+	if (normalized.startsWith("claude-")) return "anthropic";
+	if (normalized.startsWith("gemini-") || normalized.startsWith("gemma-")) return "google";
+	if (normalized.startsWith("gpt-") || normalized.startsWith("openai/")) return "openai";
 	return undefined;
 }
 

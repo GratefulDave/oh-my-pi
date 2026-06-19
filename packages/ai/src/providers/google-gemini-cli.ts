@@ -893,7 +893,10 @@ function normalizeAntigravityTools(
 		...tool,
 		functionDeclarations: tool.functionDeclarations.map(declaration => {
 			if ("parameters" in declaration) {
-				return declaration;
+				return {
+					...declaration,
+					parameters: normalizeSchemaForCCA(declaration.parameters),
+				};
 			}
 
 			const { parametersJsonSchema, ...rest } = declaration;
@@ -1072,6 +1075,9 @@ export function buildRequest(
 		const profile = getAntigravityModelWireProfile(wireModelId);
 		if (profile) {
 			generationConfig.maxOutputTokens = profile.maxOutputTokens;
+			if (profile.thinkingConfig) {
+				generationConfig.thinkingConfig = { ...profile.thinkingConfig };
+			}
 		}
 		const state = getAntigravityProviderSessionState(options.providerSessionState);
 		const envelope = buildAntigravityRequestEnvelope(model, context, wireModelId, state);

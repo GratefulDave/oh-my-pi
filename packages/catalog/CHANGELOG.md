@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Antigravity Cloud Code Assist wire metadata to include the captured Claude, Gemini, and GPT-OSS thinking-budget/output-cap profiles used by current upstream wire ids.
+
 ## [16.0.8] - 2026-06-18
 
 ### Changed

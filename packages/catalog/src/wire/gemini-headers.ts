@@ -53,13 +53,52 @@ export let getAntigravityUserAgent = () => {
 export interface AntigravityModelWireProfile {
 	modelEnum: string;
 	maxOutputTokens: number;
+	thinkingConfig?: {
+		includeThoughts: boolean;
+		thinkingBudget: number;
+	};
 }
 export const ANTIGRAVITY_MODEL_WIRE_PROFILES: Readonly<Record<string, AntigravityModelWireProfile>> = {
-	"gemini-3.5-flash-extra-low": { modelEnum: "MODEL_PLACEHOLDER_M187", maxOutputTokens: 65536 },
-	"gemini-3.5-flash-low": { modelEnum: "MODEL_PLACEHOLDER_M20", maxOutputTokens: 65536 },
-	"gemini-3-flash-agent": { modelEnum: "MODEL_PLACEHOLDER_M132", maxOutputTokens: 65536 },
-	"gemini-3.1-pro-low": { modelEnum: "MODEL_PLACEHOLDER_M36", maxOutputTokens: 65535 },
-	"gemini-pro-agent": { modelEnum: "MODEL_PLACEHOLDER_M16", maxOutputTokens: 65535 },
+	"claude-opus-4-6-thinking": {
+		modelEnum: "MODEL_PLACEHOLDER_M26",
+		maxOutputTokens: 64000,
+		thinkingConfig: { includeThoughts: true, thinkingBudget: 1024 },
+	},
+	"claude-sonnet-4-6": {
+		modelEnum: "MODEL_PLACEHOLDER_M35",
+		maxOutputTokens: 128000,
+		thinkingConfig: { includeThoughts: true, thinkingBudget: 1024 },
+	},
+	"gemini-3.5-flash-extra-low": {
+		modelEnum: "MODEL_PLACEHOLDER_M187",
+		maxOutputTokens: 65536,
+		thinkingConfig: { includeThoughts: true, thinkingBudget: 1000 },
+	},
+	"gemini-3.5-flash-low": {
+		modelEnum: "MODEL_PLACEHOLDER_M20",
+		maxOutputTokens: 65536,
+		thinkingConfig: { includeThoughts: true, thinkingBudget: 4000 },
+	},
+	"gemini-3-flash-agent": {
+		modelEnum: "MODEL_PLACEHOLDER_M132",
+		maxOutputTokens: 65536,
+		thinkingConfig: { includeThoughts: true, thinkingBudget: 10000 },
+	},
+	"gemini-3.1-pro-low": {
+		modelEnum: "MODEL_PLACEHOLDER_M36",
+		maxOutputTokens: 65535,
+		thinkingConfig: { includeThoughts: true, thinkingBudget: 1001 },
+	},
+	"gemini-pro-agent": {
+		modelEnum: "MODEL_PLACEHOLDER_M16",
+		maxOutputTokens: 65535,
+		thinkingConfig: { includeThoughts: true, thinkingBudget: 10001 },
+	},
+	"gpt-oss-120b-medium": {
+		modelEnum: "MODEL_OPENAI_GPT_OSS_120B_MEDIUM",
+		maxOutputTokens: 32768,
+		thinkingConfig: { includeThoughts: true, thinkingBudget: 8192 },
+	},
 };
 export function getAntigravityModelWireProfile(wireModelId: string): AntigravityModelWireProfile | undefined {
 	return ANTIGRAVITY_MODEL_WIRE_PROFILES[wireModelId];

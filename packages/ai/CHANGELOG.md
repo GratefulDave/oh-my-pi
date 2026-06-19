@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Antigravity / Cloud Code Assist request shaping to send captured per-wire thinking budgets and to re-normalize legacy `parameters` tool schemas for Claude CCA compatibility.
+
 ## [16.0.8] - 2026-06-18
 
 ### Fixed

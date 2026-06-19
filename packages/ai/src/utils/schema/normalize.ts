@@ -921,27 +921,44 @@ export function normalizeSchemaForGoogle(value: unknown): unknown {
 	});
 }
 
+function stripPropertyOrderingRecursive(value: unknown): unknown {
+	if (Array.isArray(value)) {
+		return value.map(stripPropertyOrderingRecursive);
+	}
+	if (!isJsonObject(value)) {
+		return value;
+	}
+	const result: Record<string, unknown> = {};
+	for (const [key, child] of Object.entries(value)) {
+		if (key === "propertyOrdering") continue;
+		result[key] = stripPropertyOrderingRecursive(child);
+	}
+	return result;
+}
+
 export function normalizeSchemaForCCA(value: unknown): unknown {
-	return normalizeSchema(value, {
-		unsupportedFields: isGoogleUnsupportedSchemaField,
-		normalizeFieldNames: true,
-		collapseNullFields: false,
-		normalizeTypeArrayToNullable: true,
-		stripNullableKeyword: true,
-		autoPropertyOrdering: false,
-		ensureObjectProperties: true,
-		liftStrippedToDescription: { format: "spill" },
-		mergeObjectCombiners: true,
-		collapseSameTypeCombiners: true,
-		collapseMixedTypeCombiners: true,
-		stripResidualCombinersFixpoint: true,
-		extractNullableFromUnions: true,
-		inferTypeForBareEnum: true,
-		dropNonScalarEnum: false,
-		foldOneOfIntoAnyOf: false,
-		rejectResidualIncompatibilities: ["type-array", "type-null", "nullable", "combiners"],
-		validateAndFallback: { fallback: CLOUD_CODE_ASSIST_CLAUDE_FALLBACK_SCHEMA },
-	});
+	return stripPropertyOrderingRecursive(
+		normalizeSchema(value, {
+			unsupportedFields: isGoogleUnsupportedSchemaField,
+			normalizeFieldNames: true,
+			collapseNullFields: false,
+			normalizeTypeArrayToNullable: true,
+			stripNullableKeyword: true,
+			autoPropertyOrdering: false,
+			ensureObjectProperties: true,
+			liftStrippedToDescription: { format: "spill" },
+			mergeObjectCombiners: true,
+			collapseSameTypeCombiners: true,
+			collapseMixedTypeCombiners: true,
+			stripResidualCombinersFixpoint: true,
+			extractNullableFromUnions: true,
+			inferTypeForBareEnum: true,
+			dropNonScalarEnum: false,
+			foldOneOfIntoAnyOf: false,
+			rejectResidualIncompatibilities: ["type-array", "type-null", "nullable", "combiners"],
+			validateAndFallback: { fallback: CLOUD_CODE_ASSIST_CLAUDE_FALLBACK_SCHEMA },
+		}),
+	);
 }
 
 export function normalizeSchemaForMCP(value: unknown): unknown {

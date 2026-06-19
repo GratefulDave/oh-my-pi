@@ -5013,7 +5013,9 @@ export class AgentSession {
 				? openrouterRoutingPreset
 				: undefined;
 		const antigravityEndpointMode =
-			provider === "google-antigravity" ? this.settings.get("providers.antigravityEndpoint") : undefined;
+			provider === "google-antigravity" || provider === "ag"
+				? this.settings.get("providers.antigravityEndpoint")
+				: undefined;
 
 		const preparedOptions: SimpleStreamOptions = {
 			...options,
@@ -11790,11 +11792,12 @@ export class AgentSession {
 		if (!authStorage.fetchUsageReports) return null;
 		return authStorage.fetchUsageReports({
 			baseUrlResolver: provider => {
-				if (provider === "google-antigravity") {
+				if (provider === "google-antigravity" || provider === "ag") {
 					const mode = this.settings.get("providers.antigravityEndpoint");
 					if (mode === "sandbox") {
 						return "https://daily-cloudcode-pa.sandbox.googleapis.com";
-					} else if (mode === "production") {
+					}
+					if (mode === "production") {
 						return "https://daily-cloudcode-pa.googleapis.com";
 					}
 				}

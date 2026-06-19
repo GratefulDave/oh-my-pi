@@ -233,6 +233,86 @@ describe("Google Gemini CLI alignment", () => {
 		expect(payload.request.labels?.model_enum).toBe("MODEL_PLACEHOLDER_M20");
 	});
 
+	it("defaults antigravity claude requests to the captured thinking budget when no explicit thinking option is set", () => {
+		const model = buildModel({
+			id: "claude-sonnet-4-6",
+			name: "Claude Sonnet 4.6",
+			api: "google-gemini-cli",
+			provider: "google-antigravity",
+			baseUrl: "https://example.com",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1_000_000,
+			maxTokens: 128000,
+		});
+		const payload = buildRequest(model, createContext(), "proj-123", {}, true) as {
+			model?: string;
+			request: {
+				generationConfig?: {
+					maxOutputTokens?: number;
+					thinkingConfig?: { includeThoughts?: boolean; thinkingBudget?: number };
+				};
+				labels?: Record<string, string>;
+			};
+		};
+
+		expect(payload.model).toBe("claude-sonnet-4-6");
+		expect(payload.request.labels?.model_enum).toBe("MODEL_PLACEHOLDER_M35");
+		expect(payload.request.generationConfig).toEqual({
+			maxOutputTokens: 128000,
+			thinkingConfig: { includeThoughts: true, thinkingBudget: 1024 },
+		});
+	});
+
+	it("defaults antigravity gemini wire ids to the captured thinking budget when no explicit thinking option is set", () => {
+		const model = createModel("google-antigravity");
+		const payload = buildRequest(
+			model,
+			createContext(),
+			"proj-123",
+			{ requestModelId: "gemini-3.5-flash-low" },
+			true,
+		) as {
+			request: {
+				generationConfig?: {
+					maxOutputTokens?: number;
+					thinkingConfig?: { includeThoughts?: boolean; thinkingBudget?: number };
+				};
+				labels?: Record<string, string>;
+			};
+		};
+
+		expect(payload.request.labels?.model_enum).toBe("MODEL_PLACEHOLDER_M20");
+		expect(payload.request.generationConfig).toEqual({
+			maxOutputTokens: 65536,
+			thinkingConfig: { includeThoughts: true, thinkingBudget: 4000 },
+		});
+	});
+
+	it("overrides antigravity gemini thinking-level requests with the captured budget payload", () => {
+		const model = createModel("google-antigravity");
+		const payload = buildRequest(
+			model,
+			createContext(),
+			"proj-123",
+			{ requestModelId: "gemini-3-flash-agent", thinking: { enabled: true, level: "HIGH" } },
+			true,
+		) as {
+			request: {
+				generationConfig?: {
+					maxOutputTokens?: number;
+					thinkingConfig?: { includeThoughts?: boolean; thinkingBudget?: number; thinkingLevel?: string };
+				};
+			};
+		};
+
+		expect(payload.request.generationConfig).toEqual({
+			maxOutputTokens: 65536,
+			thinkingConfig: { includeThoughts: true, thinkingBudget: 10000 },
+		});
+	});
+
 	it("defaults antigravity tools to VALIDATED but omits AUTO toolConfig for plain gemini-cli", () => {
 		const context: Context = {
 			messages: [{ role: "user", content: "inspect repo", timestamp: Date.now() }],
@@ -304,6 +384,35 @@ describe("Google Gemini CLI alignment", () => {
 		const parameters = payload.request.tools?.[0]?.functionDeclarations[0]?.parameters;
 		expect(parameters).toBeDefined();
 		expect(JSON.stringify(parameters)).not.toContain('"patternProperties"');
+	});
+
+	it("normalizes existing legacy parameters schemas before sending antigravity tools", () => {
+		const model = createModel("google-antigravity");
+		const toolContext: Context = {
+			messages: [{ role: "user", content: "read a file", timestamp: Date.now() }],
+			tools: [
+				{
+					name: "read",
+					description: "Read a file",
+					parameters: {
+						type: "object",
+						propertyOrdering: ["path", "_i"],
+						properties: {
+							path: { type: "string" },
+							_i: { type: "string" },
+						},
+						required: ["path"],
+					} as TJsonSchema,
+				},
+			],
+		};
+		const payload = buildRequest(model, toolContext, "proj-123", {}, true) as {
+			request: { tools?: Array<{ functionDeclarations: Array<{ parameters?: Record<string, unknown> }> }> };
+		};
+
+		const parameters = payload.request.tools?.[0]?.functionDeclarations[0]?.parameters;
+		expect(parameters).toBeDefined();
+		expect(parameters).not.toHaveProperty("propertyOrdering");
 	});
 	it("injects ANTIGRAVITY_SYSTEM_INSTRUCTION for gemini-3.1-pro-high and gemini-3.1-pro-low", () => {
 		// Regression test for #1274: shouldInjectAntigravitySystemInstruction checked

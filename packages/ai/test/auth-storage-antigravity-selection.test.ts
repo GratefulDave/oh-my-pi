@@ -1,12 +1,8 @@
 /**
- * Antigravity OAuth ranking smoke test. Proves the
- * `antigravityRankingStrategy` is wired into `DEFAULT_RANKING_STRATEGIES`
- * (issue #2198): a credential whose usage report shows an exhausted
- * counter must be skipped in favour of a healthy sibling on the next
- * `getApiKey` call.
- *
- * Without the registration `getApiKey` would round-robin between
- * credentials and could pin a session to the exhausted account.
+ * Antigravity OAuth ranking smoke tests. Prove the
+ * `antigravityRankingStrategy` is wired into the default ranking map for both
+ * the built-in `google-antigravity` provider and the extension-owned `ag`
+ * provider id.
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
 import * as fs from "node:fs/promises";
@@ -19,19 +15,33 @@ import type { UsageLimit, UsageProvider, UsageReport } from "@oh-my-pi/pi-ai/usa
 
 const HOUR_MS = 60 * 60 * 1000;
 
+const PROVIDER_CASES = [
+	{
+		provider: "google-antigravity",
+		geminiModelId: "gemini-3-flash",
+		claudeModelId: "claude-sonnet-4-5",
+	},
+	{
+		provider: "ag",
+		geminiModelId: "antigravity-gemini-3-flash",
+		claudeModelId: "antigravity-claude-sonnet-4-6",
+	},
+] as const;
+
+type ProviderId = (typeof PROVIDER_CASES)[number]["provider"];
 type AntigravityWindowSpec = {
 	counter: "google" | "anthropic" | "openai" | "default";
 	usedFraction: number;
 	resetInMs: number;
 };
 
-function createAntigravityLimit(spec: AntigravityWindowSpec, projectId: string): UsageLimit {
+function createAntigravityLimit(spec: AntigravityWindowSpec, projectId: string, provider: ProviderId): UsageLimit {
 	const used = Math.min(Math.max(spec.usedFraction, 0), 1);
 	return {
-		id: `google-antigravity:${spec.counter}:default:WINDOW_DAILY`,
+		id: `${provider}:${spec.counter}:default:WINDOW_DAILY`,
 		label: `Usage (${spec.counter})`,
 		scope: {
-			provider: "google-antigravity",
+			provider,
 			projectId,
 			windowId: "WINDOW_DAILY",
 		},
@@ -53,17 +63,16 @@ function createAntigravityLimit(spec: AntigravityWindowSpec, projectId: string):
 }
 
 function createAntigravityReport(args: {
+	provider: ProviderId;
 	projectId: string;
 	accountId: string;
 	windows: AntigravityWindowSpec[];
 }): UsageReport {
-	// fetchAntigravityUsage sorts ascending by remainingFraction; mirror
-	// that here so the strategy sees the same shape it would in production.
 	const limits = args.windows
-		.map(w => createAntigravityLimit(w, args.projectId))
-		.sort((a, b) => (a.amount.remainingFraction ?? 1) - (b.amount.remainingFraction ?? 1));
+		.map(window => createAntigravityLimit(window, args.projectId, args.provider))
+		.sort((left, right) => (left.amount.remainingFraction ?? 1) - (right.amount.remainingFraction ?? 1));
 	return {
-		provider: "google-antigravity",
+		provider: args.provider,
 		fetchedAt: Date.now(),
 		limits,
 		metadata: { accountId: args.accountId, projectId: args.projectId },
@@ -81,180 +90,207 @@ function createCredential(accountId: string, projectId: string, email: string): 
 	};
 }
 
-describe("AuthStorage google-antigravity oauth ranking", () => {
-	let tempDir = "";
-	let store: AuthCredentialStore | null = null;
-	let authStorage: AuthStorage | null = null;
-	const usageByAccount = new Map<string, UsageReport>();
+for (const providerCase of PROVIDER_CASES) {
+	describe(`AuthStorage ${providerCase.provider} oauth ranking`, () => {
+		let tempDir = "";
+		let store: AuthCredentialStore | null = null;
+		let authStorage: AuthStorage | null = null;
+		const usageByAccount = new Map<string, UsageReport>();
 
-	const usageProvider: UsageProvider = {
-		id: "google-antigravity",
-		async fetchUsage(params) {
-			const accountId = params.credential.accountId;
-			if (!accountId) return null;
-			return usageByAccount.get(accountId) ?? null;
-		},
-	};
+		const usageProvider: UsageProvider = {
+			id: providerCase.provider,
+			async fetchUsage(params) {
+				const accountId = params.credential.accountId;
+				if (!accountId) return null;
+				return usageByAccount.get(accountId) ?? null;
+			},
+		};
 
-	beforeEach(async () => {
-		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-ai-auth-antigravity-selection-"));
-		store = await SqliteAuthCredentialStore.open(path.join(tempDir, "agent.db"));
-		authStorage = new AuthStorage(store, {
-			usageProviderResolver: provider => (provider === "google-antigravity" ? usageProvider : undefined),
+		beforeEach(async () => {
+			tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `pi-ai-auth-${providerCase.provider}-selection-`));
+			store = await SqliteAuthCredentialStore.open(path.join(tempDir, "agent.db"));
+			authStorage = new AuthStorage(store, {
+				usageProviderResolver: provider => (provider === providerCase.provider ? usageProvider : undefined),
+			});
+			usageByAccount.clear();
+			vi.spyOn(oauthUtils, "getOAuthApiKey").mockImplementation(async (_provider, credentials) => {
+				const candidate = credentials[providerCase.provider];
+				if (!candidate || typeof candidate !== "object") return null;
+				const accountId =
+					"accountId" in candidate && typeof candidate.accountId === "string" ? candidate.accountId : undefined;
+				if (!accountId) return null;
+				return {
+					apiKey: `api-${accountId}`,
+					newCredentials: candidate,
+				};
+			});
 		});
-		usageByAccount.clear();
-		vi.spyOn(oauthUtils, "getOAuthApiKey").mockImplementation(async (_provider, credentials) => {
-			const credential = credentials["google-antigravity"] as OAuthCredentials | undefined;
-			if (!credential?.accountId) return null;
-			return {
-				apiKey: `api-${credential.accountId}`,
-				newCredentials: credential,
-			};
-		});
-	});
 
-	afterEach(async () => {
-		vi.restoreAllMocks();
-		store?.close();
-		store = null;
-		authStorage = null;
-		if (tempDir) {
+		afterEach(async () => {
+			vi.restoreAllMocks();
+			store?.close();
+			store = null;
+			authStorage = null;
+			if (!tempDir) return;
 			await fs.rm(tempDir, { recursive: true, force: true });
 			tempDir = "";
-		}
-	});
-
-	test("blocks exhausted Antigravity Gemini counter without blocking healthy Claude counter", async () => {
-		if (!authStorage) throw new Error("test setup failed");
-
-		await authStorage.set("google-antigravity", [
-			{
-				type: "oauth",
-				...createCredential("acct-gemini-exhausted", "proj-gemini-exhausted", "exhausted@example.com"),
-			},
-			{ type: "oauth", ...createCredential("acct-gemini-healthy", "proj-gemini-healthy", "healthy@example.com") },
-		]);
-
-		usageByAccount.set(
-			"acct-gemini-exhausted",
-			createAntigravityReport({
-				accountId: "acct-gemini-exhausted",
-				projectId: "proj-gemini-exhausted",
-				windows: [
-					{ counter: "google", usedFraction: 1, resetInMs: 12 * HOUR_MS },
-					{ counter: "anthropic", usedFraction: 0.05, resetInMs: 12 * HOUR_MS },
-				],
-			}),
-		);
-		usageByAccount.set(
-			"acct-gemini-healthy",
-			createAntigravityReport({
-				accountId: "acct-gemini-healthy",
-				projectId: "proj-gemini-healthy",
-				windows: [
-					{ counter: "google", usedFraction: 0.3, resetInMs: 20 * HOUR_MS },
-					{ counter: "anthropic", usedFraction: 0.7, resetInMs: 20 * HOUR_MS },
-				],
-			}),
-		);
-
-		const geminiKey = await authStorage.getApiKey("google-antigravity", "session-antigravity-gemini", {
-			modelId: "gemini-3-flash",
 		});
-		expect(geminiKey).toBe("api-acct-gemini-healthy");
 
-		const counts = new Map<string, number>();
-		for (let i = 0; i < 80; i += 1) {
-			const apiKey = await authStorage.getApiKey("google-antigravity", `session-antigravity-claude-${i}`, {
-				modelId: "claude-sonnet-4-5",
-			});
-			if (!apiKey) continue;
-			counts.set(apiKey, (counts.get(apiKey) ?? 0) + 1);
-		}
+		test("blocks exhausted Gemini counter without blocking healthy Claude counter", async () => {
+			if (!authStorage) throw new Error("test setup failed");
 
-		expect(counts.get("api-acct-gemini-exhausted") ?? 0).toBeGreaterThan(counts.get("api-acct-gemini-healthy") ?? 0);
+			await authStorage.set(providerCase.provider, [
+				{
+					type: "oauth",
+					...createCredential("acct-gemini-exhausted", "proj-gemini-exhausted", "exhausted@example.com"),
+				},
+				{ type: "oauth", ...createCredential("acct-gemini-healthy", "proj-gemini-healthy", "healthy@example.com") },
+			]);
+
+			usageByAccount.set(
+				"acct-gemini-exhausted",
+				createAntigravityReport({
+					provider: providerCase.provider,
+					accountId: "acct-gemini-exhausted",
+					projectId: "proj-gemini-exhausted",
+					windows: [
+						{ counter: "google", usedFraction: 1, resetInMs: 12 * HOUR_MS },
+						{ counter: "anthropic", usedFraction: 0.05, resetInMs: 12 * HOUR_MS },
+					],
+				}),
+			);
+			usageByAccount.set(
+				"acct-gemini-healthy",
+				createAntigravityReport({
+					provider: providerCase.provider,
+					accountId: "acct-gemini-healthy",
+					projectId: "proj-gemini-healthy",
+					windows: [
+						{ counter: "google", usedFraction: 0.3, resetInMs: 20 * HOUR_MS },
+						{ counter: "anthropic", usedFraction: 0.7, resetInMs: 20 * HOUR_MS },
+					],
+				}),
+			);
+
+			const geminiKey = await authStorage.getApiKey(
+				providerCase.provider,
+				`session-${providerCase.provider}-gemini`,
+				{
+					modelId: providerCase.geminiModelId,
+				},
+			);
+			expect(geminiKey).toBe("api-acct-gemini-healthy");
+
+			const counts = new Map<string, number>();
+			for (let index = 0; index < 80; index += 1) {
+				const apiKey = await authStorage.getApiKey(
+					providerCase.provider,
+					`session-${providerCase.provider}-claude-${index}`,
+					{
+						modelId: providerCase.claudeModelId,
+					},
+				);
+				if (!apiKey) continue;
+				counts.set(apiKey, (counts.get(apiKey) ?? 0) + 1);
+			}
+
+			expect(counts.get("api-acct-gemini-exhausted") ?? 0).toBeGreaterThan(
+				counts.get("api-acct-gemini-healthy") ?? 0,
+			);
+		});
+
+		test("ranks by bottleneck counter instead of healthier secondary counter", async () => {
+			if (!authStorage) throw new Error("test setup failed");
+
+			await authStorage.set(providerCase.provider, [
+				{ type: "oauth", ...createCredential("acct-gemini-hot", "proj-gemini-hot", "hot@example.com") },
+				{ type: "oauth", ...createCredential("acct-balanced", "proj-balanced", "balanced@example.com") },
+			]);
+
+			usageByAccount.set(
+				"acct-gemini-hot",
+				createAntigravityReport({
+					provider: providerCase.provider,
+					accountId: "acct-gemini-hot",
+					projectId: "proj-gemini-hot",
+					windows: [
+						{ counter: "google", usedFraction: 0.95, resetInMs: 8 * HOUR_MS },
+						{ counter: "anthropic", usedFraction: 0, resetInMs: 8 * HOUR_MS },
+					],
+				}),
+			);
+			usageByAccount.set(
+				"acct-balanced",
+				createAntigravityReport({
+					provider: providerCase.provider,
+					accountId: "acct-balanced",
+					projectId: "proj-balanced",
+					windows: [
+						{ counter: "google", usedFraction: 0.8, resetInMs: 8 * HOUR_MS },
+						{ counter: "anthropic", usedFraction: 0.7, resetInMs: 8 * HOUR_MS },
+					],
+				}),
+			);
+
+			const counts = new Map<string, number>();
+			for (let index = 0; index < 80; index += 1) {
+				const apiKey = await authStorage.getApiKey(
+					providerCase.provider,
+					`session-${providerCase.provider}-bottleneck-${index}`,
+					{
+						modelId: providerCase.geminiModelId,
+					},
+				);
+				if (!apiKey) continue;
+				counts.set(apiKey, (counts.get(apiKey) ?? 0) + 1);
+			}
+
+			expect(counts.get("api-acct-balanced") ?? 0).toBeGreaterThan(counts.get("api-acct-gemini-hot") ?? 0);
+		});
+
+		test("prefers less-pressured account when neither is exhausted", async () => {
+			if (!authStorage) throw new Error("test setup failed");
+
+			await authStorage.set(providerCase.provider, [
+				{ type: "oauth", ...createCredential("acct-loaded", "proj-loaded", "loaded@example.com") },
+				{ type: "oauth", ...createCredential("acct-fresh", "proj-fresh", "fresh@example.com") },
+			]);
+
+			usageByAccount.set(
+				"acct-loaded",
+				createAntigravityReport({
+					provider: providerCase.provider,
+					accountId: "acct-loaded",
+					projectId: "proj-loaded",
+					windows: [{ counter: "google", usedFraction: 0.8, resetInMs: 4 * HOUR_MS }],
+				}),
+			);
+			usageByAccount.set(
+				"acct-fresh",
+				createAntigravityReport({
+					provider: providerCase.provider,
+					accountId: "acct-fresh",
+					projectId: "proj-fresh",
+					windows: [{ counter: "google", usedFraction: 0.05, resetInMs: 4 * HOUR_MS }],
+				}),
+			);
+
+			const counts = new Map<string, number>();
+			for (let index = 0; index < 60; index += 1) {
+				const apiKey = await authStorage.getApiKey(
+					providerCase.provider,
+					`session-${providerCase.provider}-fresh-${index}`,
+					{
+						modelId: providerCase.geminiModelId,
+					},
+				);
+				if (!apiKey) continue;
+				counts.set(apiKey, (counts.get(apiKey) ?? 0) + 1);
+			}
+
+			const fresh = counts.get("api-acct-fresh") ?? 0;
+			const loaded = counts.get("api-acct-loaded") ?? 0;
+			expect(fresh).toBeGreaterThan(loaded);
+		});
 	});
-
-	test("ranks by bottleneck counter instead of healthier secondary counter", async () => {
-		if (!authStorage) throw new Error("test setup failed");
-
-		await authStorage.set("google-antigravity", [
-			{ type: "oauth", ...createCredential("acct-gemini-hot", "proj-gemini-hot", "hot@example.com") },
-			{ type: "oauth", ...createCredential("acct-balanced", "proj-balanced", "balanced@example.com") },
-		]);
-
-		usageByAccount.set(
-			"acct-gemini-hot",
-			createAntigravityReport({
-				accountId: "acct-gemini-hot",
-				projectId: "proj-gemini-hot",
-				windows: [
-					{ counter: "google", usedFraction: 0.95, resetInMs: 8 * HOUR_MS },
-					{ counter: "anthropic", usedFraction: 0, resetInMs: 8 * HOUR_MS },
-				],
-			}),
-		);
-		usageByAccount.set(
-			"acct-balanced",
-			createAntigravityReport({
-				accountId: "acct-balanced",
-				projectId: "proj-balanced",
-				windows: [
-					{ counter: "google", usedFraction: 0.8, resetInMs: 8 * HOUR_MS },
-					{ counter: "anthropic", usedFraction: 0.7, resetInMs: 8 * HOUR_MS },
-				],
-			}),
-		);
-
-		const counts = new Map<string, number>();
-		for (let i = 0; i < 80; i += 1) {
-			const apiKey = await authStorage.getApiKey("google-antigravity", `session-antigravity-bottleneck-${i}`, {
-				modelId: "gemini-3-flash",
-			});
-			if (!apiKey) continue;
-			counts.set(apiKey, (counts.get(apiKey) ?? 0) + 1);
-		}
-
-		expect(counts.get("api-acct-balanced") ?? 0).toBeGreaterThan(counts.get("api-acct-gemini-hot") ?? 0);
-	});
-	test("prefers less-pressured antigravity account when neither is exhausted", async () => {
-		if (!authStorage) throw new Error("test setup failed");
-
-		await authStorage.set("google-antigravity", [
-			{ type: "oauth", ...createCredential("acct-loaded", "proj-loaded", "loaded@example.com") },
-			{ type: "oauth", ...createCredential("acct-fresh", "proj-fresh", "fresh@example.com") },
-		]);
-
-		usageByAccount.set(
-			"acct-loaded",
-			createAntigravityReport({
-				accountId: "acct-loaded",
-				projectId: "proj-loaded",
-				windows: [{ counter: "google", usedFraction: 0.8, resetInMs: 4 * HOUR_MS }],
-			}),
-		);
-		usageByAccount.set(
-			"acct-fresh",
-			createAntigravityReport({
-				accountId: "acct-fresh",
-				projectId: "proj-fresh",
-				windows: [{ counter: "google", usedFraction: 0.05, resetInMs: 4 * HOUR_MS }],
-			}),
-		);
-
-		// Sample several sessions; the weighted picker must favour the fresh
-		// account by a clear margin even though both are unblocked.
-		const counts = new Map<string, number>();
-		for (let i = 0; i < 60; i += 1) {
-			const apiKey = await authStorage.getApiKey("google-antigravity", `session-antigravity-fresh-${i}`, {
-				modelId: "gemini-3-flash",
-			});
-			if (!apiKey) continue;
-			counts.set(apiKey, (counts.get(apiKey) ?? 0) + 1);
-		}
-
-		const fresh = counts.get("api-acct-fresh") ?? 0;
-		const loaded = counts.get("api-acct-loaded") ?? 0;
-		expect(fresh).toBeGreaterThan(loaded);
-	});
-});
+}
