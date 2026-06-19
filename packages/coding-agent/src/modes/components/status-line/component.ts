@@ -10,7 +10,7 @@ import type { AgentSession } from "../../../session/agent-session";
 import * as git from "../../../utils/git";
 import { getSessionAccentAnsi, getSessionAccentHex } from "../../../utils/session-color";
 import { sanitizeStatusText } from "../../shared";
-import { theme } from "../../theme/theme";
+import { type ThemeColor, theme } from "../../theme/theme";
 import { canReuseCachedPr, createPrCacheContext, isSamePrCacheContext, type PrCacheContext } from "./git-utils";
 import { getPreset } from "./presets";
 import { renderSegment, type SegmentContext } from "./segments";
@@ -183,7 +183,7 @@ export class StatusLineComponent implements Component {
 	#onBranchChange: (() => void) | null = null;
 	#disposed = false;
 	#autoCompactEnabled: boolean = true;
-	#hookStatuses: Map<string, string> = new Map();
+	#hookStatuses: Map<string, { text: string; color: ThemeColor }> = new Map();
 	#subagentCount: number = 0;
 	#sessionStartTime: number = Date.now();
 	#planModeStatus: { enabled: boolean; paused: boolean } | null = null;
@@ -297,11 +297,11 @@ export class StatusLineComponent implements Component {
 		this.#collabStatus = status;
 	}
 
-	setHookStatus(key: string, text: string | undefined): void {
+	setHookStatus(key: string, text: string | undefined, color: ThemeColor = "accent"): void {
 		if (text === undefined) {
 			this.#hookStatuses.delete(key);
 		} else {
-			this.#hookStatuses.set(key, text);
+			this.#hookStatuses.set(key, { text, color });
 		}
 	}
 
@@ -948,7 +948,7 @@ export class StatusLineComponent implements Component {
 
 		const sortedStatuses = Array.from(this.#hookStatuses.entries())
 			.sort(([a], [b]) => a.localeCompare(b))
-			.map(([, text]) => sanitizeStatusText(text));
+			.map(([, { text, color }]) => theme.fg(color, sanitizeStatusText(text)));
 		const hookLine = sortedStatuses.join(" ");
 		return [truncateToWidth(hookLine, width)];
 	}

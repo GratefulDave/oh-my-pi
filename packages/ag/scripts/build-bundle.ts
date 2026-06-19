@@ -13,7 +13,7 @@ const result = await build({
 	format: "esm",
 	minify: false,
 	sourcemap: "external",
-	external: ["@oh-my-pi/pi-coding-agent"],
+	external: ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-natives", "@oh-my-pi/pi-utils"],
 });
 
 if (!result.success) {

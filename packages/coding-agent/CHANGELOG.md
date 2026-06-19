@@ -6,6 +6,10 @@
 
 - Added `ExtensionContext.runTask`, the `createRunTaskAction` host bridge, and `TaskTool.executeInline()` so extensions can run synchronous `task` fanout without background jobs.
 
+### Changed
+
+- Renamed the subagent HUD header from `Subagents` to `Agents` so the live-agents panel label is consistent with the IRC roster and agent registry terminology.
+
 ### Fixed
 
 - Fixed the unconfigured `pi/smol` fallback chain to try `opencode-antigravity/gemini-3.5-flash:low`, then `deepseek-v4-flash`, and never select Claude Haiku as the final fallback.

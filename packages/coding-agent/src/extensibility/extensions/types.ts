@@ -44,7 +44,7 @@ import type { ExecOptions, ExecResult } from "../../exec/exec";
 import type * as PiCodingAgent from "../../index";
 import type { MemoryRuntimeContext } from "../../memory-backend";
 import type { CustomEditor } from "../../modes/components/custom-editor";
-import type { Theme } from "../../modes/theme/theme";
+import type { Theme, ThemeColor } from "../../modes/theme/theme";
 import type { CustomMessage } from "../../session/messages";
 import type { ReadonlySessionManager, SessionManager } from "../../session/session-manager";
 import type { TaskParams, TaskToolDetails } from "../../task/types";
@@ -193,8 +193,8 @@ export interface ExtensionUIContext {
 	/** Listen to raw terminal input (interactive mode only). Returns an unsubscribe function. */
 	onTerminalInput(handler: TerminalInputHandler): () => void;
 
-	/** Set status text in the footer/status bar. Pass undefined to clear. */
-	setStatus(key: string, text: string | undefined): void;
+	/** Set status text in the footer/status bar. Pass `undefined` to clear. Optional `color` selects the theme color token (default `"accent"`). */
+	setStatus(key: string, text: string | undefined, color?: ThemeColor): void;
 
 	/** Set the working/loading message shown during streaming. Call with no argument to restore default. */
 	setWorkingMessage(message?: string): void;

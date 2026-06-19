@@ -5,6 +5,7 @@
 ### Changed
 
 - Aligned the extension manifest with the built `dist/extension.bundle.js` registration path.
+- Swarm progress widget now uses a theme-aware factory: nerd-font status icons per agent state, `statusLineSubagents` blue for agent names, `muted` for summary line; removed redundant `Swarm:` / `Mode:` header lines that duplicated the built-in `Agents` HUD.
 
 ### Added
 

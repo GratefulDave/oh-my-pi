@@ -125,6 +125,14 @@ function parsePaneDetails(raw: string | undefined): unknown {
 		return raw;
 	}
 }
+/** Returns [text, color] for the pane-coms status entry. */
+function paneStatus(ref: string): [string, "accent"] {
+	// cmux may return "surface:N" or "pane:N" — strip either prefix to get the bare id
+	const label = ref.replace(/^(?:surface|pane):/, "");
+	// nf-fa-columns \uf0db
+	return [`\uf0db ${label}`, "accent"];
+}
+
 
 async function registerPane(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	await fs.mkdir(ROOT, { recursive: true });
@@ -149,7 +157,7 @@ async function registerPane(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
 		updatedAt: Date.now(),
 	};
 	await upsertRegistry(state.entry);
-	ctx.ui.setStatus("pane-coms", `pane:${state.entry.surfaceRef.slice(0, 8)}`);
+	ctx.ui.setStatus("pane-coms", ...paneStatus(state.entry.paneRef ?? state.entry.surfaceRef));
 }
 
 async function shutdownPane(pi: ExtensionAPI): Promise<void> {

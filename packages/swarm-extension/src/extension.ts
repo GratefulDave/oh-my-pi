@@ -15,7 +15,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-
 import { buildDependencyGraph, buildExecutionWaves, detectCycles } from "./swarm/dag";
 import { formatDuration } from "./swarm/format";
 import { PipelineController } from "./swarm/pipeline";
-import { renderSwarmProgress } from "./swarm/render";
+import { renderSwarmProgress, renderSwarmWidget } from "./swarm/render";
 import { parseSwarmYaml, type SwarmDefinition, validateSwarmDefinition } from "./swarm/schema";
 import { StateTracker } from "./swarm/state";
 
@@ -146,8 +146,7 @@ async function handleRun(yamlPath: string, ctx: ExtensionCommandContext, pi: Ext
 	// 8. Set up progress widget
 	const widgetKey = `swarm-${def.name}`;
 	const updateWidget = () => {
-		const lines = renderSwarmProgress(stateTracker.state);
-		ctx.ui.setWidget(widgetKey, lines);
+		ctx.ui.setWidget(widgetKey, renderSwarmWidget(stateTracker.state));
 	};
 	updateWidget();
 
@@ -241,7 +240,7 @@ async function handleSub(args: string[], ctx: ExtensionCommandContext, pi: Exten
 	};
 	const stateTracker = new StateTracker(ctx.cwd, name);
 	await stateTracker.init(["worker"], 1, "sequential");
-	const updateWidget = () => ctx.ui.setWidget(`swarm-${name}`, renderSwarmProgress(stateTracker.state));
+	const updateWidget = () => ctx.ui.setWidget(`swarm-${name}`, renderSwarmWidget(stateTracker.state));
 	updateWidget();
 	const controller = new PipelineController(def, [["worker"]], stateTracker);
 	const result = await controller.run({
@@ -257,7 +256,12 @@ async function handleSub(args: string[], ctx: ExtensionCommandContext, pi: Exten
 			customType: "swarm-result",
 			content: [{ type: "text", text: buildSummaryMessage(def, result, stateTracker, ctx.cwd) }],
 			display: true,
-			details: { swarmName: name, status: result.status, iterations: result.iterations, errorCount: result.errors.length },
+			details: {
+				swarmName: name,
+				status: result.status,
+				iterations: result.iterations,
+				errorCount: result.errors.length,
+			},
 		},
 		{ triggerTurn: false },
 	);

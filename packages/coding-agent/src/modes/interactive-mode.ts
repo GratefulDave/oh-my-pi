@@ -336,7 +336,7 @@ export function renderSubagentHudLines(sessions: ObservableSession[], columns: n
 	const indent = "  ";
 	const hook = theme.tree.hook;
 	const dot = theme.styledSymbol("status.done", "accent");
-	const lines = ["", indent + theme.bold(theme.fg("accent", "Subagents"))];
+	const lines = ["", indent + theme.bold(theme.fg("accent", "Agents"))];
 	running.forEach((session, index) => {
 		const prefix = `${indent}${index === 0 ? hook : " "} `;
 		const displayId = formatTaskId(session.id);

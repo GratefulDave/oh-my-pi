@@ -23,7 +23,14 @@ import { createRunTaskAction } from "../../extensibility/extensions/task-runner"
 import { HookEditorComponent } from "../../modes/components/hook-editor";
 import { HookInputComponent } from "../../modes/components/hook-input";
 import { HookSelectorComponent, type HookSelectorSlider } from "../../modes/components/hook-selector";
-import { getAvailableThemesWithPaths, getThemeByName, setTheme, type Theme, theme } from "../../modes/theme/theme";
+import {
+	getAvailableThemesWithPaths,
+	getThemeByName,
+	setTheme,
+	type Theme,
+	type ThemeColor,
+	theme,
+} from "../../modes/theme/theme";
 import type { InteractiveModeContext, InteractiveSelectorDialogOptions } from "../../modes/types";
 import { USER_INTERRUPT_LABEL } from "../../session/messages";
 import { setSessionTerminalTitle, setTerminalTitle } from "../../utils/title-generator";
@@ -52,7 +59,7 @@ export class ExtensionUiController {
 			input: (title, placeholder, dialogOptions) => this.showHookInput(title, placeholder, dialogOptions),
 			notify: (message, type) => this.showHookNotify(message, type),
 			onTerminalInput: handler => this.addExtensionTerminalInputListener(handler),
-			setStatus: (key, text) => this.setHookStatus(key, text),
+			setStatus: (key, text, color) => this.setHookStatus(key, text, color),
 			setWorkingMessage: message => this.ctx.setWorkingMessage(message),
 			setWidget: (key, content, options) => this.setHookWidget(key, content, options),
 			setTitle: title => setTerminalTitle(title),
@@ -535,8 +542,8 @@ export class ExtensionUiController {
 	/**
 	 * Set hook status text in the footer.
 	 */
-	setHookStatus(key: string, text: string | undefined): void {
-		this.ctx.statusLine.setHookStatus(key, text);
+	setHookStatus(key: string, text: string | undefined, color?: ThemeColor): void {
+		this.ctx.statusLine.setHookStatus(key, text, color);
 		this.ctx.ui.requestRender();
 	}
 

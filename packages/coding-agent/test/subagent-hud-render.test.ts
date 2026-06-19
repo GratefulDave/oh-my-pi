@@ -89,12 +89,12 @@ describe("subagent HUD lines", () => {
 		await initTheme();
 	});
 
-	it("renders running subagents as Id: description under a Subagents header", () => {
+	it("renders running subagents as Id: description under an Agents header", () => {
 		const out = render([
 			makeSession({ id: "AuthLoader", description: "Refactoring the auth flow" }),
 			makeSession({ id: "SchemaMigrator", description: "Migrating the users table" }),
 		]);
-		expect(out).toContain("Subagents");
+		expect(out).toContain("Agents");
 		expect(out).toContain("AuthLoader: Refactoring the auth flow");
 		expect(out).toContain("SchemaMigrator: Migrating the users table");
 	});
