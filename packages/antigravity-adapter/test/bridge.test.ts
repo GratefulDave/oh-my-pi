@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it, spyOn, vi } from "bun:test";
 import type { Api, AssistantMessageEventStream, Context, Model, Tool } from "@oh-my-pi/pi-ai";
 import type { OAuthLoginCallbacks } from "@oh-my-pi/pi-ai/registry/oauth/types";
 import type { ExtensionAPI, ProviderConfig } from "@oh-my-pi/pi-coding-agent";
+import * as pluginModule from "opencode-antigravity-auth/dist/src/plugin";
 import * as pluginStorage from "opencode-antigravity-auth/dist/src/plugin/storage";
 import * as pluginToken from "opencode-antigravity-auth/dist/src/plugin/token";
-import * as pluginModule from "opencode-antigravity-auth/dist/src/plugin";
 import type { AuthMethod, PluginResult } from "opencode-antigravity-auth/dist/src/plugin/types";
 import {
 	checkBridgeQuotaExhaustion,
@@ -562,13 +562,9 @@ describe("OpenCode Antigravity fetch bridge", () => {
 			googleStream,
 		);
 
-		await streamSimple(
-			model("antigravity-claude-sonnet-4-6"),
-			context(),
-			{
-				apiKey: serializeBridgeCredentials(credentials),
-			},
-		).result();
+		await streamSimple(model("antigravity-claude-sonnet-4-6"), context(), {
+			apiKey: serializeBridgeCredentials(credentials),
+		}).result();
 
 		expect(seenModelId).toBe("claude-sonnet-4-6");
 	});

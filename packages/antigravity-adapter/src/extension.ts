@@ -71,7 +71,10 @@ export default async function opencodeAntigravityBridge(pi: ExtensionAPI): Promi
 				];
 				ctx.ui.notify(lines.join("\n"), active?.refreshToken ? "info" : "warning");
 			} catch (error) {
-				ctx.ui.notify(`Antigravity status failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+				ctx.ui.notify(
+					`Antigravity status failed: ${error instanceof Error ? error.message : String(error)}`,
+					"error",
+				);
 			}
 		},
 	});
