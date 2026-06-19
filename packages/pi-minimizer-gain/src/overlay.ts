@@ -12,20 +12,19 @@ interface GainTheme {
 	boxSharp: { horizontal: string };
 }
 
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
-
 function truncateToWidth(text: string, maxWidth: number): string {
 	if (maxWidth <= 0) return "";
 	const singleLine = text.replace(/[\r\n]+/g, " ");
+	const rx = /\x1b\[[0-9;]*m/y;
 	let visible = 0;
 	let result = "";
 	let i = 0;
 	while (i < singleLine.length && visible < maxWidth) {
-		const m = ANSI_RE.exec(singleLine);
-		if (m && m.index === i) {
+		rx.lastIndex = i;
+		const m = rx.exec(singleLine);
+		if (m) {
 			result += m[0];
-			i = m.index + m[0].length;
-			ANSI_RE.lastIndex = i;
+			i += m[0].length;
 			continue;
 		}
 		result += singleLine[i];

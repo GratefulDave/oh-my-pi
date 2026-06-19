@@ -139,6 +139,13 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 			}
 		},
 	});
+
+	// Clean up the per-instance profile file on process exit so it doesn't
+	// linger after the OMP instance terminates.
+	process.on("exit", () => {
+		try { fs.unlinkSync(perInstanceProfilePath()); } catch { /* ignore */ }
+	});
+
 }
 
 // ── settings store (active agent-dir config.yml I/O) ─────────────────────────
@@ -162,6 +169,37 @@ function userConfigPath(): string {
 
 function legacySettingsPath(): string {
 	return path.join(activeAgentDir(), "settings.json");
+}
+
+/** Per-instance active profile file — keyed by PID so concurrent OMP instances
+ * don't clobber each other's activeModelProfile. Profile definitions stay shared
+ * in config.yml; only the active selection is per-instance. */
+function perInstanceProfilePath(): string {
+	return path.join(activeAgentDir(), `.active-profile-${process.pid}.json`);
+}
+
+/** Read the per-instance active profile (if any). */
+function readPerInstanceActiveProfile(): string | undefined {
+	try {
+		const data = fs.readFileSync(perInstanceProfilePath(), "utf8");
+		const parsed = JSON.parse(data);
+		return typeof parsed === "object" && parsed !== null && "activeModelProfile" in parsed
+			? (parsed as { activeModelProfile?: string }).activeModelProfile
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Write the per-instance active profile. */
+function writePerInstanceActiveProfile(name: string | undefined): void {
+	const file = perInstanceProfilePath();
+	if (name === undefined) {
+		try { fs.unlinkSync(file); } catch { /* ignore */ }
+		return;
+	}
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	fs.writeFileSync(file, JSON.stringify({ activeModelProfile: name }), "utf8");
 }
 
 function asSettings(value: unknown): OmpSettings {
@@ -189,8 +227,14 @@ function readJsonSettingsFile(file: string): OmpSettings {
 
 function readSettings(_ctx: ExtensionContext): OmpSettings {
 	const config = readYamlSettingsFile(userConfigPath());
-	if (Object.keys(config).length > 0) return config;
-	return readJsonSettingsFile(legacySettingsPath());
+	const settings = Object.keys(config).length > 0 ? config : readJsonSettingsFile(legacySettingsPath());
+	// Merge per-instance activeModelProfile on top, so it overrides
+	// any stale value in the shared config.
+	const perInstance = readPerInstanceActiveProfile();
+	if (perInstance !== undefined) {
+		settings.activeModelProfile = perInstance;
+	}
+	return settings;
 }
 
 function copyProfileKeys(target: OmpSettings | ModelProfile, source: OmpSettings | ModelProfile): void {
@@ -210,19 +254,16 @@ function applyProfileToSettings(settings: OmpSettings, profile: ModelProfile): v
 
 
 function writeSettings(_ctx: ExtensionContext, settings: OmpSettings): void {
-	// Persist only the profile keys to the active agent-dir config.yml; preserve
+	// Persist profile keys to the active agent-dir config.yml; preserve
 	// everything else already there (extensions[], disabledProviders, MCPs,
-	// skills, etc.).
+	// skills, etc.). activeModelProfile is NOT written here — it is per-instance
+	// and stored in a PID-scoped file so concurrent OMP instances don't clobber
+	// each other's active selection.
 	const file = userConfigPath();
 	const existing = readYamlSettingsFile(file);
 	const base = Object.keys(existing).length > 0 ? existing : readJsonSettingsFile(legacySettingsPath());
 	base.modelProfiles = settings.modelProfiles;
 	copyProfileKeys(base, settings);
-	if (settings.activeModelProfile !== undefined) {
-		base.activeModelProfile = settings.activeModelProfile;
-	} else {
-		delete base.activeModelProfile;
-	}
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	fs.writeFileSync(file, YAML.stringify(base, null, 2), "utf8");
 }
@@ -584,6 +625,7 @@ async function handleCreate(pi: ExtensionAPI, ctx: ExtensionCommandContext, args
 
 	if (activate) {
 		settings.activeModelProfile = name;
+		writePerInstanceActiveProfile(name);
 		applyProfileToSettings(settings, profiles[name]);
 		writeSettings(ctx, settings);
 		const status = await applyProfile(pi, ctx, profiles[name]);
@@ -615,6 +657,7 @@ async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName
 	if (rawName === DEFAULT_PROFILE_NAME) {
 		const profile = getProfiles(settings)[DEFAULT_PROFILE_NAME];
 		delete settings.activeModelProfile;
+		writePerInstanceActiveProfile(undefined);  // clear per-instance profile
 		if (profile) {
 			applyProfileToSettings(settings, profile);
 			writeSettings(ctx, settings);
@@ -634,6 +677,7 @@ async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName
 		return;
 	}
 	settings.activeModelProfile = name;
+	writePerInstanceActiveProfile(name);  // per-instance, not shared config
 	applyProfileToSettings(settings, profile);
 	writeSettings(ctx, settings);
 	const status = await applyProfile(pi, ctx, profile);
@@ -763,7 +807,10 @@ async function handleDelete(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawN
 	}
 	delete profiles[name];
 	settings.modelProfiles = profiles;
-	if (settings.activeModelProfile === name) delete settings.activeModelProfile;
+	if (settings.activeModelProfile === name) {
+		delete settings.activeModelProfile;
+		writePerInstanceActiveProfile(undefined);
+	}
 	writeSettings(ctx, settings);
 	notify(pi, `Deleted profile: ${name}`);
 }
