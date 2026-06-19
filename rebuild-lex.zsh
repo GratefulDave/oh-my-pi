@@ -143,9 +143,9 @@ bun --cwd=packages/pi-minimizer-gain run smoke:bundle
 # the fingerprint-protected extension path, not the native google-antigravity
 # provider.
 print_step "Extension load smoke test"
-lex_models_out="$(cd /tmp && lex models opencode-antigravity 2>&1 || true)"
-omp_models_out="$(cd /tmp && omp models opencode-antigravity 2>&1 || true)"
-no_ext_out="$(cd /tmp && lex models opencode-antigravity --no-extensions 2>&1 || true)"
+lex_models_out="$(cd /tmp && lex models ag 2>&1 || true)"
+omp_models_out="$(cd /tmp && omp models ag 2>&1 || true)"
+no_ext_out="$(cd /tmp && lex models ag --no-extensions 2>&1 || true)"
 if [[ "$lex_models_out" == *"Failed to load extension"* ]]; then
 	printf 'error: lex still reports an extension load failure after rebuild:\n%s\n' "$lex_models_out" >&2
 	exit 1
@@ -154,19 +154,19 @@ if [[ "$omp_models_out" == *"Failed to load extension"* ]]; then
 	printf 'error: omp still reports an extension load failure after rebuild:\n%s\n' "$omp_models_out" >&2
 	exit 1
 fi
-if [[ "$lex_models_out" != *"opencode-antigravity"* ]]; then
-	printf 'error: lex antigravity extension models are not visible after rebuild:\n%s\n' "$lex_models_out" >&2
+if [[ "$lex_models_out" != *"ag/"* ]]; then
+	printf 'error: lex ag extension models are not visible after rebuild:\n%s\n' "$lex_models_out" >&2
 	exit 1
 fi
-if [[ "$omp_models_out" != *"opencode-antigravity"* ]]; then
-	printf 'error: omp antigravity extension models are not visible after rebuild:\n%s\n' "$omp_models_out" >&2
+if [[ "$omp_models_out" != *"ag/"* ]]; then
+	printf 'error: omp ag extension models are not visible after rebuild:\n%s\n' "$omp_models_out" >&2
 	exit 1
 fi
-if [[ "$no_ext_out" != *"No models matching \"opencode-antigravity\""* ]]; then
-	printf 'error: unexpected opencode-antigravity --no-extensions output; expected provider to be absent:\n%s\n' "$no_ext_out" >&2
+if [[ "$no_ext_out" != *"No models matching \"ag\""* ]]; then
+	printf 'error: unexpected ag --no-extensions output; expected provider to be absent:\n%s\n' "$no_ext_out" >&2
 	exit 1
 fi
-printf '  lex and omp both load antigravity through the extension-only provider\n'
+printf '  lex and omp both load the ag antigravity provider through the extension-only path\n'
 cat <<'EOF'
 
 Done. For the current interactive shell, run:

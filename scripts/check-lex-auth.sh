@@ -36,6 +36,20 @@ check_row_exists() {
   fi
 }
 
+check_ag_row() {
+  local count_ag count_legacy
+  count_ag=$(sqlite3 "$LEX_DB" "SELECT COUNT(*) FROM auth_credentials WHERE provider='ag'" 2>/dev/null || echo 0)
+  count_legacy=$(sqlite3 "$LEX_DB" "SELECT COUNT(*) FROM auth_credentials WHERE provider='opencode-antigravity'" 2>/dev/null || echo 0)
+  if [[ "${count_ag:-0}" -gt 0 ]]; then
+    echo "OK   [ag] row present in DB"
+  elif [[ "${count_legacy:-0}" -gt 0 ]]; then
+    echo "OK   [opencode-antigravity] legacy row present in DB"
+  else
+    echo "FAIL [ag] no ag/opencode-antigravity row in $LEX_DB — antigravity tab will not appear"
+    FAIL=1
+  fi
+}
+
 echo "=== lex auth check ==="
 echo ""
 
@@ -50,8 +64,8 @@ fi
 # 2. openai-codex — full OAuth token managed by lex
 check_oauth "openai-codex"
 
-# 3. opencode-antigravity — row must exist; real token in ~/.config/opencode/antigravity-accounts.json
-check_row_exists "opencode-antigravity"
+# 3. ag — row should exist in new installs; legacy opencode-antigravity rows still pass
+check_ag_row()
 
 # 4. Verify antigravity accounts file has active account with refresh token
 if [[ -f "$ACCOUNTS" ]]; then
