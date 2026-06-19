@@ -17,6 +17,39 @@
 - Fixed the bundled `/pm` extension to import profile directory helpers from the root `@oh-my-pi/pi-utils` export instead of a subpath, restoring `/pm` command registration in rebuilt/runtime installs where the subpath import could fail.
 - Fixed `disabledExtensions` merging to accumulate global and project entries instead of replacing the global list, so globally disabled extensions such as `purpose-gate` now stay disabled in repos that define their own `.omp/settings.json`.
 
+## [16.0.10] - 2026-06-18
+
+### Added
+
+- Updated the `pi` option of the `tools.format` setting to use the new compact sigil-delimited owned tool-calling dialect (`§`/`«…»`/`¤`/`‡‡`) that uses ~46% fewer tokens than the legacy format on typical calls.
+- Integrated terminal QR codes directly into `/collab` and `/collab view` to display both deep links and scannable codes, and added a `collab.webUrl` setting for separately hosted collab web clients.
+
+### Changed
+
+- Updated description of Pi dialect in tool-calling settings to clarify compact sigil format
+
+### Fixed
+
+- Fixed legacy `settings.json`, `models.json`, and `keybindings.json` migration/loading to accept comments in JSON config files.
+- Support quoted file paths with spaces (such as default macOS screenshots) in file mentions and `@`-prefixed CLI arguments ([#2909](https://github.com/can1357/oh-my-pi/pull/2909)).
+- Fixed the first steering/follow-up message typed as auto-compaction begins being dropped instead of queued; the compaction abort controller (which backs `isCompacting`) is now installed before the `auto_compaction_start` event fires, so input routed during that window lands in the compaction queue rather than the core agent queue.
+- Fixed queued steering/follow-up messages being silently cleared by the agent reset during a handoff; they are now captured and restored across the new-session reset.
+- Fixed the `/login` provider list still offering providers listed in `disabledProviders` (and their credential-alias logins, e.g. `openai-codex-device` → `openai-codex`) as login targets ([#2906](https://github.com/can1357/oh-my-pi/pull/2906)).
+- Fixed an owned MCP manager not being disconnected on `AgentSession.dispose()`, orphaning stdio MCP subprocesses across session teardown (`/exit`, print mode, subagent teardown); the dispose-time disconnect is now bounded so a slow HTTP/SSE transport close cannot stall exit ([#2839](https://github.com/can1357/oh-my-pi/pull/2839)).
+- Fixed `inspect_image` resolving pasted image labels such as `Image #1`, `[Image #1, WxH]`, and `attachment://1` against current chat attachments instead of falling back to `<cwd>/Image #1` ([#2787](https://github.com/can1357/oh-my-pi/issues/2787)).
+- Accepted `max` as an alias for the top thinking level (`xhigh`) in selectors and `--thinking`, so DeepSeek V4 Pro can be selected with its provider-facing maximum effort ([#2727](https://github.com/can1357/oh-my-pi/issues/2727)).
+- Fixed `--provider=amazon-bedrock --model <application-inference-profile ARN>` being rejected as an unknown model before the Bedrock provider could send the ARN to Converse Stream. ([#3004](https://github.com/can1357/oh-my-pi/issues/3004))
+
+## [16.0.9] - 2026-06-18
+
+### Added
+
+- Added a `--print-thoughts` flag for single-shot print mode that includes sanitized thinking blocks in the text output; default print output stays the final answer only. When thinking is hidden by the `hideThinkingBlock` setting, `--print-thoughts` un-hides it for the print run so the flag is not a silent no-op (an explicit `--hide-thinking` still wins).
+
+### Fixed
+
+- Fixed active `/goal` mode being paused by internal compaction and session-switch lifecycle aborts, and made those switches persist wall-clock goal usage without charging time spent in another session to a preserved goal.
+
 ## [16.0.8] - 2026-06-18
 
 ### Changed
