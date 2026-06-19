@@ -289,20 +289,31 @@ async function handleTemplate(targetPath: string | undefined, ctx: ExtensionComm
 // ============================================================================
 
 async function handleStatus(name: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
-	if (!name) {
-		ctx.ui.notify("Usage: /swarm status <name>  (reads .swarm_<name>/state/pipeline.json from cwd)", "info");
+	const swarmName = name?.trim();
+	if (!swarmName) {
+		ctx.sendMessage?.(
+			{ customType: "swarm-status", content: "Usage: /swarm status <name>", display: true },
+			{ triggerTurn: false },
+		);
 		return;
 	}
 
-	const stateTracker = new StateTracker(ctx.cwd, name);
+	const stateTracker = new StateTracker(ctx.cwd, swarmName);
 	const state = await stateTracker.load();
 	if (!state) {
-		ctx.ui.notify(`No state found for swarm '${name}' in ${ctx.cwd}`, "error");
+		ctx.sendMessage?.(
+			{
+				customType: "swarm-status",
+				content: `No active swarm '${swarmName}'. Use /swarm-init to create one.`,
+				display: true,
+			},
+			{ triggerTurn: false },
+		);
 		return;
 	}
 
 	const lines = renderSwarmProgress(state);
-	ctx.ui.notify(lines.join("\n"), "info");
+	ctx.sendMessage?.({ customType: "swarm-status", content: lines.join("\n"), display: true }, { triggerTurn: false });
 }
 
 // ============================================================================

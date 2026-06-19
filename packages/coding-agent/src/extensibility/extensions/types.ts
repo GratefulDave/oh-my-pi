@@ -356,6 +356,11 @@ export interface ExtensionContext {
 	getSystemPrompt(): string[];
 	/** Run the task tool inline and wait for the result. */
 	runTask(params: TaskParams, options?: ExtensionTaskRunOptions): Promise<AgentToolResult<TaskToolDetails>>;
+	/** Send a custom message into the session transcript without triggering a model turn. */
+	sendMessage?<T = unknown>(
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "attribution">,
+		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+	): void;
 	/** Structured memory runtime for status/search/save across the configured backend. */
 	memory?: MemoryRuntimeContext;
 }
