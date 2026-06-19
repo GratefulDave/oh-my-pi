@@ -100,6 +100,25 @@ async function discoverPackageExtensionSources(): Promise<string[]> {
 	return sources;
 }
 
+async function discoverLocalExtensionSources(): Promise<string[]> {
+	const extensionsDir = path.join(REPO, ".omp", "extensions");
+	const entries = await fs.readdir(extensionsDir, { withFileTypes: true }).catch(() => []);
+	const sources: string[] = [];
+	for (const entry of entries) {
+		if (!entry.isDirectory()) continue;
+		const distDir = path.join(extensionsDir, entry.name, "dist");
+		const distEntries = await fs.readdir(distDir, { withFileTypes: true }).catch(() => []);
+		for (const distEntry of distEntries) {
+			if (!distEntry.isFile() && !distEntry.isSymbolicLink()) continue;
+			if (!distEntry.name.endsWith(".js")) continue;
+			sources.push(
+				normalizeRelative(path.join(distDir, distEntry.name)),
+			);
+		}
+	}
+	return sources;
+}
+
 function extName(extensionPath: string): string {
 	const normalized = extensionPath.split(path.sep).join("/");
 	const parts = normalized.split("/");
@@ -259,9 +278,13 @@ for (const extensionPath of await discoverPackageExtensionSources()) {
 	if (configuredNames.has(extName(extensionPath))) continue;
 	extensionPaths.push(extensionPath);
 }
+for (const extensionPath of await discoverLocalExtensionSources()) {
+	if (configuredNames.has(extName(extensionPath))) continue;
+	extensionPaths.push(extensionPath);
+}
 
 if (extensionPaths.length === 0) {
-	console.error("No extension paths found in .omp/settings.json#extensions");
+	console.error("No extension paths found in .omp/settings.json or .omp/extensions/");
 	process.exit(1);
 }
 

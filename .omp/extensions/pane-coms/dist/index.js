@@ -79,13 +79,17 @@ function paneComsExtension(pi) {
   });
 }
 function parsePaneDetails(raw) {
-  if (raw === void 0)
-    return void 0;
+  if (raw === undefined)
+    return;
   try {
     return JSON.parse(raw);
   } catch {
     return raw;
   }
+}
+function paneStatus(ref) {
+  const label = ref.replace(/^(?:surface|pane):/, "");
+  return [`\uF0DB ${label}`, "accent"];
 }
 async function registerPane(pi, ctx) {
   await fs.mkdir(ROOT, { recursive: true });
@@ -110,7 +114,7 @@ async function registerPane(pi, ctx) {
     updatedAt: Date.now()
   };
   await upsertRegistry(state.entry);
-  ctx.ui.setStatus("pane-coms", `pane:${state.entry.surfaceRef.slice(0, 8)}`);
+  ctx.ui.setStatus("pane-coms", ...paneStatus(state.entry.paneRef ?? state.entry.surfaceRef));
 }
 async function shutdownPane(pi) {
   state.server?.close();
