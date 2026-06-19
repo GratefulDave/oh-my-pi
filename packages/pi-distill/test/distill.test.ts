@@ -49,7 +49,9 @@ function originalJson(): string {
 	);
 }
 
-function fakeContext(options: { saveFails?: boolean; artifactPathMissing?: boolean; cwd?: string } = {}): DistillContext {
+function fakeContext(
+	options: { saveFails?: boolean; artifactPathMissing?: boolean; cwd?: string } = {},
+): DistillContext {
 	const artifacts = new Map<string, string>();
 	return {
 		sessionManager: {
@@ -476,7 +478,8 @@ describe("pi-distill structured compression", () => {
 
 	test("distill-stats surfaces per-tool stats", async () => {
 		const commands = new Map<string, { handler: (args: string[], ctx: DistillContext) => Promise<void> }>();
-		const handlers: Array<(event: Parameters<typeof processToolResult>[0], ctx: DistillContext) => Promise<unknown>> = [];
+		const handlers: Array<(event: Parameters<typeof processToolResult>[0], ctx: DistillContext) => Promise<unknown>> =
+			[];
 		piDistill({
 			registerCommand: (name, command) => {
 				commands.set(name, command);

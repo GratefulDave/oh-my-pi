@@ -60,7 +60,7 @@ export type ExtensionAPI = {
 		handler: (
 			event: { prompt: string; systemPrompt: string[] },
 			ctx: ExtensionContext,
-		) => Promise<{ systemPrompt: string[] } | void> | { systemPrompt: string[] } | void,
+		) => Promise<{ systemPrompt: string[] } | undefined> | { systemPrompt: string[] } | undefined,
 	): void;
 };
 

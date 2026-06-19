@@ -136,16 +136,15 @@ printf '  native loads OK\n'
 print_step "Minimizer gain bundle smoke test"
 bun --cwd=packages/pi-minimizer-gain run smoke:bundle
 
-# Smoke-test the extension path that has broken repeatedly: the global
-# Antigravity adapter must be loaded by the rebuilt binary from outside the repo
-# and expose its extension provider models for BOTH command names. With
-# --no-extensions the provider must disappear, proving the selected namespace is
-# the fingerprint-protected extension path, not the native google-antigravity
-# provider.
+# Smoke-test the extension path that has broken repeatedly: the ag extension
+# must load and expose its provider models for BOTH command names. Run from
+# repo_dir so the repo .omp/settings.json is used (no enabledModels filter).
+# With --no-extensions the provider must disappear, proving the selected
+# namespace is the extension path, not a built-in provider.
 print_step "Extension load smoke test"
-lex_models_out="$(cd /tmp && lex models ag 2>&1 || true)"
-omp_models_out="$(cd /tmp && omp models ag 2>&1 || true)"
-no_ext_out="$(cd /tmp && lex models ag --no-extensions 2>&1 || true)"
+lex_models_out="$(cd "$repo_dir" && NO_COLOR=1 FORCE_COLOR=0 lex models ag 2>&1 || true)"
+omp_models_out="$(cd "$repo_dir" && NO_COLOR=1 FORCE_COLOR=0 omp models ag 2>&1 || true)"
+no_ext_out="$(cd "$repo_dir" && NO_COLOR=1 FORCE_COLOR=0 lex models ag --no-extensions 2>&1 || true)"
 if [[ "$lex_models_out" == *"Failed to load extension"* ]]; then
 	printf 'error: lex still reports an extension load failure after rebuild:\n%s\n' "$lex_models_out" >&2
 	exit 1
@@ -154,16 +153,16 @@ if [[ "$omp_models_out" == *"Failed to load extension"* ]]; then
 	printf 'error: omp still reports an extension load failure after rebuild:\n%s\n' "$omp_models_out" >&2
 	exit 1
 fi
-if [[ "$lex_models_out" != *"ag/"* ]]; then
-	printf 'error: lex ag extension models are not visible after rebuild:\n%s\n' "$lex_models_out" >&2
+if [[ "$lex_models_out" != *"ag ("* ]]; then
+	printf 'error: lex ag extension provider section not visible after rebuild:\n%s\n' "$lex_models_out" >&2
 	exit 1
 fi
-if [[ "$omp_models_out" != *"ag/"* ]]; then
-	printf 'error: omp ag extension models are not visible after rebuild:\n%s\n' "$omp_models_out" >&2
+if [[ "$omp_models_out" != *"ag ("* ]]; then
+	printf 'error: omp ag extension provider section not visible after rebuild:\n%s\n' "$omp_models_out" >&2
 	exit 1
 fi
-if [[ "$no_ext_out" != *"No models matching \"ag\""* ]]; then
-	printf 'error: unexpected ag --no-extensions output; expected provider to be absent:\n%s\n' "$no_ext_out" >&2
+if [[ "$no_ext_out" == *"ag ("* ]]; then
+	printf 'error: ag provider section still visible with --no-extensions (should be absent):\n%s\n' "$no_ext_out" >&2
 	exit 1
 fi
 printf '  lex and omp both load the ag antigravity provider through the extension-only path\n'

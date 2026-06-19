@@ -82,7 +82,9 @@ function hashPrompt(prompt: string): string {
 }
 
 function buildResultCacheKey(request: ExternalAgentRequest): string {
-	return [request.provider, request.backend, request.mode ?? "exec", request.cwd, hashPrompt(request.prompt)].join("\u001f");
+	return [request.provider, request.backend, request.mode ?? "exec", request.cwd, hashPrompt(request.prompt)].join(
+		"\u001f",
+	);
 }
 
 function cloneCachedResult(result: ExternalAgentResult): ExternalAgentResult {
@@ -138,7 +140,9 @@ function formatReportRecord(record: DelegateReportRecord): string {
 	return lines.join("\n");
 }
 
-function parseDelegateResultsArgs(args: string): { action: "list" | "show" | "clear"; selector?: string } | { error: string } {
+function parseDelegateResultsArgs(
+	args: string,
+): { action: "list" | "show" | "clear"; selector?: string } | { error: string } {
 	const trimmed = args.trim();
 	if (!trimmed || trimmed === "list") return { action: "list" };
 	if (trimmed === "clear") return { action: "clear" };
