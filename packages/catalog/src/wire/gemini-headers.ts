@@ -43,15 +43,18 @@ export let getAntigravityUserAgent = () => {
 /**
  * Per-wire-id Antigravity Cloud Code Assist request constants, captured from the
  * real `antigravity/hub` client against `daily-cloudcode-pa`. `modelEnum` is the
- * opaque `labels.model_enum` token the client tags each request with;
- * `maxOutputTokens` is the fixed `generationConfig.maxOutputTokens` it sends
- * regardless of the thinking budget. Keyed by the routed upstream wire id
- * (post effort-routing), not the collapsed logical id. Checkpoint-only ids
+ * opaque `labels.model_enum` token the client tags each request with — optional
+ * because Anthropic-backed wire ids (e.g. `claude-sonnet-4-6`,
+ * `claude-opus-4-6-thinking`) are accepted without one; the label is purely
+ * telemetry. `maxOutputTokens` is the fixed `generationConfig.maxOutputTokens`
+ * the backend enforces regardless of the thinking budget (Claude caps at
+ * 64000, Gemini accepts the discovered cap). Keyed by the routed upstream wire
+ * id (post effort-routing), not the collapsed logical id. Checkpoint-only ids
  * (e.g. `gemini-3.1-flash-lite`) are intentionally absent — this provider only
  * emits agent requests.
  */
 export interface AntigravityModelWireProfile {
-	modelEnum: string;
+	modelEnum?: string;
 	maxOutputTokens: number;
 	thinkingConfig?: {
 		includeThoughts: boolean;
@@ -59,46 +62,16 @@ export interface AntigravityModelWireProfile {
 	};
 }
 export const ANTIGRAVITY_MODEL_WIRE_PROFILES: Readonly<Record<string, AntigravityModelWireProfile>> = {
-	"claude-opus-4-6-thinking": {
-		modelEnum: "MODEL_PLACEHOLDER_M26",
-		maxOutputTokens: 64000,
-		thinkingConfig: { includeThoughts: true, thinkingBudget: 1024 },
-	},
-	"claude-sonnet-4-6": {
-		modelEnum: "MODEL_PLACEHOLDER_M35",
-		maxOutputTokens: 128000,
-		thinkingConfig: { includeThoughts: true, thinkingBudget: 1024 },
-	},
-	"gemini-3.5-flash-extra-low": {
-		modelEnum: "MODEL_PLACEHOLDER_M187",
-		maxOutputTokens: 65536,
-		thinkingConfig: { includeThoughts: true, thinkingBudget: 1000 },
-	},
-	"gemini-3.5-flash-low": {
-		modelEnum: "MODEL_PLACEHOLDER_M20",
-		maxOutputTokens: 65536,
-		thinkingConfig: { includeThoughts: true, thinkingBudget: 4000 },
-	},
-	"gemini-3-flash-agent": {
-		modelEnum: "MODEL_PLACEHOLDER_M132",
-		maxOutputTokens: 65536,
-		thinkingConfig: { includeThoughts: true, thinkingBudget: 10000 },
-	},
-	"gemini-3.1-pro-low": {
-		modelEnum: "MODEL_PLACEHOLDER_M36",
-		maxOutputTokens: 65535,
-		thinkingConfig: { includeThoughts: true, thinkingBudget: 1001 },
-	},
-	"gemini-pro-agent": {
-		modelEnum: "MODEL_PLACEHOLDER_M16",
-		maxOutputTokens: 65535,
-		thinkingConfig: { includeThoughts: true, thinkingBudget: 10001 },
-	},
-	"gpt-oss-120b-medium": {
-		modelEnum: "MODEL_OPENAI_GPT_OSS_120B_MEDIUM",
-		maxOutputTokens: 32768,
-		thinkingConfig: { includeThoughts: true, thinkingBudget: 8192 },
-	},
+	"gemini-3.5-flash-extra-low": { modelEnum: "MODEL_PLACEHOLDER_M187", maxOutputTokens: 65536 },
+	"gemini-3.5-flash-low": { modelEnum: "MODEL_PLACEHOLDER_M20", maxOutputTokens: 65536 },
+	"gemini-3-flash-agent": { modelEnum: "MODEL_PLACEHOLDER_M132", maxOutputTokens: 65536 },
+	"gemini-3.1-pro-low": { modelEnum: "MODEL_PLACEHOLDER_M36", maxOutputTokens: 65535 },
+	"gemini-pro-agent": { modelEnum: "MODEL_PLACEHOLDER_M16", maxOutputTokens: 65535 },
+	// Claude on `daily-cloudcode-pa` rejects `maxOutputTokens > 64000` with a
+	// 400 (`Request contains an invalid argument`). The model_enum label is
+	// untracked for these ids; the backend does not require it.
+	"claude-sonnet-4-6": { maxOutputTokens: 64000 },
+	"claude-opus-4-6-thinking": { maxOutputTokens: 64000 },
 };
 export function getAntigravityModelWireProfile(wireModelId: string): AntigravityModelWireProfile | undefined {
 	return ANTIGRAVITY_MODEL_WIRE_PROFILES[wireModelId];

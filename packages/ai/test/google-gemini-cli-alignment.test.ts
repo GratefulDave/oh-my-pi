@@ -233,86 +233,23 @@ describe("Google Gemini CLI alignment", () => {
 		expect(payload.request.labels?.model_enum).toBe("MODEL_PLACEHOLDER_M20");
 	});
 
-	it("defaults antigravity claude requests to the captured thinking budget when no explicit thinking option is set", () => {
-		const model = buildModel({
-			id: "claude-sonnet-4-6",
-			name: "Claude Sonnet 4.6",
-			api: "google-gemini-cli",
-			provider: "google-antigravity",
-			baseUrl: "https://example.com",
-			reasoning: true,
-			input: ["text"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 1_000_000,
-			maxTokens: 128000,
-		});
-		const payload = buildRequest(model, createContext(), "proj-123", {}, true) as {
-			model?: string;
-			request: {
-				generationConfig?: {
-					maxOutputTokens?: number;
-					thinkingConfig?: { includeThoughts?: boolean; thinkingBudget?: number };
-				};
-				labels?: Record<string, string>;
+	it("caps Claude maxOutputTokens at 64000 and omits the unset model_enum label", () => {
+		// Regression for #3067: discovery may advertise 65536, but
+		// `daily-cloudcode-pa` 400s when Claude requests exceed 64000.
+		// The Claude profiles also lack a captured model_enum token, so
+		// the request must not emit a stale or placeholder label.
+		const cases = [{ requestModelId: "claude-sonnet-4-6" }, { requestModelId: "claude-opus-4-6-thinking" }];
+		for (const opts of cases) {
+			const payload = buildRequest(createModel("google-antigravity"), createContext(), "proj-123", opts, true) as {
+				model?: string;
+				request: { generationConfig?: { maxOutputTokens?: number }; labels?: Record<string, string> };
 			};
-		};
 
-		expect(payload.model).toBe("claude-sonnet-4-6");
-		expect(payload.request.labels?.model_enum).toBe("MODEL_PLACEHOLDER_M35");
-		expect(payload.request.generationConfig).toEqual({
-			maxOutputTokens: 128000,
-			thinkingConfig: { includeThoughts: true, thinkingBudget: 1024 },
-		});
+			expect(payload.model).toBe(opts.requestModelId);
+			expect(payload.request.generationConfig?.maxOutputTokens).toBe(64000);
+			expect(payload.request.labels?.model_enum).toBeUndefined();
+		}
 	});
-
-	it("defaults antigravity gemini wire ids to the captured thinking budget when no explicit thinking option is set", () => {
-		const model = createModel("google-antigravity");
-		const payload = buildRequest(
-			model,
-			createContext(),
-			"proj-123",
-			{ requestModelId: "gemini-3.5-flash-low" },
-			true,
-		) as {
-			request: {
-				generationConfig?: {
-					maxOutputTokens?: number;
-					thinkingConfig?: { includeThoughts?: boolean; thinkingBudget?: number };
-				};
-				labels?: Record<string, string>;
-			};
-		};
-
-		expect(payload.request.labels?.model_enum).toBe("MODEL_PLACEHOLDER_M20");
-		expect(payload.request.generationConfig).toEqual({
-			maxOutputTokens: 65536,
-			thinkingConfig: { includeThoughts: true, thinkingBudget: 4000 },
-		});
-	});
-
-	it("overrides antigravity gemini thinking-level requests with the captured budget payload", () => {
-		const model = createModel("google-antigravity");
-		const payload = buildRequest(
-			model,
-			createContext(),
-			"proj-123",
-			{ requestModelId: "gemini-3-flash-agent", thinking: { enabled: true, level: "HIGH" } },
-			true,
-		) as {
-			request: {
-				generationConfig?: {
-					maxOutputTokens?: number;
-					thinkingConfig?: { includeThoughts?: boolean; thinkingBudget?: number; thinkingLevel?: string };
-				};
-			};
-		};
-
-		expect(payload.request.generationConfig).toEqual({
-			maxOutputTokens: 65536,
-			thinkingConfig: { includeThoughts: true, thinkingBudget: 10000 },
-		});
-	});
-
 	it("defaults antigravity tools to VALIDATED but omits AUTO toolConfig for plain gemini-cli", () => {
 		const context: Context = {
 			messages: [{ role: "user", content: "inspect repo", timestamp: Date.now() }],
