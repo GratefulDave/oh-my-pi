@@ -1,8 +1,4 @@
-/**
- * TUI progress rendering for swarm pipeline status.
- */
-import type { ExtensionUiComponentFactory, SymbolKey, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent";
-import { Text } from "@oh-my-pi/pi-tui";
+import type { SymbolKey, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent";
 import { formatDuration, truncate } from "./format";
 import type { AgentState, SwarmState } from "./state";
 
@@ -74,14 +70,6 @@ export function renderSwarmProgress(state: SwarmState, theme?: SwarmTheme): stri
 	lines.push(theme ? `  ${theme.fg("muted", summary)}` : `  ${summary}`);
 
 	return lines;
-}
-
-/** Widget factory: receives theme from the TUI and renders with color. */
-export function renderSwarmWidget(state: SwarmState): ExtensionUiComponentFactory {
-	return (_tui, theme) => {
-		const lines = renderSwarmProgress(state, theme);
-		return new Text(lines.join("\n"), 0, 0);
-	};
 }
 
 function formatAgentDuration(agent: { startedAt?: number; completedAt?: number; status: string }): string {

@@ -15,7 +15,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-
 import { buildDependencyGraph, buildExecutionWaves, detectCycles } from "./swarm/dag";
 import { formatDuration } from "./swarm/format";
 import { PipelineController } from "./swarm/pipeline";
-import { renderSwarmProgress, renderSwarmWidget } from "./swarm/render";
+import { renderSwarmProgress } from "./swarm/render";
 import { parseSwarmYaml, type SwarmDefinition, validateSwarmDefinition } from "./swarm/schema";
 import { StateTracker } from "./swarm/state";
 
@@ -143,25 +143,19 @@ async function handleRun(yamlPath: string, ctx: ExtensionCommandContext, pi: Ext
 		"info",
 	);
 
-	// 8. Set up progress widget
-	const widgetKey = `swarm-${def.name}`;
-	const updateWidget = () => {
-		ctx.ui.setWidget(widgetKey, renderSwarmWidget(stateTracker.state));
-	};
-	updateWidget();
+	// 8. Built-in subagent HUD tracks progress — no duplicate widget needed
 
 	// 9. Run pipeline
 	const controller = new PipelineController(def, waves, stateTracker);
 
 	const result = await controller.run({
 		workspace,
-		onProgress: () => updateWidget(),
+		onProgress: () => {},
 		modelRegistry: ctx.modelRegistry,
 		settings: pi.pi.settings,
 	});
 
 	// 10. Clear widget and show summary
-	ctx.ui.setWidget(widgetKey, undefined);
 
 	const elapsed = stateTracker.state.completedAt
 		? formatDuration(stateTracker.state.completedAt - stateTracker.state.startedAt)
@@ -240,16 +234,14 @@ async function handleSub(args: string[], ctx: ExtensionCommandContext, pi: Exten
 	};
 	const stateTracker = new StateTracker(ctx.cwd, name);
 	await stateTracker.init(["worker"], 1, "sequential");
-	const updateWidget = () => ctx.ui.setWidget(`swarm-${name}`, renderSwarmWidget(stateTracker.state));
-	updateWidget();
+	// Built-in subagent HUD tracks progress
 	const controller = new PipelineController(def, [["worker"]], stateTracker);
 	const result = await controller.run({
 		workspace: ctx.cwd,
-		onProgress: updateWidget,
+		onProgress: () => {},
 		modelRegistry: ctx.modelRegistry,
 		settings: pi.pi.settings,
 	});
-	ctx.ui.setWidget(`swarm-${name}`, undefined);
 	ctx.ui.notify(`Swarm subagent ${result.status}: ${task}`, result.status === "completed" ? "info" : "error");
 	pi.sendMessage(
 		{
