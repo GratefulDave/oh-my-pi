@@ -40,7 +40,7 @@ type FakeCustomView = {
 type FakeObserverContext = {
 	hasUI?: boolean;
 	ui: {
-		setWidget?(key: string, content: string[] | undefined): void;
+		setWidget?(key: string, content: any): void;
 	};
 };
 
@@ -260,7 +260,18 @@ describe("pi-observer subagent fan-in", () => {
 			hasUI: true,
 			ui: {
 				setWidget(key, content) {
-					widgetCalls.push({ key, content });
+					if (typeof content === "function") {
+						const mockTheme = {
+							fg: (_c: string, t: string) => t,
+							bold: (t: string) => t,
+							dim: (t: string) => t,
+						};
+						const component = content({}, mockTheme);
+						const lines = component ? component.render(120) : undefined;
+						widgetCalls.push({ key, content: lines });
+					} else {
+						widgetCalls.push({ key, content });
+					}
 				},
 			},
 		};

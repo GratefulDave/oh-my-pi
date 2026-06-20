@@ -155,6 +155,28 @@ describe("job renderer task-result preview", () => {
 			expect(output).toContain("waiting on 2 of 3 jobs");
 		});
 
+		it("renders task-only running poll rows instead of an empty block", () => {
+			const result = {
+				content: [{ type: "text" as const, text: "" }],
+				details: {
+					jobs: [
+						{ id: "Task1", type: "task" as const, status: "running" as const, label: "Task1 running", durationMs: 1200 },
+						{ id: "Task2", type: "task" as const, status: "running" as const, label: "Task2 running", durationMs: 500 },
+					],
+				},
+			};
+			const component = jobToolRenderer.renderResult(
+				result,
+				{ expanded: true, isPartial: true } as Parameters<typeof jobToolRenderer.renderResult>[1],
+				theme,
+				{ poll: [] },
+			);
+			const output = Bun.stripANSI((component.render(120) as readonly string[]).join("\n"));
+			expect(output).toContain("waiting on 2 jobs");
+			expect(output).toContain("Task1 running");
+			expect(output).toContain("Task2 running");
+		});
+
 		it("shows only finished jobs when isPartial is false and it is a poll call", () => {
 			const result = {
 				content: [{ type: "text" as const, text: "" }],

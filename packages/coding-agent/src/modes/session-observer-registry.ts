@@ -7,6 +7,7 @@ export interface ObservableSession {
 	kind: "main" | "subagent";
 	label: string;
 	agent?: string;
+	agentSource?: AgentProgress["agentSource"];
 	description?: string;
 	status: "active" | "completed" | "failed" | "aborted";
 	sessionFile?: string;
@@ -154,6 +155,7 @@ export class SessionObserverRegistry {
 					existing.index = payload.index;
 					existing.parentToolCallId = payload.parentToolCallId ?? existing.parentToolCallId;
 					existing.detached = payload.detached ?? existing.detached;
+					if (payload.agentSource) existing.agentSource = payload.agentSource;
 					if (payload.description) existing.description = payload.description;
 					if (payload.sessionFile) existing.sessionFile = payload.sessionFile;
 				} else {
@@ -162,6 +164,7 @@ export class SessionObserverRegistry {
 						kind: "subagent",
 						label: payload.description ?? `Subagent #${payload.index}`,
 						agent: payload.agent,
+						agentSource: payload.agentSource,
 						description: payload.description,
 						status,
 						sessionFile: payload.sessionFile,
@@ -190,6 +193,7 @@ export class SessionObserverRegistry {
 					existing.parentToolCallId = payload.parentToolCallId ?? existing.parentToolCallId;
 					existing.detached = payload.detached ?? existing.detached;
 					existing.progress = progress;
+					if (payload.agentSource) existing.agentSource = payload.agentSource;
 					if (progress.description) existing.description = progress.description;
 					if (payload.sessionFile) existing.sessionFile = payload.sessionFile;
 				} else {
@@ -198,6 +202,7 @@ export class SessionObserverRegistry {
 						kind: "subagent",
 						label: progress.description ?? `Subagent #${payload.index}`,
 						agent: payload.agent,
+						agentSource: payload.agentSource,
 						description: progress.description,
 						status: "active",
 						sessionFile: payload.sessionFile,

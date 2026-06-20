@@ -526,6 +526,24 @@ function formatOutputInline(data: unknown, theme: Theme, maxWidth = 80): string 
 	return `Output: ${pairs.join(", ")}`;
 }
 
+function cleanTaskDescription(desc: string): string {
+	if (!desc) return "";
+	const fallback = replaceTabs(desc).trim().replace(/\s+/g, " ");
+	const headingRe =
+		/^#{1,6}\s*(target|targets|change|changes|steps|acceptance|acceptance criteria|goal|constraints|contract)\s*:?\s*$/i;
+	const labelRe =
+		/^(target|targets|change|changes|steps|acceptance|acceptance criteria|goal|constraints|contract)\s*:\s*$/i;
+	for (const line of desc.split(/\r?\n/)) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		if (trimmed === "Complete the assignment below, thoroughly:") continue;
+		if (headingRe.test(trimmed)) continue;
+		if (labelRe.test(trimmed)) continue;
+		return replaceTabs(trimmed).replace(/\s+/g, " ");
+	}
+	return fallback;
+}
+
 /**
  * Render the call preview lines for the single spawned agent. The
  * args stream in token by token, so every field access is defensive.
@@ -537,7 +555,7 @@ function renderTaskCallLines(args: Partial<TaskParams> | undefined, theme: Theme
 
 	const rawId = typeof args.id === "string" ? args.id.trim() : "";
 	const idLabel = rawId ? formatTaskId(rawId) : "";
-	const desc = typeof args.description === "string" ? args.description.trim() : "";
+	const desc = typeof args.description === "string" ? cleanTaskDescription(args.description) : "";
 	if (idLabel || desc) {
 		let line = `${bullet} ${theme.fg("accent", theme.bold(idLabel || "agent"))}`;
 		if (desc) {
@@ -572,7 +590,7 @@ function renderTaskItemLines(tasks: TaskItem[] | undefined, theme: Theme): strin
 		const rawId = typeof task?.id === "string" ? task.id.trim() : "";
 		const idLabel = rawId ? formatTaskId(rawId) : `#${i + 1}`;
 		let line = `${bullet} ${theme.fg("accent", theme.bold(idLabel))}`;
-		const desc = typeof task?.description === "string" ? task.description.trim() : "";
+		const desc = typeof task?.description === "string" ? cleanTaskDescription(task.description) : "";
 		if (desc) {
 			line += `: ${theme.fg("muted", truncateToWidth(replaceTabs(desc), 64))}`;
 		}
@@ -707,7 +725,7 @@ function renderAgentProgress(
 				: "accent";
 
 	// Main status line: id: description [status] · stats · ⟨agent⟩
-	const description = progress.description?.trim();
+	const description = progress.description ? cleanTaskDescription(progress.description) : undefined;
 	const displayId = formatTaskId(progress.id);
 	const titlePart = description ? `${theme.bold(displayId)}: ${description}` : displayId;
 	const indent = prefix ? `${prefix} ` : "";
@@ -1029,7 +1047,7 @@ function renderAgentResult(
 					: "failed";
 
 	// Main status line: id: description [status] · stats · ⟨agent⟩
-	const description = result.description?.trim();
+	const description = result.description ? cleanTaskDescription(result.description) : undefined;
 	const displayId = formatTaskId(result.id);
 	const titlePart = description ? `${theme.bold(displayId)}: ${description}` : displayId;
 	let statusLine = `${prefix ? `${prefix} ` : ""}${theme.fg(iconColor, icon)} ${theme.fg(

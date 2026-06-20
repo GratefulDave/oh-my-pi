@@ -71,6 +71,7 @@ export interface SubagentProgressUpdate {
 	lastIntent?: string;
 	recentOutput?: string[];
 	durationMs?: number;
+	requests?: number;
 	contextTokens?: number;
 	contextWindow?: number;
 	resolvedModel?: string;
@@ -111,6 +112,7 @@ export interface SubagentActivity {
 	lastIntent?: string;
 	recentOutput: string[];
 	durationMs: number;
+	requests: number;
 	contextTokens?: number;
 	contextWindow?: number;
 	resolvedModel?: string;
@@ -319,6 +321,7 @@ export function onSubagentProgress(update: SubagentProgressUpdate): void {
 		lastIntent: update.lastIntent ?? existing?.lastIntent,
 		recentOutput: update.recentOutput ?? existing?.recentOutput ?? [],
 		durationMs: update.durationMs ?? existing?.durationMs ?? 0,
+		requests: update.requests ?? existing?.requests ?? 0,
 		contextTokens: update.contextTokens ?? existing?.contextTokens,
 		contextWindow: update.contextWindow ?? existing?.contextWindow,
 		resolvedModel: update.resolvedModel ?? existing?.resolvedModel,
@@ -371,6 +374,7 @@ export function onSubagentLifecycle(
 			description: details.description,
 			recentOutput: [],
 			durationMs: 0,
+			requests: 0,
 			startedAt: now,
 			completedAt: isTerminalStatus(status) ? now : undefined,
 		});

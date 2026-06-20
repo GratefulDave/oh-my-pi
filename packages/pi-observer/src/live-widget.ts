@@ -28,14 +28,11 @@ function renderGroupedAgentLines(
 	theme?: RenderTheme,
 ): string[] {
 	if (agents.length === 0) return [];
-	const lines = theme ? [theme.fg("accent", "● Agents")] : ["● Agents"];
-	let currentGroup = "";
+	const hasActive = agents.some(a => a.status === "running" || a.status === "pending");
+	const headingColor = hasActive ? "accent" : "dim";
+	const headingIcon = hasActive ? "●" : "○";
+	const lines = theme ? [theme.fg(headingColor, `${headingIcon} Agents`)] : [`${headingIcon} Agents`];
 	for (const agent of agents) {
-		const group = getAgentGroupLabel(agent);
-		if (group !== currentGroup) {
-			lines.push(`○ ${group}`);
-			currentGroup = group;
-		}
 		for (const line of renderCompactAgentLines(agent, {
 			width: MAX_LINE_WIDTH - 2,
 			now,
@@ -47,26 +44,3 @@ function renderGroupedAgentLines(
 	return lines;
 }
 
-function getAgentGroupLabel(agent: SubagentActivity): string {
-	const metadata = readChainMetadata(agent);
-	return (
-		metadata.activeChain ?? metadata.teamGroup ?? agent.agentSource ?? agent.task ?? agent.description ?? agent.agent
-	);
-}
-
-function readChainMetadata(agent: SubagentActivity): { activeChain?: string; teamGroup?: string } {
-	const candidates = [agent.inflightTaskDetails, ...((agent.extractedToolData?.task as unknown[] | undefined) ?? [])];
-	for (const candidate of candidates) {
-		if (!candidate || typeof candidate !== "object") continue;
-		const record = candidate as Record<string, unknown>;
-		const activeChain = readString(record.activeChain) ?? readString(record.chainId);
-		if (activeChain) return { activeChain };
-		const teamGroup = readString(record.teamGroup);
-		if (teamGroup) return { teamGroup };
-	}
-	return {};
-}
-
-function readString(value: unknown): string | undefined {
-	return typeof value === "string" && value.length > 0 ? value : undefined;
-}

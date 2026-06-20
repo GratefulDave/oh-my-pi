@@ -1,3 +1,4 @@
+import { replaceTabs } from "@oh-my-pi/pi-tui";
 import type { IrcMessageActivity, ObserverStats, SubagentActivity, SubagentStatus } from "./stats-collector";
 
 declare const process:
@@ -104,11 +105,24 @@ function tinted(theme: RenderTheme | undefined, tint: string, text: string): str
 	}
 }
 
-export function padTintedLine(text: string, width: number, tint = CYAN_TINT): string {
+function padLine(text: string, width: number): string {
 	const available = Math.max(0, width - 2);
 	const paddedText = ` ${truncateVisible(text, available)} `;
 	const padding = Math.max(0, width - visibleWidth(paddedText));
-	return `${tint}${paddedText}${" ".repeat(padding)}${RESET}`;
+	return `${paddedText}${" ".repeat(padding)}`;
+}
+
+function tintPaddedLine(
+	theme: RenderTheme | undefined,
+	color: "accent" | "success" | "error" | "muted",
+	text: string,
+	width: number,
+	fallbackTint: string,
+): string {
+	const paddedText = padLine(text, width);
+	if (fallbackTint === SELECT_TINT) return `${SELECT_TINT}${paddedText}${RESET}`;
+	if (theme) return theme.fg(color, paddedText);
+	return `${fallbackTint}${paddedText}${RESET}`;
 }
 
 export class SubagentRenderer {
@@ -170,31 +184,31 @@ export class SubagentRenderer {
 		const theme = options.theme;
 		if (agent.status === "running") {
 			const header = `▶ [${role}] ${label}`;
-			const tint = selected ? SELECT_TINT : (theme ? theme.fg("accent", "") : CYAN_TINT);
+			const tint = selected ? SELECT_TINT : CYAN_TINT;
 			return [
-				padTintedLine(header, options.width, tint),
+				tintPaddedLine(theme, "accent", header, options.width, tint),
 				truncateVisible(`${CHILD_PREFIX}Running in background (ID: ${agent.id})`, options.width),
 				truncateVisible(`${CHILD_PREFIX}${describeState(agent)}`, options.width),
 			];
 		}
 		if (agent.status === "completed") {
 			const header = `✔ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`;
-			const tint = selected ? SELECT_TINT : (theme ? theme.fg("success", "") : GREEN_TINT);
-			return [padTintedLine(header, options.width, tint)];
+			const tint = selected ? SELECT_TINT : GREEN_TINT;
+			return [tintPaddedLine(theme, "success", header, options.width, tint)];
 		}
 		if (agent.status === "failed" || agent.status === "aborted") {
 			const header = `✗ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`;
 			const state = agent.failureReason ?? agent.retryFailure?.errorMessage;
-			const tint = selected ? SELECT_TINT : (theme ? theme.fg("error", "") : RED_TINT);
+			const tint = selected ? SELECT_TINT : RED_TINT;
 			return state
 				? [
-						padTintedLine(header, options.width, tint),
+						tintPaddedLine(theme, "error", header, options.width, tint),
 						truncateVisible(`${CHILD_PREFIX}${state}`, options.width),
 					]
-				: [padTintedLine(header, options.width, tint)];
+				: [tintPaddedLine(theme, "error", header, options.width, tint)];
 		}
-		const tint = selected ? SELECT_TINT : (theme ? theme.fg("muted", "") : DIM_TINT);
-		return [padTintedLine(`◇ [${role}] ${label}`, options.width, tint)];
+		const tint = selected ? SELECT_TINT : DIM_TINT;
+		return [tintPaddedLine(theme, "muted", `◇ [${role}] ${label}`, options.width, tint)];
 	}
 }
 
@@ -293,8 +307,28 @@ function clampIndex(index: number, length: number): number {
 	return index;
 }
 
+export function cleanTaskDescription(desc: string): string {
+	if (!desc) return "";
+	const fallback = replaceTabs(desc).trim().replace(/\s+/g, " ");
+	const headingRe =
+		/^#{1,6}\s*(target|targets|change|changes|steps|acceptance|acceptance criteria|goal|constraints|contract)\s*:?\s*$/i;
+	const labelRe =
+		/^(target|targets|change|changes|steps|acceptance|acceptance criteria|goal|constraints|contract)\s*:\s*$/i;
+	for (const line of desc.split(/\r?\n/)) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		if (trimmed === "Complete the assignment below, thoroughly:") continue;
+		if (headingRe.test(trimmed)) continue;
+		if (labelRe.test(trimmed)) continue;
+		return replaceTabs(trimmed).replace(/\s+/g, " ");
+	}
+	return fallback;
+}
+
+
 function formatLabel(agent: SubagentActivity): string {
-	return agent.description ?? agent.task ?? agent.assignment ?? agent.id;
+	const raw = agent.description ?? agent.task ?? agent.assignment ?? agent.id;
+	return cleanTaskDescription(raw);
 }
 
 function formatRole(agent: SubagentActivity): string {
@@ -310,21 +344,58 @@ export function renderCompactAgentLines(
 	const elapsedMs = resolveDurationMs(agent, options.now);
 	const theme = options.theme;
 	if (agent.status === "running") {
+		const COMPACT_CHILD_PREFIX = "  ⎿  ";
 		const frame = SPINNER_FRAMES[(options.spinnerFrame ?? Math.floor(options.now / 120)) % SPINNER_FRAMES.length];
+		const roleDisplay = agent.agent.charAt(0).toUpperCase() + agent.agent.slice(1);
+		const reqPart = agent.requests > 0 ? `↻${agent.requests}` : undefined;
+		const pctPart =
+			agent.contextTokens && agent.contextWindow
+				? ` (${Math.round((agent.contextTokens / agent.contextWindow) * 100)}%)`
+				: "";
+		const tokPart = `${(agent.tokens / 1000).toFixed(1)}k tok${pctPart}`;
+		const toolPart = `${agent.toolCount} tool use${agent.toolCount === 1 ? "" : "s"}`;
+		const durPart = formatDurationCompact(elapsedMs);
+		if (theme) {
+			const frameStr = theme.fg("accent", frame);
+			const roleStr = theme.fg("dim", roleDisplay);
+			const labelStr = theme.fg("muted", label);
+			const dotStr = theme.fg("dim", "·");
+			const segments: string[] = [`${frameStr} ${roleStr}  ${labelStr}`];
+			if (reqPart) segments.push(theme.fg("dim", reqPart));
+			segments.push(
+				theme.fg("dim", toolPart),
+				theme.fg("dim", tokPart),
+				theme.fg("dim", durPart),
+			);
+			const line1 = segments.join(` ${dotStr} `);
+			const line2 = `${theme.fg("dim", COMPACT_CHILD_PREFIX)}${theme.fg("dim", describeState(agent))}`;
+			return [
+				truncateVisible(line1, options.width),
+				truncateVisible(line2, options.width),
+			];
+		}
+		const segmentsPlain: string[] = [`${frame} ${roleDisplay}  ${label}`];
+		if (reqPart) segmentsPlain.push(reqPart);
+		segmentsPlain.push(toolPart, tokPart, durPart);
 		return [
-			truncateVisible(`${frame} [${agent.agent}] ${label} · ${Math.floor(elapsedMs / 1000)}s`, options.width),
-			truncateVisible(`${CHILD_PREFIX}${describeState(agent)}`, options.width),
+			truncateVisible(segmentsPlain.join(" · "), options.width),
+			truncateVisible(`  ⎿  ${describeState(agent)}`, options.width),
 		];
 	}
 	if (agent.status === "completed") {
-		const line = `✔ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`;
+		const line = `✔ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatDurationCompact(elapsedMs)}`;
 		return [tinted(theme, "success", line)];
 	}
 	if (agent.status === "failed" || agent.status === "aborted") {
-		const line = `✗ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`;
+		const line = `✗ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatDurationCompact(elapsedMs)}`;
 		const header = tinted(theme, "error", line);
 		const state = agent.failureReason ?? agent.retryFailure?.errorMessage;
-		return state ? [header, truncateVisible(`${CHILD_PREFIX}${state}`, options.width)] : [header];
+		if (state) {
+			const childPrefixStr = theme ? theme.fg("dim", CHILD_PREFIX) : CHILD_PREFIX;
+			const stateStr = theme ? theme.fg("dim", state) : state;
+			return [header, truncateVisible(`${childPrefixStr}${stateStr}`, options.width)];
+		}
+		return [header];
 	}
 	return [tinted(theme, "muted", `◇ [${role}] ${label}`)];
 }
@@ -358,6 +429,13 @@ function formatTokens(tokens: number): string {
 
 function formatSeconds(ms: number): string {
 	return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function formatDurationCompact(ms: number): string {
+	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+	const m = Math.floor(ms / 60_000);
+	const s = Math.floor((ms % 60_000) / 1000);
+	return `${m}m${s}s`;
 }
 
 function formatDollar(value: number): string {
@@ -413,6 +491,7 @@ function createMockStats(now: number): ObserverStats {
 					recentOutput: ["patched renderer"],
 					durationMs: 0,
 					startedAt: now,
+					requests: 0,
 					resolvedModel: "anthropic/claude-sonnet-4",
 				},
 			],
@@ -431,6 +510,7 @@ function createMockStats(now: number): ObserverStats {
 					recentOutput: [],
 					durationMs: 0,
 					startedAt: now,
+					requests: 0,
 				},
 			],
 		]),

@@ -155,7 +155,7 @@ export interface ExtensionUIDialogOptions {
 /** Raw terminal input listener for extensions. */
 export type TerminalInputHandler = (data: string) => { consume?: boolean; data?: string } | undefined;
 
-export type WidgetPlacement = "aboveEditor" | "belowEditor";
+export type WidgetPlacement = "aboveEditor" | "belowEditor" | "subagentHud";
 
 export interface ExtensionWidgetOptions {
 	placement?: WidgetPlacement;

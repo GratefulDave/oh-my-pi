@@ -34,6 +34,7 @@ function makeSubagent(
 		index: 0,
 		recentOutput: [],
 		durationMs: 0,
+		requests: 0,
 		startedAt: NOW - 12_000,
 		...update,
 	};
@@ -189,9 +190,41 @@ describe("diagnostic renderers", () => {
 
 		const lines = renderLiveObserverWidgetLines(NOW)?.map(stripAnsi);
 		expect(lines?.[0]).toBe("● Agents");
-		expect(lines).toContain("○ Build dashboard");
-		expect(lines?.some(line => line.startsWith("  ⠋ [executor] Build dashboard · "))).toBe(true);
-		expect(lines).toContain("    └ using edit");
+		expect(lines?.some(line => line.includes("[executor]"))).toBe(false);
+		expect(lines?.some(line => line.includes("Executor  Build dashboard"))).toBe(true);
+		expect(lines?.some(line => line.includes("⎿"))).toBe(true);
+		expect(lines?.some(line => line.includes("using edit"))).toBe(true);
+	});
+
+	test("renders new running row format in renderCompactAgentLines", () => {
+		const agent: SubagentActivity = {
+			id: "a1",
+			agent: "task",
+			status: "running" as const,
+			tokens: 33800,
+			toolCount: 5,
+			requests: 5,
+			contextTokens: 62000,
+			contextWindow: 100000,
+			durationMs: 12300,
+			lastIntent: "editing 2 files",
+			recentOutput: [],
+			cost: 0,
+			index: 0,
+			lastUpdate: NOW,
+			startedAt: NOW - 12300,
+		};
+		const { renderCompactAgentLines } = require("../src/renderer");
+		const lines = renderCompactAgentLines(agent, { width: 120, now: NOW }).map(stripAnsi);
+		const row = lines[0];
+		expect(row).toContain("↻5");
+		expect(row).toContain("5 tool uses");
+		expect(row).toContain("33.8k tok");
+		expect(row).toContain("(62%)");
+		expect(row).toContain("12.3s");
+		expect(row).not.toContain("[task]");
+		expect(lines[1]).toContain("⎿");
+		expect(lines[1]).toContain("editing 2 files");
 	});
 
 	test("compact live widget groups agents by chain label and keeps active rows first", () => {
@@ -228,11 +261,36 @@ describe("diagnostic renderers", () => {
 		});
 
 		const lines = renderLiveObserverWidgetLines(NOW)?.map(stripAnsi) ?? [];
-		expect(lines).toContain("○ team-alpha");
-		expect(lines).toContain("○ Solo follow-up");
+		expect(lines).not.toContain("○ team-alpha");
+		expect(lines).not.toContain("○ Solo follow-up");
 		expect(lines.findIndex(line => line.includes("Build dashboard"))).toBeLessThan(
 			lines.findIndex(line => line.includes("Review dashboard")),
 		);
+	});
+
+
+	test("themed full-width rows do not leak extra reset codes", () => {
+		const renderer = new SubagentRenderer();
+		const stats = makeStats([
+			makeSubagent({
+				id: "done-2",
+				agent: "reviewer",
+				status: "completed",
+				task: "Review dashboard",
+				tokens: 800,
+				toolCount: 2,
+				durationMs: 1400,
+			}),
+		]);
+		const theme = {
+			fg: (_color: string, text: string) => `\u001b[35m${text}\u001b[0m`,
+			bold: (text: string) => text,
+			dim: (text: string) => text,
+		};
+
+		const lines = renderer.render(stats, { width: 80, now: NOW, theme }).lines;
+		expect(lines).toHaveLength(2);
+		expect(lines[1]?.match(/\x1b\[0m/g)?.length ?? 0).toBe(1);
 	});
 
 	test("pure observer hierarchy orders phase groups and nested task nodes", () => {

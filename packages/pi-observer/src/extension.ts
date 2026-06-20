@@ -5,7 +5,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { DEFAULT_REFRESH_INTERVAL_MS, ObserverDashboard } from "./dashboard";
-import { type RenderOptions, renderJobResult, type ThemeLike, type ToolResult } from "./job-renderer";
 import { renderLiveObserverWidgetLines } from "./live-widget";
 import { type RenderTheme } from "./renderer";
 import {
@@ -84,6 +83,7 @@ type SubagentProgressSnapshot = {
 	tokens?: number;
 	toolCount?: number;
 	cost?: number;
+	requests?: number;
 	index?: number;
 	task?: string;
 	assignment?: string;
@@ -167,7 +167,7 @@ type ExtensionCommandContext = {
 	cwd: string;
 	ui: {
 		setEditorText(text: string): void;
-		setWidget?(key: string, content: string[] | undefined): void;
+		setWidget?(key: string, content: string[] | undefined, options?: { placement?: "subagentHud" }): void;
 		custom<T>(
 			factory: (
 				tui: { requestRender(): void; terminal?: { rows: number } },
@@ -195,14 +195,6 @@ type ExtensionAPI = {
 	registerCommand(
 		name: string,
 		command: { description: string; handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> | void },
-	): void;
-	registerToolRenderer?(
-		toolName: string,
-		renderer: {
-			inline?: boolean;
-			mergeCallAndResult?: boolean;
-			renderResult?: (result: ToolResult, options: RenderOptions, theme: ThemeLike) => unknown;
-		},
 	): void;
 };
 
@@ -352,7 +344,14 @@ export default function observer(pi: ExtensionAPI): void {
 	const refreshLiveWidget = (ctx?: ExtensionCommandContext) => {
 		if (ctx) widgetContext = ctx;
 		if (!widgetContext?.hasUI || !widgetContext.ui.setWidget) return;
-		widgetContext.ui.setWidget(widgetKey, renderLiveObserverWidgetLines(Date.now(), cachedTheme));
+
+		const lines = renderLiveObserverWidgetLines(Date.now(), cachedTheme);
+		if (!lines || lines.length === 0) {
+			widgetContext.ui.setWidget(widgetKey, undefined);
+			return;
+		}
+
+		widgetContext.ui.setWidget(widgetKey, lines, { placement: "subagentHud" });
 	};
 
 	// Hook into agent lifecycle events.
@@ -407,6 +406,7 @@ export default function observer(pi: ExtensionAPI): void {
 			lastIntent: progress.lastIntent,
 			recentOutput: progress.recentOutput,
 			durationMs: progress.durationMs,
+			requests: progress.requests,
 			contextTokens: progress.contextTokens,
 			contextWindow: progress.contextWindow,
 			resolvedModel: progress.resolvedModel,
@@ -457,12 +457,6 @@ export default function observer(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.registerToolRenderer?.("job", {
-		inline: true,
-		mergeCallAndResult: true,
-		renderResult: (result: ToolResult, options: RenderOptions, theme: ThemeLike) =>
-			renderJobResult(result, options, theme),
-	});
 
 	// Register /observe slash command.
 	pi.registerCommand("observe", {

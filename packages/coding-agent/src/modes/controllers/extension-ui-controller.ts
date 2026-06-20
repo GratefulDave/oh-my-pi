@@ -37,10 +37,28 @@ import { setSessionTerminalTitle, setTerminalTitle } from "../../utils/title-gen
 
 const MAX_WIDGET_LINES = 10;
 
+function capWidgetLines(lines: readonly string[]): readonly string[] {
+	if (lines.length <= MAX_WIDGET_LINES) return lines;
+	return [...lines.slice(0, MAX_WIDGET_LINES), theme.fg("muted", "... (widget truncated)")];
+}
+
+class CappedWidgetComponent implements ExtensionUiComponent {
+	constructor(private readonly inner: ExtensionUiComponent) {}
+
+	render(width: number): readonly string[] {
+		return capWidgetLines(this.inner.render(width));
+	}
+
+	dispose(): void {
+		this.inner.dispose?.();
+	}
+}
+
 export class ExtensionUiController {
 	#extensionTerminalInputUnsubscribers = new Set<() => void>();
 	#hookWidgetsAbove = new Map<string, ExtensionUiComponent>();
 	#hookWidgetsBelow = new Map<string, ExtensionUiComponent>();
+	#hookWidgetsSubagent = new Map<string, ExtensionUiComponent>();
 	// Single-file dialog surface (`editorContainer` + focus) is shared by the
 	// selector / input / editor modals, so only one may be presented at a time;
 	// the rest queue. See `#presentDialog`.
@@ -265,17 +283,31 @@ export class ExtensionUiController {
 
 	setHookWidget(key: string, content: ExtensionWidgetContent, options?: ExtensionWidgetOptions): void {
 		const placement = options?.placement ?? "aboveEditor";
+		const hadSubagentHud = this.#hookWidgetsSubagent.size > 0;
 		this.#removeHookWidget(this.#hookWidgetsAbove, key);
 		this.#removeHookWidget(this.#hookWidgetsBelow, key);
+		this.#removeHookWidget(this.#hookWidgetsSubagent, key);
 
 		if (content === undefined) {
 			this.#rebuildHookWidgets();
+			if (hadSubagentHud && this.#hookWidgetsSubagent.size === 0) {
+				this.ctx.refreshSubagentHud();
+			}
 			return;
 		}
 
-		const target = placement === "belowEditor" ? this.#hookWidgetsBelow : this.#hookWidgetsAbove;
+		const target =
+			placement === "belowEditor"
+				? this.#hookWidgetsBelow
+				: placement === "subagentHud"
+					? this.#hookWidgetsSubagent
+					: this.#hookWidgetsAbove;
 		target.set(key, this.#createHookWidget(content));
 		this.#rebuildHookWidgets();
+	}
+
+	hasSubagentHudWidget(): boolean {
+		return this.#hookWidgetsSubagent.size > 0;
 	}
 
 	#removeHookWidget(widgets: Map<string, ExtensionUiComponent>, key: string): void {
@@ -287,23 +319,21 @@ export class ExtensionUiController {
 	#createHookWidget(content: ExtensionWidgetContent): ExtensionUiComponent {
 		if (Array.isArray(content)) {
 			const container = new Container();
-			for (const line of content.slice(0, MAX_WIDGET_LINES)) {
+			for (const line of capWidgetLines(content)) {
 				container.addChild(new Text(line, 1, 0));
-			}
-			if (content.length > MAX_WIDGET_LINES) {
-				container.addChild(new Text(theme.fg("muted", "... (widget truncated)"), 1, 0));
 			}
 			return container;
 		}
 		if (content === undefined) {
 			throw new Error("Widget content missing");
 		}
-		return content(this.ctx.ui, theme);
+		return new CappedWidgetComponent(content(this.ctx.ui, theme));
 	}
 
 	#rebuildHookWidgets(): void {
 		this.#renderHookWidgetContainer(this.ctx.hookWidgetContainerAbove, this.#hookWidgetsAbove, true, true);
 		this.#renderHookWidgetContainer(this.ctx.hookWidgetContainerBelow, this.#hookWidgetsBelow, false, false);
+		this.#renderHookWidgetContainer(this.ctx.subagentContainer, this.#hookWidgetsSubagent, false, false);
 		this.ctx.ui.requestRender();
 	}
 
@@ -780,15 +810,23 @@ export class ExtensionUiController {
 	}
 
 	clearHookWidgets(): void {
+		const hadSubagentHud = this.#hookWidgetsSubagent.size > 0;
 		for (const widget of this.#hookWidgetsAbove.values()) {
 			widget.dispose?.();
 		}
 		for (const widget of this.#hookWidgetsBelow.values()) {
 			widget.dispose?.();
 		}
+		for (const widget of this.#hookWidgetsSubagent.values()) {
+			widget.dispose?.();
+		}
 		this.#hookWidgetsAbove.clear();
 		this.#hookWidgetsBelow.clear();
+		this.#hookWidgetsSubagent.clear();
 		this.#rebuildHookWidgets();
+		if (hadSubagentHud) {
+			this.ctx.refreshSubagentHud();
+		}
 	}
 
 	clearExtensionTerminalInputListeners(): void {

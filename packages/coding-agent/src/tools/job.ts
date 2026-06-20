@@ -464,15 +464,18 @@ export const jobToolRenderer = {
 	): Component {
 		let jobs = result.details?.jobs ?? [];
 
+		const isPollCall = args
+			? !args.list && (!args.cancel || args.cancel.length === 0 || args.poll !== undefined)
+			: true;
+
 		if (jobs.length === 0) {
+			if (isPollCall) {
+				return new Text("", 0, 0);
+			}
 			const fallback = result.content?.find(c => c.type === "text")?.text || "No jobs to process";
 			const header = renderStatusLine({ icon: "warning", title: describeTarget(args) || "Job" }, uiTheme);
 			return new Text([header, formatEmptyMessage(fallback, uiTheme)].join("\n"), 0, 0);
 		}
-
-		const isPollCall = args
-			? !args.list && (!args.cancel || args.cancel.length === 0 || args.poll !== undefined)
-			: true;
 
 		if (!options.isPartial && isPollCall) {
 			jobs = jobs.filter(job => job.status !== "running");

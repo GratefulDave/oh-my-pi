@@ -123,6 +123,8 @@ export interface InteractiveModeContext {
 	unfocusSession(): Promise<void>;
 	/** Clear loader, status/pending containers, streaming state, and pending tools. */
 	clearTransientSessionUi(): void;
+	/** Re-render the anchored subagent HUD container. */
+	refreshSubagentHud(): void;
 	settings: Settings;
 	keybindings: KeybindingsManager;
 	agent: AgentSession["agent"];

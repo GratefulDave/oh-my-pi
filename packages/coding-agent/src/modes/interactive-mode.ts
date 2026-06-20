@@ -154,8 +154,7 @@ import {
 	parseLoopLimitArgs,
 } from "./loop-limit";
 import { OAuthManualInputManager } from "./oauth-manual-input";
-import type { ObservableSession } from "./session-observer-registry";
-import { SessionObserverRegistry } from "./session-observer-registry";
+import { type ObservableSession, SessionObserverRegistry } from "./session-observer-registry";
 import { runProviderSetupWizard } from "./setup-wizard/lazy";
 import { interruptHint } from "./shared";
 import { clearMermaidCache } from "./theme/mermaid-cache";
@@ -324,45 +323,118 @@ class StatusContainer extends Container implements NativeScrollbackLiveRegion {
  *  before it auto-clears, mirroring the todo HUD's auto-clear timer. */
 const MODEL_CYCLE_TRACK_CLEAR_MS = 4000;
 
-/**
- * Build the anchored subagent HUD block: a bold accent "Subagents" header plus
- * one hooked row per running agent in the same `Id: description` shape the
- * inline task rows use (muted task preview when no description was given).
- * Only detached background spawns are listed: a sync task call blocks the
- * parent turn and its inline tool block already renders progress live, and
- * eval `agent()` spawns are rendered by their own eval cell tree.
- * Returns an empty array when nothing is running so the container can clear.
- */
-export function renderSubagentHudLines(sessions: ObservableSession[], columns: number): string[] {
-	const running = sessions.filter(
-		session => session.kind === "subagent" && session.status === "active" && session.detached === true,
-	);
-	if (running.length === 0) return [];
+const SUBAGENT_HUD_VISIBLE_ROWS = 6;
+const TASK_SCAFFOLD_HEADING_RE =
+	/^#{1,6}\s*(target|targets|change|changes|steps|acceptance|acceptance criteria|goal|constraints|contract)\s*:?\s*$/i;
+const TASK_SCAFFOLD_LABEL_RE =
+	/^(target|targets|change|changes|steps|acceptance|acceptance criteria|goal|constraints|contract)\s*:\s*$/i;
 
-	const indent = "  ";
-	const hook = theme.tree.hook;
-	const dot = theme.styledSymbol("status.done", "accent");
-	const lines = ["", indent + theme.bold(theme.fg("accent", "Agents"))];
-	running.forEach((session, index) => {
-		const prefix = `${indent}${index === 0 ? hook : " "} `;
-		const displayId = formatTaskId(session.id);
-		let line = `${prefix}${dot} ${theme.fg("accent", theme.bold(displayId))}`;
-		const description = session.description?.trim() || session.progress?.description?.trim();
-		if (description) {
-			const budget = Math.max(TRUNCATE_LENGTHS.SHORT, columns - visibleWidth(prefix) - visibleWidth(displayId) - 6);
-			line += `${theme.fg("accent", ":")} ${theme.fg("accent", truncateToWidth(replaceTabs(description), budget))}`;
-		} else {
-			// No spawn description: fall back to a muted task preview, same as
-			// the inline task rows when a row has no label.
-			const taskPreview = session.progress?.task?.trim();
-			if (taskPreview) {
-				line += ` ${theme.fg("muted", truncateToWidth(replaceTabs(taskPreview), TRUNCATE_LENGTHS.SHORT))}`;
+function cleanSubagentHudLabel(text: string | undefined): string {
+	if (!text) return "";
+	const fallback = text.trim().replace(/\s+/g, " ");
+	for (const line of text.split(/\r?\n/)) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		if (trimmed === "Complete the assignment below, thoroughly:") continue;
+		if (TASK_SCAFFOLD_HEADING_RE.test(trimmed)) continue;
+		if (TASK_SCAFFOLD_LABEL_RE.test(trimmed)) continue;
+		return trimmed.replace(/\s+/g, " ");
+	}
+	return fallback;
+}
+
+export function renderSubagentHudLines(sessions: ObservableSession[], columns: number): string[] {
+	const detached = sessions.filter(
+		(session): session is ObservableSession & { kind: "subagent"; detached: true } =>
+			session.kind === "subagent" && session.detached === true,
+	);
+	if (detached.length === 0) return [];
+
+	const visible = detached.slice(-SUBAGENT_HUD_VISIBLE_ROWS);
+	const hiddenCount = detached.length - visible.length;
+	const hasActive = detached.some(session => session.status === "active");
+	const headerColor = hasActive ? "accent" : "muted";
+	const rowWidth = Math.max(TRUNCATE_LENGTHS.SHORT, columns - 4);
+	const childWidth = Math.max(TRUNCATE_LENGTHS.SHORT, columns - 6);
+	const lines = ["", `  ${theme.bold(theme.fg(headerColor, `${hasActive ? "●" : "○"} Agents`))}`];
+
+	for (const session of visible) {
+		const progress = session.progress;
+
+		const statusGlyph =
+			session.status === "completed"
+				? theme.fg("success", theme.status.done)
+				: session.status === "failed"
+					? theme.fg("error", theme.status.error)
+					: session.status === "aborted"
+						? theme.fg("warning", theme.status.aborted)
+						: theme.fg("accent", theme.status.running);
+		const agentLabel = cleanSubagentHudLabel(
+			[session.agent, progress?.resolvedModel].filter((value): value is string => Boolean(value)).join(" "),
+		);
+		const rawLabel =
+			cleanSubagentHudLabel(session.description ?? progress?.description ?? progress?.task ?? session.label) ||
+			formatTaskId(session.id);
+		const toolCount = progress?.toolCount ?? 0;
+		const requests = progress?.requests;
+		const reqLabel =
+			requests !== undefined && requests > 0
+				? theme.fg("dim", `↻${formatNumber(requests)}`)
+				: undefined;
+		const tokenPct =
+			progress?.contextTokens && progress.contextWindow
+				? ` (${Math.round((progress.contextTokens / progress.contextWindow) * 100)}%)`
+				: "";
+		const tokenLabel =
+			progress?.contextTokens && progress.contextWindow
+				? `${formatContextTokenCount(progress.contextTokens)}/${formatContextTokenCount(progress.contextWindow)}${tokenPct}`
+				: `${formatContextTokenCount(progress?.tokens ?? 0)} tok`;
+		const durationMs = progress?.durationMs ?? 0;
+		const durLabel =
+			durationMs < 60_000
+				? `${(durationMs / 1000).toFixed(1)}s`
+				: `${Math.floor(durationMs / 60_000)}m${Math.floor((durationMs % 60_000) / 1000)}s`;
+		const parts: string[] = [
+			`${statusGlyph} ${theme.fg("dim", `[${replaceTabs(agentLabel || session.agent || "agent")}]`)}`,
+			theme.fg("accent", replaceTabs(rawLabel)),
+		];
+		if (reqLabel) parts.push(reqLabel);
+		parts.push(
+			theme.fg("dim", `${formatNumber(toolCount)} tool use${toolCount === 1 ? "" : "s"}`),
+			theme.fg("dim", tokenLabel),
+			theme.fg("dim", durLabel),
+		);
+		const line = parts.join(` ${theme.sep.dot} `);
+		lines.push(`    ${truncateToWidth(line, rowWidth)}`);
+
+		if (session.status === "active") {
+			const detailParts: string[] = [];
+			if (progress?.currentTool) {
+				const elapsed =
+					progress.currentToolStartMs && progress.currentToolStartMs > 0
+						? ` (${formatDuration(Date.now() - progress.currentToolStartMs)})`
+						: "";
+				detailParts.push(`${progress.currentTool}${elapsed}`);
+			}
+			if (progress?.lastIntent) detailParts.push(progress.lastIntent);
+			if (detailParts.length > 0) {
+				lines.push(
+					`      ${truncateToWidth(
+						theme.fg("dim", `${theme.tree.hook} ${replaceTabs(detailParts.join(` ${theme.sep.dot} `))}`),
+						childWidth,
+					)}`,
+				);
 			}
 		}
-		lines.push(line);
-	});
+	}
+
+	if (hiddenCount > 0) {
+		lines.push(`  ${theme.fg("dim", `… ${formatNumber(hiddenCount)} more agents`)}`);
+	}
+
 	return lines;
 }
+
 
 export class InteractiveMode implements InteractiveModeContext {
 	session: AgentSession;
@@ -1648,9 +1720,14 @@ export class InteractiveMode implements InteractiveModeContext {
 	 */
 	#renderSubagentList(): void {
 		this.subagentContainer.clear();
+		if (this.#extensionUiController.hasSubagentHudWidget()) return;
 		const lines = renderSubagentHudLines(this.#observerRegistry.getSessions(), this.ui.terminal.columns);
 		if (lines.length === 0) return;
 		this.subagentContainer.addChild(new Text(lines.join("\n"), 1, 0));
+	}
+
+	refreshSubagentHud(): void {
+		this.#renderSubagentList();
 	}
 
 	async #loadTodoList(): Promise<void> {
