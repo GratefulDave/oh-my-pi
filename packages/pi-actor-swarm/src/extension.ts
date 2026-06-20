@@ -149,9 +149,11 @@ export default function actorSwarm(pi: ExtensionAPI): void {
 				createdAt: Date.now(),
 				staleAgentTtlMs,
 			});
-			ctx.ui.setEditorText(
-				`Swarm "${name}" initialized with ${DEFAULT_AGENTS.length} agents (${routingPolicy} routing).\n\nUse /swarm-status to view, /swarm-send <agent> <message> to coordinate.`,
-			);
+			ctx.sendMessage?.({
+				customType: "swarm-init",
+				content: `Swarm "${name}" initialized with ${DEFAULT_AGENTS.length} agents (${routingPolicy} routing).\n\nUse /swarm-status to view, /swarm-send <agent> <message> to coordinate.`,
+				display: true,
+			});
 		},
 	});
 
@@ -162,11 +164,9 @@ export default function actorSwarm(pi: ExtensionAPI): void {
 			setProjectRoot(ctx.cwd);
 			const cfg = getConfig();
 			if (!cfg) {
-				ctx.ui.setEditorText("No active swarm. Use /swarm-init to create one.");
+				ctx.ui.notify("No active swarm. Use /swarm-init to create one.", "error");
 				return;
 			}
-
-			ctx.ui.setEditorText("");
 
 			await ctx.ui.custom<void>(
 				(tui, theme, _keybindings, done) => {
@@ -189,17 +189,20 @@ export default function actorSwarm(pi: ExtensionAPI): void {
 			setProjectRoot(ctx.cwd);
 			const cfg = getConfig();
 			if (!cfg) {
-				ctx.ui.setEditorText("No active swarm. Use /swarm-init to create one.");
+				ctx.ui.notify("No active swarm. Use /swarm-init to create one.", "error");
 				return;
 			}
 
 			// Parse: first token is agent ID, rest is message
 			const spaceIdx = args.indexOf(" ");
 			if (spaceIdx < 0) {
-				ctx.ui.setEditorText(
-					"Usage: /swarm-send <agent-id> <message>\n\nAvailable agents:\n" +
+				ctx.sendMessage?.({
+					customType: "swarm-send-usage",
+					content:
+						"Usage: /swarm-send <agent-id> <message>\n\nAvailable agents:\n" +
 						cfg.agents.map(a => `  ${a.id} (${a.role}) — ${a.state}`).join("\n"),
-				);
+					display: true,
+				});
 				return;
 			}
 
@@ -207,15 +210,17 @@ export default function actorSwarm(pi: ExtensionAPI): void {
 			const message = args.slice(spaceIdx + 1).trim();
 
 			if (!message) {
-				ctx.ui.setEditorText(`Usage: /swarm-send ${agentId} <message>`);
+				ctx.ui.notify(`Usage: /swarm-send ${agentId} <message>`, "error");
 				return;
 			}
 
 			const agent = cfg.agents.find(a => a.id === agentId);
 			if (!agent) {
-				ctx.ui.setEditorText(
-					`Unknown agent "${agentId}". Available:\n${cfg.agents.map(a => `  ${a.id} (${a.role})`).join("\n")}`,
-				);
+				ctx.sendMessage?.({
+					customType: "swarm-send-error",
+					content: `Unknown agent "${agentId}". Available:\n${cfg.agents.map(a => `  ${a.id} (${a.role})`).join("\n")}`,
+					display: true,
+				});
 				return;
 			}
 
@@ -227,9 +232,11 @@ export default function actorSwarm(pi: ExtensionAPI): void {
 				priority: "normal",
 			});
 
-			ctx.ui.setEditorText(
-				`Message ${msg.id} sent to ${agentId}.\n\nUse /swarm-status to view the swarm dashboard.`,
-			);
+			ctx.sendMessage?.({
+				customType: "swarm-send",
+				content: `Message ${msg.id} sent to ${agentId}.\n\nUse /swarm-status to view the swarm dashboard.`,
+				display: true,
+			});
 		},
 	});
 
@@ -240,11 +247,11 @@ export default function actorSwarm(pi: ExtensionAPI): void {
 			setProjectRoot(ctx.cwd);
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
 			if (tokens[0] !== "export") {
-				ctx.ui.setEditorText("Usage: /swarm-logs export [path]");
+				ctx.ui.notify("Usage: /swarm-logs export [path]", "error");
 				return;
 			}
 			const outputPath = exportSwarmLogs(tokens[1]);
-			ctx.ui.setEditorText(`Swarm logs exported to ${outputPath}`);
+			ctx.sendMessage?.({ customType: "swarm-logs", content: `Swarm logs exported to ${outputPath}`, display: true });
 		},
 	});
 
@@ -254,7 +261,7 @@ export default function actorSwarm(pi: ExtensionAPI): void {
 		handler: async (_args, ctx) => {
 			setProjectRoot(ctx.cwd);
 			clearSwarm();
-			ctx.ui.setEditorText("Swarm cleared.");
+			ctx.sendMessage?.({ customType: "swarm-reset", content: "Swarm cleared.", display: true });
 		},
 	});
 }
