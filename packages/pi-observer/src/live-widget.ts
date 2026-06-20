@@ -1,4 +1,4 @@
-import { getOrderedSubagents, IrcRenderer, renderCompactAgentLines } from "./renderer";
+import { getOrderedSubagents, IrcRenderer, RenderTheme, renderCompactAgentLines } from "./renderer";
 import { getStats, type SubagentActivity } from "./stats-collector";
 
 const MAX_AGENT_ROWS = 6;
@@ -7,11 +7,11 @@ const MAX_LINE_WIDTH = 120;
 
 const ircRenderer = new IrcRenderer();
 
-export function renderLiveObserverWidgetLines(now = Date.now()): string[] | undefined {
+export function renderLiveObserverWidgetLines(now = Date.now(), theme?: RenderTheme): string[] | undefined {
 	const stats = getStats();
 	if (stats.subagents.size === 0 && stats.ircMessages.length === 0) return undefined;
 
-	const agentLines = renderGroupedAgentLines(getOrderedSubagents(stats).slice(0, MAX_AGENT_ROWS), now);
+	const agentLines = renderGroupedAgentLines(getOrderedSubagents(stats).slice(0, MAX_AGENT_ROWS), now, theme);
 	const ircLines = ircRenderer.render(stats.ircMessages, {
 		width: MAX_LINE_WIDTH,
 		now,
@@ -22,9 +22,13 @@ export function renderLiveObserverWidgetLines(now = Date.now()): string[] | unde
 	return lines.length > 0 ? lines : undefined;
 }
 
-function renderGroupedAgentLines(agents: readonly SubagentActivity[], now: number): string[] {
+function renderGroupedAgentLines(
+	agents: readonly SubagentActivity[],
+	now: number,
+	theme?: RenderTheme,
+): string[] {
 	if (agents.length === 0) return [];
-	const lines = ["● Agents"];
+	const lines = theme ? [theme.fg("accent", "● Agents")] : ["● Agents"];
 	let currentGroup = "";
 	for (const agent of agents) {
 		const group = getAgentGroupLabel(agent);
@@ -32,7 +36,11 @@ function renderGroupedAgentLines(agents: readonly SubagentActivity[], now: numbe
 			lines.push(`○ ${group}`);
 			currentGroup = group;
 		}
-		for (const line of renderCompactAgentLines(agent, { width: MAX_LINE_WIDTH - 2, now })) {
+		for (const line of renderCompactAgentLines(agent, {
+			width: MAX_LINE_WIDTH - 2,
+			now,
+			theme,
+		})) {
 			lines.push(`  ${line}`);
 		}
 	}

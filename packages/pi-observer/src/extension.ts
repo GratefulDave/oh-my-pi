@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { DEFAULT_REFRESH_INTERVAL_MS, ObserverDashboard } from "./dashboard";
 import { type RenderOptions, renderJobResult, type ThemeLike, type ToolResult } from "./job-renderer";
 import { renderLiveObserverWidgetLines } from "./live-widget";
+import { type RenderTheme } from "./renderer";
 import {
 	defaultExportPath,
 	onAgentStart,
@@ -347,10 +348,11 @@ export default function observer(pi: ExtensionAPI): void {
 	// Hook into agent lifecycle events.
 	const widgetKey = "observer-live";
 	let widgetContext: ExtensionCommandContext | undefined;
+	let cachedTheme: RenderTheme | undefined;
 	const refreshLiveWidget = (ctx?: ExtensionCommandContext) => {
 		if (ctx) widgetContext = ctx;
 		if (!widgetContext?.hasUI || !widgetContext.ui.setWidget) return;
-		widgetContext.ui.setWidget(widgetKey, renderLiveObserverWidgetLines());
+		widgetContext.ui.setWidget(widgetKey, renderLiveObserverWidgetLines(Date.now(), cachedTheme));
 	};
 
 	// Hook into agent lifecycle events.
@@ -471,8 +473,9 @@ export default function observer(pi: ExtensionAPI): void {
 
 			await ctx.ui.custom<void>(
 				(tui, theme, _keybindings, done) => {
+					cachedTheme = normalizeTheme(theme);
 					const dashboard = new ObserverDashboard(
-						normalizeTheme(theme),
+						cachedTheme,
 						() => tui.requestRender(),
 						() => done(undefined),
 						{ refreshIntervalMs },

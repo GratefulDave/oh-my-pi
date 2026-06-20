@@ -93,6 +93,17 @@ export function truncateVisible(value: string, maxWidth: number): string {
 	return `${output}…`;
 }
 
+function tinted(theme: RenderTheme | undefined, tint: string, text: string): string {
+	if (theme) return theme.fg(tint, text);
+	switch (tint) {
+		case "success": return color(GREEN_FG, text);
+		case "error": return color(RED_FG, text);
+		case "accent": return color(CYAN_TINT, text);
+		case "muted": return color(DIM_TINT, text);
+		default: return text;
+	}
+}
+
 export function padTintedLine(text: string, width: number, tint = CYAN_TINT): string {
 	const available = Math.max(0, width - 2);
 	const paddedText = ` ${truncateVisible(text, available)} `;
@@ -156,43 +167,34 @@ export class SubagentRenderer {
 		const label = formatLabel(agent);
 		const role = formatRole(agent);
 		const elapsedMs = resolveDurationMs(agent, options.now);
+		const theme = options.theme;
 		if (agent.status === "running") {
 			const header = `▶ [${role}] ${label}`;
+			const tint = selected ? SELECT_TINT : (theme ? theme.fg("accent", "") : CYAN_TINT);
 			return [
-				padTintedLine(header, options.width, selected ? SELECT_TINT : CYAN_TINT),
+				padTintedLine(header, options.width, tint),
 				truncateVisible(`${CHILD_PREFIX}Running in background (ID: ${agent.id})`, options.width),
 				truncateVisible(`${CHILD_PREFIX}${describeState(agent)}`, options.width),
 			];
 		}
 		if (agent.status === "completed") {
 			const header = `✔ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`;
-			return [
-				options.compact
-					? color(GREEN_FG, header)
-					: padTintedLine(header, options.width, selected ? SELECT_TINT : GREEN_TINT),
-			];
+			const tint = selected ? SELECT_TINT : (theme ? theme.fg("success", "") : GREEN_TINT);
+			return [padTintedLine(header, options.width, tint)];
 		}
 		if (agent.status === "failed" || agent.status === "aborted") {
 			const header = `✗ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`;
 			const state = agent.failureReason ?? agent.retryFailure?.errorMessage;
+			const tint = selected ? SELECT_TINT : (theme ? theme.fg("error", "") : RED_TINT);
 			return state
 				? [
-						options.compact
-							? color(RED_FG, header)
-							: padTintedLine(header, options.width, selected ? SELECT_TINT : RED_TINT),
+						padTintedLine(header, options.width, tint),
 						truncateVisible(`${CHILD_PREFIX}${state}`, options.width),
 					]
-				: [
-						options.compact
-							? color(RED_FG, header)
-							: padTintedLine(header, options.width, selected ? SELECT_TINT : RED_TINT),
-					];
+				: [padTintedLine(header, options.width, tint)];
 		}
-		return [
-			options.compact
-				? `◇ [${role}] ${label}`
-				: padTintedLine(`◇ [${role}] ${label}`, options.width, selected ? SELECT_TINT : DIM_TINT),
-		];
+		const tint = selected ? SELECT_TINT : (theme ? theme.fg("muted", "") : DIM_TINT);
+		return [padTintedLine(`◇ [${role}] ${label}`, options.width, tint)];
 	}
 }
 
@@ -301,11 +303,12 @@ function formatRole(agent: SubagentActivity): string {
 
 export function renderCompactAgentLines(
 	agent: SubagentActivity,
-	options: Required<Pick<RenderOptions, "width" | "now">> & Pick<RenderOptions, "spinnerFrame">,
+	options: Required<Pick<RenderOptions, "width" | "now">> & Pick<RenderOptions, "spinnerFrame" | "theme">,
 ): string[] {
 	const label = formatLabel(agent);
 	const role = formatRole(agent);
 	const elapsedMs = resolveDurationMs(agent, options.now);
+	const theme = options.theme;
 	if (agent.status === "running") {
 		const frame = SPINNER_FRAMES[(options.spinnerFrame ?? Math.floor(options.now / 120)) % SPINNER_FRAMES.length];
 		return [
@@ -314,22 +317,16 @@ export function renderCompactAgentLines(
 		];
 	}
 	if (agent.status === "completed") {
-		return [
-			color(
-				GREEN_FG,
-				`✔ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`,
-			),
-		];
+		const line = `✔ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`;
+		return [tinted(theme, "success", line)];
 	}
 	if (agent.status === "failed" || agent.status === "aborted") {
-		const header = color(
-			RED_FG,
-			`✗ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`,
-		);
+		const line = `✗ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`;
+		const header = tinted(theme, "error", line);
 		const state = agent.failureReason ?? agent.retryFailure?.errorMessage;
 		return state ? [header, truncateVisible(`${CHILD_PREFIX}${state}`, options.width)] : [header];
 	}
-	return [`◇ [${role}] ${label}`];
+	return [tinted(theme, "muted", `◇ [${role}] ${label}`)];
 }
 
 export function describeState(agent: SubagentActivity): string {
