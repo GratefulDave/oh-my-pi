@@ -20,6 +20,9 @@ const TOOL_SYMBOLS: Readonly<Record<string, SymbolKey>> = {
 	search_tool_bm25: "icon.search",
 	rewind: "icon.rewind",
 	report_tool_issue: "icon.warning",
+	browser: "tool.browser",
+	irc: "tool.irc",
+	recall: "tool.memory",
 };
 
 export default function toolTallyExtension(pi: ExtensionAPI): void {
