@@ -9,6 +9,7 @@ import { renderLiveObserverWidgetLines } from "./live-widget";
 import { type RenderTheme } from "./renderer";
 import {
 	defaultExportPath,
+	getStats,
 	onAgentStart,
 	onIrcMessage,
 	onSubagentLifecycle,
@@ -347,7 +348,12 @@ export default function observer(pi: ExtensionAPI): void {
 
 		const lines = renderLiveObserverWidgetLines(Date.now(), cachedTheme);
 		if (!lines || lines.length === 0) {
-			widgetContext.ui.setWidget(widgetKey, undefined);
+			// Only clear the widget when no agents have ever been tracked.
+			// If agents exist but rendering produced nothing, keep the last frame
+			// rather than flashing to empty during a transient gap.
+			if (getStats().subagents.size === 0 && getStats().ircMessages.length === 0) {
+				widgetContext.ui.setWidget(widgetKey, undefined);
+			}
 			return;
 		}
 
@@ -355,9 +361,14 @@ export default function observer(pi: ExtensionAPI): void {
 	};
 
 	// Hook into agent lifecycle events.
+	// session_start fires for every subagent spawn as well as the parent session.
+	// Only use it to capture the UI context (widgetContext). Never resetStats() here
+	// because child session_start events would wipe all in-flight subagent data.
 	pi.on("session_start", (_event, ctx) => {
-		resetStats();
-		refreshLiveWidget(ctx);
+		// Only capture the UI context for future refreshes.
+		// Do NOT call refreshLiveWidget() — session_start fires for every subagent
+		// spawn before lifecycle data arrives, which would clear the widget.
+		if (ctx) widgetContext = ctx;
 	});
 
 	pi.on("agent_start", () => {

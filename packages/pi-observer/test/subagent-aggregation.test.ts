@@ -277,7 +277,9 @@ describe("pi-observer subagent fan-in", () => {
 		};
 
 		sessionHandlers.get("session_start")?.({}, ctx);
-		expect(widgetCalls.at(-1)).toEqual({ key: "observer-live", content: undefined });
+		// session_start now only captures UI context — it must NOT call setWidget
+		// (the old behavior cleared the widget before lifecycle data arrived).
+		expect(widgetCalls).toHaveLength(0);
 
 		events.emit(PROGRESS_CHANNEL, {
 			agent: "explore",
@@ -316,8 +318,10 @@ describe("pi-observer subagent fan-in", () => {
 		sessionHandlers.get("turn_end")?.({}, ctx);
 		expect(widgetCalls.length).toBeGreaterThan(afterTurnStart + 1);
 
+		// session_start no longer resets stats (would wipe in-flight subagent data for child spawns).
+		// It only captures the widgetContext — content stays non-undefined while data exists.
 		sessionHandlers.get("session_start")?.({}, ctx);
-		expect(widgetCalls.at(-1)).toEqual({ key: "observer-live", content: undefined });
+		expect(widgetCalls.at(-1)?.content).not.toBeUndefined();
 	});
 
 	test("observe command tolerates custom UI themes without dim helper", async () => {

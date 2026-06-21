@@ -45,3 +45,16 @@ Prefer lean-ctx MCP tools over native equivalents for token savings:
 Native Edit/Write/Glob stay as-is; use `ctx_edit` only when Edit needs an unavailable Read.
 Full rules: LEAN-CTX.md (open on demand — do not auto-load).
 <!-- /lean-ctx -->
+
+<!-- lean-ctx override -->
+# lean-ctx MCP — tool routing override
+
+The lean-ctx instructions above are **SUPERSEDED** by this block.
+lean-ctx is **code-intel only** in this stack. Allowed tools: `ctx_read`,
+`ctx_semantic_search`, `ctx_symbol`, `ctx_callgraph`, `ctx_architecture`,
+`ctx_impact`, `ctx_smells`, `ctx_refactor`, `ctx_repomap`, `ctx_overview`.
+
+**NEVER** use `ctx_shell`, `ctx_search`, `ctx_execute`, `ctx_tree`, `ctx_edit`,
+`ctx_session`, `ctx_knowledge`, `ctx_graph`, `ctx_call` in place of native tools.
+Native `bash`/`read`/`search`/`find` take precedence.
+<!-- /lean-ctx override -->

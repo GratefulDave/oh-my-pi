@@ -36,6 +36,7 @@ import {
 	TUI,
 	visibleWidth,
 } from "@oh-my-pi/pi-tui";
+import { renderStatusLine } from "../tui/status-line";
 import {
 	APP_NAME,
 	adjustHsv,
@@ -101,7 +102,7 @@ import { formatTaskId } from "../task/render";
 import type { LspStartupServerInfo } from "../tools";
 import { isImageProviderPreference, setPreferredImageProvider } from "../tools/image-gen";
 import { normalizeLocalScheme } from "../tools/path-utils";
-import { replaceTabs, TRUNCATE_LENGTHS, truncateToWidth } from "../tools/render-utils";
+import { formatStatusIcon, replaceTabs, TRUNCATE_LENGTHS, truncateToWidth } from "../tools/render-utils";
 import { setAutoQaConsentHandler } from "../tools/report-tool-issue";
 import { type ResolveToolDetails, runResolveInvocation } from "../tools/resolve";
 import { formatPhaseDisplayName, selectStickyTodoWindow, todoMatchesAnyDescription } from "../tools/todo";
@@ -130,6 +131,7 @@ import type { HookSelectorComponent, HookSelectorSlider } from "./components/hoo
 import { PlanReviewOverlay } from "./components/plan-review-overlay";
 import { StatusLineComponent } from "./components/status-line";
 import type { ToolExecutionHandle } from "./components/tool-execution";
+import { sharedSpinnerFrame, SPINNER_RENDER_INTERVAL_MS } from "./components/tool-execution";
 import { TranscriptContainer } from "./components/transcript-container";
 import { WelcomeComponent, type LspServerInfo as WelcomeLspServerInfo } from "./components/welcome";
 import { BtwController } from "./controllers/btw-controller";
@@ -343,32 +345,54 @@ function cleanSubagentHudLabel(text: string | undefined): string {
 	return fallback;
 }
 
-export function renderSubagentHudLines(sessions: ObservableSession[], columns: number): string[] {
+export function renderSubagentHudLines(
+	sessions: ObservableSession[],
+	columns: number,
+	spinnerFrame?: number,
+): string[] {
 	const detached = sessions.filter(
 		(session): session is ObservableSession & { kind: "subagent"; detached: true } =>
 			session.kind === "subagent" && session.detached === true,
 	);
+	// Don't bail when all are settled — keep the block visible like "N jobs settled"
 	if (detached.length === 0) return [];
 
 	const visible = detached.slice(-SUBAGENT_HUD_VISIBLE_ROWS);
 	const hiddenCount = detached.length - visible.length;
 	const hasActive = detached.some(session => session.status === "active");
-	const headerColor = hasActive ? "accent" : "muted";
 	const rowWidth = Math.max(TRUNCATE_LENGTHS.SHORT, columns - 4);
 	const childWidth = Math.max(TRUNCATE_LENGTHS.SHORT, columns - 6);
-	const lines = ["", `  ${theme.bold(theme.fg(headerColor, `${hasActive ? "●" : "○"} Agents`))}`];
+
+	// Header matches jobs: renderStatusLine with info/success icon + spinnerFrame
+	const activeCount = detached.filter(s => s.status === "active").length;
+	const headerIcon: "info" | "success" = hasActive ? "info" : "success";
+	const agentsNoun = detached.length === 1 ? "agent" : "agents";
+	const headerTitle = hasActive
+		? activeCount === detached.length
+			? `waiting on ${detached.length} ${agentsNoun}`
+			: `waiting on ${activeCount} of ${detached.length} ${agentsNoun}`
+		: `${detached.length} ${agentsNoun} settled`;
+	const header = renderStatusLine(
+		{ icon: headerIcon, spinnerFrame: hasActive ? spinnerFrame : undefined, title: headerTitle },
+		theme,
+	);
+	const lines = ["", `  ${header}`];
 
 	for (const session of visible) {
 		const progress = session.progress;
+		const live = session.status === "active" && spinnerFrame !== undefined;
 
-		const statusGlyph =
+		// Icon: same formatStatusIcon as job rows — spinner when live, themed symbol when settled
+		const iconStatus: "running" | "done" | "error" | "aborted" =
 			session.status === "completed"
-				? theme.fg("success", theme.status.done)
+				? "done"
 				: session.status === "failed"
-					? theme.fg("error", theme.status.error)
+					? "error"
 					: session.status === "aborted"
-						? theme.fg("warning", theme.status.aborted)
-						: theme.fg("accent", theme.status.running);
+						? "aborted"
+						: "running";
+		const statusGlyph = formatStatusIcon(iconStatus, theme, live ? spinnerFrame : undefined);
+
 		const agentLabel = cleanSubagentHudLabel(
 			[session.agent, progress?.resolvedModel].filter((value): value is string => Boolean(value)).join(" "),
 		);
@@ -394,10 +418,17 @@ export function renderSubagentHudLines(sessions: ObservableSession[], columns: n
 			durationMs < 60_000
 				? `${(durationMs / 1000).toFixed(1)}s`
 				: `${Math.floor(durationMs / 60_000)}m${Math.floor((durationMs % 60_000) / 1000)}s`;
-		const parts: string[] = [
-			`${statusGlyph} ${theme.fg("dim", `[${replaceTabs(agentLabel || session.agent || "agent")}]`)}`,
-			theme.fg("accent", replaceTabs(rawLabel)),
-		];
+
+		// Label: shimmer when live (matches job rows), accent static when settled
+		const rawLabelText = replaceTabs(rawLabel);
+		const headLabel = live
+			? shimmerEnabled()
+				? shimmerText(rawLabelText, theme)
+				: theme.fg("accent", rawLabelText)
+			: theme.fg("toolOutput", rawLabelText);
+
+		const typeBadge = theme.fg("dim", `[${replaceTabs(agentLabel || session.agent || "agent")}]`);
+		const parts: string[] = [`${statusGlyph} ${typeBadge} ${headLabel}`];
 		if (reqLabel) parts.push(reqLabel);
 		parts.push(
 			theme.fg("dim", `${formatNumber(toolCount)} tool use${toolCount === 1 ? "" : "s"}`),
@@ -605,6 +636,8 @@ export class InteractiveMode implements InteractiveModeContext {
 	readonly #uiHelpers: UiHelpers;
 	#sttController: STTController | undefined;
 	#voiceAnimationInterval: NodeJS.Timeout | undefined;
+	#subagentSpinnerInterval: NodeJS.Timeout | undefined;
+	#subagentSpinnerFrame: number | undefined;
 	#voiceHue = 0;
 	#voicePreviousShowHardwareCursor: boolean | null = null;
 	#voicePreviousUseTerminalCursor: boolean | null = null;
@@ -1714,16 +1747,39 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	/**
 	 * Anchored HUD of in-flight subagents, mirroring the Todos block above the
-	 * editor. Driven entirely by observer-registry change events, so rows appear
-	 * on spawn and the whole block clears itself once the last subagent leaves
-	 * the "active" state.
+	 * editor. Persists settled rows like "N agents settled" (same as jobs).
+	 * Drives a spinner interval while any agent is active; tears it down when all settle.
 	 */
 	#renderSubagentList(): void {
+		if (this.#extensionUiController.hasSubagentHudWidget()) {
+			this.#stopSubagentSpinner();
+			return; // Extension owns subagentContainer via #rebuildHookWidgets — don't touch it
+		}
 		this.subagentContainer.clear();
-		if (this.#extensionUiController.hasSubagentHudWidget()) return;
-		const lines = renderSubagentHudLines(this.#observerRegistry.getSessions(), this.ui.terminal.columns);
+		const sessions = this.#observerRegistry.getSessions();
+		const hasActive = sessions.some(s => s.kind === "subagent" && s.detached && s.status === "active");
+		// Manage spinner lifecycle: start when agents are live, stop when all settle
+		if (hasActive && !this.#subagentSpinnerInterval) {
+			this.#subagentSpinnerFrame = sharedSpinnerFrame(theme.spinnerFrames.length);
+			this.#subagentSpinnerInterval = setInterval(() => {
+				this.#subagentSpinnerFrame = sharedSpinnerFrame(theme.spinnerFrames.length);
+				this.#renderSubagentList();
+				this.ui.requestRender();
+			}, SPINNER_RENDER_INTERVAL_MS);
+		} else if (!hasActive) {
+			this.#stopSubagentSpinner();
+		}
+		const lines = renderSubagentHudLines(sessions, this.ui.terminal.columns, this.#subagentSpinnerFrame);
 		if (lines.length === 0) return;
 		this.subagentContainer.addChild(new Text(lines.join("\n"), 1, 0));
+	}
+
+	#stopSubagentSpinner(): void {
+		if (this.#subagentSpinnerInterval) {
+			clearInterval(this.#subagentSpinnerInterval);
+			this.#subagentSpinnerInterval = undefined;
+		}
+		this.#subagentSpinnerFrame = undefined;
 	}
 
 	refreshSubagentHud(): void {
@@ -3163,6 +3219,7 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.#stopLoadingAnimation(false);
 		}
 		this.#cleanupMicAnimation();
+		this.#stopSubagentSpinner();
 		this.#cancelTodoAutoClearTimer();
 		this.#cancelGoalContinuation();
 		if (this.#sttController) {

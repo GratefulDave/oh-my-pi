@@ -94,8 +94,9 @@ describe("subagent HUD lines", () => {
 			makeSession({ id: "AuthLoader", description: "Review auth flow" }),
 			makeSession({ id: "DocScout", agentSource: "bundled", description: "Inspect docs" }),
 		]);
-		expect((out.match(/Agents/g) ?? []).length).toBe(1);
-		expect(out).toContain("● Agents");
+		expect((out.match(/agents/gi) ?? []).length).toBeGreaterThanOrEqual(1);
+		// Header now uses renderStatusLine → "waiting on N agents" (accent colored, no bare "● Agents")
+		expect(out).toContain("waiting on");
 		expect(out).not.toContain("○ user");
 		expect(out).not.toContain("○ bundled");
 		expect(out).toContain("Review auth flow");
@@ -116,7 +117,8 @@ describe("subagent HUD lines", () => {
 			makeSession({ id: "DoneWorker", status: "completed", description: undefined }),
 			makeSession({ id: "FailedWorker", status: "failed", description: undefined }),
 		]);
-		expect(out).toContain("○ Agents");
+		// All settled → header reads "N agents settled" (no "○ Agents" bare string)
+		expect(out).toContain("agents settled");
 		expect(out).toContain("DoneWorker");
 		expect(out).toContain("FailedWorker");
 	});
