@@ -20,6 +20,7 @@
 - Fixed `/pm` startup to prefer a same-named model profile from the active OMP profile and to skip applying a stale saved profile when its default model is absent from the current registry, preventing unavailable OMLX assignments from overriding startup model settings.
 - Fixed the bundled `/pm` extension to import profile directory helpers from the root `@oh-my-pi/pi-utils` export instead of a subpath, restoring `/pm` command registration in rebuilt/runtime installs where the subpath import could fail.
 - Fixed `disabledExtensions` merging to accumulate global and project entries instead of replacing the global list, so globally disabled extensions such as `purpose-gate` now stay disabled in repos that define their own `.omp/settings.json`.
+- Fixed the built-in fallback subagent HUD to match the observer HUD's running/completed accent coloring while keeping settled rows visible after agents finish.
 
 ## [16.1.11] - 2026-06-21
 

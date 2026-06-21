@@ -7,6 +7,14 @@ import { onIrcMessage, onSubagentProgress, resetStats } from "../src/stats-colle
 
 const NOW = Date.UTC(2026, 5, 5, 13, 42, 0);
 
+const ANSI_BY_COLOR: Record<string, string> = {
+	accent: "\x1b[94m",
+	dim: "\x1b[90m",
+	muted: "\x1b[37m",
+	success: "\x1b[32m",
+	error: "\x1b[31m",
+};
+
 function makeStats(subagents: SubagentActivity[], ircMessages: IrcMessageActivity[] = []): ObserverStats {
 	return {
 		sessionStartTime: NOW,
@@ -39,6 +47,12 @@ function makeSubagent(
 		...update,
 	};
 }
+
+const markerTheme = {
+	fg: (color: string, text: string) => `${ANSI_BY_COLOR[color] ?? "\x1b[39m"}${text}\x1b[39m`,
+	bold: (text: string) => text,
+	dim: (text: string) => `\x1b[90m${text}\x1b[39m`,
+};
 
 describe("diagnostic renderers", () => {
 	test("renders exact running/completed/queued agent grammar", () => {
@@ -207,6 +221,7 @@ describe("diagnostic renderers", () => {
 			contextTokens: 62000,
 			contextWindow: 100000,
 			durationMs: 12300,
+			task: "Task description",
 			lastIntent: "editing 2 files",
 			recentOutput: [],
 			cost: 0,
@@ -215,7 +230,14 @@ describe("diagnostic renderers", () => {
 			startedAt: NOW - 12300,
 		};
 		const { renderCompactAgentLines } = require("../src/renderer");
-		const lines = renderCompactAgentLines(agent, { width: 120, now: NOW }).map(stripAnsi);
+		const rawLines = renderCompactAgentLines(agent, { width: 120, now: NOW, theme: markerTheme });
+		expect(rawLines[0]).toContain(`\x1b[94m${"Task description"}`);
+		expect(rawLines[0]).toContain("\x1b[90m5 tool uses\x1b[39m");
+		expect(rawLines[0]).toContain("\x1b[90m33.8k tok (62%)\x1b[39m");
+		expect(rawLines[0]).toContain("\x1b[90m12.3s\x1b[39m");
+		expect(rawLines[1]).toContain("\x1b[90m");
+		expect(rawLines[1]).toContain("editing 2 files");
+		const lines = rawLines.map(stripAnsi);
 		const row = lines[0];
 		expect(row).toContain("↻5");
 		expect(row).toContain("5 tool uses");
@@ -227,7 +249,8 @@ describe("diagnostic renderers", () => {
 		expect(lines[1]).toContain("editing 2 files");
 	});
 
-	test("compact live widget groups agents by chain label and keeps active rows first", () => {
+	test("compact live widget keeps active rows first and scrolls older settled rows out", () => {
+		resetStats();
 		onSubagentProgress({
 			id: "run-1",
 			agent: "executor",
@@ -239,33 +262,49 @@ describe("diagnostic renderers", () => {
 			task: "Build dashboard",
 			currentTool: "edit",
 		});
-		onSubagentProgress({
-			id: "run-2",
-			agent: "reviewer",
-			status: "completed",
-			tokens: 400,
-			toolCount: 1,
-			cost: 0.005,
-			agentSource: "team-alpha",
-			task: "Review dashboard",
-		});
-		onSubagentProgress({
-			id: "run-3",
-			agent: "planner",
-			status: "pending",
-			tokens: 50,
-			toolCount: 0,
-			cost: 0,
-			description: "solo-team",
-			task: "Solo follow-up",
-		});
+		for (let index = 0; index < 7; index++) {
+			onSubagentProgress({
+				id: `done-${index + 1}`,
+				agent: "reviewer",
+				status: "completed",
+				tokens: 400 + index,
+				toolCount: 1,
+				cost: 0.005,
+				agentSource: "team-alpha",
+				task: `Review dashboard ${index + 1}`,
+				lastUpdate: NOW + index + 1,
+			});
+		}
 
 		const lines = renderLiveObserverWidgetLines(NOW)?.map(stripAnsi) ?? [];
 		expect(lines).not.toContain("○ team-alpha");
-		expect(lines).not.toContain("○ Solo follow-up");
+		expect(lines).toContain("  … 2 more agents");
+		expect(lines.some(line => line.includes("Build dashboard"))).toBe(true);
+		expect(lines.some(line => line.includes("Review dashboard 3"))).toBe(true);
+		expect(lines.some(line => line.includes("Review dashboard 7"))).toBe(true);
+		expect(lines.some(line => line.includes("Review dashboard 1"))).toBe(false);
+		expect(lines.some(line => line.includes("Review dashboard 2"))).toBe(false);
 		expect(lines.findIndex(line => line.includes("Build dashboard"))).toBeLessThan(
-			lines.findIndex(line => line.includes("Review dashboard")),
+			lines.findIndex(line => line.includes("Review dashboard 3")),
 		);
+	});
+
+	test("completed compact rows use accent tint instead of success", () => {
+		const { renderCompactAgentLines } = require("../src/renderer");
+		const line = renderCompactAgentLines(
+			makeSubagent({
+				id: "done-compact",
+				agent: "reviewer",
+				status: "completed",
+				task: "Review dashboard",
+				tokens: 800,
+				toolCount: 2,
+				durationMs: 1400,
+			}),
+			{ width: 120, now: NOW, theme: markerTheme },
+		)[0];
+		expect(line).toContain("\x1b[94m");
+		expect(line).not.toContain("\x1b[32m");
 	});
 
 

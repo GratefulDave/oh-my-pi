@@ -193,8 +193,8 @@ export class SubagentRenderer {
 		}
 		if (agent.status === "completed") {
 			const header = `✔ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`;
-			const tint = selected ? SELECT_TINT : GREEN_TINT;
-			return [tintPaddedLine(theme, "success", header, options.width, tint)];
+			const tint = selected ? SELECT_TINT : CYAN_TINT;
+			return [tintPaddedLine(theme, "accent", header, options.width, tint)];
 		}
 		if (agent.status === "failed" || agent.status === "aborted") {
 			const header = `✗ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatSeconds(elapsedMs)}`;
@@ -358,7 +358,7 @@ export function renderCompactAgentLines(
 		if (theme) {
 			const frameStr = theme.fg("accent", frame);
 			const roleStr = theme.fg("dim", roleDisplay);
-			const labelStr = theme.fg("muted", label);
+			const labelStr = theme.fg("accent", label);
 			const dotStr = theme.fg("dim", "·");
 			const segments: string[] = [`${frameStr} ${roleStr}  ${labelStr}`];
 			if (reqPart) segments.push(theme.fg("dim", reqPart));
@@ -384,7 +384,7 @@ export function renderCompactAgentLines(
 	}
 	if (agent.status === "completed") {
 		const line = `✔ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatDurationCompact(elapsedMs)}`;
-		return [tinted(theme, "success", line)];
+		return [tinted(theme, "accent", line)];
 	}
 	if (agent.status === "failed" || agent.status === "aborted") {
 		const line = `✗ [${role}] ${label} · ${agent.toolCount} tool uses · ${formatTokens(agent.tokens)} · ${formatDurationCompact(elapsedMs)}`;

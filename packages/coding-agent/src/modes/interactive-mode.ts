@@ -383,16 +383,14 @@ export function renderSubagentHudLines(
 		const live = session.status === "active" && spinnerFrame !== undefined;
 
 		// Icon: same formatStatusIcon as job rows — spinner when live, themed symbol when settled
-		const iconStatus: "running" | "done" | "error" | "aborted" =
+		const statusGlyph =
 			session.status === "completed"
-				? "done"
+				? theme.styledSymbol("status.done", "accent")
 				: session.status === "failed"
-					? "error"
+					? formatStatusIcon("error", theme, live ? spinnerFrame : undefined)
 					: session.status === "aborted"
-						? "aborted"
-						: "running";
-		const statusGlyph = formatStatusIcon(iconStatus, theme, live ? spinnerFrame : undefined);
-
+						? formatStatusIcon("aborted", theme, live ? spinnerFrame : undefined)
+						: formatStatusIcon("running", theme, live ? spinnerFrame : undefined);
 		const agentLabel = cleanSubagentHudLabel(
 			[session.agent, progress?.resolvedModel].filter((value): value is string => Boolean(value)).join(" "),
 		);
@@ -419,21 +417,26 @@ export function renderSubagentHudLines(
 				? `${(durationMs / 1000).toFixed(1)}s`
 				: `${Math.floor(durationMs / 60_000)}m${Math.floor((durationMs % 60_000) / 1000)}s`;
 
-		// Label: shimmer when live (matches job rows), accent static when settled
+		// Label: shimmer when live (matches job rows), accent static when completed
 		const rawLabelText = replaceTabs(rawLabel);
 		const headLabel = live
 			? shimmerEnabled()
 				? shimmerText(rawLabelText, theme)
 				: theme.fg("accent", rawLabelText)
-			: theme.fg("toolOutput", rawLabelText);
+			: session.status === "completed"
+				? theme.fg("accent", rawLabelText)
+				: session.status === "failed" || session.status === "aborted"
+					? theme.fg("error", rawLabelText)
+					: theme.fg("toolOutput", rawLabelText);
 
 		const typeBadge = theme.fg("dim", `[${replaceTabs(agentLabel || session.agent || "agent")}]`);
+		const metricColor = session.status === "completed" ? "accent" : "dim";
 		const parts: string[] = [`${statusGlyph} ${typeBadge} ${headLabel}`];
 		if (reqLabel) parts.push(reqLabel);
 		parts.push(
-			theme.fg("dim", `${formatNumber(toolCount)} tool use${toolCount === 1 ? "" : "s"}`),
-			theme.fg("dim", tokenLabel),
-			theme.fg("dim", durLabel),
+			theme.fg(metricColor, `${formatNumber(toolCount)} tool use${toolCount === 1 ? "" : "s"}`),
+			theme.fg(metricColor, tokenLabel),
+			theme.fg(metricColor, durLabel),
 		);
 		const line = parts.join(` ${theme.sep.dot} `);
 		lines.push(`    ${truncateToWidth(line, rowWidth)}`);

@@ -84,6 +84,10 @@ function render(sessions: ObservableSession[], columns = 120): string {
 	return Bun.stripANSI(renderSubagentHudLines(sessions, columns).join("\n"));
 }
 
+function renderRaw(sessions: ObservableSession[], columns = 120): string {
+	return renderSubagentHudLines(sessions, columns).join("\n");
+}
+
 describe("subagent HUD lines", () => {
 	beforeAll(async () => {
 		await initTheme();
@@ -113,14 +117,17 @@ describe("subagent HUD lines", () => {
 	});
 
 	it("keeps detached terminal rows visible after activity settles", () => {
-		const out = render([
+		const sessions = [
 			makeSession({ id: "DoneWorker", status: "completed", description: undefined }),
 			makeSession({ id: "FailedWorker", status: "failed", description: undefined }),
-		]);
+		];
+		const out = render(sessions);
+		const rawOut = renderRaw(sessions);
 		// All settled → header reads "N agents settled" (no "○ Agents" bare string)
 		expect(out).toContain("agents settled");
 		expect(out).toContain("DoneWorker");
 		expect(out).toContain("FailedWorker");
+		expect(rawOut).toMatch(/\x1b\[[0-9;]*mDoneWorker\x1b\[39m/);
 	});
 
 	it("uses progress snapshots for description and tool detail", () => {

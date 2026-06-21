@@ -6,7 +6,6 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { DEFAULT_REFRESH_INTERVAL_MS, ObserverDashboard } from "./dashboard";
 import { renderLiveObserverWidgetLines } from "./live-widget";
-import { type RenderTheme } from "./renderer";
 import {
 	defaultExportPath,
 	getStats,
@@ -163,12 +162,17 @@ type CustomTheme = {
 	dim?: (text: string) => string;
 };
 
+type LiveWidgetFactory = (
+	tui: { requestRender(): void; terminal?: { rows: number } },
+	theme: CustomTheme,
+) => { render(width: number): readonly string[]; dispose?(): void; invalidate?(): void };
+
 type ExtensionCommandContext = {
 	hasUI?: boolean;
 	cwd: string;
 	ui: {
 		setEditorText(text: string): void;
-		setWidget?(key: string, content: string[] | undefined, options?: { placement?: "subagentHud" }): void;
+		setWidget?(key: string, content: string[] | LiveWidgetFactory | undefined, options?: { placement?: "subagentHud" }): void;
 		custom<T>(
 			factory: (
 				tui: { requestRender(): void; terminal?: { rows: number } },
@@ -289,6 +293,17 @@ function normalizeTheme(theme: CustomTheme): {
 	return { fg, bold, dim };
 }
 
+function createLiveWidgetFactory(): LiveWidgetFactory {
+	return (_tui, theme) => {
+		const renderTheme = normalizeTheme(theme);
+		return {
+			render(width: number) {
+				return renderLiveObserverWidgetLines(Date.now(), renderTheme, width) ?? [];
+			},
+		};
+	};
+}
+
 function parseExportArgs(args: string): { format: "json" | "csv"; outputPath: string | undefined } | undefined {
 	const parts = args.trim().split(/\s+/).filter(Boolean);
 	const format = parts[0];
@@ -341,23 +356,14 @@ export default function observer(pi: ExtensionAPI): void {
 	// Hook into agent lifecycle events.
 	const widgetKey = "observer-live";
 	let widgetContext: ExtensionCommandContext | undefined;
-	let cachedTheme: RenderTheme | undefined;
 	const refreshLiveWidget = (ctx?: ExtensionCommandContext) => {
 		if (ctx) widgetContext = ctx;
 		if (!widgetContext?.hasUI || !widgetContext.ui.setWidget) return;
-
-		const lines = renderLiveObserverWidgetLines(Date.now(), cachedTheme);
-		if (!lines || lines.length === 0) {
-			// Only clear the widget when no agents have ever been tracked.
-			// If agents exist but rendering produced nothing, keep the last frame
-			// rather than flashing to empty during a transient gap.
-			if (getStats().subagents.size === 0 && getStats().ircMessages.length === 0) {
-				widgetContext.ui.setWidget(widgetKey, undefined);
-			}
+		if (getStats().subagents.size === 0 && getStats().ircMessages.length === 0) {
+			widgetContext.ui.setWidget(widgetKey, undefined, { placement: "subagentHud" });
 			return;
 		}
-
-		widgetContext.ui.setWidget(widgetKey, lines, { placement: "subagentHud" });
+		widgetContext.ui.setWidget(widgetKey, createLiveWidgetFactory(), { placement: "subagentHud" });
 	};
 
 	// Hook into agent lifecycle events.
@@ -478,9 +484,9 @@ export default function observer(pi: ExtensionAPI): void {
 
 			await ctx.ui.custom<void>(
 				(tui, theme, _keybindings, done) => {
-					cachedTheme = normalizeTheme(theme);
+					const dashboardTheme = normalizeTheme(theme);
 					const dashboard = new ObserverDashboard(
-						cachedTheme,
+						dashboardTheme,
 						() => tui.requestRender(),
 						() => done(undefined),
 						{ refreshIntervalMs },
