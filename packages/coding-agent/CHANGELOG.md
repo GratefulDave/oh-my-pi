@@ -21,6 +21,46 @@
 - Fixed the bundled `/pm` extension to import profile directory helpers from the root `@oh-my-pi/pi-utils` export instead of a subpath, restoring `/pm` command registration in rebuilt/runtime installs where the subpath import could fail.
 - Fixed `disabledExtensions` merging to accumulate global and project entries instead of replacing the global list, so globally disabled extensions such as `purpose-gate` now stay disabled in repos that define their own `.omp/settings.json`.
 
+## [16.1.10] - 2026-06-21
+
+### Added
+
+- Added `tab.ariaSnapshot(selector?)` to the browser tool for Playwright-format ARIA-tree YAML
+- Added `tab.ref("e5")` and support for `aria-ref=e5` selectors in all `tab` action methods
+
+### Changed
+
+- Made `write` and `find` tools essential so they are always available initially (surviving `tools.discoveryMode === "all"` hiding) to ensure instructions to write/find files are immediately executable ([#3165](https://github.com/can1357/oh-my-pi/issues/3165))
+
+### Fixed
+
+- Fixed streamed tool-call previews freezing on their placeholder body (`$ …`, `Write: …`, an empty args tree) even after the tool finished: the pending card was created while arguments streamed, but when the closing full-arguments `message_update` never arrived (smooth-streaming disabled leaving the throttled arguments stale, an owned-dialect projector, or a superseded/aborted turn that still ran the call) nothing re-applied the final args. `tool_execution_start` — the one event every execution path emits with validated full arguments right before the result — now reconciles them onto the existing pending card and cancels any in-flight reveal so a late tick can't re-truncate the body.
+
+## [16.1.9] - 2026-06-21
+
+### Added
+
+- Added LLM request JSON export functionality to `/dump`
+
+### Changed
+
+- Improved browser stealth by suppressing common automation flags and patching property descriptors
+- Enhanced stealth for `WebGL`, `Worker`, `IFrame`, `Screen`, and `Audio` APIs to evade detection
+- Updated `toString` patching to register native function sources for improved fingerprint protection
+
+### Fixed
+
+- Fixed `omp list` and `omp remove` silently starting an interactive agent session (forwarding the bare verb to the model as a prompt) instead of surfacing the real `omp plugin list` / `omp plugin uninstall <name>` commands ([#2935](https://github.com/can1357/oh-my-pi/issues/2935))
+- Fixed lazy-initialized LSP servers (basedpyright/pyright, and likely gopls/rust-analyzer) hanging on the first request: the message reader matched incoming messages against pending client requests by id before checking for a `method`, so a server-originated `workspace/configuration` pull whose id collided with an in-flight request was swallowed as a bogus response, leaving the pull unanswered and the server wedged. The reader now routes any message carrying a `method` as a server request before id-matching ([#3001](https://github.com/can1357/oh-my-pi/issues/3001))
+- Fixed `omp --approval-mode=yolo acp` and other global option flags placed before a subcommand being rewritten to `launch` with the subcommand swallowed as prompt text; the CLI resolver now skips leading global flags (using the launch parser's value-consumption contract) and dispatches the real subcommand with the flags applied, so ACP mode honors the configured approval policy. ([#2970](https://github.com/can1357/oh-my-pi/issues/2970))
+- Fixed `/mcp enable` and `/mcp disable` reconnecting unrelated MCP servers by scoping toggle reconnect/disconnect work to the named server. ([#3157](https://github.com/can1357/oh-my-pi/issues/3157))
+- Stopped the local llama.cpp no-auth login placeholder from being sent as a discovery bearer token.
+
+### Removed
+
+- Removed `/debug dump-next-request` command
+- Removed Wafer Pass from CLI credential help; Wafer Serverless remains available.
+
 ## [16.1.8] - 2026-06-20
 
 ### Added
