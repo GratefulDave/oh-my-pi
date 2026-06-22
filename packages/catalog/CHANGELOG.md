@@ -6,6 +6,22 @@
 
 - Fixed Antigravity Cloud Code Assist wire metadata to include the captured Claude, Gemini, and GPT-OSS thinking-budget/output-cap profiles used by current upstream wire ids.
 
+## [16.1.14] - 2026-06-22
+
+### Added
+
+- Added Sakana AI provider support with Fugu model integration
+- Added Sakana AI/Fugu provider catalog entries with Fugu model discovery and Responses API metadata
+- Added support for "xhigh" reasoning tier across model configurations
+- Added configuration for new models GCP-5.4 Mini, GPT-5.5, and variants
+- Added `devin` variant collapse table to streamline model tiering
+
+### Changed
+
+- Updated reasoning label pattern to include "minimal" and "max" efforts
+- Simplified model identification logic for Devin-powered reasoning models
+- Refactored variant routing to consolidate and standardize tier definitions
+
 ## [16.1.13] - 2026-06-22
 
 ### Added

@@ -12,6 +12,7 @@ import { type Theme, theme } from "../../modes/theme/theme";
 import type { SessionManager } from "../../session/session-manager";
 import type { EventBus } from "../../utils/event-bus";
 import { loadExtensions } from "./loader";
+import type { BranchHandler, NavigateTreeHandler, NewSessionHandler } from "../session-handler-types";
 import { createExtensionModelQuery } from "./model-api";
 import { EXTENSION_TASK_UNAVAILABLE_ERROR } from "./task-runner";
 import type {
@@ -145,17 +146,9 @@ type RunnerEmitResult<TEvent extends RunnerEmitEvent> = TEvent extends { type: "
 						? SessionStopEventResult | undefined
 						: undefined;
 
-export type NewSessionHandler = (options?: {
-	parentSession?: string;
-	setup?: (sessionManager: SessionManager) => Promise<void>;
-}) => Promise<{ cancelled: boolean }>;
-
-export type BranchHandler = (entryId: string) => Promise<{ cancelled: boolean }>;
-
-export type NavigateTreeHandler = (
-	targetId: string,
-	options?: { summarize?: boolean },
-) => Promise<{ cancelled: boolean }>;
+// Session-lifecycle handler types live once in session-handler-types (imported
+// above for local use); re-exported here to keep this module's public API stable.
+export type { BranchHandler, NavigateTreeHandler, NewSessionHandler };
 
 export type SwitchSessionHandler = (sessionPath: string) => Promise<{ cancelled: boolean }>;
 
