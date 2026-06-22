@@ -14,7 +14,14 @@ const result = await Bun.build({
   target: "bun",
   format: "esm",
   naming: path.basename(outFile),
-  external: ["@oh-my-pi/pi-coding-agent"],
+  external: [
+    "@oh-my-pi/pi-coding-agent",
+    "@oh-my-pi/pi-utils",
+    "@oh-my-pi/pi-tui",
+    "@oh-my-pi/pi-agent-core",
+    "@oh-my-pi/pi-ai",
+    "@oh-my-pi/pi-natives",
+  ],
 });
 if (!result.success) {
   console.error("Bundle failed:");
