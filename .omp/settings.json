@@ -8,7 +8,12 @@
     "packages/pi-actor-swarm/dist/swarm.bundle.js",
     "packages/pi-omnidelegate/dist/omnidelegate.bundle.js",
     "packages/pi-software-factory/dist/factory.bundle.js",
-    "packages/swarm-extension/dist/extension.bundle.js"
+    "packages/swarm-extension/dist/extension.bundle.js",
+    "packages/profile-manager/dist/profile-manager.bundle.js",
+    "packages/semantic-search/dist/semantic-search.bundle.js",
+    "packages/pane-coms/dist/pane-coms.bundle.js",
+    "packages/damage-control/dist/damage-control.bundle.js",
+    "packages/tool-tally/dist/tool-tally.bundle.js"
   ],
   "disabledExtensions": [
     "extension-module:semantic-search",

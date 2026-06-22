@@ -106,7 +106,15 @@ async function discoverLocalExtensionSources(): Promise<string[]> {
 	const sources: string[] = [];
 	for (const entry of entries) {
 		if (!entry.isDirectory()) continue;
-		const distDir = path.join(extensionsDir, entry.name, "dist");
+		const localDir = path.join(extensionsDir, entry.name);
+		const localEntrypoint = path.join(localDir, "index.ts");
+		const srcEntrypoint = path.join(localDir, "src", "extension.ts");
+		const localPackageJson = path.join(localDir, "package.json");
+		const localPkg = await readJson<PackageJson>(localPackageJson);
+		if (!(await pathExists(localEntrypoint)) && !(await pathExists(srcEntrypoint)) && !localPkg?.scripts?.build) {
+			continue;
+		}
+		const distDir = path.join(localDir, "dist");
 		const distEntries = await fs.readdir(distDir, { withFileTypes: true }).catch(() => []);
 		for (const distEntry of distEntries) {
 			if (!distEntry.isFile() && !distEntry.isSymbolicLink()) continue;
@@ -187,6 +195,24 @@ async function collectTargets(extensionPaths: string[]): Promise<BuildTarget[]> 
 			});
 			continue;
 		}
+
+		// Check local .omp/extensions/<name>/package.json for build script
+		const rel = normalizeRelative(extensionPath);
+		if (rel.startsWith(".omp/extensions/")) {
+			const localExtDir = path.dirname(path.dirname(output));
+			const localPackageJson = path.join(localExtDir, "package.json");
+			const localPkg = await readJson<PackageJson>(localPackageJson);
+			if (localPkg?.scripts?.build) {
+				targets.set(`local:${output}`, {
+					kind: "package-script",
+					name: extName(extensionPath),
+					cwd: localExtDir,
+					outputs: [output],
+				});
+				continue;
+			}
+		}
+
 
 		const bundle = await resolveBundleEntrypoint(output);
 		if (!bundle) {

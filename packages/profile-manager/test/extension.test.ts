@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Model } from "@oh-my-pi/pi-ai";
-import profileManagerExtension from "./index";
+import profileManagerExtension from "../src/extension";
 
 interface RegisteredCommand {
 	description: string;
@@ -174,7 +174,11 @@ describe("profile manager extension", () => {
 			enabledModels?: string[];
 			modelRoles?: Record<string, string>;
 		};
-		expect(written.activeModelProfile).toBe("nvidia");
+		const perInstance = JSON.parse(
+			await Bun.file(path.join(harness.agentDir, `.active-profile-${process.pid}.json`)).text(),
+		) as { activeModelProfile?: string };
+		expect(written.activeModelProfile).toBeUndefined();
+		expect(perInstance.activeModelProfile).toBe("nvidia");
 		expect(written.enabledModels).toEqual([]);
 		expect(written.modelRoles).toEqual({
 			default: `${harness.model.provider}/${harness.model.id}`,
@@ -211,7 +215,11 @@ describe("profile manager extension", () => {
 			modelRoles?: Record<string, string>;
 			enabledModels?: string[];
 		};
-		expect(written.activeModelProfile).toBe("clean");
+		const perInstance = JSON.parse(
+			await Bun.file(path.join(harness.agentDir, `.active-profile-${process.pid}.json`)).text(),
+		) as { activeModelProfile?: string };
+		expect(written.activeModelProfile).toBeUndefined();
+		expect(perInstance.activeModelProfile).toBe("clean");
 		expect(written.modelRoles).toEqual({});
 		expect(written.enabledModels).toEqual([]);
 		expect(harness.notifications.at(-1)).toContain("No 'default' role");
@@ -280,7 +288,11 @@ describe("profile manager extension", () => {
 		const written = (YAML.parse(await Bun.file(path.join(harness.agentDir, "config.yml")).text()) ?? {}) as {
 			activeModelProfile?: string;
 		};
-		expect(written.activeModelProfile).toBe("omlx");
+		const perInstance = JSON.parse(
+			await Bun.file(path.join(harness.agentDir, `.active-profile-${process.pid}.json`)).text(),
+		) as { activeModelProfile?: string };
+		expect(written.activeModelProfile).toBeUndefined();
+		expect(perInstance.activeModelProfile).toBe("omlx");
 		expect(harness.notifications.at(-1)).toContain("Active profile: omlx");
 	});
 
@@ -355,7 +367,7 @@ describe("profile manager extension", () => {
 
 	test("built bundle uses UI notifications for startup banners", async () => {
 		const harness = await createHarness();
-		const bundleModule = await import(`./dist/index.js?ts=${Date.now()}`);
+		const bundleModule = await import(`../dist/profile-manager.bundle.js?ts=${Date.now()}`);
 		expect(typeof bundleModule.default).toBe("function");
 
 		const commands = new Map<string, RegisteredCommand>();

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import toolTallyExtension, { formatWidgetLine } from "./index";
-import bundledToolTallyExtension, { formatWidgetLine as formatBundledWidgetLine } from "./dist/index.js";
+import toolTallyExtension, { formatWidgetLine } from "../src/extension";
+import bundledToolTallyExtension, { formatWidgetLine as formatBundledWidgetLine } from "../dist/tool-tally.bundle.js";
 
 
 const nerdTheme = {
