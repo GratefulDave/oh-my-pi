@@ -235,9 +235,10 @@ import ttsrInterruptTemplate from "../prompts/system/ttsr-interrupt.md" with { t
 import ttsrToolReminderTemplate from "../prompts/system/ttsr-tool-reminder.md" with { type: "text" };
 import unexpectedStopRetryTemplate from "../prompts/system/unexpected-stop-retry.md" with { type: "text" };
 import {
+	deobfuscateAssistantContent,
 	deobfuscateSessionContext,
+	obfuscateMessages,
 	obfuscateProviderContext,
-	obfuscateProviderTools,
 	type SecretObfuscator,
 } from "../secrets/obfuscator";
 import { invalidateHostMetadata } from "../ssh/connection-manager";
@@ -2501,7 +2502,7 @@ export class AgentSession {
 		const obfuscator = this.#obfuscator;
 		if (obfuscator && event.type === "message_end" && event.message.role === "assistant") {
 			const message = event.message;
-			const deobfuscatedContent = obfuscator.deobfuscateObject(message.content);
+			const deobfuscatedContent = deobfuscateAssistantContent(obfuscator, message.content);
 			if (deobfuscatedContent !== message.content) {
 				displayEvent = { ...event, message: { ...message, content: deobfuscatedContent } };
 			}
@@ -5233,28 +5234,17 @@ export class AgentSession {
 		return deobfuscateSessionContext(this.sessionManager.buildSessionContext({ transcript: true }), this.#obfuscator);
 	}
 
-	#obfuscateForProvider<T>(value: T): T {
-		if (!this.#obfuscator?.hasSecrets()) return value;
-		return this.#obfuscator.obfuscateObject(value);
-	}
-
 	#obfuscateTextForProvider(text: string | undefined): string | undefined {
 		if (!text || !this.#obfuscator?.hasSecrets()) return text;
 		return this.#obfuscator.obfuscate(text);
 	}
 
 	#obfuscatePreparationForProvider(preparation: CompactionPreparation): CompactionPreparation {
-		if (!this.#obfuscator?.hasSecrets()) return preparation;
-		if (!preparation.previousSummary && !preparation.previousPreserveData) return preparation;
-		return {
-			...preparation,
-			previousSummary: preparation.previousSummary
-				? this.#obfuscator.obfuscate(preparation.previousSummary)
-				: preparation.previousSummary,
-			previousPreserveData: preparation.previousPreserveData
-				? this.#obfuscator.obfuscateObject(preparation.previousPreserveData)
-				: preparation.previousPreserveData,
-		};
+		if (!this.#obfuscator?.hasSecrets() || !preparation.previousSummary) return preparation;
+		// `previousPreserveData` is opaque provider-replay state (e.g. OpenAI remote-compaction
+		// `encrypted_content`); rewriting it would corrupt replay, so only the plaintext summary
+		// is redacted.
+		return { ...preparation, previousSummary: this.#obfuscator.obfuscate(preparation.previousSummary) };
 	}
 
 	#deobfuscateFromProvider(text: string): string {
@@ -5271,7 +5261,8 @@ export class AgentSession {
 	}
 
 	#convertToLlmForSideRequest(messages: AgentMessage[]): Message[] {
-		return this.#obfuscateForProvider(convertToLlm(messages));
+		const converted = convertToLlm(messages);
+		return this.#obfuscator?.hasSecrets() ? obfuscateMessages(this.#obfuscator, converted) : converted;
 	}
 
 	/** Convert session messages using the same pre-LLM pipeline as the active session. */
@@ -7869,8 +7860,8 @@ export class AgentSession {
 						compactionAbortController.signal,
 						{
 							promptOverride: this.#obfuscateTextForProvider(compactionPrep.hookPrompt),
-							extraContext: this.#obfuscateForProvider(compactionPrep.hookContext),
-							remoteInstructions: this.#obfuscateForProvider(this.#baseSystemPrompt.join("\n\n")),
+							extraContext: compactionPrep.hookContext,
+							remoteInstructions: this.#baseSystemPrompt.join("\n\n"),
 							convertToLlm: messages => this.#convertToLlmForSideRequest(messages),
 						},
 					);
@@ -8064,11 +8055,10 @@ export class AgentSession {
 				model,
 				this.#modelRegistry.resolver(model, this.sessionId),
 				{
-					systemPrompt: this.#obfuscateForProvider(this.#baseSystemPrompt),
-					tools: obfuscateProviderTools(
-						this.#obfuscator,
-						this.#pruneToolDescriptions ? stripToolDescriptions(this.agent.state.tools) : this.agent.state.tools,
-					),
+					systemPrompt: this.#baseSystemPrompt,
+					tools: this.#pruneToolDescriptions
+						? stripToolDescriptions(this.agent.state.tools)
+						: this.agent.state.tools,
 					customInstructions: this.#obfuscateTextForProvider(customInstructions),
 					convertToLlm: messages => this.#convertToLlmForSideRequest(messages),
 					initiatorOverride: "agent",
@@ -9756,8 +9746,8 @@ export class AgentSession {
 								autoCompactionSignal,
 								{
 									promptOverride: this.#obfuscateTextForProvider(compactionPrep.hookPrompt),
-									extraContext: this.#obfuscateForProvider(compactionPrep.hookContext),
-									remoteInstructions: this.#obfuscateForProvider(this.#baseSystemPrompt.join("\n\n")),
+									extraContext: compactionPrep.hookContext,
+									remoteInstructions: this.#baseSystemPrompt.join("\n\n"),
 									metadata: this.agent.metadataForProvider(candidate.provider),
 									initiatorOverride: "agent",
 									convertToLlm: messages => this.#convertToLlmForSideRequest(messages),
@@ -11383,7 +11373,7 @@ export class AgentSession {
 			}
 			if (event.type === "done") {
 				assistantMessage = this.#obfuscator?.hasSecrets()
-					? { ...event.message, content: this.#obfuscator.deobfuscateObject(event.message.content) }
+					? { ...event.message, content: deobfuscateAssistantContent(this.#obfuscator, event.message.content) }
 					: event.message;
 				break;
 			}
