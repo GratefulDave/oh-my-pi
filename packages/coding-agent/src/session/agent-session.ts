@@ -181,6 +181,7 @@ import {
 import { disposeRubyKernelSessionsByOwner } from "../eval/rb/executor";
 import { defaultEvalSessionId } from "../eval/session-id";
 import { type BashResult, executeBash as executeBashCommand } from "../exec/bash-executor";
+import { appendBashMinimizerGainRecord, inferBashMinimizerMissedFilter } from "../tools/bash-minimizer-gain";
 import type { TtsrManager, TtsrMatchContext } from "../export/ttsr";
 import type { LoadedCustomCommand } from "../extensibility/custom-commands";
 import type { CustomTool, CustomToolContext } from "../extensibility/custom-tools/types";
@@ -12086,6 +12087,17 @@ export class AgentSession {
 			});
 			if (hookResult?.result) {
 				this.recordBashResult(command, hookResult.result, options);
+				void appendBashMinimizerGainRecord({
+					command,
+					cwd,
+					sessionId: this.sessionId,
+					filter: inferBashMinimizerMissedFilter(command),
+					inputBytes: hookResult.result.totalBytes,
+					outputBytes: hookResult.result.totalBytes,
+					exitCode: hookResult.result.exitCode ?? null,
+					kind: "missed",
+					agentDir: this.settings.getAgentDir?.(),
+				}).catch(() => {});
 				return hookResult.result;
 			}
 		}
@@ -12104,6 +12116,17 @@ export class AgentSession {
 			});
 
 			this.recordBashResult(command, result, options);
+			void appendBashMinimizerGainRecord({
+				command,
+				cwd,
+				sessionId: this.sessionId,
+				filter: inferBashMinimizerMissedFilter(command),
+				inputBytes: result.totalBytes,
+				outputBytes: result.totalBytes,
+				exitCode: result.exitCode ?? null,
+				kind: "missed",
+				agentDir: this.settings.getAgentDir?.(),
+			}).catch(() => {});
 			return result;
 		} finally {
 			this.#bashAbortControllers.delete(abortController);
