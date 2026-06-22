@@ -105,29 +105,37 @@ function makeMinimizedSaveHandler(
 	session: ToolSession,
 	command: string,
 	commandCwd: string,
-): (
-	originalText: string,
-	info: { filter: string; inputBytes: number; outputBytes: number },
-) => Promise<string | undefined> {
-	return async (originalText, info) => {
-		const artifactId = await saveBashOriginalArtifact(session, originalText);
-		try {
-			await appendBashMinimizerGainRecord({
-				command,
-				cwd: commandCwd,
-				sessionCwd: session.cwd,
-				sessionId: session.getSessionId?.() ?? undefined,
-				filter: info.filter,
-				inputBytes: info.inputBytes,
-				outputBytes: info.outputBytes,
-				exitCode: null,
-				kind: "saved",
-				agentDir: session.settings.getAgentDir?.(),
-			});
-		} catch {
-			// Best-effort
-		}
-		return artifactId;
+): {
+	onMinimizedSave: (
+		originalText: string,
+		info: { filter: string; inputBytes: number; outputBytes: number },
+	) => Promise<string | undefined>;
+	didSave: () => boolean;
+} {
+	let saved = false;
+	return {
+		onMinimizedSave: async (originalText, info) => {
+			saved = true;
+			const artifactId = await saveBashOriginalArtifact(session, originalText);
+			try {
+				await appendBashMinimizerGainRecord({
+					command,
+					cwd: commandCwd,
+					sessionCwd: session.cwd,
+					sessionId: session.getSessionId?.() ?? undefined,
+					filter: info.filter,
+					inputBytes: info.inputBytes,
+					outputBytes: info.outputBytes,
+					exitCode: null,
+					kind: "saved",
+					agentDir: session.settings.getAgentDir?.(),
+				});
+			} catch {
+				// Best-effort
+			}
+			return artifactId;
+		},
+		didSave: () => saved,
 	};
 }
 
@@ -619,6 +627,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 				const tailBuffer = new TailBuffer(DEFAULT_MAX_BYTES);
 				const wallTimeStart = performance.now();
 				try {
+					const minimizedSave = makeMinimizedSaveHandler(this.session, options.command, options.commandCwd);
 					const result = await executeBash(options.command, {
 						cwd: options.commandCwd,
 						sessionKey: `${this.session.getSessionId?.() ?? ""}:async:${jobId}`,
@@ -632,14 +641,16 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 							latestText = tailBuffer.text();
 							void reportProgress(latestText, { async: { state: "running", jobId, type: "bash" } });
 						},
-						onMinimizedSave: makeMinimizedSaveHandler(this.session, options.command, options.commandCwd),
+						onMinimizedSave: minimizedSave.onMinimizedSave,
 					});
-					await recordBashMinimizerGain({
-						session: this.session,
-						command: options.command,
-						commandCwd: options.commandCwd,
-						result,
-					});
+					if (!minimizedSave.didSave()) {
+						await recordBashMinimizerGain({
+							session: this.session,
+							command: options.command,
+							commandCwd: options.commandCwd,
+							result,
+						});
+					}
 					const wallTimeMs = performance.now() - wallTimeStart;
 					const finalResult = await this.#buildCompletedResult(result, options.timeoutSec, {
 						requestedTimeoutSec: options.requestedTimeoutSec,
@@ -1114,6 +1125,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 			pendingNotices.push("pty requested but unavailable in this environment; ran without a terminal");
 		}
 		const wallTimeStart = performance.now();
+		const minimizedSave = makeMinimizedSaveHandler(this.session, command, commandCwd);
 		const result: BashResult | BashInteractiveResult = interactiveUi
 			? await runInteractiveBashPty(interactiveUi, {
 					command,
@@ -1133,7 +1145,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 					artifactPath,
 					artifactId,
 					onChunk: streamTailUpdates(tailBuffer, onUpdate),
-					onMinimizedSave: makeMinimizedSaveHandler(this.session, command, commandCwd),
+					onMinimizedSave: minimizedSave.onMinimizedSave,
 				});
 		const wallTimeMs = performance.now() - wallTimeStart;
 		if (result.cancelled) {
@@ -1154,12 +1166,14 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 					: `Command timed out after ${timeoutSec} seconds`,
 			);
 		}
-		await recordBashMinimizerGain({
-			session: this.session,
-			command,
-			commandCwd,
-			result,
-		});
+		if (!minimizedSave.didSave()) {
+			await recordBashMinimizerGain({
+				session: this.session,
+				command,
+				commandCwd,
+				result,
+			});
+		}
 		return this.#buildCompletedResult(result, timeoutSec, {
 			requestedTimeoutSec,
 			notices: pendingNotices,
