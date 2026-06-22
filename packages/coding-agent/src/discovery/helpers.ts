@@ -656,20 +656,28 @@ export async function discoverExtensionModulePaths(_ctx: LoadContext, dir: strin
  * Derive a stable extension name from a path.
  */
 export function getExtensionNameFromPath(extensionPath: string): string {
-	const base = extensionPath.replace(/\\/g, "/").split("/").pop() ?? extensionPath;
+	const parts = extensionPath.replace(/\\/g, "/").split("/");
+	const base = parts.at(-1) ?? extensionPath;
+	const parent = parts.at(-2);
+	const grandparent = parts.at(-3);
 
 	if (base === "index.ts" || base === "index.js") {
-		const parts = extensionPath.replace(/\\/g, "/").split("/");
-		const parent = parts[parts.length - 2];
 		return parent ?? base;
 	}
 
 	const dot = base.lastIndexOf(".");
-	if (dot > 0) {
-		return base.slice(0, dot);
+	if (dot <= 0) {
+		return base;
 	}
 
-	return base;
+	const stem = base.slice(0, dot);
+	if (stem.endsWith(".bundle")) {
+		if (parent && parent !== "dist") return parent;
+		if (parent === "dist" && grandparent) return grandparent;
+		return stem.slice(0, -".bundle".length);
+	}
+
+	return stem;
 }
 
 /**

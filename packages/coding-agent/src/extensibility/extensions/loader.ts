@@ -579,6 +579,10 @@ export async function discoverExtensionPaths(
 			continue;
 		}
 
+		if (isDisabledName(getExtensionNameFromPath(resolved))) {
+			continue;
+		}
+
 		addPath(resolved);
 	}
 

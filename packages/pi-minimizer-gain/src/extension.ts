@@ -95,16 +95,20 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 			const loadDualContext = async (): Promise<DualContext> => {
 				const activeSession = getActiveSessionHeader(ctx.sessionManager.getHeader());
 				const activeSessionCommands = extractActiveSessionBashCommands(ctx.sessionManager.getEntries(), cwd);
+				// getHeader() returns null until the session file is flushed to disk (requires at
+				// least one assistant turn). Fall back to getSessionId() which is always available.
+				const effectiveSessionId: string | undefined =
+					activeSession.id ?? ctx.sessionManager.getSessionId?.() ?? undefined;
 				return {
 					active: await loadMinimizerGainContext({
 						cwd,
 						all: false,
 						days: parsed.days,
 						activeSessionFile,
-						activeSessionId: activeSession.id,
+						activeSessionId: effectiveSessionId,
 						activeSessionStartedAt: activeSession.startedAt,
 						activeSessionCommands:
-							activeSession.id === undefined && activeSession.startedAt === undefined
+							effectiveSessionId === undefined && activeSession.startedAt === undefined
 								? activeSessionCommands
 								: undefined,
 					}),
@@ -113,9 +117,9 @@ export default function minimizerGain(pi: ExtensionAPI): void {
 					diagnostic: await buildDiagnosticForCwd(
 						initialScope === 2 ? undefined : cwd,
 						initialScope === 0 ? activeSessionFile : undefined,
-						initialScope === 0 ? activeSession.id : undefined,
+						initialScope === 0 ? effectiveSessionId : undefined,
 						initialScope === 0 ? activeSession.startedAt : undefined,
-						initialScope === 0 && activeSession.id === undefined && activeSession.startedAt === undefined
+						initialScope === 0 && effectiveSessionId === undefined && activeSession.startedAt === undefined
 							? activeSessionCommands
 							: undefined,
 					),
