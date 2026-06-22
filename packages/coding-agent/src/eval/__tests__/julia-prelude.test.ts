@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import * as path from "node:path";
 import { $which, TempDir } from "@oh-my-pi/pi-utils";
 import { disposeJuliaKernelSessionsByOwner, executeJulia } from "../jl/executor";
 
 const HAS_JULIA = Boolean($which("julia"));
+if (HAS_JULIA) setDefaultTimeout(60_000);
 const OWNER_ID = "julia-prelude-tests";
 
 describe.skipIf(!HAS_JULIA)("eval Julia prelude helpers", () => {

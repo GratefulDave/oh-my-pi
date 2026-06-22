@@ -26,6 +26,7 @@ import { truncateForPrompt } from "./approval";
 import { applyBashFixups } from "./bash-command-fixup";
 import { type BashInteractiveResult, runInteractiveBashPty } from "./bash-interactive";
 import { checkBashInterception } from "./bash-interceptor";
+import { appendBashMinimizerGainRecord, inferBashMinimizerMissedFilter } from "./bash-minimizer-gain";
 import { canUseInteractiveBashPty } from "./bash-pty-selection";
 import { expandInternalUrls, type InternalUrlExpansionOptions } from "./bash-skill-urls";
 import { invalidateGithubCacheForBashCommand } from "./gh-cache-invalidation";
@@ -97,6 +98,62 @@ async function saveBashOriginalArtifact(session: ToolSession, originalText: stri
 		return alloc.id;
 	} catch {
 		return undefined;
+	}
+}
+
+function makeMinimizedSaveHandler(
+	session: ToolSession,
+	command: string,
+	commandCwd: string,
+): (
+	originalText: string,
+	info: { filter: string; inputBytes: number; outputBytes: number },
+) => Promise<string | undefined> {
+	return async (originalText, info) => {
+		const artifactId = await saveBashOriginalArtifact(session, originalText);
+		try {
+			await appendBashMinimizerGainRecord({
+				command,
+				cwd: commandCwd,
+				sessionCwd: session.cwd,
+				sessionId: session.getSessionId?.() ?? undefined,
+				filter: info.filter,
+				inputBytes: info.inputBytes,
+				outputBytes: info.outputBytes,
+				exitCode: null,
+				kind: "saved",
+				agentDir: session.settings.getAgentDir?.(),
+			});
+		} catch {
+			// Best-effort
+		}
+		return artifactId;
+	};
+}
+
+async function recordBashMinimizerGain(input: {
+	session: ToolSession;
+	command: string;
+	commandCwd: string;
+	result: BashResult | BashInteractiveResult;
+}): Promise<void> {
+	try {
+		if (input.result.cancelled || input.result.exitCode === undefined) return;
+		if (input.result.totalBytes <= 0) return;
+		await appendBashMinimizerGainRecord({
+			command: input.command,
+			cwd: input.commandCwd,
+			sessionCwd: input.session.cwd,
+			sessionId: input.session.getSessionId?.() ?? undefined,
+			filter: inferBashMinimizerMissedFilter(input.command),
+			inputBytes: input.result.totalBytes,
+			outputBytes: input.result.totalBytes,
+			exitCode: input.result.exitCode,
+			kind: "missed",
+			agentDir: input.session.settings.getAgentDir?.(),
+		});
+	} catch {
+		// Best-effort: gain telemetry failure must not break bash execution
 	}
 }
 
@@ -575,7 +632,13 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 							latestText = tailBuffer.text();
 							void reportProgress(latestText, { async: { state: "running", jobId, type: "bash" } });
 						},
-						onMinimizedSave: originalText => saveBashOriginalArtifact(this.session, originalText),
+						onMinimizedSave: makeMinimizedSaveHandler(this.session, options.command, options.commandCwd),
+					});
+					await recordBashMinimizerGain({
+						session: this.session,
+						command: options.command,
+						commandCwd: options.commandCwd,
+						result,
 					});
 					const wallTimeMs = performance.now() - wallTimeStart;
 					const finalResult = await this.#buildCompletedResult(result, options.timeoutSec, {
@@ -1018,6 +1081,13 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 				if (finalOutput.truncated) bridgeNotices.push("(output truncated)");
 				for (const notice of pendingNotices) bridgeNotices.push(notice);
 
+				await recordBashMinimizerGain({
+					session: this.session,
+					command,
+					commandCwd,
+					result: bridgeResult,
+				});
+
 				return this.#buildCompletedResult(bridgeResult, timeoutSec, {
 					requestedTimeoutSec,
 					notices: bridgeNotices,
@@ -1063,7 +1133,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 					artifactPath,
 					artifactId,
 					onChunk: streamTailUpdates(tailBuffer, onUpdate),
-					onMinimizedSave: originalText => saveBashOriginalArtifact(this.session, originalText),
+					onMinimizedSave: makeMinimizedSaveHandler(this.session, command, commandCwd),
 				});
 		const wallTimeMs = performance.now() - wallTimeStart;
 		if (result.cancelled) {
@@ -1084,6 +1154,12 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 					: `Command timed out after ${timeoutSec} seconds`,
 			);
 		}
+		await recordBashMinimizerGain({
+			session: this.session,
+			command,
+			commandCwd,
+			result,
+		});
 		return this.#buildCompletedResult(result, timeoutSec, {
 			requestedTimeoutSec,
 			notices: pendingNotices,
