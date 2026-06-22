@@ -58,3 +58,10 @@ lean-ctx is **code-intel only** in this stack. Allowed tools: `ctx_read`,
 `ctx_session`, `ctx_knowledge`, `ctx_graph`, `ctx_call` in place of native tools.
 Native `bash`/`read`/`search`/`find` take precedence.
 <!-- /lean-ctx override -->
+
+## Extension packaging rule
+
+- All new authored extensions MUST live under `packages/<name>`.
+- `.omp/extensions/` is runtime/local compatibility only; NEVER create new source-owned extensions there.
+- Package each extension with `package.json`, `src/extension.ts`, build script, and `omp.extensions` output.
+- Repo `.omp/settings.json#extensions` MUST point at package-built bundles, not authored `.omp/extensions/*` sources.
