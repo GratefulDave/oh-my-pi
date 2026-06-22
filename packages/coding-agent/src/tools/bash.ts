@@ -106,8 +106,8 @@ async function recordBashMinimizerGain(input: {
 	commandCwd: string;
 	result: BashResult | BashInteractiveResult;
 }): Promise<void> {
-	if (input.result.cancelled || input.result.exitCode === undefined || !("minimized" in input.result)) return;
-	const telemetry = input.result.minimized;
+	if (input.result.cancelled || input.result.exitCode === undefined) return;
+	const telemetry = "minimized" in input.result ? input.result.minimized : undefined;
 	if (telemetry) {
 		await appendBashMinimizerGainRecord({
 			command: input.command,
@@ -1061,7 +1061,12 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 				const bridgeNotices: string[] = [];
 				if (finalOutput.truncated) bridgeNotices.push("(output truncated)");
 				for (const notice of pendingNotices) bridgeNotices.push(notice);
-
+				await recordBashMinimizerGain({
+					session: this.session,
+					command,
+					commandCwd,
+					result: bridgeResult,
+				});
 				return this.#buildCompletedResult(bridgeResult, timeoutSec, {
 					requestedTimeoutSec,
 					notices: bridgeNotices,

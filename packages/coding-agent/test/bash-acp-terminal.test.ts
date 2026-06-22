@@ -1,7 +1,12 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ClientBridge, ClientBridgeTerminalHandle } from "@oh-my-pi/pi-coding-agent/session/client-bridge";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { BashTool } from "@oh-my-pi/pi-coding-agent/tools/bash";
+let tempDir: string;
+let originalAgentDir: string | undefined;
 
 function makeSession(bridge: ClientBridge): ToolSession {
 	return {
@@ -9,6 +14,7 @@ function makeSession(bridge: ClientBridge): ToolSession {
 		hasUI: false,
 		skills: [],
 		getSessionFile: () => null,
+		getSessionId: () => "bridge-session-id",
 		settings: {
 			get(key: string) {
 				if (key === "async.enabled") return false;
@@ -24,12 +30,24 @@ function makeSession(bridge: ClientBridge): ToolSession {
 			getBashInterceptorRules() {
 				return [];
 			},
+			getAgentDir() {
+				return Bun.env.OMP_AGENT_DIR ?? "";
+			},
 		},
 		getClientBridge: () => bridge,
 	} as unknown as ToolSession;
 }
 
+beforeEach(() => {
+	originalAgentDir = Bun.env.OMP_AGENT_DIR;
+	tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-bash-acp-gain-"));
+	Bun.env.OMP_AGENT_DIR = path.join(tempDir, "agent");
+});
+
 afterEach(() => {
+	if (originalAgentDir === undefined) delete Bun.env.OMP_AGENT_DIR;
+	else Bun.env.OMP_AGENT_DIR = originalAgentDir;
+	fs.rmSync(tempDir, { recursive: true, force: true });
 	mock.restore();
 });
 
@@ -78,6 +96,28 @@ describe("BashTool ACP terminal routing", () => {
 
 		// The handle must always be released
 		expect(releaseSpy).toHaveBeenCalledTimes(1);
+
+		const gainPath = path.join(Bun.env.OMP_AGENT_DIR ?? "", "minimizer-gain.jsonl");
+		expect(fs.existsSync(gainPath)).toBe(true);
+		const records = fs
+			.readFileSync(gainPath, "utf8")
+			.trim()
+			.split("\n")
+			.map(line => JSON.parse(line) as Record<string, unknown>);
+		const realTmp = fs.realpathSync("/tmp");
+		expect(records).toHaveLength(1);
+		expect(records[0]).toMatchObject({
+			command: "echo hi",
+			cwd: realTmp,
+			sessionCwd: realTmp,
+			sessionId: "bridge-session-id",
+			filter: "echo",
+			inputBytes: stubText.length,
+			outputBytes: stubText.length,
+			savedBytes: 0,
+			exitCode: 0,
+			kind: "missed",
+		});
 	});
 
 	it("releases the client terminal when final output retrieval fails", async () => {
