@@ -6,6 +6,21 @@
 
 - Fixed Antigravity / Cloud Code Assist request shaping to send captured per-wire thinking budgets and to re-normalize legacy `parameters` tool schemas for Claude CCA compatibility.
 
+## [16.1.13] - 2026-06-22
+
+### Added
+
+- Added support for Devin as a provider
+
+### Changed
+
+- Updated tool call arguments to use `Record<string, unknown>` and `unknown` for tool results
+
+### Fixed
+
+- Fixed OpenAI Responses native history replay dropping failed/incomplete image generation calls instead of resending their transient `ig_...` item IDs, preventing follow-up requests from failing with `404 Item with id ... not found`. ([#3225](https://github.com/can1357/oh-my-pi/issues/3225))
+- Fixed `/login fireworks` rejecting valid `fw_…` keys with `Fireworks API key validation failed (500): Error listing deployed models`. The validator pinged `/inference/v1/models`, which Fireworks serves from the per-account deployment registry and 500s for accounts without active deployments. Login now hits the static control-plane `List Models` catalog (`GET /v1/accounts/fireworks/models?filter=supports_serverless=true&pageSize=1`) — the same endpoint discovery already uses — so authentication no longer depends on the caller's deployment state. ([#3219](https://github.com/can1357/oh-my-pi/issues/3219))
+
 ## [16.1.11] - 2026-06-21
 
 ### Fixed

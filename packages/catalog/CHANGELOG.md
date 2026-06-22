@@ -6,6 +6,13 @@
 
 - Fixed Antigravity Cloud Code Assist wire metadata to include the captured Claude, Gemini, and GPT-OSS thinking-budget/output-cap profiles used by current upstream wire ids.
 
+## [16.1.13] - 2026-06-22
+
+### Added
+
+- Added support for Devin as a model provider
+- Added capability to fetch dynamic models from the Devin model manager
+
 ## [16.1.11] - 2026-06-21
 
 ### Fixed
