@@ -11016,28 +11016,46 @@ export class AgentSession {
 		const abortController = new AbortController();
 		this.#bashAbortControllers.add(abortController);
 
+		let minimizationInfo: { filter: string; inputBytes: number; outputBytes: number } | undefined;
 		try {
 			const result = await executeBashCommand(command, {
 				onChunk,
 				signal: abortController.signal,
 				sessionKey: this.sessionId,
 				timeout: clampTimeout("bash") * 1000,
-				onMinimizedSave: originalText => this.#saveBashOriginalArtifact(originalText),
+				onMinimizedSave: async (originalText, info) => {
+					minimizationInfo = info;
+					return this.#saveBashOriginalArtifact(originalText);
+				},
 				useUserShell: options?.useUserShell,
 			});
 
 			this.recordBashResult(command, result, options);
-			void appendBashMinimizerGainRecord({
-				command,
-				cwd,
-				sessionId: this.sessionId,
-				filter: inferBashMinimizerMissedFilter(command),
-				inputBytes: result.totalBytes,
-				outputBytes: result.totalBytes,
-				exitCode: result.exitCode ?? null,
-				kind: "missed",
-				agentDir: this.settings.getAgentDir?.(),
-			}).catch(() => {});
+			if (minimizationInfo) {
+				void appendBashMinimizerGainRecord({
+					command,
+					cwd,
+					sessionId: this.sessionId,
+					filter: minimizationInfo.filter,
+					inputBytes: minimizationInfo.inputBytes,
+					outputBytes: minimizationInfo.outputBytes,
+					exitCode: result.exitCode ?? null,
+					kind: "saved",
+					agentDir: this.settings.getAgentDir?.(),
+				}).catch(() => {});
+			} else if (!result.cancelled && result.exitCode !== undefined && result.totalBytes > 0) {
+				void appendBashMinimizerGainRecord({
+					command,
+					cwd,
+					sessionId: this.sessionId,
+					filter: inferBashMinimizerMissedFilter(command),
+					inputBytes: result.totalBytes,
+					outputBytes: result.totalBytes,
+					exitCode: result.exitCode ?? null,
+					kind: "missed",
+					agentDir: this.settings.getAgentDir?.(),
+				}).catch(() => {});
+			}
 			return result;
 		} finally {
 			this.#bashAbortControllers.delete(abortController);
