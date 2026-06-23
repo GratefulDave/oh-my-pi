@@ -47,6 +47,7 @@ import type { AsyncJobManager } from "../async";
 import type { LocalProtocolOptions } from "../internal-urls";
 import { loadOverallPlanReference } from "../plan-mode/plan-handoff";
 import { AgentRegistry, MAIN_AGENT_ID } from "../registry/agent-registry";
+import { normalizeDisabledAgents } from "./disabled-agents";
 import { type DiscoveryResult, discoverAgents, getAgent } from "./discovery";
 import { runSubprocess } from "./executor";
 import {
@@ -514,7 +515,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 
 	/** Dynamic description that reflects current disabled-agent settings */
 	get description(): string {
-		const disabledAgents = this.session.settings.get("task.disabledAgents") as string[];
+		const disabledAgents = normalizeDisabledAgents(this.session.settings.get("task.disabledAgents") as string[]);
 		const maxConcurrency = this.session.settings.get("task.maxConcurrency");
 		const isolationMode = this.session.settings.get("task.isolation.mode");
 		return renderDescription(
@@ -543,6 +544,49 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 	#getSpawnSemaphore(): Semaphore {
 		this.#spawnSemaphore ??= new Semaphore(this.session.settings.get("task.maxConcurrency"));
 		return this.#spawnSemaphore;
+	}
+
+	#resolveAgentForDispatch(
+		agentName: string,
+	): { agent: AgentDefinition } | { error: AgentToolResult<TaskToolDetails> } {
+		const agent = getAgent(this.#discoveredAgents, agentName);
+		if (!agent) {
+			const available = this.#discoveredAgents.map(a => a.name).join(", ") || "none";
+			return { error: createTaskModeError(`Unknown agent "${agentName}". Available: ${available}`) };
+		}
+
+		const disabledAgents = normalizeDisabledAgents(this.session.settings.get("task.disabledAgents") as string[]);
+		if (disabledAgents.length > 0 && disabledAgents.includes(agentName)) {
+			const enabled = this.#discoveredAgents.filter(a => !disabledAgents.includes(a.name)).map(a => a.name);
+			return {
+				error: createTaskModeError(
+					`Agent "${agentName}" is disabled in settings. Enable it via /agents, or use a different agent type.${enabled.length > 0 ? ` Available: ${enabled.join(", ")}` : ""}`,
+				),
+			};
+		}
+
+		if (this.#blockedAgent && agentName === this.#blockedAgent) {
+			return {
+				error: createTaskModeError(
+					`Cannot spawn ${this.#blockedAgent} agent from within itself (recursion prevention). Use a different agent type.`,
+				),
+			};
+		}
+
+		const parentSpawns = this.session.getSessionSpawns() ?? "*";
+		if (parentSpawns === "") {
+			return {
+				error: createTaskModeError(`Cannot spawn '${agentName}'. Allowed: none (spawns disabled for this agent)`),
+			};
+		}
+		if (parentSpawns !== "*") {
+			const allowedSpawns = parentSpawns.split(",").map(s => s.trim());
+			if (!allowedSpawns.includes(agentName)) {
+				return { error: createTaskModeError(`Cannot spawn '${agentName}'. Allowed: ${parentSpawns}`) };
+			}
+		}
+
+		return { agent };
 	}
 
 	/**
@@ -584,7 +628,9 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		}
 
 		const spawnItems = resolveSpawnItems(params);
-		const selectedAgent = this.#discoveredAgents.find(agent => agent.name === params.agent);
+		const agentResolution = this.#resolveAgentForDispatch(params.agent ?? "");
+		if ("error" in agentResolution) return agentResolution.error;
+		const selectedAgent = agentResolution.agent;
 		const asyncEnabled = this.session.settings.get("async.enabled");
 		const manager = asyncEnabled ? this.session.asyncJobManager : undefined;
 		const depthCapacity = canSpawnAtDepth(
@@ -859,7 +905,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 						content: [{ type: "text", text: statusText }],
 						details: buildDetails(resultFailed ? "failed" : "completed", ownJobId),
 					});
-					const deliveryText = `${finalText}${buildFollowUpHint(singleResult?.aborted === true)}`;
+					const deliveryText = `${finalText}${singleResult ? buildFollowUpHint(singleResult.aborted === true) : ""}`;
 					if (resultFailed) {
 						// Mark the job itself failed; the failed agent stays interrogable.
 						throw new TaskJobError(deliveryText);
@@ -1078,7 +1124,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		}
 
 		// Check if agent is disabled in settings
-		const disabledAgents = this.session.settings.get("task.disabledAgents") as string[];
+		const disabledAgents = normalizeDisabledAgents(this.session.settings.get("task.disabledAgents") as string[]);
 		if (disabledAgents.length > 0 && disabledAgents.includes(agentName)) {
 			const enabled = agents.filter(a => !disabledAgents.includes(a.name)).map(a => a.name);
 			return {

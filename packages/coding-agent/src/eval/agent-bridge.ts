@@ -11,6 +11,7 @@ import type { LocalProtocolOptions } from "../internal-urls";
 import { MCPManager } from "../mcp/manager";
 import subagentUserPromptTemplate from "../prompts/system/subagent-user-prompt.md" with { type: "text" };
 import { MAIN_AGENT_ID } from "../registry/agent-registry";
+import { normalizeDisabledAgents } from "../task/disabled-agents";
 import * as taskDiscovery from "../task/discovery";
 import type { ExecutorOptions } from "../task/executor";
 import * as taskExecutor from "../task/executor";
@@ -150,7 +151,7 @@ function assertSpawnAllowed(session: ToolSession, agentName: string): void {
 }
 
 function assertAgentEnabled(session: ToolSession, agentName: string, agents: AgentDefinition[]): void {
-	const disabledAgents = session.settings.get("task.disabledAgents") as string[];
+	const disabledAgents = normalizeDisabledAgents(session.settings.get("task.disabledAgents") as string[]);
 	if (!disabledAgents.includes(agentName)) return;
 	const enabled = agents.filter(agent => !disabledAgents.includes(agent.name)).map(agent => agent.name);
 	throw new ToolError(

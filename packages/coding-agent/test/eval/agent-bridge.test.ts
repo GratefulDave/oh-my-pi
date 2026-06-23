@@ -30,7 +30,7 @@ describe("runEvalAgent", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("forwards session-scoped MCP and local protocol options", async () => {
+	it("forwards session-scoped MCP and local protocol options while keeping task enabled", async () => {
 		const agent: AgentDefinition = {
 			name: "task",
 			description: "Task agent",
@@ -47,7 +47,7 @@ describe("runEvalAgent", () => {
 		};
 		const session = {
 			cwd: "/tmp",
-			settings: Settings.isolated(),
+			settings: Settings.isolated({ "task.disabledAgents": ["task"] }),
 			getSessionSpawns: () => "*",
 			getSessionFile: () => null,
 			mcpManager,

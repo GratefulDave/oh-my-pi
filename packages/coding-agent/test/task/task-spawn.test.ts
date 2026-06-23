@@ -146,6 +146,33 @@ describe("task spawn routing", () => {
 		expect(runSpy).toHaveBeenCalledTimes(1);
 	});
 
+	it("ignores a local disabled setting for the built-in task agent", async () => {
+		vi.spyOn(discoveryModule, "discoverAgents").mockResolvedValue({
+			agents: [taskAgent],
+			projectAgentsDir: null,
+		});
+		const runSpy = vi.spyOn(executorModule, "runSubprocess").mockResolvedValue(makeResult("EnabledTask"));
+
+		const manager = createManager();
+		const tool = await TaskTool.create(
+			createSession({ manager, settings: { "async.enabled": true, "task.disabledAgents": ["task"] } }),
+		);
+
+		const result = await tool.execute("tc-enabled-task", {
+			agent: "task",
+			id: "EnabledTask",
+			assignment: "Do the thing.",
+		} as TaskParams);
+
+		const text = getFirstText(result);
+		expect(text).toContain("Spawned agent `EnabledTask`");
+		expect(text).not.toContain('Agent "task" is disabled in settings');
+		const job = manager.getJob(result.details!.async!.jobId)!;
+		await job.promise;
+		expect(job.status).toBe("completed");
+		expect(runSpy).toHaveBeenCalledTimes(1);
+	});
+
 	it("executeInline waits for completion even when async jobs are enabled", async () => {
 		vi.spyOn(discoveryModule, "discoverAgents").mockResolvedValue({
 			agents: [taskAgent],

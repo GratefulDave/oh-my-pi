@@ -47,6 +47,7 @@ import { Settings } from "../../config/settings";
 import agentCreationArchitectPrompt from "../../prompts/system/agent-creation-architect.md" with { type: "text" };
 import agentCreationUserPrompt from "../../prompts/system/agent-creation-user.md" with { type: "text" };
 import { createAgentSession } from "../../sdk";
+import { isAlwaysEnabledAgent, normalizeDisabledAgents } from "../../task/disabled-agents";
 import { discoverAgents } from "../../task/discovery";
 import type { AgentDefinition, AgentSource } from "../../task/types";
 import { shortenPath } from "../../tools/render-utils";
@@ -408,7 +409,9 @@ export class AgentDashboard extends Container {
 			const selectedName = this.#selectedAgent()?.name;
 			const activeTabId = this.#tabs[this.#activeTabIndex]?.id ?? "all";
 			const { agents } = await discoverAgents(this.cwd);
-			const disabled = new Set((this.#settingsManager?.get("task.disabledAgents") as string[] | undefined) ?? []);
+			const disabled = new Set(
+				normalizeDisabledAgents(this.#settingsManager?.get("task.disabledAgents") as string[] | undefined),
+			);
 			const overrides = this.#settingsManager?.get("task.agentModelOverrides") ?? {};
 
 			this.#allAgents = agents
@@ -539,7 +542,7 @@ export class AgentDashboard extends Container {
 	#persistDisabledAgents(): void {
 		if (!this.#settingsManager) return;
 		const disabled = this.#allAgents
-			.filter(agent => agent.disabled)
+			.filter(agent => agent.disabled && !isAlwaysEnabledAgent(agent.name))
 			.map(agent => agent.name)
 			.sort((a, b) => a.localeCompare(b));
 		this.#settingsManager.set("task.disabledAgents", disabled);
@@ -559,7 +562,7 @@ export class AgentDashboard extends Container {
 
 	#toggleSelectedAgent(): void {
 		const selected = this.#selectedAgent();
-		if (!selected) return;
+		if (!selected || isAlwaysEnabledAgent(selected.name)) return;
 		selected.disabled = !selected.disabled;
 		this.#persistDisabledAgents();
 		this.#buildLayout();
