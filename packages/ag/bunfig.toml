@@ -1,4 +1,0 @@
-[test]
-# Mock proper-lockfile before any test file imports the adapter source, which
-# transitively loads opencode-antigravity-auth's storage module. See test/setup.ts.
-preload = ["./test/setup.ts"]

@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_dir="${0:A:h}"
 binary="$repo_dir/packages/coding-agent/dist/omp"
+personal_extensions_dir="$HOME/PycharmProjects/omp-personal-extensions"
 link_dir="$HOME/.local/bin"
 bun_link_dir="$HOME/.bun/bin"
 zshrc="$HOME/.zshrc"
@@ -100,7 +101,7 @@ if [[ "$settings_checksum_before" != "$settings_checksum_after" ]]; then
 fi
 printf '  protected user configs unchanged\n'
 print_step "Minimizer gain installed bundle session-scope smoke test"
-bun run --filter pi-minimizer-gain smoke:installed
+bun --cwd="$personal_extensions_dir/packages/pi-minimizer-gain" run smoke:installed
 
 print_step "Ensuring zsh PATH prefers $link_dir"
 touch "$zshrc"
@@ -134,7 +135,7 @@ fi
 printf '  native loads OK\n'
 
 print_step "Minimizer gain bundle smoke test"
-bun --cwd=packages/pi-minimizer-gain run smoke:bundle
+bun --cwd="$personal_extensions_dir/packages/pi-minimizer-gain" run smoke:bundle
 
 # Smoke-test the extension path that has broken repeatedly: the ag extension
 # must load and expose its provider models for BOTH command names. Run from

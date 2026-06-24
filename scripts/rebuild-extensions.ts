@@ -137,11 +137,21 @@ function extName(extensionPath: string): string {
 	return path.basename(path.dirname(path.dirname(normalized)));
 }
 
-function getPackageDir(extensionPath: string): string | null {
-	const normalized = extensionPath.split(path.sep).join("/");
+async function findNearestPackageDir(startPath: string): Promise<string | null> {
+	let current = path.dirname(startPath);
+	while (current !== path.dirname(current)) {
+		if (await pathExists(path.join(current, "package.json"))) return current;
+		current = path.dirname(current);
+	}
+	return null;
+}
+
+async function getPackageDir(extensionPath: string): Promise<string | null> {
+	const output = path.resolve(REPO, extensionPath);
+	const normalized = normalizeRelative(output);
 	const parts = normalized.split("/");
-	if (parts[0] !== "packages" || !parts[1]) return null;
-	return path.join(REPO, "packages", parts[1]);
+	if (parts[0] === "packages" && parts[1]) return path.join(REPO, "packages", parts[1]);
+	return findNearestPackageDir(output);
 }
 
 async function hasBuildScript(packageDir: string): Promise<boolean> {
@@ -150,8 +160,7 @@ async function hasBuildScript(packageDir: string): Promise<boolean> {
 }
 
 async function resolveBundleEntrypoint(output: string): Promise<{ entrypoint: string; target: "bun" | "node" } | null> {
-	const rel = normalizeRelative(output);
-	const packageDir = getPackageDir(rel);
+	const packageDir = await getPackageDir(output);
 	if (packageDir) {
 		const packageEntrypoint = path.join(packageDir, "src", "extension.ts");
 		if (await pathExists(packageEntrypoint)) {
@@ -179,7 +188,7 @@ async function collectTargets(extensionPaths: string[]): Promise<BuildTarget[]> 
 	const targets = new Map<string, BuildTarget>();
 	for (const extensionPath of extensionPaths) {
 		const output = path.resolve(REPO, extensionPath);
-		const packageDir = getPackageDir(extensionPath);
+		const packageDir = await getPackageDir(extensionPath);
 		if (packageDir && (await hasBuildScript(packageDir))) {
 			const key = `package:${packageDir}`;
 			const existing = targets.get(key);
