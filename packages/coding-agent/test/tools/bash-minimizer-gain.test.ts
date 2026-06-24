@@ -151,5 +151,4 @@ describe("bash minimizer gain writer", () => {
 		expect(inferBashMinimizerMissedFilter("NODE_OPTIONS=--require\\ ./setup.js pnpm test")).toBe("pnpm");
 		expect(inferBashMinimizerMissedFilter("FOO=bar\\ baz node index.js")).toBe("node");
 	});
-
 });

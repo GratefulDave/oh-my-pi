@@ -10998,7 +10998,11 @@ export class AgentSession {
 			});
 			if (hookResult?.result) {
 				this.recordBashResult(command, hookResult.result, options);
-				if (!hookResult.result.cancelled && hookResult.result.exitCode !== undefined && hookResult.result.totalBytes > 0) {
+				if (
+					!hookResult.result.cancelled &&
+					hookResult.result.exitCode !== undefined &&
+					hookResult.result.totalBytes > 0
+				) {
 					void appendBashMinimizerGainRecord({
 						command,
 						cwd,
