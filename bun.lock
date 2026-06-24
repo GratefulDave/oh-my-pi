@@ -261,6 +261,13 @@
         "@oh-my-pi/pi-tui": "workspace:*",
       },
     },
+    "packages/pi-herdr": {
+      "name": "pi-herdr",
+      "version": "16.1.12-lex",
+      "peerDependencies": {
+        "@oh-my-pi/pi-coding-agent": "workspace:*",
+      },
+    },
     "packages/pi-minimizer-gain": {
       "name": "pi-minimizer-gain",
       "version": "15.10.3-lex",
@@ -1490,6 +1497,8 @@
     "pi-agent-chain": ["pi-agent-chain@workspace:packages/pi-agent-chain"],
 
     "pi-distill": ["pi-distill@workspace:packages/pi-distill"],
+
+    "pi-herdr": ["pi-herdr@workspace:packages/pi-herdr"],
 
     "pi-minimizer-gain": ["pi-minimizer-gain@workspace:packages/pi-minimizer-gain"],
 
