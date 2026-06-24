@@ -10998,17 +10998,19 @@ export class AgentSession {
 			});
 			if (hookResult?.result) {
 				this.recordBashResult(command, hookResult.result, options);
-				void appendBashMinimizerGainRecord({
-					command,
-					cwd,
-					sessionId: this.sessionId,
-					filter: inferBashMinimizerMissedFilter(command),
-					inputBytes: hookResult.result.totalBytes,
-					outputBytes: hookResult.result.totalBytes,
-					exitCode: hookResult.result.exitCode ?? null,
-					kind: "missed",
-					agentDir: this.settings.getAgentDir?.(),
-				}).catch(() => {});
+				if (!hookResult.result.cancelled && hookResult.result.exitCode !== undefined && hookResult.result.totalBytes > 0) {
+					void appendBashMinimizerGainRecord({
+						command,
+						cwd,
+						sessionId: this.sessionId,
+						filter: inferBashMinimizerMissedFilter(command),
+						inputBytes: hookResult.result.totalBytes,
+						outputBytes: hookResult.result.totalBytes,
+						exitCode: hookResult.result.exitCode ?? null,
+						kind: "missed",
+						agentDir: this.settings.getAgentDir?.(),
+					}).catch(() => {});
+				}
 				return hookResult.result;
 			}
 		}

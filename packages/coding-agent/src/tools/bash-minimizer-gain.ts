@@ -93,6 +93,10 @@ function shellTokens(command: string): string[] {
 					token += command[i++];
 				}
 				if (i < len) i++; // skip closing "
+			} else if (ch === "\\" && i + 1 < len && (command[i + 1] === " " || command[i + 1] === "\t")) {
+				// backslash-escaped whitespace: part of this token, not a word boundary
+				i++; // skip the backslash
+				token += command[i++];
 			} else {
 				token += ch;
 				i++;

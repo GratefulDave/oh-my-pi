@@ -145,4 +145,11 @@ describe("bash minimizer gain writer", () => {
 			inferBashMinimizerMissedFilter("NODE_OPTIONS='--require ./setup.js --max-old-space-size=4096' npm run build"),
 		).toBe("npm");
 	});
+	test("handles backslash-escaped spaces in env values", () => {
+		// NODE_OPTIONS=--require\ ./setup.js pnpm test — backslash-escaped space keeps the
+		// assignment token together so the real executable is still correctly detected
+		expect(inferBashMinimizerMissedFilter("NODE_OPTIONS=--require\\ ./setup.js pnpm test")).toBe("pnpm");
+		expect(inferBashMinimizerMissedFilter("FOO=bar\\ baz node index.js")).toBe("node");
+	});
+
 });
