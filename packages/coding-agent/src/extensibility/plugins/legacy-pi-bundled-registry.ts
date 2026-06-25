@@ -385,7 +385,6 @@ import * as bundledPiCodingAgentEvalJsContextManager from "@oh-my-pi/pi-coding-a
 import * as bundledPiCodingAgentEvalJsExecutor from "@oh-my-pi/pi-coding-agent/eval/js/executor";
 import * as bundledPiCodingAgentEvalJsToolBridge from "@oh-my-pi/pi-coding-agent/eval/js/tool-bridge";
 import * as bundledPiCodingAgentEvalJsWorkerCore from "@oh-my-pi/pi-coding-agent/eval/js/worker-core";
-import * as bundledPiCodingAgentEvalJsWorkerEntry from "@oh-my-pi/pi-coding-agent/eval/js/worker-entry";
 import * as bundledPiCodingAgentEvalJsWorkerProtocol from "@oh-my-pi/pi-coding-agent/eval/js/worker-protocol";
 import * as bundledPiCodingAgentEvalPyDisplay from "@oh-my-pi/pi-coding-agent/eval/py/display";
 import * as bundledPiCodingAgentEvalPyExecutor from "@oh-my-pi/pi-coding-agent/eval/py/executor";
@@ -420,6 +419,7 @@ import * as bundledPiCodingAgentExtensibilityExtensionsGetCommandsHandler from "
 import * as bundledPiCodingAgentExtensibilityExtensionsLoader from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 import * as bundledPiCodingAgentExtensibilityExtensionsModelApi from "@oh-my-pi/pi-coding-agent/extensibility/extensions/model-api";
 import * as bundledPiCodingAgentExtensibilityExtensionsRunner from "@oh-my-pi/pi-coding-agent/extensibility/extensions/runner";
+import * as bundledPiCodingAgentExtensibilityExtensionsTaskRunner from "@oh-my-pi/pi-coding-agent/extensibility/extensions/task-runner";
 import * as bundledPiCodingAgentExtensibilityExtensionsTypes from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import * as bundledPiCodingAgentExtensibilityExtensionsWrapper from "@oh-my-pi/pi-coding-agent/extensibility/extensions/wrapper";
 import * as bundledPiCodingAgentExtensibilityHooks from "@oh-my-pi/pi-coding-agent/extensibility/hooks";
@@ -742,6 +742,7 @@ import * as bundledPiCodingAgentSttWav from "@oh-my-pi/pi-coding-agent/stt/wav";
 import * as bundledPiCodingAgentTask from "@oh-my-pi/pi-coding-agent/task";
 import * as bundledPiCodingAgentTaskAgents from "@oh-my-pi/pi-coding-agent/task/agents";
 import * as bundledPiCodingAgentTaskCommands from "@oh-my-pi/pi-coding-agent/task/commands";
+import * as bundledPiCodingAgentTaskDisabledAgents from "@oh-my-pi/pi-coding-agent/task/disabled-agents";
 import * as bundledPiCodingAgentTaskDiscovery from "@oh-my-pi/pi-coding-agent/task/discovery";
 import * as bundledPiCodingAgentTaskExecutor from "@oh-my-pi/pi-coding-agent/task/executor";
 import * as bundledPiCodingAgentTaskIsolationRunner from "@oh-my-pi/pi-coding-agent/task/isolation-runner";
@@ -768,6 +769,7 @@ import * as bundledPiCodingAgentToolsBash from "@oh-my-pi/pi-coding-agent/tools/
 import * as bundledPiCodingAgentToolsBashCommandFixup from "@oh-my-pi/pi-coding-agent/tools/bash-command-fixup";
 import * as bundledPiCodingAgentToolsBashInteractive from "@oh-my-pi/pi-coding-agent/tools/bash-interactive";
 import * as bundledPiCodingAgentToolsBashInterceptor from "@oh-my-pi/pi-coding-agent/tools/bash-interceptor";
+import * as bundledPiCodingAgentToolsBashMinimizerGain from "@oh-my-pi/pi-coding-agent/tools/bash-minimizer-gain";
 import * as bundledPiCodingAgentToolsBashPtySelection from "@oh-my-pi/pi-coding-agent/tools/bash-pty-selection";
 import * as bundledPiCodingAgentToolsBashSkillUrls from "@oh-my-pi/pi-coding-agent/tools/bash-skill-urls";
 import * as bundledPiCodingAgentToolsBrowser from "@oh-my-pi/pi-coding-agent/tools/browser";
@@ -2001,6 +2003,8 @@ export const BUNDLED_PI_REGISTRY: Readonly<Record<string, Readonly<Record<string
 		bundledPiCodingAgentExtensibilityExtensionsModelApi as unknown as Readonly<Record<string, unknown>>,
 	"@oh-my-pi/pi-coding-agent/extensibility/extensions/runner":
 		bundledPiCodingAgentExtensibilityExtensionsRunner as unknown as Readonly<Record<string, unknown>>,
+	"@oh-my-pi/pi-coding-agent/extensibility/extensions/task-runner":
+		bundledPiCodingAgentExtensibilityExtensionsTaskRunner as unknown as Readonly<Record<string, unknown>>,
 	"@oh-my-pi/pi-coding-agent/extensibility/extensions/types":
 		bundledPiCodingAgentExtensibilityExtensionsTypes as unknown as Readonly<Record<string, unknown>>,
 	"@oh-my-pi/pi-coding-agent/extensibility/extensions/wrapper":
@@ -2098,9 +2102,6 @@ export const BUNDLED_PI_REGISTRY: Readonly<Record<string, Readonly<Record<string
 		Record<string, unknown>
 	>,
 	"@oh-my-pi/pi-coding-agent/eval/js/worker-core": bundledPiCodingAgentEvalJsWorkerCore as unknown as Readonly<
-		Record<string, unknown>
-	>,
-	"@oh-my-pi/pi-coding-agent/eval/js/worker-entry": bundledPiCodingAgentEvalJsWorkerEntry as unknown as Readonly<
 		Record<string, unknown>
 	>,
 	"@oh-my-pi/pi-coding-agent/eval/js/worker-protocol": bundledPiCodingAgentEvalJsWorkerProtocol as unknown as Readonly<
@@ -2717,6 +2718,9 @@ export const BUNDLED_PI_REGISTRY: Readonly<Record<string, Readonly<Record<string
 	"@oh-my-pi/pi-coding-agent/task/commands": bundledPiCodingAgentTaskCommands as unknown as Readonly<
 		Record<string, unknown>
 	>,
+	"@oh-my-pi/pi-coding-agent/task/disabled-agents": bundledPiCodingAgentTaskDisabledAgents as unknown as Readonly<
+		Record<string, unknown>
+	>,
 	"@oh-my-pi/pi-coding-agent/task/discovery": bundledPiCodingAgentTaskDiscovery as unknown as Readonly<
 		Record<string, unknown>
 	>,
@@ -2783,6 +2787,8 @@ export const BUNDLED_PI_REGISTRY: Readonly<Record<string, Readonly<Record<string
 	"@oh-my-pi/pi-coding-agent/tools/bash-interceptor": bundledPiCodingAgentToolsBashInterceptor as unknown as Readonly<
 		Record<string, unknown>
 	>,
+	"@oh-my-pi/pi-coding-agent/tools/bash-minimizer-gain":
+		bundledPiCodingAgentToolsBashMinimizerGain as unknown as Readonly<Record<string, unknown>>,
 	"@oh-my-pi/pi-coding-agent/tools/bash-pty-selection":
 		bundledPiCodingAgentToolsBashPtySelection as unknown as Readonly<Record<string, unknown>>,
 	"@oh-my-pi/pi-coding-agent/tools/bash-skill-urls": bundledPiCodingAgentToolsBashSkillUrls as unknown as Readonly<

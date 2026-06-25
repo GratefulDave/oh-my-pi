@@ -153,6 +153,13 @@ function exportImportTarget(value: unknown): string | null {
 	}
 	return null;
 }
+// Subpath specifiers that must never enter the bundled registry: these modules
+// assert a Worker context at load time (parentPort check) and throw immediately
+// when imported in the main thread during extension loading.
+const EXCLUDED_SUBPATHS = new Set<string>([
+	"@oh-my-pi/pi-coding-agent/eval/js/worker-entry",
+]);
+
 
 async function collectEntries(): Promise<RegistryEntry[]> {
 	const entries: RegistryEntry[] = [];
@@ -178,7 +185,9 @@ async function collectEntries(): Promise<RegistryEntry[]> {
 		for (const exportKey in exportsField) {
 			if (!exportKey.startsWith("./") || exportKey === "." || exportKey.includes("*")) continue;
 			const subpath = exportKey.slice(2);
-			pushEntry(`${pkg.name}/${subpath}`, bindingForSubpath(pkg.identifier, subpath), `${pkg.name}/${subpath}`);
+			const fullKey = `${pkg.name}/${subpath}`;
+			if (EXCLUDED_SUBPATHS.has(fullKey)) continue; // runtime worker artifact — crashes if loaded in main thread
+			pushEntry(fullKey, bindingForSubpath(pkg.identifier, subpath), fullKey);
 		}
 		// Pass 2: expand wildcard exports against the source tree so plugins can
 		// import concrete subpath targets — e.g. `@(scope)/pi-ai/oauth/anthropic`
@@ -219,8 +228,9 @@ async function collectEntries(): Promise<RegistryEntry[]> {
 					if (!isSafeWildcardBasename(basename)) continue;
 					if (basename.includes("/")) continue;
 					const subpath = `${pattern.exportPrefix}${basename}${pattern.exportSuffix}`;
-					const key = `${pkg.name}/${subpath}`;
-					pushEntry(key, bindingForSubpath(pkg.identifier, subpath), key);
+						const key = `${pkg.name}/${subpath}`;
+						if (EXCLUDED_SUBPATHS.has(key)) continue; // runtime worker artifact — crashes if loaded in main thread
+						pushEntry(key, bindingForSubpath(pkg.identifier, subpath), key);
 				}
 			} catch (err) {
 				// Missing source dir means the wildcard is declared in
