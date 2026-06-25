@@ -26,6 +26,14 @@ the native `read`/`bash`/`grep`/`find`/`ls` are **not** routed through lean-ctx 
 
 Prefer the `lean_ctx` tool (installed by the extension) to run `lean-ctx` directly:
 
+## GitHub
+
+Unless user tells you exactly what to write:
+- **Never comment on GitHub** (issues, PRs, discussions).
+- **Never create issues on GitHub**.
+
+## Code Quality
+
 - `lean-ctx overview`
 - `lean-ctx session …`
 - `lean-ctx knowledge …`
