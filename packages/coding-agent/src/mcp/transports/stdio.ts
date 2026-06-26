@@ -386,7 +386,7 @@ export class StdioTransport implements MCPTransport {
 			stdout: "pipe",
 			stderr: "pipe",
 			windowsHide: spawnCommand.windowsHide,
-			detached: spawnCommand.detached,
+			detached: spawnCommand.detached, // POSIX: no controlling terminal; Windows: false (see detached field)
 		});
 
 		this.#connected = true;
