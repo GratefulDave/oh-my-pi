@@ -162,6 +162,18 @@ describe("bash minimizer gain writer", () => {
 	test("handles backslash-escaped spaces in env assignments", () => {
 		expect(inferBashMinimizerMissedFilter("NODE_OPTIONS=--require\\ ./setup.js pnpm test")).toBe("pnpm");
 	});
+
+	test("treats newlines as command separators (compound)", () => {
+		expect(inferBashMinimizerMissedFilter("git status\nnpm test")).toBe("compound");
+		expect(inferBashMinimizerMissedFilter("cd /tmp\nls -la")).toBe("compound");
+	});
+
+	test("handles env -i (no-arg) and -v (no-arg) options correctly", () => {
+		// -i takes no argument (ignore-environment), so the next token is the command
+		expect(inferBashMinimizerMissedFilter("env -i pnpm test")).toBe("pnpm");
+		// -v takes no argument (verbose), so the next token is the command
+		expect(inferBashMinimizerMissedFilter("env -v bun test")).toBe("bun");
+	});
 });
 
 describe("makeMinimizedSaveHandler + didSave gate contract", () => {

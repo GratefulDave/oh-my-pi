@@ -71,12 +71,12 @@ function shellTokens(command: string): string[] {
 	let i = 0;
 	const len = command.length;
 	while (i < len) {
-		// skip unquoted whitespace
+		// skip unquoted horizontal whitespace (newlines are command separators, not whitespace)
 		while (i < len && (command[i] === " " || command[i] === "\t")) i++;
 		if (i >= len) break;
 		const ch0 = command[i];
 		// unquoted shell operators become single-character tokens
-		if (ch0 === "|" || ch0 === "&" || ch0 === ";") {
+		if (ch0 === "|" || ch0 === "&" || ch0 === ";" || ch0 === "\n" || ch0 === "\r") {
 			tokens.push(ch0);
 			i++;
 			continue;
@@ -85,7 +85,7 @@ function shellTokens(command: string): string[] {
 		// consume one word token (may contain quoted spans or escape sequences)
 		while (i < len) {
 			const ch = command[i];
-			if (ch === " " || ch === "\t") break;
+			if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") break;
 			if (ch === "|" || ch === "&" || ch === ";") break;
 			if (ch === "\\") {
 				// backslash escape: next char is a literal word character
@@ -123,7 +123,7 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 	// misidentified as compound commands.
 	const tokens = shellTokens(trimmed);
 	// Any unquoted shell operator token means compound command.
-	if (tokens.some(t => t === "|" || t === "&" || t === ";")) return "compound";
+	if (tokens.some(t => t === "|" || t === "&" || t === ";" || t === "\n" || t === "\r")) return "compound";
 	let idx = 0;
 	let first = tokens[0] ?? "";
 	// Skip env wrapper and its assignments/flags (e.g. `env -u FOO cmd` or `env FOO=bar cmd`)
@@ -136,8 +136,9 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 				idx++;
 			} else if (t.startsWith("-")) {
 				idx++;
-				// single-char option that takes a following argument (e.g. -u, -n, -i)
-				if (/^-[a-z]$/.test(t) && idx < tokens.length && !tokens[idx]!.startsWith("-")) {
+				// single-char option that takes a following argument: -u (unset), -C (chdir), -n (dry-run)
+				// but NOT -i (ignore-env) or -v (verbose) which take no operand
+				if (/^-[a-z]$/.test(t) && !/^-[iv]$/.test(t) && idx < tokens.length && !tokens[idx]!.startsWith("-")) {
 					idx++; // skip the option's argument
 				}
 			} else {
