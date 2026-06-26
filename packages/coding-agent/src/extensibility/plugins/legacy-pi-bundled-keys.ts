@@ -360,6 +360,7 @@ export const BUNDLED_PI_REGISTRY_KEYS: ReadonlySet<string> = new Set([
 	"@oh-my-pi/pi-coding-agent/config/models-config",
 	"@oh-my-pi/pi-coding-agent/config/prompt-templates",
 	"@oh-my-pi/pi-coding-agent/config/resolve-config-value",
+	"@oh-my-pi/pi-coding-agent/config/service-tier",
 	"@oh-my-pi/pi-coding-agent/config/settings-schema",
 	"@oh-my-pi/pi-coding-agent/config/settings",
 	"@oh-my-pi/pi-coding-agent/dap/client",

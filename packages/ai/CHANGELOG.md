@@ -6,6 +6,12 @@
 
 - Fixed Antigravity / Cloud Code Assist request shaping to send captured per-wire thinking budgets and to re-normalize legacy `parameters` tool schemas for Claude CCA compatibility.
 
+## [16.1.21] - 2026-06-26
+
+### Fixed
+
+- Restored the `pollOAuthDeviceCodeFlow` export from `@oh-my-pi/pi-ai/oauth` so legacy provider extensions can reuse the host OAuth device-code poller. ([#3508](https://github.com/can1357/oh-my-pi/issues/3508))
+
 ## [16.1.20] - 2026-06-25
 
 ### Fixed

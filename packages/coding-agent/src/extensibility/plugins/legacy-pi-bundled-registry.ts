@@ -328,6 +328,7 @@ import * as bundledPiCodingAgentConfigModelsConfig from "@oh-my-pi/pi-coding-age
 import * as bundledPiCodingAgentConfigModelsConfigSchema from "@oh-my-pi/pi-coding-agent/config/models-config-schema";
 import * as bundledPiCodingAgentConfigPromptTemplates from "@oh-my-pi/pi-coding-agent/config/prompt-templates";
 import * as bundledPiCodingAgentConfigResolveConfigValue from "@oh-my-pi/pi-coding-agent/config/resolve-config-value";
+import * as bundledPiCodingAgentConfigServiceTier from "@oh-my-pi/pi-coding-agent/config/service-tier";
 import * as bundledPiCodingAgentConfigSettings from "@oh-my-pi/pi-coding-agent/config/settings";
 import * as bundledPiCodingAgentConfigSettingsSchema from "@oh-my-pi/pi-coding-agent/config/settings-schema";
 import * as bundledPiCodingAgentDap from "@oh-my-pi/pi-coding-agent/dap";
@@ -1804,6 +1805,9 @@ export const BUNDLED_PI_REGISTRY: Readonly<Record<string, Readonly<Record<string
 		bundledPiCodingAgentConfigPromptTemplates as unknown as Readonly<Record<string, unknown>>,
 	"@oh-my-pi/pi-coding-agent/config/resolve-config-value":
 		bundledPiCodingAgentConfigResolveConfigValue as unknown as Readonly<Record<string, unknown>>,
+	"@oh-my-pi/pi-coding-agent/config/service-tier": bundledPiCodingAgentConfigServiceTier as unknown as Readonly<
+		Record<string, unknown>
+	>,
 	"@oh-my-pi/pi-coding-agent/config/settings-schema": bundledPiCodingAgentConfigSettingsSchema as unknown as Readonly<
 		Record<string, unknown>
 	>,
