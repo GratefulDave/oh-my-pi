@@ -61,10 +61,10 @@ export async function appendBashMinimizerGainRecord(input: BashMinimizerGainInpu
 }
 
 /**
- * Shell-aware tokenizer: splits `command` on unquoted whitespace, consuming
- * single-quoted ('…') and double-quoted ("…") spans without splitting on the
- * whitespace inside them.  Only the first few tokens are needed, so we stop
- * once we have found the real program token.
+ * Shell-aware tokenizer: splits `command` on unquoted whitespace and
+ * detects shell operators (`|`, `&`, `;`). Returns token strings; operator
+ * tokens are the single characters `|`, `&`, or `;`. Backslash-escaped
+ * spaces are treated as word characters, not delimiters.
  */
 function shellTokens(command: string): string[] {
 	const tokens: string[] = [];
@@ -74,11 +74,24 @@ function shellTokens(command: string): string[] {
 		// skip unquoted whitespace
 		while (i < len && (command[i] === " " || command[i] === "\t")) i++;
 		if (i >= len) break;
+		const ch0 = command[i];
+		// unquoted shell operators become single-character tokens
+		if (ch0 === "|" || ch0 === "&" || ch0 === ";") {
+			tokens.push(ch0);
+			i++;
+			continue;
+		}
 		let token = "";
-		// consume one token (may contain quoted spans)
-		while (i < len && command[i] !== " " && command[i] !== "\t") {
+		// consume one word token (may contain quoted spans or escape sequences)
+		while (i < len) {
 			const ch = command[i];
-			if (ch === "'") {
+			if (ch === " " || ch === "\t") break;
+			if (ch === "|" || ch === "&" || ch === ";") break;
+			if (ch === "\\") {
+				// backslash escape: next char is a literal word character
+				i++;
+				if (i < len) token += command[i++];
+			} else if (ch === "'") {
 				// single-quoted: consume until closing '
 				i++;
 				while (i < len && command[i] !== "'") {
@@ -86,7 +99,7 @@ function shellTokens(command: string): string[] {
 				}
 				if (i < len) i++; // skip closing '
 			} else if (ch === '"') {
-				// double-quoted: consume until closing " (no backslash handling needed for identity)
+				// double-quoted: consume until closing "
 				i++;
 				while (i < len && command[i] !== '"') {
 					if (command[i] === "\\" && i + 1 < len) i++; // skip escape
@@ -106,13 +119,34 @@ function shellTokens(command: string): string[] {
 export function inferBashMinimizerMissedFilter(command: string): string {
 	const trimmed = command.trim();
 	if (trimmed.length === 0) return "missed";
-	if (/[;&|]/.test(trimmed)) return "compound";
-	// Use shell-aware tokenization so quoted env values containing whitespace
-	// (e.g. NODE_OPTIONS='--max-old-space-size=4096 --trace-warnings' pnpm test)
-	// don't cause the loop to stop at a value fragment instead of the real command.
+	// Tokenize first so quoted operators (e.g. `rg 'foo|bar'`) are not
+	// misidentified as compound commands.
 	const tokens = shellTokens(trimmed);
-	let first = tokens[0] ?? "";
+	// Any unquoted shell operator token means compound command.
+	if (tokens.some(t => t === "|" || t === "&" || t === ";")) return "compound";
 	let idx = 0;
+	let first = tokens[0] ?? "";
+	// Skip env wrapper and its assignments/flags (e.g. `env -u FOO cmd` or `env FOO=bar cmd`)
+	if (first === "env") {
+		idx++;
+		// skip env options and NAME=value pairs; env -u VAR takes a following argument
+		while (idx < tokens.length) {
+			const t = tokens[idx]!;
+			if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
+				idx++;
+			} else if (t.startsWith("-")) {
+				idx++;
+				// single-char option that takes a following argument (e.g. -u, -n, -i)
+				if (/^-[a-z]$/.test(t) && idx < tokens.length && !tokens[idx]!.startsWith("-")) {
+					idx++; // skip the option's argument
+				}
+			} else {
+				break;
+			}
+		}
+		first = tokens[idx] ?? "";
+	}
+	// Skip leading NAME=value env assignments
 	while (first && /^[A-Za-z_][A-Za-z0-9_]*=/.test(first)) {
 		idx++;
 		first = tokens[idx] ?? "";
