@@ -41,7 +41,7 @@ export async function appendBashMinimizerGainRecord(input: BashMinimizerGainInpu
 		? await fs.realpath(resolvedSessionCwd).catch(() => resolvedSessionCwd)
 		: undefined;
 	const record = {
-		schemaVersion: 2,
+		schemaVersion: 1,
 		timestamp: new Date().toISOString(),
 		...(cwdRealpath ? { cwd: cwdRealpath } : {}),
 		...(sessionCwdRealpath ? { sessionCwd: sessionCwdRealpath } : {}),
