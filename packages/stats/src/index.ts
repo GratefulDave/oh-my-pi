@@ -17,13 +17,12 @@ export {
 export { closeDb } from "./db";
 export { getGainDashboardStats } from "./gain-aggregator";
 export { startServer } from "./server";
-export { getGainDashboardStats } from "./gain-aggregator";
-export type { GainDashboardStats, GainSource, GainSourceTotals, GainTimeSeriesPoint, GainTopFilter } from "./shared-types";
 export type {
 	GainDashboardStats,
 	GainSource,
 	GainSourceTotals,
 	GainTimeSeriesPoint,
+	GainTopFilter,
 } from "./shared-types";
 export type {
 	AggregatedStats,
