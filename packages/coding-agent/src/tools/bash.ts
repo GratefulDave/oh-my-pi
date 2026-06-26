@@ -101,7 +101,7 @@ async function saveBashOriginalArtifact(session: ToolSession, originalText: stri
 	}
 }
 
-function makeMinimizedSaveHandler(
+export function makeMinimizedSaveHandler(
 	session: ToolSession,
 	command: string,
 	commandCwd: string,
@@ -113,25 +113,28 @@ function makeMinimizedSaveHandler(
 	didSave: () => boolean;
 } {
 	let saved = false;
+	const gainTelemetry = session.settings.get("shellMinimizer.gainTelemetry");
 	return {
 		onMinimizedSave: async (originalText, info) => {
 			saved = true;
 			const artifactId = await saveBashOriginalArtifact(session, originalText);
-			try {
-				await appendBashMinimizerGainRecord({
-					command,
-					cwd: commandCwd,
-					sessionCwd: session.cwd,
-					sessionId: session.getSessionId?.() ?? undefined,
-					filter: info.filter,
-					inputBytes: info.inputBytes,
-					outputBytes: info.outputBytes,
-					exitCode: null,
-					kind: "saved",
-					agentDir: session.settings.getAgentDir?.(),
-				});
-			} catch {
-				// Best-effort
+			if (gainTelemetry) {
+				try {
+					await appendBashMinimizerGainRecord({
+						command,
+						cwd: commandCwd,
+						sessionCwd: session.cwd,
+						sessionId: session.getSessionId?.() ?? undefined,
+						filter: info.filter,
+						inputBytes: info.inputBytes,
+						outputBytes: info.outputBytes,
+						exitCode: null,
+						kind: "saved",
+						agentDir: session.settings.getAgentDir(),
+					});
+				} catch {
+					// Best-effort
+				}
 			}
 			return artifactId;
 		},
@@ -145,6 +148,7 @@ async function recordBashMinimizerGain(input: {
 	commandCwd: string;
 	result: BashResult | BashInteractiveResult;
 }): Promise<void> {
+	if (!input.session.settings.get("shellMinimizer.gainTelemetry")) return;
 	try {
 		if (input.result.cancelled || input.result.exitCode === undefined) return;
 		if (input.result.totalBytes <= 0) return;
@@ -158,7 +162,7 @@ async function recordBashMinimizerGain(input: {
 			outputBytes: input.result.totalBytes,
 			exitCode: input.result.exitCode,
 			kind: "missed",
-			agentDir: input.session.settings.getAgentDir?.(),
+			agentDir: input.session.settings.getAgentDir(),
 		});
 	} catch {
 		// Best-effort: gain telemetry failure must not break bash execution

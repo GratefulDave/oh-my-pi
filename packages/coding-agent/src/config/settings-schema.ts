@@ -3198,6 +3198,17 @@ export const SETTINGS_SCHEMA = {
 		type: "boolean",
 		default: undefined,
 	},
+	"shellMinimizer.gainTelemetry": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "shell",
+			group: "Bash",
+			label: "Shell Minimizer Gain Telemetry",
+			description:
+				"Record bash minimizer hit/miss gain data to ~/.omp/agent/minimizer-gain.jsonl. Off by default. Note: records the raw command string verbatim — avoid enabling when commands may contain credentials.",
+		},
+	},
 
 	// Eval (per-backend toggles; add more as new backends ship, e.g. eval.ts)
 	"eval.py": {
@@ -5151,6 +5162,7 @@ export interface ShellMinimizerSettings {
 	maxCaptureBytes: number;
 	sourceOutlineLevel: "default" | "aggressive";
 	legacyFilters: boolean | undefined;
+	gainTelemetry: boolean;
 }
 export type CodexAutoRedeemMode = "unset" | "yes" | "no";
 

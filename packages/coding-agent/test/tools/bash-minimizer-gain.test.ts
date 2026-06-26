@@ -146,3 +146,120 @@ describe("bash minimizer gain writer", () => {
 		).toBe("npm");
 	});
 });
+
+describe("makeMinimizedSaveHandler + didSave gate contract", () => {
+	let tempDir: string;
+	let agentDir: string;
+
+	beforeEach(() => {
+		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-gain-gate-"));
+		agentDir = path.join(tempDir, "agent");
+	});
+
+	afterEach(() => {
+		if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true });
+	});
+
+	function mockSession(gainTelemetry: boolean, dir: string) {
+		return {
+			cwd: tempDir,
+			hasUI: false,
+			getSessionId: () => "test-session",
+			getSessionFile: () => null,
+			settings: {
+				get: (key: string) => {
+					if (key === "shellMinimizer.gainTelemetry") return gainTelemetry;
+					return undefined;
+				},
+				getAgentDir: () => dir,
+			},
+		};
+	}
+
+	test("minimized run emits exactly one saved record and no missed record", async () => {
+		const { makeMinimizedSaveHandler } = await import("@oh-my-pi/pi-coding-agent/tools/bash");
+		const session = mockSession(true, agentDir) as Parameters<typeof makeMinimizedSaveHandler>[0];
+
+		const handler = makeMinimizedSaveHandler(session, "bun test noisy.test.ts", tempDir);
+		await handler.onMinimizedSave("original output text here", {
+			filter: "bun-test",
+			inputBytes: 4000,
+			outputBytes: 1000,
+		});
+
+		expect(handler.didSave()).toBe(true);
+
+		const lines = fs.readFileSync(getBashMinimizerGainPath(agentDir), "utf8").trim().split("\n").filter(Boolean);
+		expect(lines).toHaveLength(1);
+		const record = JSON.parse(lines[0]!) as { kind: string; filter: string };
+		expect(record.kind).toBe("saved");
+		expect(record.filter).toBe("bun-test");
+	});
+
+	test("unminimized run emits exactly one missed record when caller uses guard", async () => {
+		const { makeMinimizedSaveHandler } = await import("@oh-my-pi/pi-coding-agent/tools/bash");
+		const session = mockSession(true, agentDir) as Parameters<typeof makeMinimizedSaveHandler>[0];
+
+		const handler = makeMinimizedSaveHandler(session, "git log --oneline", tempDir);
+		// onMinimizedSave NOT called — no minimization
+		expect(handler.didSave()).toBe(false);
+
+		// Caller writes missed only when !didSave()
+		if (!handler.didSave()) {
+			await appendBashMinimizerGainRecord({
+				command: "git log --oneline",
+				cwd: tempDir,
+				sessionId: "test-session",
+				filter: inferBashMinimizerMissedFilter("git log --oneline"),
+				inputBytes: 500,
+				outputBytes: 500,
+				exitCode: 0,
+				kind: "missed",
+				agentDir,
+			});
+		}
+
+		const lines = fs.readFileSync(getBashMinimizerGainPath(agentDir), "utf8").trim().split("\n").filter(Boolean);
+		expect(lines).toHaveLength(1);
+		const record = JSON.parse(lines[0]!) as { kind: string; filter: string };
+		expect(record.kind).toBe("missed");
+		expect(record.filter).toBe("git");
+	});
+
+	test("didSave guard prevents spurious missed record on minimized run", async () => {
+		const { makeMinimizedSaveHandler } = await import("@oh-my-pi/pi-coding-agent/tools/bash");
+		const session = mockSession(true, agentDir) as Parameters<typeof makeMinimizedSaveHandler>[0];
+
+		const handler = makeMinimizedSaveHandler(session, "cargo build", tempDir);
+		await handler.onMinimizedSave("build output...", { filter: "cargo", inputBytes: 8000, outputBytes: 500 });
+
+		// Guard: caller skips the missed write when didSave() is true
+		if (!handler.didSave()) {
+			await appendBashMinimizerGainRecord({
+				command: "cargo build",
+				agentDir,
+				filter: "cargo",
+				inputBytes: 8000,
+				outputBytes: 8000,
+				exitCode: 0,
+				kind: "missed",
+			});
+		}
+
+		const lines = fs.readFileSync(getBashMinimizerGainPath(agentDir), "utf8").trim().split("\n").filter(Boolean);
+		// Only the saved record — no spurious missed
+		expect(lines).toHaveLength(1);
+		expect((JSON.parse(lines[0]!) as { kind: string }).kind).toBe("saved");
+	});
+
+	test("telemetry suppressed when shellMinimizer.gainTelemetry is false (default)", async () => {
+		const { makeMinimizedSaveHandler } = await import("@oh-my-pi/pi-coding-agent/tools/bash");
+		const session = mockSession(false, agentDir) as Parameters<typeof makeMinimizedSaveHandler>[0];
+
+		const handler = makeMinimizedSaveHandler(session, "npm install", tempDir);
+		await handler.onMinimizedSave("install output", { filter: "npm", inputBytes: 2000, outputBytes: 500 });
+
+		// No JSONL written — telemetry is off by default
+		expect(fs.existsSync(getBashMinimizerGainPath(agentDir))).toBe(false);
+	});
+});

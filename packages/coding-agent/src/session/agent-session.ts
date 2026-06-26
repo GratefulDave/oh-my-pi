@@ -190,7 +190,6 @@ import {
 import { disposeRubyKernelSessionsByOwner } from "../eval/rb/executor";
 import { defaultEvalSessionId } from "../eval/session-id";
 import { type BashResult, executeBash as executeBashCommand } from "../exec/bash-executor";
-import { appendBashMinimizerGainRecord, inferBashMinimizerMissedFilter } from "../tools/bash-minimizer-gain";
 import type { TtsrManager, TtsrMatchContext } from "../export/ttsr";
 import type { LoadedCustomCommand } from "../extensibility/custom-commands";
 import type { CustomTool, CustomToolContext } from "../extensibility/custom-tools/types";
@@ -290,6 +289,7 @@ import {
 import { assertEditableFile } from "../tools/auto-generated-guard";
 import { releaseTabsForOwner } from "../tools/browser/tab-supervisor";
 import { normalizeToolNames } from "../tools/builtin-names";
+import { appendBashMinimizerGainRecord, inferBashMinimizerMissedFilter } from "../tools/bash-minimizer-gain";
 import type { CheckpointState } from "../tools/checkpoint";
 import { outputMeta, wrapToolWithMetaNotice } from "../tools/output-meta";
 import { normalizeLocalScheme, resolveToCwd } from "../tools/path-utils";
@@ -12839,18 +12839,26 @@ export class AgentSession {
 			});
 			if (hookResult?.result) {
 				this.recordBashResult(command, hookResult.result, options);
-				void appendBashMinimizerGainRecord({
-					command,
-					cwd,
-					sessionId: this.sessionId,
-					filter: inferBashMinimizerMissedFilter(command),
-					inputBytes: hookResult.result.totalBytes,
-					outputBytes: hookResult.result.totalBytes,
-					exitCode: hookResult.result.exitCode ?? null,
-					kind: "missed",
-					agentDir: this.settings.getAgentDir?.(),
-				}).catch(() => {});
-				return hookResult.result;
+				const r = hookResult.result;
+				if (
+					this.settings.get("shellMinimizer.gainTelemetry") &&
+					!r.cancelled &&
+					r.exitCode !== undefined &&
+					r.totalBytes > 0
+				) {
+					void appendBashMinimizerGainRecord({
+						command,
+						cwd,
+						sessionId: this.sessionId,
+						filter: inferBashMinimizerMissedFilter(command),
+						inputBytes: r.totalBytes,
+						outputBytes: r.totalBytes,
+						exitCode: r.exitCode ?? null,
+						kind: "missed",
+						agentDir: this.settings.getAgentDir(),
+					}).catch(() => {});
+				}
+				return r;
 			}
 		}
 
@@ -12858,27 +12866,54 @@ export class AgentSession {
 		this.#bashAbortControllers.add(abortController);
 
 		try {
+			const gainTelemetry = this.settings.get("shellMinimizer.gainTelemetry");
+			let minimizationSaved = false;
 			const result = await executeBashCommand(command, {
 				onChunk,
 				signal: abortController.signal,
 				sessionKey: this.sessionId,
 				timeout: clampTimeout("bash") * 1000,
-				onMinimizedSave: originalText => this.#saveBashOriginalArtifact(originalText),
+				onMinimizedSave: async (originalText, info) => {
+					minimizationSaved = true;
+					const artifactId = await this.#saveBashOriginalArtifact(originalText);
+					if (gainTelemetry) {
+						void appendBashMinimizerGainRecord({
+							command,
+							cwd,
+							sessionId: this.sessionId,
+							filter: info.filter,
+							inputBytes: info.inputBytes,
+							outputBytes: info.outputBytes,
+							exitCode: null,
+							kind: "saved",
+							agentDir: this.settings.getAgentDir(),
+						}).catch(() => {});
+					}
+					return artifactId;
+				},
 				useUserShell: options?.useUserShell,
 			});
 
 			this.recordBashResult(command, result, options);
-			void appendBashMinimizerGainRecord({
-				command,
-				cwd,
-				sessionId: this.sessionId,
-				filter: inferBashMinimizerMissedFilter(command),
-				inputBytes: result.totalBytes,
-				outputBytes: result.totalBytes,
-				exitCode: result.exitCode ?? null,
-				kind: "missed",
-				agentDir: this.settings.getAgentDir?.(),
-			}).catch(() => {});
+			if (
+				gainTelemetry &&
+				!minimizationSaved &&
+				!result.cancelled &&
+				result.exitCode !== undefined &&
+				result.totalBytes > 0
+			) {
+				void appendBashMinimizerGainRecord({
+					command,
+					cwd,
+					sessionId: this.sessionId,
+					filter: inferBashMinimizerMissedFilter(command),
+					inputBytes: result.totalBytes,
+					outputBytes: result.totalBytes,
+					exitCode: result.exitCode ?? null,
+					kind: "missed",
+					agentDir: this.settings.getAgentDir(),
+				}).catch(() => {});
+			}
 			return result;
 		} finally {
 			this.#bashAbortControllers.delete(abortController);

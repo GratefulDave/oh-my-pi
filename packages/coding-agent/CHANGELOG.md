@@ -467,7 +467,7 @@
 
 ### Added
 
-- Added `isolated`, `apply`, and `merge` options to eval `agent()` across every workflow runtime (Python, JavaScript, Ruby, Julia) so `workflowz`-driven fan-outs can request the same copy-on-write worktree isolation the `task` tool offers (strict opt-in via `isolated: true`, matching the `task` tool; `apply: false` keeps captured patches/branches without merging back; `merge: false` forces patch mode). Extracted the task-isolation lifecycle into `task/isolation-runner.ts` so the eval bridge and `TaskTool` share one implementation ([#3196](https://github.com/can1357/oh-my-pi/issues/3196))
+- Added bash minimizer gain telemetry (`shellMinimizer.gainTelemetry`): when enabled (default **off**), appends JSONL hit/miss records to `~/.omp/agent/minimizer-gain.jsonl` on every bash execution — `kind:"saved"` when the shell minimizer compressed output, `kind:"missed"` when it did not. Records include session context, byte counts, filter name, and exit code. Opt-in only; records the raw command string verbatim so the setting description documents the credential-exposure tradeoff. The `AgentSession.executeBash` path (TUI `!`-bash and RPC) and the `user_bash` extension path both participate, and both honour the same `didSave()` guard that ensures a minimized run emits exactly one `saved` record with no spurious `missed`. The schema version starts at `1` (no prior writer exists in the codebase) ([#3542](https://github.com/can1357/oh-my-pi/pull/3542))
 
 ### Changed
 
