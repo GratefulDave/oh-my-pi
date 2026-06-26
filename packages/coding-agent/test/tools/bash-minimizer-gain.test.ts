@@ -145,6 +145,23 @@ describe("bash minimizer gain writer", () => {
 			inferBashMinimizerMissedFilter("NODE_OPTIONS='--require ./setup.js --max-old-space-size=4096' npm run build"),
 		).toBe("npm");
 	});
+
+	test("handles env wrapper commands", () => {
+		expect(inferBashMinimizerMissedFilter("env CI=1 pnpm test")).toBe("pnpm");
+		expect(inferBashMinimizerMissedFilter("env -u FOO bun test")).toBe("bun");
+		expect(inferBashMinimizerMissedFilter("env FOO=bar BAR=baz node index.js")).toBe("node");
+	});
+
+	test("treats quoted shell operators as word characters, not compound", () => {
+		expect(inferBashMinimizerMissedFilter("rg 'foo|bar'")).toBe("rg");
+		expect(inferBashMinimizerMissedFilter('grep "a;b" file.txt')).toBe("grep");
+		expect(inferBashMinimizerMissedFilter("git log --oneline | head -10")).toBe("compound");
+		expect(inferBashMinimizerMissedFilter("git status && git log")).toBe("compound");
+	});
+
+	test("handles backslash-escaped spaces in env assignments", () => {
+		expect(inferBashMinimizerMissedFilter("NODE_OPTIONS=--require\\ ./setup.js pnpm test")).toBe("pnpm");
+	});
 });
 
 describe("makeMinimizedSaveHandler + didSave gate contract", () => {
@@ -186,14 +203,18 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 			inputBytes: 4000,
 			outputBytes: 1000,
 		});
+		handler.flushSaved(1); // simulate exitCode:1 from executeBash
 
 		expect(handler.didSave()).toBe(true);
+		// Allow the microtask queue to flush the void appendBashMinimizerGainRecord call
+		await new Promise(resolve => setTimeout(resolve, 10));
 
 		const lines = fs.readFileSync(getBashMinimizerGainPath(agentDir), "utf8").trim().split("\n").filter(Boolean);
 		expect(lines).toHaveLength(1);
-		const record = JSON.parse(lines[0]!) as { kind: string; filter: string };
+		const record = JSON.parse(lines[0]!) as { kind: string; filter: string; exitCode: number | null };
 		expect(record.kind).toBe("saved");
 		expect(record.filter).toBe("bun-test");
+		expect(record.exitCode).toBe(1);
 	});
 
 	test("unminimized run emits exactly one missed record when caller uses guard", async () => {
@@ -232,6 +253,8 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 
 		const handler = makeMinimizedSaveHandler(session, "cargo build", tempDir);
 		await handler.onMinimizedSave("build output...", { filter: "cargo", inputBytes: 8000, outputBytes: 500 });
+		handler.flushSaved(0); // writes the saved record
+		await new Promise(resolve => setTimeout(resolve, 10));
 
 		// Guard: caller skips the missed write when didSave() is true
 		if (!handler.didSave()) {
@@ -258,6 +281,8 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 
 		const handler = makeMinimizedSaveHandler(session, "npm install", tempDir);
 		await handler.onMinimizedSave("install output", { filter: "npm", inputBytes: 2000, outputBytes: 500 });
+		handler.flushSaved(0);
+		await new Promise(resolve => setTimeout(resolve, 10));
 
 		// No JSONL written — telemetry is off by default
 		expect(fs.existsSync(getBashMinimizerGainPath(agentDir))).toBe(false);

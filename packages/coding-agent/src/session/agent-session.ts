@@ -12115,52 +12115,48 @@ export class AgentSession {
 
 		try {
 			const gainTelemetry = this.settings.get("shellMinimizer.gainTelemetry");
-			let minimizationSaved = false;
+			const savedGain = { info: null as { filter: string; inputBytes: number; outputBytes: number } | null };
 			const result = await executeBashCommand(command, {
 				onChunk,
 				signal: abortController.signal,
 				sessionKey: this.sessionId,
 				timeout: clampTimeout("bash") * 1000,
 				onMinimizedSave: async (originalText, info) => {
-					minimizationSaved = true;
-					const artifactId = await this.#saveBashOriginalArtifact(originalText);
-					if (gainTelemetry) {
-						void appendBashMinimizerGainRecord({
-							command,
-							cwd,
-							sessionId: this.sessionId,
-							filter: info.filter,
-							inputBytes: info.inputBytes,
-							outputBytes: info.outputBytes,
-							exitCode: null,
-							kind: "saved",
-							agentDir: this.settings.getAgentDir(),
-						}).catch(() => {});
-					}
-					return artifactId;
+					if (gainTelemetry) savedGain.info = info;
+					return this.#saveBashOriginalArtifact(originalText);
 				},
 				useUserShell: options?.useUserShell,
 			});
 
 			this.recordBashResult(command, result, options);
-			if (
-				gainTelemetry &&
-				!minimizationSaved &&
-				!result.cancelled &&
-				result.exitCode !== undefined &&
-				result.totalBytes > 0
-			) {
-				void appendBashMinimizerGainRecord({
-					command,
-					cwd,
-					sessionId: this.sessionId,
-					filter: inferBashMinimizerMissedFilter(command),
-					inputBytes: result.totalBytes,
-					outputBytes: result.totalBytes,
-					exitCode: result.exitCode ?? null,
-					kind: "missed",
-					agentDir: this.settings.getAgentDir(),
-				}).catch(() => {});
+			if (gainTelemetry) {
+				if (savedGain.info) {
+					// Flush saved record with real exitCode now that the result is known.
+					const info = savedGain.info;
+					void appendBashMinimizerGainRecord({
+						command,
+						cwd,
+						sessionId: this.sessionId,
+						filter: info.filter,
+						inputBytes: info.inputBytes,
+						outputBytes: info.outputBytes,
+						exitCode: result.exitCode ?? null,
+						kind: "saved",
+						agentDir: this.settings.getAgentDir(),
+					}).catch(() => {});
+				} else if (!result.cancelled && result.exitCode !== undefined && result.totalBytes > 0) {
+					void appendBashMinimizerGainRecord({
+						command,
+						cwd,
+						sessionId: this.sessionId,
+						filter: inferBashMinimizerMissedFilter(command),
+						inputBytes: result.totalBytes,
+						outputBytes: result.totalBytes,
+						exitCode: result.exitCode ?? null,
+						kind: "missed",
+						agentDir: this.settings.getAgentDir(),
+					}).catch(() => {});
+				}
 			}
 			return result;
 		} finally {
