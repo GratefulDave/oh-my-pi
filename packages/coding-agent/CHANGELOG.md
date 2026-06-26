@@ -302,6 +302,10 @@
 - Added caching for successful document conversions (PDFs, Office documents, EPUBs) to avoid redundant conversions on repeated reads.
 - Moved the `Working…` activity indicator below the sticky todo and subagent HUDs so it sits just above the editor instead of floating atop the todo panel.
 
+### Added
+
+- Added bash minimizer gain telemetry (`shellMinimizer.gainTelemetry`): when enabled (default **off**), appends JSONL records to `~/.omp/agent/minimizer-gain.jsonl` for every bash execution — `kind:"saved"` when the shell minimizer compressed output, `kind:"missed"` when it did not. Records include `sessionId`, `cwd`, `command`, `filter`, `inputBytes`, `outputBytes`, `exitCode`, and `timestamp`. Off by default; the setting description documents that the raw command string is recorded verbatim and may contain credentials. The `AgentSession.executeBash` path (TUI `!`-bash and RPC) and the `user_bash` extension path both participate, with a `didSave()` guard ensuring minimized runs emit exactly one `saved` record and no spurious `missed`. Shell tokenizer (`shellTokens`) handles `env`-prefixed commands, quoted assignments, escaped spaces, and newline command separators correctly when inferring missed filter names. ([#3542](https://github.com/can1357/oh-my-pi/pull/3542))
+
 ### Fixed
 
 - Fixed Z.AI web search to initialize the Streamable HTTP MCP session before calling `web_search_prime`, preserving the returned session ID for authenticated tool calls. ([#3619](https://github.com/can1357/oh-my-pi/issues/3619))
