@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { makeMinimizedSaveHandler } from "@oh-my-pi/pi-coding-agent/tools/bash";
 import {
 	appendBashMinimizerGainRecord,
 	getBashMinimizerGainPath,
@@ -206,7 +207,6 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 	}
 
 	test("minimized run emits exactly one saved record and no missed record", async () => {
-		const { makeMinimizedSaveHandler } = await import("@oh-my-pi/pi-coding-agent/tools/bash");
 		const session = mockSession(true, agentDir) as Parameters<typeof makeMinimizedSaveHandler>[0];
 
 		const handler = makeMinimizedSaveHandler(session, "bun test noisy.test.ts", tempDir);
@@ -230,7 +230,6 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 	});
 
 	test("unminimized run emits exactly one missed record when caller uses guard", async () => {
-		const { makeMinimizedSaveHandler } = await import("@oh-my-pi/pi-coding-agent/tools/bash");
 		const session = mockSession(true, agentDir) as Parameters<typeof makeMinimizedSaveHandler>[0];
 
 		const handler = makeMinimizedSaveHandler(session, "git log --oneline", tempDir);
@@ -260,7 +259,6 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 	});
 
 	test("didSave guard prevents spurious missed record on minimized run", async () => {
-		const { makeMinimizedSaveHandler } = await import("@oh-my-pi/pi-coding-agent/tools/bash");
 		const session = mockSession(true, agentDir) as Parameters<typeof makeMinimizedSaveHandler>[0];
 
 		const handler = makeMinimizedSaveHandler(session, "cargo build", tempDir);
@@ -288,7 +286,6 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 	});
 
 	test("telemetry suppressed when shellMinimizer.gainTelemetry is false (default)", async () => {
-		const { makeMinimizedSaveHandler } = await import("@oh-my-pi/pi-coding-agent/tools/bash");
 		const session = mockSession(false, agentDir) as Parameters<typeof makeMinimizedSaveHandler>[0];
 
 		const handler = makeMinimizedSaveHandler(session, "npm install", tempDir);

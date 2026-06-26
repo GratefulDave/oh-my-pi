@@ -151,6 +151,7 @@ async function recordBashMinimizerGain(input: {
 	result: BashResult | BashInteractiveResult;
 }): Promise<void> {
 	if (!input.session.settings.get("shellMinimizer.gainTelemetry")) return;
+	if (!input.session.settings.get("shellMinimizer.enabled")) return;
 	try {
 		if (input.result.cancelled || input.result.exitCode === undefined) return;
 		if (input.result.totalBytes <= 0) return;
