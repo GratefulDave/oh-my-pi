@@ -28,6 +28,10 @@
 - Moved the `Working…` activity indicator below the sticky todo and subagent HUDs so it sits just above the editor instead of floating atop the todo panel.
 - Lightened the persistent Todo HUD: dropped the bracketing rules and, in the collapsed view, added a dimmed preview of the upcoming phases (marked with a distinct glyph) so the next stages stay visible without expanding.
 
+### Added
+
+- Added bash minimizer gain telemetry (`shellMinimizer.gainTelemetry`): when enabled (default **off**), appends JSONL records to `~/.omp/agent/minimizer-gain.jsonl` for every bash execution — `kind:"saved"` when the shell minimizer compressed output, `kind:"missed"` when it did not. Records include `sessionId`, `cwd`, `command`, `filter`, `inputBytes`, `outputBytes`, `exitCode`, and `timestamp`. Off by default; the setting description documents that the raw command string is recorded verbatim and may contain credentials. The `AgentSession.executeBash` path (TUI `!`-bash and RPC) and the `user_bash` extension path both participate, with a `didSave()` guard ensuring minimized runs emit exactly one `saved` record and no spurious `missed`. Shell tokenizer (`shellTokens`) handles `env`-prefixed commands, quoted assignments, escaped spaces, and newline command separators correctly when inferring missed filter names. ([#3542](https://github.com/can1357/oh-my-pi/pull/3542))
+
 ### Fixed
 
 - Fixed terminal hangs on Ctrl+Z (SIGTSTP) after running bash tool calls, and insulated MCP stdio servers from terminal job-control signals.
