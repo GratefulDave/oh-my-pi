@@ -16,6 +16,24 @@ import { theme } from "../theme/theme";
 type CustomOrHookMessage = Extract<AgentMessage, { role: "custom" | "hookMessage" }>;
 type AssistantAgentMessage = Extract<AgentMessage, { role: "assistant" }>;
 
+export const SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE = "subagent-hud-summary";
+
+export interface SubagentHudSummaryRow {
+	id: string;
+	roleLabel: string;
+	label: string;
+	status: "completed" | "failed" | "aborted";
+	toolCount: number;
+	tokenLabel: string;
+	durationLabel: string;
+	failureReason?: string;
+}
+
+export interface SubagentHudSummaryDetails {
+	emittedAt: number;
+	rows: SubagentHudSummaryRow[];
+}
+
 /**
  * Render an `async-result` custom message (a completed background bash/task job,
  * or a batch of them) as a transcript block of one "Background job completed"
@@ -57,6 +75,49 @@ export function buildAsyncResultBlock(message: CustomOrHookMessage): TranscriptB
 			.join(" ");
 		block.addChild(new Text(line, 1, 0));
 	}
+	return block;
+}
+
+export function buildSubagentHudSummaryBlock(message: CustomOrHookMessage): TranscriptBlock {
+	const details = (message as CustomMessage<SubagentHudSummaryDetails>).details;
+	const block = new TranscriptBlock();
+	if (!details?.rows.length) {
+		const content = typeof message.content === "string" ? message.content : String(message.content ?? "");
+		for (const line of content.split(/\r?\n/)) {
+			block.addChild(new Text(theme.fg("dim", line), 1, 0));
+		}
+		return block;
+	}
+
+	const hasFailure = details.rows.some(row => row.status === "failed" || row.status === "aborted");
+	const headerGlyph = hasFailure ? "✗" : "✓";
+	const headerColor = hasFailure ? "error" : "success";
+	const headerAgentLabel = details.rows.length === 1 ? "agent" : "agents";
+	block.addChild(
+		new Text(theme.fg(headerColor, `${headerGlyph} ${details.rows.length} ${headerAgentLabel} settled`), 1, 0),
+	);
+
+	for (const row of details.rows) {
+		const failed = row.status === "failed" || row.status === "aborted";
+		const metricColor = failed ? "error" : "success";
+		const glyph = failed ? "✗" : "✓";
+		const line = [
+			`  ${theme.fg(metricColor, glyph)}`,
+			theme.fg("accent", `[${row.roleLabel}]`),
+			theme.fg("accent", row.label),
+			theme.fg("dim", "·"),
+			theme.fg(metricColor, `${row.toolCount} tool use(s)`),
+			theme.fg("dim", "·"),
+			theme.fg(metricColor, row.tokenLabel),
+			theme.fg("dim", "·"),
+			theme.fg(metricColor, row.durationLabel),
+		].join(" ");
+		block.addChild(new Text(line, 1, 0));
+		if (row.failureReason) {
+			block.addChild(new Text(theme.fg("dim", `    └ ${row.failureReason}`), 1, 0));
+		}
+	}
+
 	return block;
 }
 

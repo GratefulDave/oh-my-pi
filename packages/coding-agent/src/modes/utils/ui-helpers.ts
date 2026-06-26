@@ -50,8 +50,10 @@ import {
 	buildAsyncResultBlock,
 	buildFileMentionBlock,
 	buildIrcMessageCard,
+	buildSubagentHudSummaryBlock,
 	normalizeToolArgs,
 	resolveAssistantErrorMessage,
+	SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
 } from "./transcript-render-helpers";
 
 type TextBlock = { type: "text"; text: string };
@@ -148,6 +150,10 @@ export class UiHelpers {
 				if (message.display) {
 					if (message.customType === "async-result") {
 						this.ctx.chatContainer.addChild(buildAsyncResultBlock(message));
+						break;
+					}
+					if (message.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE) {
+						this.ctx.chatContainer.addChild(buildSubagentHudSummaryBlock(message));
 						break;
 					}
 					if (message.customType === LSP_LATE_DIAGNOSTIC_MESSAGE_TYPE) {
