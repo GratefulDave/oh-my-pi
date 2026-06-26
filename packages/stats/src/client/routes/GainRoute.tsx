@@ -4,8 +4,16 @@ import { getGainDashboardStats } from "../api";
 import { buildSharedPlugins, buildSharedScales, CHART_THEMES, lineDatasetStyle } from "../components/chart-shared";
 import { formatBytes, formatCompact, formatInteger, formatPercent } from "../data/formatters";
 import { useResource } from "../data/useResource";
-import type { GainDashboardStats, GainSourceTotals, GainTimeSeriesPoint, TimeRange } from "../types";
-import { AsyncBoundary, Panel } from "../ui";
+import type {
+	GainDashboardStats,
+	GainSourceTotals,
+	GainTimeSeriesPoint,
+	GainTopFilter,
+	GainUnparsedCommand,
+	TimeRange,
+} from "../types";
+import { AsyncBoundary, DataTable, Panel } from "../ui";
+import type { DataTableColumn } from "../ui/DataTable";
 import { useSystemTheme } from "../useSystemTheme";
 
 export interface GainRouteProps {
@@ -35,6 +43,8 @@ export function GainRoute({ active, range, refreshTrigger }: GainRouteProps) {
 						<GainOverallPanel overall={stats.overall} />
 						<GainBySourcePanel bySource={stats.bySource} />
 						<GainTimeSeriesPanel timeSeries={stats.timeSeries} />
+						<GainTopFiltersPanel topFilters={stats.topFilters} />
+						<GainUnparsedCommandsPanel unparsedCommands={stats.unparsedCommands} />
 					</>
 				)}
 			</AsyncBoundary>
@@ -84,7 +94,7 @@ function GainProjectSelector({
 
 function GainOverallPanel({ overall }: { overall: GainSourceTotals }) {
 	return (
-		<Panel title="Overall Gain" subtitle="Aggregate snapcompact savings">
+		<Panel title="Overall Gain" subtitle="Aggregate savings across all sources">
 			<div className="stats-metric-primary-grid">
 				<div className="stats-metric-card primary">
 					<div className="stats-metric-label">Saved Tokens</div>
@@ -153,6 +163,7 @@ function GainBySourcePanel({ bySource }: { bySource: GainDashboardStats["bySourc
 	return (
 		<Panel title="By Source" subtitle="Savings breakdown per subsystem">
 			<div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+				<SourceCard title="Bash Minimizer" totals={bySource.minimizer} />
 				<SourceCard title="Snapcompact" totals={bySource.snapcompact} />
 			</div>
 		</Panel>
@@ -163,7 +174,20 @@ function GainBySourcePanel({ bySource }: { bySource: GainDashboardStats["bySourc
 // Time series chart (stacked area, daily)
 // ---------------------------------------------------------------------------
 
+
+function formatGainDateLabel(date: string): string {
+	const [, month, day] = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(date) ?? [];
+	if (!month || !day) return date;
+	const monthIndex = Number(month) - 1;
+	const dayNumber = Number(day);
+	if (!Number.isInteger(monthIndex) || !Number.isInteger(dayNumber)) return date;
+	const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+	return `${monthNames[monthIndex] ?? month} ${dayNumber}`;
+}
+
+// Stable colours matching the plan: blue/green from Tailwind palette
 const GAIN_COLORS = {
+	minimizer: "rgb(59, 130, 246)",
 	snapcompact: "rgb(34, 197, 94)",
 } as const;
 
@@ -172,15 +196,15 @@ function GainTimeSeriesPanel({ timeSeries }: { timeSeries: GainTimeSeriesPoint[]
 	const chartTheme = CHART_THEMES[theme];
 
 	const { data, options } = useMemo(() => {
-		const labelFormatter = new Intl.DateTimeFormat(undefined, {
-			month: "short",
-			day: "numeric",
-			timeZone: "UTC",
-		});
-		const labels = timeSeries.map(p => labelFormatter.format(new Date(`${p.date}T00:00:00.000Z`)));
+		const labels = timeSeries.map(p => formatGainDateLabel(p.date));
 		const chartData = {
 			labels,
 			datasets: [
+				{
+					label: "Bash Minimizer",
+					data: timeSeries.map(p => p.minimizer),
+					...lineDatasetStyle(GAIN_COLORS.minimizer),
+				},
 				{
 					label: "Snapcompact",
 					data: timeSeries.map(p => p.snapcompact),
@@ -213,7 +237,7 @@ function GainTimeSeriesPanel({ timeSeries }: { timeSeries: GainTimeSeriesPoint[]
 	}, [timeSeries, chartTheme]);
 
 	return (
-		<Panel title="Savings Over Time" subtitle="Daily token savings">
+		<Panel title="Savings Over Time" subtitle="Daily token savings by source">
 			<div style={{ height: 240 }}>
 				{timeSeries.length === 0 ? (
 					<div className="stats-table-empty">No time series data yet</div>
@@ -221,6 +245,90 @@ function GainTimeSeriesPanel({ timeSeries }: { timeSeries: GainTimeSeriesPoint[]
 					<Line data={data} options={options as Parameters<typeof Line>[0]["options"]} />
 				)}
 			</div>
+		</Panel>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Top filters table
+// ---------------------------------------------------------------------------
+
+const TOP_FILTER_COLUMNS: DataTableColumn<GainTopFilter>[] = [
+	{
+		key: "filter",
+		header: "Filter / Command",
+		render: item => <code style={{ fontSize: "0.85em" }}>{item.filter}</code>,
+	},
+	{
+		key: "savedTokens",
+		header: "Saved Tokens",
+		numeric: true,
+		render: item => formatCompact(item.savedTokens),
+	},
+	{
+		key: "savedBytes",
+		header: "Saved Bytes",
+		numeric: true,
+		render: item => formatBytes(item.savedBytes),
+	},
+	{
+		key: "hits",
+		header: "Hits",
+		numeric: true,
+		render: item => formatInteger(item.hits),
+	},
+];
+
+function GainTopFiltersPanel({ topFilters }: { topFilters: GainTopFilter[] }) {
+	return (
+		<Panel title="Top Filters" subtitle="Bash minimizer filters with the highest token savings">
+			<DataTable
+				columns={TOP_FILTER_COLUMNS}
+				data={topFilters}
+				keyExtractor={item => item.filter}
+				emptyText="No minimizer filter data yet"
+			/>
+		</Panel>
+	);
+}
+// ---------------------------------------------------------------------------
+// Unparsed commands table — the tuning surface
+// ---------------------------------------------------------------------------
+
+const UNPARSED_COLUMNS: DataTableColumn<GainUnparsedCommand>[] = [
+	{
+		key: "command",
+		header: "Command (unparsed)",
+		render: item => (
+			<code style={{ fontSize: "0.8em", wordBreak: "break-all", whiteSpace: "pre-wrap" }}>{item.command}</code>
+		),
+	},
+	{
+		key: "hits",
+		header: "Hits",
+		numeric: true,
+		render: item => formatInteger(item.hits),
+	},
+	{
+		key: "inputBytes",
+		header: "Input Bytes",
+		numeric: true,
+		render: item => formatBytes(item.inputBytes),
+	},
+];
+
+function GainUnparsedCommandsPanel({ unparsedCommands }: { unparsedCommands: GainUnparsedCommand[] }) {
+	return (
+		<Panel
+			title="Unparsed Commands"
+			subtitle="Commands with no matching filter — write a new minimizer filter for the top entries"
+		>
+			<DataTable
+				columns={UNPARSED_COLUMNS}
+				data={unparsedCommands}
+				keyExtractor={item => item.command}
+				emptyText="No unparsed commands in this range/project"
+			/>
 		</Panel>
 	);
 }
