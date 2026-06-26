@@ -2595,7 +2595,7 @@ class CodexWebSocketConnection {
 				notifyCodexWebSocketInbound(this.#streamObserver, parsed, text);
 				this.#push(parsed);
 			} catch (error) {
-				notifyCodexWebSocketMalformed(this.#streamObserver, event.data, error);
+				notifyCodexWebSocketMalformed(this.#streamObserver, messageEvent.data, error);
 				this.#push(new CodexWebSocketTransportError(`${String(error)}`));
 			}
 		};
