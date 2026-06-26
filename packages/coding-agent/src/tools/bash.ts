@@ -111,34 +111,36 @@ export function makeMinimizedSaveHandler(
 		info: { filter: string; inputBytes: number; outputBytes: number },
 	) => Promise<string | undefined>;
 	didSave: () => boolean;
+	/** Call after executeBash resolves to write the saved record with the real exitCode. */
+	flushSaved: (exitCode: number | null) => void;
 } {
 	let saved = false;
+	let pendingSaved: { filter: string; inputBytes: number; outputBytes: number } | null = null;
 	const gainTelemetry = session.settings.get("shellMinimizer.gainTelemetry");
 	return {
 		onMinimizedSave: async (originalText, info) => {
 			saved = true;
-			const artifactId = await saveBashOriginalArtifact(session, originalText);
-			if (gainTelemetry) {
-				try {
-					await appendBashMinimizerGainRecord({
-						command,
-						cwd: commandCwd,
-						sessionCwd: session.cwd,
-						sessionId: session.getSessionId?.() ?? undefined,
-						filter: info.filter,
-						inputBytes: info.inputBytes,
-						outputBytes: info.outputBytes,
-						exitCode: null,
-						kind: "saved",
-						agentDir: session.settings.getAgentDir(),
-					});
-				} catch {
-					// Best-effort
-				}
-			}
-			return artifactId;
+			if (gainTelemetry) pendingSaved = info;
+			return saveBashOriginalArtifact(session, originalText);
 		},
 		didSave: () => saved,
+		flushSaved: exitCode => {
+			if (!pendingSaved) return;
+			const info = pendingSaved;
+			pendingSaved = null;
+			void appendBashMinimizerGainRecord({
+				command,
+				cwd: commandCwd,
+				sessionCwd: session.cwd,
+				sessionId: session.getSessionId?.() ?? undefined,
+				filter: info.filter,
+				inputBytes: info.inputBytes,
+				outputBytes: info.outputBytes,
+				exitCode,
+				kind: "saved",
+				agentDir: session.settings.getAgentDir(),
+			}).catch(() => {});
+		},
 	};
 }
 
@@ -647,6 +649,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 						},
 						onMinimizedSave: minimizedSave.onMinimizedSave,
 					});
+					minimizedSave.flushSaved(result.exitCode ?? null);
 					if (!minimizedSave.didSave()) {
 						await recordBashMinimizerGain({
 							session: this.session,
@@ -1096,13 +1099,6 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 				if (finalOutput.truncated) bridgeNotices.push("(output truncated)");
 				for (const notice of pendingNotices) bridgeNotices.push(notice);
 
-				await recordBashMinimizerGain({
-					session: this.session,
-					command,
-					commandCwd,
-					result: bridgeResult,
-				});
-
 				return this.#buildCompletedResult(bridgeResult, timeoutSec, {
 					requestedTimeoutSec,
 					notices: bridgeNotices,
@@ -1170,13 +1166,19 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 					: `Command timed out after ${timeoutSec} seconds`,
 			);
 		}
-		if (!minimizedSave.didSave()) {
-			await recordBashMinimizerGain({
-				session: this.session,
-				command,
-				commandCwd,
-				result,
-			});
+		// Flush the deferred saved record (with real exitCode) or write a missed record.
+		// Skip telemetry for interactive PTY runs — the minimizer never fires there.
+		if (!interactiveUi) {
+			const exitCode = "exitCode" in result ? (result.exitCode ?? null) : null;
+			minimizedSave.flushSaved(exitCode);
+			if (!minimizedSave.didSave()) {
+				await recordBashMinimizerGain({
+					session: this.session,
+					command,
+					commandCwd,
+					result,
+				});
+			}
 		}
 		return this.#buildCompletedResult(result, timeoutSec, {
 			requestedTimeoutSec,
