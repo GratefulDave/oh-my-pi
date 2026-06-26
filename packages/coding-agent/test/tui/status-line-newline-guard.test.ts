@@ -34,6 +34,16 @@ describe("renderStatusLine", () => {
 		expect(rendered).toContain("third");
 	});
 
+	it("allows meta entries to use the title accent color", async () => {
+		const uiTheme = (await getThemeByName("dark"))!;
+		expect(uiTheme).toBeDefined();
+		const rendered = renderStatusLine(
+			{ icon: "success", title: "Task", meta: ["1 agent: task"], metaColor: "accent" },
+			uiTheme,
+		);
+		expect(rendered).toContain(`${uiTheme.getFgAnsi("accent")}1 agent: task\x1b[39m`);
+	});
+
 	it("flattens CRLF the same way as LF", async () => {
 		const uiTheme = (await getThemeByName("dark"))!;
 		expect(uiTheme).toBeDefined();

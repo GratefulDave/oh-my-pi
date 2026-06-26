@@ -36,7 +36,6 @@ import {
 	TUI,
 	visibleWidth,
 } from "@oh-my-pi/pi-tui";
-import { renderStatusLine } from "../tui/status-line";
 import {
 	APP_NAME,
 	adjustHsv,
@@ -108,6 +107,7 @@ import { type ResolveToolDetails, runResolveInvocation } from "../tools/resolve"
 import { formatPhaseDisplayName, selectStickyTodoWindow, todoMatchesAnyDescription } from "../tools/todo";
 import { ToolError } from "../tools/tool-errors";
 import { vocalizer } from "../tts/vocalizer";
+import { renderStatusLine } from "../tui/status-line";
 import type { EventBus } from "../utils/event-bus";
 import { getEditorCommand, openInEditor } from "../utils/external-editor";
 import { getSessionAccentAnsi, getSessionAccentHex } from "../utils/session-color";
@@ -131,7 +131,7 @@ import type { HookSelectorComponent, HookSelectorSlider } from "./components/hoo
 import { PlanReviewOverlay } from "./components/plan-review-overlay";
 import { StatusLineComponent } from "./components/status-line";
 import type { ToolExecutionHandle } from "./components/tool-execution";
-import { sharedSpinnerFrame, SPINNER_RENDER_INTERVAL_MS } from "./components/tool-execution";
+import { SPINNER_RENDER_INTERVAL_MS, sharedSpinnerFrame } from "./components/tool-execution";
 import { TranscriptContainer } from "./components/transcript-container";
 import { WelcomeComponent, type LspServerInfo as WelcomeLspServerInfo } from "./components/welcome";
 import { BtwController } from "./controllers/btw-controller";
@@ -179,6 +179,11 @@ import type {
 	TodoItem,
 	TodoPhase,
 } from "./types";
+import {
+	SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+	type SubagentHudSummaryDetails,
+	type SubagentHudSummaryRow,
+} from "./utils/transcript-render-helpers";
 import { UiHelpers } from "./utils/ui-helpers";
 
 const HINT_SHIMMER_PALETTE: ShimmerPalette = {
@@ -345,6 +350,72 @@ function cleanSubagentHudLabel(text: string | undefined): string {
 	return fallback;
 }
 
+function formatHudDuration(ms: number): string {
+	return ms < 60_000
+		? `${(ms / 1000).toFixed(1)}s`
+		: `${Math.floor(ms / 60_000)}m${Math.floor((ms % 60_000) / 1000)}s`;
+}
+
+function formatActiveSubagentHudText(text: string): string {
+	const clean = replaceTabs(text);
+	return shimmerEnabled() ? shimmerText(clean, theme) : theme.fg("accent", clean);
+}
+
+function renderActiveSubagentDetailLine(progress: ObservableSession["progress"]): string | undefined {
+	if (!progress?.currentTool && !progress?.lastIntent) return undefined;
+	const prefix = theme.fg("dim", `${theme.tree.hook} `);
+	if (!progress.currentTool) return `${prefix}${theme.fg("dim", replaceTabs(progress.lastIntent ?? ""))}`;
+	const parts = [prefix, formatActiveSubagentHudText(progress.currentTool)];
+	if (progress.currentToolStartMs && progress.currentToolStartMs > 0) {
+		parts.push(theme.fg("dim", ` (${formatDuration(Date.now() - progress.currentToolStartMs)})`));
+	}
+	if (progress.lastIntent) {
+		parts.push(` ${theme.fg("dim", theme.sep.dot)} `, theme.fg("dim", replaceTabs(progress.lastIntent)));
+	}
+	return parts.join("");
+}
+
+function toSubagentHudSummaryRow(
+	session: ObservableSession & { kind: "subagent"; detached: true },
+): SubagentHudSummaryRow | undefined {
+	if (session.status === "active") return undefined;
+	if (session.status !== "completed" && session.status !== "failed" && session.status !== "aborted") return undefined;
+	const progress = session.progress;
+	const roleLabel =
+		cleanSubagentHudLabel([session.agent, progress?.resolvedModel].filter(Boolean).join(" ")) ||
+		session.agent ||
+		"agent";
+	const label =
+		cleanSubagentHudLabel(session.description ?? progress?.description ?? progress?.task ?? session.label) ||
+		formatTaskId(session.id);
+	const tokenLabel =
+		progress?.contextTokens && progress.contextWindow
+			? `${formatContextTokenCount(progress.contextTokens)}/${formatContextTokenCount(progress.contextWindow)} (${Math.round(
+					(progress.contextTokens / progress.contextWindow) * 100,
+				)}%)`
+			: `${formatContextTokenCount(progress?.tokens ?? 0)} tok`;
+	return {
+		id: session.id,
+		roleLabel,
+		label,
+		status: session.status,
+		toolCount: progress?.toolCount ?? 0,
+		tokenLabel,
+		durationLabel: formatHudDuration(progress?.durationMs ?? 0),
+		failureReason: progress?.retryFailure?.errorMessage,
+	};
+}
+
+function buildSubagentHudSummaryContent(rows: readonly SubagentHudSummaryRow[]): string {
+	const lines = [`${rows.length} agent(s) settled`];
+	for (const row of rows) {
+		lines.push(
+			`- [${row.status}] [${row.roleLabel}] ${row.label} · ${row.toolCount} tool use(s) · ${row.tokenLabel} · ${row.durationLabel}`,
+		);
+		if (row.failureReason) lines.push(`  ${row.failureReason}`);
+	}
+	return lines.join("\n");
+}
 export function renderSubagentHudLines(
 	sessions: ObservableSession[],
 	columns: number,
@@ -385,7 +456,7 @@ export function renderSubagentHudLines(
 		// Icon: same formatStatusIcon as job rows — spinner when live, themed symbol when settled
 		const statusGlyph =
 			session.status === "completed"
-				? theme.styledSymbol("status.done", "accent")
+				? formatStatusIcon("done", theme, undefined)
 				: session.status === "failed"
 					? formatStatusIcon("error", theme, live ? spinnerFrame : undefined)
 					: session.status === "aborted"
@@ -400,9 +471,7 @@ export function renderSubagentHudLines(
 		const toolCount = progress?.toolCount ?? 0;
 		const requests = progress?.requests;
 		const reqLabel =
-			requests !== undefined && requests > 0
-				? theme.fg("dim", `↻${formatNumber(requests)}`)
-				: undefined;
+			requests !== undefined && requests > 0 ? theme.fg("dim", `↻${formatNumber(requests)}`) : undefined;
 		const tokenPct =
 			progress?.contextTokens && progress.contextWindow
 				? ` (${Math.round((progress.contextTokens / progress.contextWindow) * 100)}%)`
@@ -412,10 +481,7 @@ export function renderSubagentHudLines(
 				? `${formatContextTokenCount(progress.contextTokens)}/${formatContextTokenCount(progress.contextWindow)}${tokenPct}`
 				: `${formatContextTokenCount(progress?.tokens ?? 0)} tok`;
 		const durationMs = progress?.durationMs ?? 0;
-		const durLabel =
-			durationMs < 60_000
-				? `${(durationMs / 1000).toFixed(1)}s`
-				: `${Math.floor(durationMs / 60_000)}m${Math.floor((durationMs % 60_000) / 1000)}s`;
+		const durLabel = formatHudDuration(durationMs);
 
 		// Label: shimmer when live (matches job rows), accent static when completed
 		const rawLabelText = replaceTabs(rawLabel);
@@ -423,14 +489,17 @@ export function renderSubagentHudLines(
 			? shimmerEnabled()
 				? shimmerText(rawLabelText, theme)
 				: theme.fg("accent", rawLabelText)
-			: session.status === "completed"
+			: session.status === "completed" || session.status === "failed" || session.status === "aborted"
 				? theme.fg("accent", rawLabelText)
-				: session.status === "failed" || session.status === "aborted"
-					? theme.fg("error", rawLabelText)
-					: theme.fg("toolOutput", rawLabelText);
+				: theme.fg("toolOutput", rawLabelText);
 
-		const typeBadge = theme.fg("dim", `[${replaceTabs(agentLabel || session.agent || "agent")}]`);
-		const metricColor = session.status === "completed" ? "accent" : "dim";
+		const typeBadge = theme.fg("accent", `[${replaceTabs(agentLabel || session.agent || "agent")}]`);
+		const metricColor =
+			session.status === "completed"
+				? "success"
+				: session.status === "failed" || session.status === "aborted"
+					? "error"
+					: "dim";
 		const parts: string[] = [`${statusGlyph} ${typeBadge} ${headLabel}`];
 		if (reqLabel) parts.push(reqLabel);
 		parts.push(
@@ -442,23 +511,8 @@ export function renderSubagentHudLines(
 		lines.push(`    ${truncateToWidth(line, rowWidth)}`);
 
 		if (session.status === "active") {
-			const detailParts: string[] = [];
-			if (progress?.currentTool) {
-				const elapsed =
-					progress.currentToolStartMs && progress.currentToolStartMs > 0
-						? ` (${formatDuration(Date.now() - progress.currentToolStartMs)})`
-						: "";
-				detailParts.push(`${progress.currentTool}${elapsed}`);
-			}
-			if (progress?.lastIntent) detailParts.push(progress.lastIntent);
-			if (detailParts.length > 0) {
-				lines.push(
-					`      ${truncateToWidth(
-						theme.fg("dim", `${theme.tree.hook} ${replaceTabs(detailParts.join(` ${theme.sep.dot} `))}`),
-						childWidth,
-					)}`,
-				);
-			}
+			const detailLine = renderActiveSubagentDetailLine(progress);
+			if (detailLine) lines.push(`      ${truncateToWidth(detailLine, childWidth)}`);
 		}
 	}
 
@@ -468,7 +522,6 @@ export function renderSubagentHudLines(
 
 	return lines;
 }
-
 
 export class InteractiveMode implements InteractiveModeContext {
 	session: AgentSession;
@@ -641,6 +694,8 @@ export class InteractiveMode implements InteractiveModeContext {
 	#voiceAnimationInterval: NodeJS.Timeout | undefined;
 	#subagentSpinnerInterval: NodeJS.Timeout | undefined;
 	#subagentSpinnerFrame: number | undefined;
+	#subagentHudHadActive = false;
+	#lastCommittedSubagentHudSignature: string | undefined;
 	#voiceHue = 0;
 	#voicePreviousShowHardwareCursor: boolean | null = null;
 	#voicePreviousUseTerminalCursor: boolean | null = null;
@@ -1778,7 +1833,8 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	/**
 	 * Anchored HUD of in-flight subagents, mirroring the Todos block above the
-	 * editor. Persists settled rows like "N agents settled" (same as jobs).
+	 * editor only while work is active. Once the last detached agent settles, the
+	 * final snapshot moves into the transcript so it scrolls like task/job output.
 	 * Drives a spinner interval while any agent is active; tears it down when all settle.
 	 */
 	#renderSubagentList(): void {
@@ -1788,7 +1844,11 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 		this.subagentContainer.clear();
 		const sessions = this.#observerRegistry.getSessions();
-		const hasActive = sessions.some(s => s.kind === "subagent" && s.detached && s.status === "active");
+		const detached = sessions.filter(
+			(s): s is ObservableSession & { kind: "subagent"; detached: true } =>
+				s.kind === "subagent" && s.detached === true,
+		);
+		const hasActive = detached.some(s => s.status === "active");
 		// Manage spinner lifecycle: start when agents are live, stop when all settle
 		if (hasActive && !this.#subagentSpinnerInterval) {
 			this.#subagentSpinnerFrame = sharedSpinnerFrame(theme.spinnerFrames.length);
@@ -1801,8 +1861,44 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.#stopSubagentSpinner();
 		}
 		const lines = renderSubagentHudLines(sessions, this.ui.terminal.columns, this.#subagentSpinnerFrame);
-		if (lines.length === 0) return;
-		this.subagentContainer.addChild(new Text(lines.join("\n"), 1, 0));
+		if (lines.length === 0) {
+			this.#subagentHudHadActive = false;
+			return;
+		}
+		if (hasActive) {
+			this.#subagentHudHadActive = true;
+			this.subagentContainer.addChild(new Text(lines.join("\n"), 1, 0));
+			return;
+		}
+		if (!this.#subagentHudHadActive) return;
+		const signature = detached.map(session => `${session.id}:${session.status}:${session.lastUpdate}`).join("|");
+		this.#subagentHudHadActive = false;
+		if (signature === this.#lastCommittedSubagentHudSignature) return;
+		this.#lastCommittedSubagentHudSignature = signature;
+		const rows = detached.map(toSubagentHudSummaryRow).filter((row): row is SubagentHudSummaryRow => Boolean(row));
+		if (rows.length === 0) return;
+		const emittedAt = Date.now();
+		const content = buildSubagentHudSummaryContent(rows);
+		const details: SubagentHudSummaryDetails = { emittedAt, rows };
+		const message = {
+			role: "custom" as const,
+			customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+			content,
+			display: true,
+			attribution: "agent" as const,
+			details,
+			timestamp: emittedAt,
+		};
+		void this.session
+			.sendCustomMessage<SubagentHudSummaryDetails>({
+				customType: message.customType,
+				content,
+				display: true,
+				attribution: "agent",
+				details,
+			})
+			.then(() => this.addMessageToChat(message as AgentMessage))
+			.catch(err => logger.debug("subagent HUD summary delivery failed", { err: String(err) }));
 	}
 
 	#stopSubagentSpinner(): void {

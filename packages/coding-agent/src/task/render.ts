@@ -1339,6 +1339,7 @@ export function renderResult(
 						: undefined,
 			title: "Task",
 			meta: metaLabel ? [metaLabel] : undefined,
+			metaColor: "accent",
 		},
 		theme,
 	);
