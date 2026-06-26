@@ -2,11 +2,9 @@
 
 ## [Unreleased]
 
-## [16.2.0] - 2026-06-27
-
 ### Added
 
-- Added a Gain tab to the `omp stats` dashboard (`/#/gain`) to display snapcompact token-savings with project scoping from synced session folders.
+- Gain tab in `omp stats` dashboard (`/#/gain`) — surfaces bash minimizer, snapcompact, and pi-distill token-savings with project scoping and an Unparsed Commands panel listing unhandled bash commands as filter-tuning candidates ([#3543](https://github.com/can1357/oh-my-pi/pull/3543)).
 
 ## [16.1.17] - 2026-06-24
 
