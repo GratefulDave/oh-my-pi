@@ -264,7 +264,6 @@ export async function getGainDashboardStats(
 
 	const { records: minimizerRecords, unparsed: unparsedRecords, projects: minimizerProjects } = minimizerSets;
 
-	// --- Minimizer totals ---
 	const minimizerTotals = emptyTotals();
 	const filterMap = new Map<string, GainTopFilter>();
 	const timeMap = new Map<string, { minimizer: number; snapcompact: number }>();
@@ -297,8 +296,6 @@ export async function getGainDashboardStats(
 	}
 	finalizeReductionPercent(minimizerTotals);
 
-	// --- Unparsed commands (no filter matched — tuning targets) ---
-	// Key on the full command string to avoid collision; truncate only at display time.
 	const cmdMap = new Map<string, GainUnparsedCommand>();
 	for (const rec of unparsedRecords) {
 		const fullKey = rec.command ?? "";
@@ -314,7 +311,6 @@ export async function getGainDashboardStats(
 		.sort((a, b) => b.hits - a.hits)
 		.slice(0, 25);
 
-	// --- Snapcompact totals ---
 	const snapcompactTotals = emptyTotals();
 	for (const rec of snapcompactRecords) {
 		snapcompactTotals.savedTokens += rec.savedTokens;
@@ -327,7 +323,6 @@ export async function getGainDashboardStats(
 		bucket.snapcompact += rec.savedTokens;
 		timeMap.set(date, bucket);
 	}
-	// No originalBytes for snapcompact — reductionPercent stays null.
 
 	const overall: GainSourceTotals = {
 		savedTokens: minimizerTotals.savedTokens + snapcompactTotals.savedTokens,
