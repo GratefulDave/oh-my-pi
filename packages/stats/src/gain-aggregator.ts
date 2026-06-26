@@ -416,8 +416,12 @@ export async function getGainDashboardStats(
 		originalBytes: minimizerTotals.originalBytes + distillTotals.originalBytes,
 		reductionPercent: null,
 	};
+	// Exclude snapcompact from the ratio: it has no originalBytes, so
+	// including its savedBytes in the numerator with only minimizer+distill
+	// in the denominator would overstate savings.
+	const comparableSavedBytes = minimizerTotals.savedBytes + distillTotals.savedBytes;
 	if (overall.originalBytes > 0) {
-		overall.reductionPercent = overall.savedBytes / overall.originalBytes;
+		overall.reductionPercent = comparableSavedBytes / overall.originalBytes;
 	}
 
 	// --- Time series (sorted ascending by date) ---
