@@ -1,4 +1,4 @@
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { useMemo, useState } from "react";
 import { Line } from "react-chartjs-2";
 import { getGainDashboardStats } from "../api";
@@ -188,7 +188,7 @@ function GainTimeSeriesPanel({ timeSeries }: { timeSeries: GainTimeSeriesPoint[]
 	const chartTheme = CHART_THEMES[theme];
 
 	const { data, options } = useMemo(() => {
-		const labels = timeSeries.map(p => format(new Date(p.date), "MMM d"));
+		const labels = timeSeries.map(p => format(parseISO(p.date), "MMM d"));
 		const chartData = {
 			labels,
 			datasets: [

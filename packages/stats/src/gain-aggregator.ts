@@ -131,7 +131,7 @@ async function readMinimizerSets(cutoff: number | null, project: string | null):
  *
  * Returns null to drop temp/internal paths entirely.
  */
-function normalizeProjectPath(p: string): string | null {
+export function normalizeProjectPath(p: string): string | null {
 	if (TEMP_PATH_RE.test(p)) return null;
 	// omp internal worktrees — not meaningful project roots
 	if (/\/\.omp\/wt\//.test(p)) return null;
@@ -139,8 +139,8 @@ function normalizeProjectPath(p: string): string | null {
 	// Generic worktree layouts — strip the worktree suffix/subpath.
 	// Matches: <root>/.wt/<lane>/..., <root>-wt/<lane>/...,
 	//          <root>.wt/<lane>/..., <root>/.worktrees/<lane>/...,
-	//          <root>-worktrees/<lane>/..., <root>/.herdr/worktrees/<name>/...
-	const m = p.match(/^(.+?)(?:\/\.wt\/|\/\.worktrees\/|-worktrees\/|-wt\/|\.wt\/|\/.+\/worktrees\/)[^/]+(\/.*)?$/);
+	//          <root>-worktrees/<lane>/..., <root>/.<dotdir>/worktrees/<name>/...
+	const m = p.match(/^(.+?)(?:\/\.wt\/|\/\.worktrees\/|-worktrees\/|-wt\/|\.wt\/|\/\.[^/]+\/worktrees\/)[^/]+(?:\/.*)?$/);
 	if (m) return m[1];
 
 	return p;
@@ -151,7 +151,7 @@ function normalizeProjectPath(p: string): string | null {
  * that are already covered by a shorter parent at depth ≥ 4.
  * Returns a sorted, deduped list of meaningful project roots.
  */
-function dedupeProjects(rawPaths: Set<string>): string[] {
+export function dedupeProjects(rawPaths: Set<string>): string[] {
 	const normalized = new Set<string>();
 	for (const p of rawPaths) {
 		const n = normalizeProjectPath(p);
