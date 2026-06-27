@@ -100,6 +100,8 @@ if [[ "$settings_checksum_before" != "$settings_checksum_after" ]]; then
 	exit 1
 fi
 printf '  protected user configs unchanged\n'
+print_step "Installing personal extension symlinks (~/.omp/agent/extensions)"
+bun --cwd="$personal_extensions_dir" run install:user
 print_step "Minimizer gain installed bundle session-scope smoke test"
 bun --cwd="$personal_extensions_dir/packages/pi-minimizer-gain" run smoke:installed
 
