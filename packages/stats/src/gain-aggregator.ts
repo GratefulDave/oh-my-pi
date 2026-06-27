@@ -258,13 +258,6 @@ export async function getGainDashboardStats(
 		originalBytes: 0,
 		reductionPercent: null,
 	};
-	// Exclude snapcompact from the ratio: it has no originalBytes, so
-	// including its savedBytes in the numerator with only minimizer+distill
-	// in the denominator would overstate savings.
-	const comparableSavedBytes = minimizerTotals.savedBytes + distillTotals.savedBytes;
-	if (overall.originalBytes > 0) {
-		overall.reductionPercent = comparableSavedBytes / overall.originalBytes;
-	}
 
 	const timeSeries: GainTimeSeriesPoint[] = Array.from(timeMap.entries())
 		.sort(([a], [b]) => a.localeCompare(b))
