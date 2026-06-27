@@ -238,6 +238,47 @@ function normalizeStreamingContentText(content: unknown): string {
 	return "";
 }
 
+const TOOL_ECHO_ARGUMENT_MIN_LENGTH = 80;
+const TOOL_ECHO_MAX_EXTRA_TEXT_LENGTH = 160;
+
+function collectLongStringArguments(value: unknown, out: string[] = []): string[] {
+	if (typeof value === "string") {
+		if (value.trim().length >= TOOL_ECHO_ARGUMENT_MIN_LENGTH) out.push(value.trim());
+		return out;
+	}
+	if (!value || typeof value !== "object") return out;
+	if (Array.isArray(value)) {
+		for (const item of value) collectLongStringArguments(item, out);
+		return out;
+	}
+	for (const item of Object.values(value as Record<string, unknown>)) collectLongStringArguments(item, out);
+	return out;
+}
+
+function isStructuredToolCallEchoText(text: string, toolCalls: ToolCall[]): boolean {
+	const trimmed = text.trim();
+	if (!trimmed) return true;
+	for (const toolCall of toolCalls) {
+		for (const argumentText of collectLongStringArguments(toolCall.arguments)) {
+			if (!trimmed.includes(argumentText)) continue;
+			const remainder = trimmed
+				.replace(argumentText, "")
+				.replace(new RegExp(`\\b${toolCall.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g"), "")
+				.trim();
+			if (remainder.length <= TOOL_ECHO_MAX_EXTRA_TEXT_LENGTH) return true;
+		}
+	}
+	return false;
+}
+
+function dropStructuredToolCallEchoText(message: AssistantMessage): void {
+	const toolCalls = message.content.filter((block): block is ToolCall => block.type === "toolCall");
+	if (toolCalls.length === 0) return;
+	message.content = message.content.filter(
+		block => block.type !== "text" || !isStructuredToolCallEchoText(block.text, toolCalls),
+	);
+}
+
 function serializeToolArguments(value: unknown): string {
 	if (value && typeof value === "object" && !Array.isArray(value)) {
 		try {
@@ -1245,6 +1286,7 @@ const streamOpenAICompletionsOnce = (
 			if (output.stopReason === "stop" && output.content.some(b => b.type === "toolCall")) {
 				output.stopReason = "toolUse";
 			}
+			dropStructuredToolCallEchoText(output);
 
 			if (
 				policy.stream.emptyLengthFinishIsContextError &&
@@ -1804,29 +1846,6 @@ export function convertMessages(
 					// this path: `transform-messages` strips the source wire-format
 					// signature on cross-API replays before the block reaches us.
 					const reasoningField = compat.reasoningContentField ?? "reasoning_content";
-					assistantMsg[reasoningField] = nonEmptyThinkingBlocks.map(b => b.thinking).join("\n");
-				} else if (compat.replayReasoningContent) {
-					// Local llama.cpp-style servers (llama.cpp, LM Studio, vLLM, Ollama
-					// in openai-completions mode, custom providers pointed at a
-					// loopback baseUrl) re-tokenize the entire prompt every request.
-					// Qwen3 / DeepSeek-R1 / GLM chat templates reconstruct the prior
-					// assistant turn's `<think>` block from `reasoning_content`; if we
-					// drop the field the template re-renders the assistant turn
-					// without thinking content, the rendered tokens diverge from the
-					// slot's existing KV cache, and llama.cpp falls back to full
-					// prompt re-processing (#3528). Honor the streamed signature when
-					// it identifies a recognized wire field so a model that emitted
-					// `reasoning` (some llama.cpp builds) round-trips to the same
-					// field; otherwise fall back to the configured
-					// `reasoningContentField`. Gated by the new compat flag rather
-					// than the existing `requires*` flags because local servers
-					// accept but don't validate the field — they just need it to
-					// preserve cache locality.
-					const signature = nonEmptyThinkingBlocks[0].thinkingSignature;
-					const reasoningField: OpenAICompletionsReasoningField =
-						signature === "reasoning_content" || signature === "reasoning" || signature === "reasoning_text"
-							? signature
-							: (compat.reasoningContentField ?? "reasoning_content");
 					assistantMsg[reasoningField] = nonEmptyThinkingBlocks.map(b => b.thinking).join("\n");
 				}
 			}
