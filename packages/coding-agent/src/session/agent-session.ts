@@ -12090,6 +12090,7 @@ export class AgentSession {
 				const r = hookResult.result;
 				if (
 					this.settings.get("shellMinimizer.gainTelemetry") &&
+					this.settings.get("shellMinimizer.enabled") &&
 					!r.cancelled &&
 					r.exitCode !== undefined &&
 					r.totalBytes > 0
@@ -12129,7 +12130,7 @@ export class AgentSession {
 			});
 
 			this.recordBashResult(command, result, options);
-			if (gainTelemetry) {
+			if (gainTelemetry && this.settings.get("shellMinimizer.enabled")) {
 				if (savedGain.info) {
 					// Flush saved record with real exitCode now that the result is known.
 					const info = savedGain.info;
