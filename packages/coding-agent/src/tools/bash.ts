@@ -112,7 +112,7 @@ export function makeMinimizedSaveHandler(
 	) => Promise<string | undefined>;
 	didSave: () => boolean;
 	/** Call after executeBash resolves to write the saved record with the real exitCode. */
-	flushSaved: (exitCode: number | null) => void;
+	flushSaved: (exitCode: number | null) => Promise<void>;
 } {
 	let saved = false;
 	let pendingSaved: { filter: string; inputBytes: number; outputBytes: number } | null = null;
@@ -124,11 +124,11 @@ export function makeMinimizedSaveHandler(
 			return saveBashOriginalArtifact(session, originalText);
 		},
 		didSave: () => saved,
-		flushSaved: exitCode => {
+	flushSaved: async exitCode => {
 			if (!pendingSaved) return;
 			const info = pendingSaved;
 			pendingSaved = null;
-			void appendBashMinimizerGainRecord({
+			await appendBashMinimizerGainRecord({
 				command,
 				cwd: commandCwd,
 				sessionCwd: session.cwd,
@@ -139,7 +139,7 @@ export function makeMinimizedSaveHandler(
 				exitCode,
 				kind: "saved",
 				agentDir: session.settings.getAgentDir(),
-			}).catch(() => {});
+			});
 		},
 	};
 }

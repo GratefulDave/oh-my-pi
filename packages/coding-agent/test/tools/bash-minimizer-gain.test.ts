@@ -215,11 +215,9 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 			inputBytes: 4000,
 			outputBytes: 1000,
 		});
-		handler.flushSaved(1); // simulate exitCode:1 from executeBash
+		await handler.flushSaved(1); // simulate exitCode:1 from executeBash
 
 		expect(handler.didSave()).toBe(true);
-		// Allow the microtask queue to flush the void appendBashMinimizerGainRecord call
-		await Bun.sleep(10);
 
 		const lines = fs.readFileSync(getBashMinimizerGainPath(agentDir), "utf8").trim().split("\n").filter(Boolean);
 		expect(lines).toHaveLength(1);
@@ -263,8 +261,7 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 
 		const handler = makeMinimizedSaveHandler(session, "cargo build", tempDir);
 		await handler.onMinimizedSave("build output...", { filter: "cargo", inputBytes: 8000, outputBytes: 500 });
-		handler.flushSaved(0); // writes the saved record
-		await Bun.sleep(10);
+		await handler.flushSaved(0); // writes the saved record
 
 		// Guard: caller skips the missed write when didSave() is true
 		if (!handler.didSave()) {
