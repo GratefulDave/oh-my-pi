@@ -34,9 +34,7 @@ describe("normalizeProjectPath", () => {
 	});
 
 	it("strips -worktrees/ worktree suffix", () => {
-		expect(normalizeProjectPath("/Users/x/myrepo-worktrees/feat-lane/packages/foo")).toBe(
-			"/Users/x/myrepo",
-		);
+		expect(normalizeProjectPath("/Users/x/myrepo-worktrees/feat-lane/packages/foo")).toBe("/Users/x/myrepo");
 	});
 
 	it("strips generic /<dir>/worktrees/ suffix (e.g. .herdr/worktrees)", () => {
@@ -130,9 +128,7 @@ afterEach(() => {
 });
 
 /** Write a minimizer-gain.jsonl with the given records into the temp agent dir. */
-async function writeMinimizerJSONL(
-	records: object[],
-): Promise<void> {
+async function writeMinimizerJSONL(records: object[]): Promise<void> {
 	const agentDir = getAgentDir();
 	await fs.mkdir(agentDir, { recursive: true });
 	const lines = records.map(r => JSON.stringify(r)).join("\n");

@@ -174,7 +174,6 @@ function GainBySourcePanel({ bySource }: { bySource: GainDashboardStats["bySourc
 // Time series chart (stacked area, daily)
 // ---------------------------------------------------------------------------
 
-
 function formatGainDateLabel(date: string): string {
 	const [, month, day] = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(date) ?? [];
 	if (!month || !day) return date;
