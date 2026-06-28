@@ -138,7 +138,9 @@ export function normalizeProjectPath(p: string): string | null {
 	// Matches: <root>/.wt/<lane>/..., <root>-wt/<lane>/...,
 	//          <root>.wt/<lane>/..., <root>/.worktrees/<lane>/...,
 	//          <root>-worktrees/<lane>/..., <root>/.<dotdir>/worktrees/<name>/...
-	const m = p.match(/^(.+?)(?:\/\.wt\/|\/\.worktrees\/|-worktrees\/|-wt\/|\.wt\/|\/\.[^/]+\/worktrees\/)[^/]+(?:\/.*)?$/);
+	const m = p.match(
+		/^(.+?)(?:\/\.wt\/|\/\.worktrees\/|-worktrees\/|-wt\/|\.wt\/|\/\.[^/]+\/worktrees\/)[^/]+(?:\/.*)?$/,
+	);
 	if (m) return m[1];
 
 	return p;
