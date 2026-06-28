@@ -191,9 +191,7 @@ interface SnapcompactRecord {
  * per-project view.
  */
 async function readSnapcompactRecords(cutoff: number | null, project: string | null): Promise<SnapcompactRecord[]> {
-	// No project field → skip entirely for project-scoped requests.
-	if (project !== null) return [];
-
+	// Snapcompact has no cwd/project field — always read, regardless of project scope.
 	const filePath = path.join(path.dirname(getStatsDbPath()), "snapcompact-savings.jsonl");
 	let text: string;
 	try {
