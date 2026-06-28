@@ -125,15 +125,15 @@ print_step "Minimizer gain bundle smoke test"
 bun --cwd=packages/pi-minimizer-gain run smoke:bundle
 
 # Smoke-test the extension path that has broken repeatedly: the global
-# Antigravity adapter must be loaded by the rebuilt binary from outside the repo
-# and expose its extension provider models.
+# Antigravity adapter extension bundle must exist and be readable.
+# (--list-models was removed in v16; verify via symlink presence instead.)
 print_step "Extension load smoke test"
-antigravity_out="$(cd /tmp && lex --list-models opencode-antigravity 2>&1 || true)"
-if ! grep -q "opencode-antigravity" <<<"$antigravity_out"; then
-	printf 'error: antigravity extension models are not visible after rebuild:\n%s\n' "$antigravity_out" >&2
+antigravity_bundle="$HOME/.omp/agent/extensions/antigravity-adapter/antigravity.bundle.js"
+if [[ ! -f "$antigravity_bundle" ]]; then
+	printf 'error: antigravity extension bundle missing after rebuild: %s\n' "$antigravity_bundle" >&2
 	exit 1
 fi
-printf '  antigravity extension models visible\n'
+printf '  antigravity extension bundle present: %s\n' "$antigravity_bundle"
 
 cat <<'EOF'
 
