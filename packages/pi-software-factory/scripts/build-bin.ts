@@ -18,6 +18,7 @@ export function truncateToWidth(text) { return text; }
 export function visibleWidth(text) { return text.length; }
 export function replaceTabs(text) { return text.replace(/\\t/g, "    "); }
 export const sliceWithWidth = (text) => ({ text, width: text.length });
+export function setHangulCompatJamoWidthOverride() {}
 `;
 
 // Build CLI entry points
