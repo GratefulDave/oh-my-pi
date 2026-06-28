@@ -12559,28 +12559,9 @@ export class AgentSession {
 				cwd,
 			});
 			if (hookResult?.result) {
+				// user_bash extension handled the command — skip minimizer miss recording.
 				this.recordBashResult(command, hookResult.result, options);
-				const r = hookResult.result;
-				if (
-					this.settings.get("shellMinimizer.gainTelemetry") &&
-					this.settings.get("shellMinimizer.enabled") &&
-					!r.cancelled &&
-					r.exitCode !== undefined &&
-					r.totalBytes > 0
-				) {
-					void appendBashMinimizerGainRecord({
-						command,
-						cwd,
-						sessionId: this.sessionId,
-						filter: inferBashMinimizerMissedFilter(command),
-						inputBytes: r.totalBytes,
-						outputBytes: r.totalBytes,
-						exitCode: r.exitCode ?? null,
-						kind: "missed",
-						agentDir: this.settings.getAgentDir(),
-					}).catch(() => {});
-				}
-				return r;
+				return hookResult.result;
 			}
 		}
 
