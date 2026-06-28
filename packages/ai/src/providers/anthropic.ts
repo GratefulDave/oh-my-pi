@@ -13,12 +13,12 @@ import {
 	readSseEvents,
 } from "@oh-my-pi/pi-utils";
 import {
+	disablesParallelToolUse,
 	hasOpus47ApiRestrictions,
 	mapEffortToAnthropicAdaptiveEffort,
 	supportsMidConversationSystemMessages,
 } from "../model-thinking";
 import { calculateCost } from "../models";
-import { isUsageLimitError } from "../rate-limit-utils";
 import { getEnvApiKey, OUTPUT_FALLBACK_BUFFER } from "../stream";
 import type {
 	Api,
@@ -30,7 +30,6 @@ import type {
 	Message,
 	Model,
 	ProviderSessionState,
-	RawSseEvent,
 	RedactedThinkingContent,
 	ServiceTier,
 	SimpleStreamOptions,
@@ -64,7 +63,7 @@ import { isCopilotTransientModelError } from "../utils/retry";
 import { COMBINATOR_KEYS, NO_STRICT, toolWireSchema } from "../utils/schema";
 import { spillToDescription } from "../utils/schema/spill";
 import { createSdkStreamRequestOptions } from "../utils/sdk-stream-timeout";
-import { notifyRawSseEvent } from "../utils/sse-debug";
+import { notifyRawSseEvent, wrapFetchForSseDebug } from "../utils/sse-debug";
 import {
 	AnthropicConnectionTimeoutError,
 	type AnthropicFetchOptions,
@@ -133,6 +132,7 @@ const claudeCodeUtilityBetaDefaults = [
 const claudeCodeAgentBetaDefaults = [
 	"claude-code-20250219",
 	"oauth-2025-04-20",
+	"context-1m-2025-08-07",
 	"interleaved-thinking-2025-05-14",
 	"context-management-2025-06-27",
 	"prompt-caching-scope-2026-01-05",
@@ -865,6 +865,7 @@ export type AnthropicClientOptionsArgs = {
 	hasTools?: boolean;
 	thinkingEnabled?: boolean;
 	thinkingDisplay?: AnthropicThinkingDisplay;
+	onSseEvent?: AnthropicOptions["onSseEvent"];
 	fetch?: FetchImpl;
 	claudeCodeSessionId?: string;
 };
@@ -1037,25 +1038,11 @@ const ANTHROPIC_MESSAGE_EVENTS: ReadonlySet<string> = new Set([
 	"content_block_stop",
 ]);
 
-/**
- * Anthropic keepalive `ping` events carry no message content, but they prove the
- * upstream connection is alive during long server-side gaps (extended thinking,
- * slow tool execution). They are normally dropped before reaching the consumer;
- * we instead surface them as lightweight markers so the idle watchdog
- * (`iterateWithIdleTimeout`) resets its deadline on every ping. Without this, a
- * connection that is demonstrably still streaming pings still trips
- * "Anthropic stream stalled while waiting for the next event". The message-event
- * branches in `streamAnthropic` match none of these markers, so they are ignored.
- */
-type RawMessagePingEvent = { type: "ping" };
-type AnthropicStreamEvent = RawMessageStreamEvent | RawMessagePingEvent;
-const ANTHROPIC_PING_EVENT: RawMessagePingEvent = { type: "ping" };
-
 async function* iterateAnthropicEvents(
 	response: Response,
 	signal?: AbortSignal,
 	onSseEvent?: AnthropicOptions["onSseEvent"],
-): AsyncGenerator<AnthropicStreamEvent> {
+): AsyncGenerator<RawMessageStreamEvent> {
 	if (!response.body) {
 		throw new Error("Attempted to iterate over an Anthropic response with no body");
 	}
@@ -1067,12 +1054,6 @@ async function* iterateAnthropicEvents(
 		notifyRawSseEvent(onSseEvent, sse);
 		if (sse.event === "error") {
 			throw new Error(sse.data);
-		}
-
-		if (sse.event === "ping") {
-			// Surface keepalives so the idle watchdog treats them as liveness.
-			yield ANTHROPIC_PING_EVENT;
-			continue;
 		}
 
 		if (!ANTHROPIC_MESSAGE_EVENTS.has(sse.event ?? "")) {
@@ -1124,38 +1105,20 @@ async function getAnthropicStreamResponse(
 	request: unknown,
 	signal?: AbortSignal,
 	onSseEvent?: AnthropicOptions["onSseEvent"],
-): Promise<{
-	events: AsyncIterable<AnthropicStreamEvent>;
-	response: Response;
-	requestId: string | null;
-	recordsRawSseEvents: boolean;
-}> {
+): Promise<{ events: AsyncIterable<RawMessageStreamEvent>; response: Response; requestId: string | null }> {
 	if (hasAnthropicRawResponseRequest(request)) {
 		const response = await request.asResponse();
 		return {
 			events: iterateAnthropicEvents(response, signal, onSseEvent),
 			response,
 			requestId: response.headers.get("request-id"),
-			recordsRawSseEvents: true,
 		};
 	}
 	if (hasAnthropicStreamWithResponseRequest(request)) {
 		const { data, response, request_id } = await request.withResponse();
-		return { events: data, response, requestId: request_id, recordsRawSseEvents: false };
+		return { events: data, response, requestId: request_id };
 	}
 	throw new Error("Anthropic SDK request did not expose a stream response");
-}
-
-async function* observeDecodedAnthropicSdkEvents(
-	events: AsyncIterable<AnthropicStreamEvent>,
-	observer: (event: RawSseEvent) => void,
-): AsyncGenerator<AnthropicStreamEvent> {
-	for await (const event of events) {
-		const data = JSON.stringify(event);
-		// Reconstructed from decoded SDK event; not literal wire bytes.
-		notifyRawSseEvent(observer, { event: event.type, data, raw: [`event: ${event.type}`, `data: ${data}`] });
-		yield event;
-	}
 }
 
 function getAnthropicCompat(
@@ -1228,14 +1191,6 @@ function isProviderRetryableStreamEnvelopeError(error: unknown): boolean {
 export function isProviderRetryableError(error: unknown, provider?: string): boolean {
 	if (!(error instanceof Error)) return false;
 	if (provider === "github-copilot" && isCopilotTransientModelError(error)) return true;
-	// Account-level usage/quota limits ("usage_limit_reached", "exceed your
-	// account's rate limit", "quota exceeded") are persistent — the server
-	// parks the credential for minutes-to-hours (see the long `retry-after`).
-	// Retrying the same key with the provider's seconds-scale backoff never
-	// helps; these are owned by the credential-rotation layer (auth-gateway /
-	// `streamSimple` a/b/c policy), so surface them immediately instead of
-	// burning the retry budget here.
-	if (isUsageLimitError(error.message)) return false;
 	const msg = error.message.toLowerCase();
 	if (
 		isUnexpectedSocketCloseMessage(msg) ||
@@ -1332,9 +1287,6 @@ export const streamAnthropic: StreamFunction<"anthropic-messages"> = (
 		let rawRequestDump: RawHttpRequestDump | undefined;
 		let activeAbortTracker = createAbortSourceTracker(options?.signal);
 
-		const onSseEvent = options?.onSseEvent;
-		const rawSseObserver = onSseEvent ? (event: RawSseEvent) => onSseEvent(event, model) : undefined;
-
 		try {
 			let client: AnthropicMessagesClientLike;
 			let isOAuthToken: boolean;
@@ -1369,6 +1321,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages"> = (
 					hasTools: !!context.tools?.length,
 					thinkingEnabled: options?.thinkingEnabled,
 					thinkingDisplay: options?.thinkingDisplay,
+					onSseEvent: options?.onSseEvent,
 					fetch: options?.fetch,
 					claudeCodeSessionId: options?.sessionId ?? extractClaudeMetadataSessionId(options?.metadata?.user_id),
 				});
@@ -1444,17 +1397,19 @@ export const streamAnthropic: StreamFunction<"anthropic-messages"> = (
 							requestTimeoutMs,
 						);
 					}
-					let anthropicStream: AsyncIterable<AnthropicStreamEvent>;
+					let anthropicStream: AsyncIterable<RawMessageStreamEvent>;
 					let response: Response;
 					let requestId: string | null;
-					let recordsRawSseEvents: boolean;
 					try {
 						({
 							events: anthropicStream,
 							response,
 							requestId,
-							recordsRawSseEvents,
-						} = await getAnthropicStreamResponse(anthropicRequest, requestSignal, rawSseObserver));
+						} = await getAnthropicStreamResponse(
+							anthropicRequest,
+							requestSignal,
+							options?.client ? event => options?.onSseEvent?.(event, model) : undefined,
+						));
 					} catch (error) {
 						if (error instanceof AnthropicConnectionTimeoutError && !activeAbortTracker.wasCallerAbort()) {
 							throw firstEventTimeoutAbortError;
@@ -1468,7 +1423,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages"> = (
 					let sawMessageStart = false;
 					let sawTerminalEnvelope = false;
 
-					const timedAnthropicStream = iterateWithIdleTimeout(anthropicStream, {
+					for await (const event of iterateWithIdleTimeout(anthropicStream, {
 						idleTimeoutMs,
 						firstItemTimeoutMs: firstEventTimeoutMs,
 						errorMessage: idleTimeoutAbortError.message,
@@ -1476,12 +1431,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages"> = (
 						onIdle: () => activeAbortTracker.abortLocally(idleTimeoutAbortError),
 						onFirstItemTimeout: () => activeAbortTracker.abortLocally(firstEventTimeoutAbortError),
 						abortSignal: options?.signal,
-					});
-					const observedAnthropicStream =
-						rawSseObserver && !recordsRawSseEvents
-							? observeDecodedAnthropicSdkEvents(timedAnthropicStream, rawSseObserver)
-							: timedAnthropicStream;
-					for await (const event of observedAnthropicStream) {
+					})) {
 						sawEvent = true;
 
 						if (event.type === "message_start") {
@@ -1829,12 +1779,16 @@ type SystemBlockOptions = {
 	cacheControl?: AnthropicCacheControl;
 };
 
+function withGlobalCacheScope(cacheControl: AnthropicCacheControl): AnthropicCacheControl {
+	return { ...cacheControl, scope: "global" };
+}
+
 function applyClaudeCodeSystemCache(
 	blocks: AnthropicSystemBlock[],
 	cacheControl: AnthropicCacheControl | undefined,
 ): number {
 	if (!cacheControl || blocks.length <= 2) return 0;
-	blocks[2] = { ...blocks[2], cache_control: cacheControl };
+	blocks[2] = { ...blocks[2], cache_control: withGlobalCacheScope(cacheControl) };
 	if (blocks.length === 3) return 1;
 	const lastIndex = blocks.length - 1;
 	blocks[lastIndex] = { ...blocks[lastIndex], cache_control: cacheControl };
@@ -1900,6 +1854,7 @@ export function buildAnthropicClientOptions(args: AnthropicClientOptionsArgs): A
 		thinkingEnabled = false,
 		thinkingDisplay,
 		isOAuth,
+		onSseEvent,
 		claudeCodeSessionId,
 	} = args;
 	const compat = getAnthropicCompat(model);
@@ -1913,6 +1868,7 @@ export function buildAnthropicClientOptions(args: AnthropicClientOptionsArgs): A
 	// Only OAuth requests inject the CC billing header; no API-key request can ever
 	// contain it, so there is no need to install the rewriter for those.
 	const cchFetch = oauthToken ? wrapFetchForCch(baseFetch) : baseFetch;
+	const debugFetch = onSseEvent ? wrapFetchForSseDebug(cchFetch, event => onSseEvent(event, model)) : cchFetch;
 	if (model.provider === "github-copilot") {
 		const copilotApiKey = parseGitHubCopilotApiKey(apiKey).accessToken;
 		const betaFeatures = [...extraBetas];
@@ -1938,7 +1894,7 @@ export function buildAnthropicClientOptions(args: AnthropicClientOptionsArgs): A
 			baseURL: baseUrl,
 			maxRetries: 5,
 			defaultHeaders,
-			fetch: cchFetch,
+			fetch: debugFetch,
 			...(tlsFetchOptions ? { fetchOptions: tlsFetchOptions } : {}),
 		};
 	}
@@ -1973,7 +1929,7 @@ export function buildAnthropicClientOptions(args: AnthropicClientOptionsArgs): A
 			baseURL: baseUrl,
 			maxRetries: 5,
 			defaultHeaders,
-			fetch: cchFetch,
+			fetch: debugFetch,
 		};
 	}
 
@@ -1989,7 +1945,7 @@ export function buildAnthropicClientOptions(args: AnthropicClientOptionsArgs): A
 			baseURL: baseUrl,
 			maxRetries: 5,
 			defaultHeaders,
-			fetch: cchFetch,
+			...(debugFetch ? { fetch: debugFetch } : {}),
 			...(tlsFetchOptions ? { fetchOptions: tlsFetchOptions } : {}),
 		};
 	}
@@ -2004,7 +1960,7 @@ export function buildAnthropicClientOptions(args: AnthropicClientOptionsArgs): A
 			baseURL: baseUrl,
 			maxRetries: 5,
 			defaultHeaders,
-			fetch: cchFetch,
+			...(debugFetch ? { fetch: debugFetch } : {}),
 			...(tlsFetchOptions ? { fetchOptions: tlsFetchOptions } : {}),
 		};
 	}
@@ -2016,7 +1972,7 @@ export function buildAnthropicClientOptions(args: AnthropicClientOptionsArgs): A
 		baseURL: baseUrl,
 		maxRetries: 5,
 		defaultHeaders,
-		fetch: cchFetch,
+		fetch: debugFetch,
 		...(tlsFetchOptions ? { fetchOptions: tlsFetchOptions } : {}),
 	};
 }
@@ -2271,16 +2227,33 @@ function resolveAnthropicAdaptiveEffort(
 	return mapEffortToAnthropicAdaptiveEffort(model, requestedEffort);
 }
 
+function startsWithAfterAsciiWhitespace(value: string, prefix: string): boolean {
+	let index = 0;
+	while (index < value.length) {
+		const code = value.charCodeAt(index);
+		if (code !== 9 && code !== 10 && code !== 13 && code !== 32) break;
+		index++;
+	}
+	return value.startsWith(prefix, index);
+}
+
+function isClaudeSyntheticUserText(value: string): boolean {
+	return startsWithAfterAsciiWhitespace(value, "<system-reminder>");
+}
+
 function extractClaudeCodeFirstUserMessageText(messages: readonly Message[]): string {
 	for (const message of messages) {
 		if (message.role !== "user") continue;
 		const { content } = message;
 		if (typeof content === "string") return content;
 		if (!Array.isArray(content)) return "";
+		let fallback: string | undefined;
 		for (const block of content) {
-			if (block.type === "text") return block.text;
+			if (block.type !== "text") continue;
+			fallback ??= block.text;
+			if (!isClaudeSyntheticUserText(block.text)) return block.text;
 		}
-		return "";
+		return fallback ?? "";
 	}
 	return "";
 }
@@ -2403,6 +2376,21 @@ function buildParams(
 		}
 	}
 
+	// Claude Opus 4.8 must emit at most one tool call per turn. Force
+	// `disable_parallel_tool_use` onto the outgoing tool_choice (synthesizing an
+	// `auto` choice when none is set). Gated on tools being present: Anthropic
+	// rejects `tool_choice` without `tools`, and parallelism is moot otherwise.
+	// `none` rejects the field, so leave it untouched. A fresh object is built
+	// rather than mutated so the caller's `options.toolChoice` is never aliased.
+	if (disablesParallelToolUse(model.id) && params.tools && params.tools.length > 0) {
+		const current = params.tool_choice;
+		if (!current) {
+			params.tool_choice = { type: "auto", disable_parallel_tool_use: true };
+		} else if (current.type !== "none") {
+			params.tool_choice = { ...current, disable_parallel_tool_use: true };
+		}
+	}
+
 	const shouldInjectClaudeCodeInstruction = isOAuthToken && !model.id.startsWith("claude-3-5-haiku");
 	const firstUserMessageText = shouldInjectClaudeCodeInstruction
 		? extractClaudeCodeFirstUserMessageText(context.messages)
@@ -2444,31 +2432,22 @@ function isZaiAnthropicEndpoint(model: Model<"anthropic-messages">): boolean {
 }
 
 /**
- * Returns true when unsigned `thinking` blocks from prior assistant turns should
- * be replayed as Anthropic-native thinking instead of demoted to text.
- *
- * Official Anthropic (matched via `isAnthropicApiBaseUrl`, which intentionally
- * treats a missing baseUrl as official since `resolveAnthropicBaseUrl` routes
- * it to `https://api.anthropic.com`) enforces signature-based thinking-chain
- * integrity, so unsigned blocks must remain text there. Anthropic-compatible
- * reasoning endpoints commonly emit unsigned thinking blocks while still
- * expecting them back as `type: "thinking"` on continuation; demoting them
- * loses the model's reasoning chain and can destabilize the next tool-call
- * arguments (#2005). Known non-signing hosts are also preserved for
- * compatibility.
+ * Returns true for providers whose Anthropic-compatible endpoints do NOT
+ * implement signature-based thinking-chain integrity (DeepSeek, Z.AI, etc.).
+ * For these providers, unsigned thinking blocks must be preserved as
+ * `type: "thinking"` instead of being degraded to text.
  */
-function shouldReplayUnsignedThinking(model: Model<"anthropic-messages">): boolean {
+function isNonSigningAnthropicEndpoint(model: Model<"anthropic-messages">): boolean {
+	// Known non-signing providers
 	if (model.provider === "zai" || model.provider === "deepseek") return true;
 	const baseUrl = model.baseUrl;
-	if (baseUrl) {
-		try {
-			const hostname = new URL(baseUrl).hostname.toLowerCase();
-			if (hostname === "api.deepseek.com" || hostname.endsWith(".deepseek.com")) return true;
-		} catch {
-			// Fall through to the protocol-level reasoning rule below.
-		}
+	if (!baseUrl) return false;
+	try {
+		const hostname = new URL(baseUrl).hostname.toLowerCase();
+		return hostname === "api.deepseek.com" || hostname.endsWith(".deepseek.com");
+	} catch {
+		return false;
 	}
-	return model.reasoning && !isAnthropicApiBaseUrl(baseUrl);
 }
 
 function buildToolResultBlock(model: Model<"anthropic-messages">, msg: ToolResultMessage): ContentBlockParam {
@@ -2559,7 +2538,7 @@ export function convertAnthropicMessages(
 					}
 					if (block.thinking.trim().length === 0) continue;
 					if (!block.thinkingSignature || block.thinkingSignature.trim().length === 0) {
-						if (shouldReplayUnsignedThinking(model)) {
+						if (isNonSigningAnthropicEndpoint(model)) {
 							blocks.push({
 								type: "thinking",
 								thinking: block.thinking.toWellFormed(),
