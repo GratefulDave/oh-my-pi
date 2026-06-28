@@ -12600,17 +12600,25 @@ export class AgentSession {
 						agentDir: this.settings.getAgentDir(),
 					}).catch(() => {});
 				} else if (!result.cancelled && result.exitCode !== undefined && result.totalBytes > 0) {
-					void appendBashMinimizerGainRecord({
-						command,
-						cwd,
-						sessionId: this.sessionId,
-						filter: inferBashMinimizerMissedFilter(command),
-						inputBytes: result.totalBytes,
-						outputBytes: result.totalBytes,
-						exitCode: result.exitCode ?? null,
-						kind: "missed",
-						agentDir: this.settings.getAgentDir(),
-					}).catch(() => {});
+					const missedFilter = inferBashMinimizerMissedFilter(command);
+					const only = this.settings.get("shellMinimizer.only") as string[];
+					const except = this.settings.get("shellMinimizer.except") as string[];
+					const eligible =
+						(only.length === 0 || only.includes(missedFilter)) &&
+						(except.length === 0 || !except.includes(missedFilter));
+					if (eligible) {
+						void appendBashMinimizerGainRecord({
+							command,
+							cwd,
+							sessionId: this.sessionId,
+							filter: missedFilter,
+							inputBytes: result.totalBytes,
+							outputBytes: result.totalBytes,
+							exitCode: result.exitCode ?? null,
+							kind: "missed",
+							agentDir: this.settings.getAgentDir(),
+						}).catch(() => {});
+					}
 				}
 			}
 			return result;

@@ -175,6 +175,17 @@ describe("bash minimizer gain writer", () => {
 		// -v takes no argument (verbose), so the next token is the command
 		expect(inferBashMinimizerMissedFilter("env -v bun test")).toBe("bun");
 	});
+
+	test("handles env long options with separate operands", () => {
+		// --unset takes a separate NAME argument; real command follows
+		expect(inferBashMinimizerMissedFilter("env --unset FOO git status")).toBe("git");
+		// --chdir takes a separate DIR argument; real command follows
+		expect(inferBashMinimizerMissedFilter("env --chdir /repo bun test")).toBe("bun");
+		// inline --unset=NAME has no separate arg; real command follows immediately
+		expect(inferBashMinimizerMissedFilter("env --unset=FOO git log")).toBe("git");
+		// combined long and short options
+		expect(inferBashMinimizerMissedFilter("env -i --unset FOO node script.js")).toBe("node");
+	});
 });
 
 describe("makeMinimizedSaveHandler + didSave gate contract", () => {

@@ -136,10 +136,18 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 				idx++;
 			} else if (t.startsWith("-")) {
 				idx++;
-				// Single-char options that take a following argument:
-				// -u (unset), -C (chdir), -S (split-string) take an operand.
-				// No operand: -i (ignore-env), -v (verbose), -0 (null terminator).
-				const takesArg = /^-[a-zA-Z]$/.test(t) && !/^-[iv0]$/.test(t);
+				// Determine whether this option takes a separate following argument.
+				// Short-option forms: -u, -C, -S take an operand; -i, -v, -0 do not.
+				// Long-option forms: --unset and --chdir take an operand as the next
+				// token when written without `=value`; --split-string always uses `=`.
+				let takesArg: boolean;
+				if (/^-[a-zA-Z]$/.test(t)) {
+					takesArg = !/^-[iv0]$/.test(t);
+				} else if (t.startsWith("--") && !t.includes("=")) {
+					takesArg = /^--(unset|chdir)$/.test(t);
+				} else {
+					takesArg = false;
+				}
 				if (takesArg && idx < tokens.length && !tokens[idx]!.startsWith("-")) {
 					idx++; // skip the option's argument
 				}

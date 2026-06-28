@@ -16,6 +16,8 @@
 
 - Gain tab in `omp stats` dashboard (`/#/gain`) — surfaces bash minimizer and snapcompact token-savings with project scoping and an Unparsed Commands panel listing unhandled bash commands as filter-tuning candidates ([#3691](https://github.com/can1357/oh-my-pi/pull/3691)).
 
+## [16.2.0] - 2026-06-27
+
 ## [16.1.17] - 2026-06-24
 
 ### Fixed
