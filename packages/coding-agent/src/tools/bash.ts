@@ -152,6 +152,11 @@ async function recordBashMinimizerGain(input: {
 }): Promise<void> {
 	if (!input.session.settings.get("shellMinimizer.gainTelemetry")) return;
 	if (!input.session.settings.get("shellMinimizer.enabled")) return;
+	const only = input.session.settings.get("shellMinimizer.only") as string[];
+	const except = input.session.settings.get("shellMinimizer.except") as string[];
+	const filter = inferBashMinimizerMissedFilter(input.command);
+	if (only.length > 0 && !only.includes(filter)) return;
+	if (except.length > 0 && except.includes(filter)) return;
 	try {
 		if (input.result.cancelled || input.result.exitCode === undefined) return;
 		if (input.result.totalBytes <= 0) return;
@@ -160,7 +165,7 @@ async function recordBashMinimizerGain(input: {
 			cwd: input.commandCwd,
 			sessionCwd: input.session.cwd,
 			sessionId: input.session.getSessionId?.() ?? undefined,
-			filter: inferBashMinimizerMissedFilter(input.command),
+			filter,
 			inputBytes: input.result.totalBytes,
 			outputBytes: input.result.totalBytes,
 			exitCode: input.result.exitCode,

@@ -118,8 +118,8 @@ async function readMinimizerSets(cutoff: number | null, project: string | null):
 			if (project !== null && !matchesProject(rec.cwd, project)) continue;
 
 			if (rec.kind === "missed") {
-				// Unparsed: only "no filter matched" records from meaningful cwds.
-				if (rec.filter === "missed" && !TEMP_PATH_RE.test(rec.cwd ?? "")) {
+				// Unparsed: all missed records from meaningful cwds (temp paths excluded).
+				if (!TEMP_PATH_RE.test(rec.cwd ?? "")) {
 					sets.unparsed.push(rec);
 				}
 			} else {
