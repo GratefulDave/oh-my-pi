@@ -11,6 +11,7 @@
 import * as path from "node:path";
 import { getAgentDir, getStatsDbPath, isEnoent, logger } from "@oh-my-pi/pi-utils";
 import { getTimeRangeConfig } from "./aggregator";
+import { initDb } from "./db";
 import type {
 	GainDashboardStats,
 	GainSourceTotals,
@@ -20,6 +21,7 @@ import type {
 } from "./shared-types";
 
 const BYTES_PER_TOKEN_ESTIMATE = 4;
+const SQLITE_VARIABLE_CHUNK_SIZE = 500;
 
 // ---------------------------------------------------------------------------
 // Minimizer record schema
@@ -45,18 +47,32 @@ const TEMP_PATH_RE = /\/T\/|\/tmp\/|\/pi-bash-exec|\/omp-bash-exec|\/pi-bash-det
 // Project-match helper
 // ---------------------------------------------------------------------------
 
+function canonicalProjectPath(p: string): string {
+	const normalized = p.replaceAll("\\", "/").replace(/\/+$/u, "");
+	return normalized || "/";
+}
+
+/** True when `candidate` exactly equals `parent` or is a separator-bounded sub-path. */
+function isSameOrSubPath(candidate: string, parent: string): boolean {
+	const normalizedCandidate = canonicalProjectPath(candidate);
+	const normalizedParent = canonicalProjectPath(parent);
+	return normalizedCandidate === normalizedParent || normalizedCandidate.startsWith(`${normalizedParent}/`);
+}
+
 /**
  * True when `cwd` (or its normalized project root) exactly equals `project`
  * or is a direct sub-path of it.
  *
- * Normalization is applied so that a cwd of `/repo-worktrees/lane/src` matches
- * a project root of `/repo` — the selector shows normalized roots, so the
- * filter must compare apples-to-apples.
+ * Normalization is applied so that a cwd of `/repo/.worktrees/lane/src`
+ * matches a project root of `/repo` — the selector shows normalized roots, so
+ * the filter must compare apples-to-apples. Backslashes are normalized first
+ * so Windows realpath records are matched correctly.
  */
 function matchesProject(cwd: string | undefined, project: string): boolean {
 	if (!cwd) return false;
-	const normalized = normalizeProjectPath(cwd) ?? cwd;
-	return normalized === project || normalized.startsWith(`${project}/`);
+	const normalizedCwd = normalizeProjectPath(cwd) ?? canonicalProjectPath(cwd);
+	const normalizedProject = normalizeProjectPath(project) ?? canonicalProjectPath(project);
+	return isSameOrSubPath(normalizedCwd, normalizedProject) || isSameOrSubPath(cwd, normalizedProject);
 }
 
 // ---------------------------------------------------------------------------
@@ -130,20 +146,21 @@ async function readMinimizerSets(cutoff: number | null, project: string | null):
  * Returns null to drop temp/internal paths entirely.
  */
 export function normalizeProjectPath(p: string): string | null {
-	if (TEMP_PATH_RE.test(p)) return null;
+	const clean = canonicalProjectPath(p);
+	if (TEMP_PATH_RE.test(clean)) return null;
 	// omp internal worktrees — not meaningful project roots
-	if (/\/\.omp\/wt\//.test(p)) return null;
+	if (/\/\.omp\/wt\//.test(clean)) return null;
 
 	// Generic worktree layouts — strip the worktree suffix/subpath.
 	// Matches: <root>/.wt/<lane>/..., <root>-wt/<lane>/...,
 	//          <root>.wt/<lane>/..., <root>/.worktrees/<lane>/...,
 	//          <root>-worktrees/<lane>/..., <root>/.<dotdir>/worktrees/<name>/...
-	const m = p.match(
+	const m = clean.match(
 		/^(.+?)(?:\/\.wt\/|\/\.worktrees\/|-worktrees\/|-wt\/|\.wt\/|\/\.[^/]+\/worktrees\/)[^/]+(?:\/.*)?$/,
 	);
 	if (m) return m[1];
 
-	return p;
+	return clean;
 }
 
 /**
@@ -184,25 +201,60 @@ interface SnapcompactRecord {
 	savedTokens: number;
 }
 
+interface SnapcompactSets {
+	records: SnapcompactRecord[];
+	projects: Set<string>;
+}
+
 /**
- * Snapcompact records carry no cwd/project field — project filter cannot be
- * applied. When a project is selected the snapcompact totals are omitted from
- * project-scoped responses to avoid mixing unrelated savings into the
- * per-project view.
+ * Map snapcompact session IDs to the project folder(s) they belong to,
+ * using the stats DB `messages(session_file, folder)` join. This preserves
+ * the per-project snapcompact view that existed before the minimizer source
+ * was added.
  */
-async function readSnapcompactRecords(cutoff: number | null, project: string | null): Promise<SnapcompactRecord[]> {
-	// Snapcompact has no cwd/project field — always read, regardless of project scope.
+async function readProjectsBySession(sessions: readonly string[]): Promise<Map<string, Set<string>>> {
+	const uniqueSessions = Array.from(new Set(sessions.filter(Boolean)));
+	const projectsBySession = new Map<string, Set<string>>();
+	if (uniqueSessions.length === 0) return projectsBySession;
+
+	const database = await initDb();
+	for (let i = 0; i < uniqueSessions.length; i += SQLITE_VARIABLE_CHUNK_SIZE) {
+		const chunk = uniqueSessions.slice(i, i + SQLITE_VARIABLE_CHUNK_SIZE);
+		const placeholders = chunk.map(() => "?").join(",");
+		const rows = database
+			.prepare(`SELECT DISTINCT session_file, folder FROM messages WHERE session_file IN (${placeholders})`)
+			.all(...chunk) as Array<{ session_file: string; folder: string }>;
+		for (const row of rows) {
+			if (!row.folder) continue;
+			let projects = projectsBySession.get(row.session_file);
+			if (!projects) {
+				projects = new Set<string>();
+				projectsBySession.set(row.session_file, projects);
+			}
+			projects.add(row.folder);
+		}
+	}
+	return projectsBySession;
+}
+
+/**
+ * Parse the snapcompact JSONL, resolve session → project folder via the stats
+ * DB, and filter to the requested project. Returns both the filtered records
+ * and the full set of snapcompact project folders (for the project selector).
+ */
+async function readSnapcompactSets(cutoff: number | null, project: string | null): Promise<SnapcompactSets> {
 	const filePath = path.join(path.dirname(getStatsDbPath()), "snapcompact-savings.jsonl");
 	let text: string;
 	try {
 		text = await Bun.file(filePath).text();
 	} catch (err) {
-		if (isEnoent(err)) return [];
+		if (isEnoent(err)) return { records: [], projects: new Set() };
 		logger.debug("gain-aggregator: failed to read snapcompact-savings.jsonl", { err: String(err) });
-		return [];
+		return { records: [], projects: new Set() };
 	}
+
 	const seen = new Set<string>();
-	const records: SnapcompactRecord[] = [];
+	const parsed: SnapcompactRecord[] = [];
 	for (const line of text.split("\n")) {
 		if (!line.trim()) continue;
 		try {
@@ -211,12 +263,32 @@ async function readSnapcompactRecords(cutoff: number | null, project: string | n
 			const key = `${rec.session}:${rec.toolCallId}`;
 			if (seen.has(key)) continue;
 			seen.add(key);
-			records.push(rec);
+			parsed.push(rec);
 		} catch {
 			/* skip malformed line */
 		}
 	}
-	return records;
+
+	const projectsBySession = await readProjectsBySession(parsed.map(rec => rec.session));
+	const projects = new Set<string>();
+	const records: SnapcompactRecord[] = [];
+	for (const rec of parsed) {
+		const sessionProjects = projectsBySession.get(rec.session);
+		if (sessionProjects) {
+			for (const sessionProject of sessionProjects) projects.add(sessionProject);
+		}
+		if (project !== null) {
+			if (
+				!sessionProjects ||
+				!Array.from(sessionProjects).some(sessionProject => matchesProject(sessionProject, project))
+			) {
+				continue;
+			}
+		}
+		records.push(rec);
+	}
+
+	return { records, projects };
 }
 
 // ---------------------------------------------------------------------------
@@ -257,12 +329,13 @@ export async function getGainDashboardStats(
 	const { cutoff: effectiveCutoff } = getTimeRangeConfig(range);
 	const effectiveProject: string | null = project?.trim() || null;
 
-	const [minimizerSets, snapcompactRecords] = await Promise.all([
+	const [minimizerSets, snapcompactSets] = await Promise.all([
 		readMinimizerSets(effectiveCutoff, effectiveProject),
-		readSnapcompactRecords(effectiveCutoff, effectiveProject),
+		readSnapcompactSets(effectiveCutoff, effectiveProject),
 	]);
 
 	const { records: minimizerRecords, unparsed: unparsedRecords, projects: minimizerProjects } = minimizerSets;
+	const { records: snapcompactRecords, projects: snapcompactProjects } = snapcompactSets;
 
 	const minimizerTotals = emptyTotals();
 	const filterMap = new Map<string, GainTopFilter>();
@@ -346,7 +419,9 @@ export async function getGainDashboardStats(
 		.sort((a, b) => b.savedTokens - a.savedTokens)
 		.slice(0, 10);
 
-	const projects = dedupeProjects(minimizerProjects);
+	// Merge minimizer cwds and snapcompact session-folder paths into the project selector.
+	const allProjectPaths = new Set<string>([...minimizerProjects, ...snapcompactProjects]);
+	const projects = dedupeProjects(allProjectPaths);
 
 	return {
 		overall,
