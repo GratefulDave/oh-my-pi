@@ -136,9 +136,11 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 				idx++;
 			} else if (t.startsWith("-")) {
 				idx++;
-				// single-char option that takes a following argument: -u (unset), -C (chdir), -n (dry-run)
-				// but NOT -i (ignore-env) or -v (verbose) which take no operand
-				if (/^-[a-z]$/.test(t) && !/^-[iv]$/.test(t) && idx < tokens.length && !tokens[idx]!.startsWith("-")) {
+				// Single-char options that take a following argument:
+				// -u (unset), -C (chdir), -S (split-string) take an operand.
+				// No operand: -i (ignore-env), -v (verbose), -0 (null terminator).
+				const takesArg = /^-[a-zA-Z]$/.test(t) && !/^-[iv0]$/.test(t);
+				if (takesArg && idx < tokens.length && !tokens[idx]!.startsWith("-")) {
 					idx++; // skip the option's argument
 				}
 			} else {

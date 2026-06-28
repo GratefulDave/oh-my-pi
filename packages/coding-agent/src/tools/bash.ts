@@ -124,7 +124,7 @@ export function makeMinimizedSaveHandler(
 			return saveBashOriginalArtifact(session, originalText);
 		},
 		didSave: () => saved,
-	flushSaved: async exitCode => {
+		flushSaved: async exitCode => {
 			if (!pendingSaved) return;
 			const info = pendingSaved;
 			pendingSaved = null;
@@ -650,7 +650,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 						},
 						onMinimizedSave: minimizedSave.onMinimizedSave,
 					});
-					minimizedSave.flushSaved(result.exitCode ?? null);
+					minimizedSave.flushSaved(result.exitCode ?? null).catch(() => {});
 					if (!minimizedSave.didSave()) {
 						await recordBashMinimizerGain({
 							session: this.session,
@@ -1171,7 +1171,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 		// Skip telemetry for interactive PTY runs — the minimizer never fires there.
 		if (!interactiveUi) {
 			const exitCode = "exitCode" in result ? (result.exitCode ?? null) : null;
-			minimizedSave.flushSaved(exitCode);
+			minimizedSave.flushSaved(exitCode).catch(() => {});
 			if (!minimizedSave.didSave()) {
 				await recordBashMinimizerGain({
 					session: this.session,
