@@ -17,11 +17,13 @@ import type {
 	TerminalInputHandler,
 } from "../../extensibility/extensions";
 import { getSessionSlashCommands } from "../../extensibility/extensions/get-commands-handler";
+import { createExtensionModelQuery } from "../../extensibility/extensions/model-api";
 import { HookEditorComponent } from "../../modes/components/hook-editor";
 import { HookInputComponent } from "../../modes/components/hook-input";
 import { HookSelectorComponent, type HookSelectorSlider } from "../../modes/components/hook-selector";
 import { getAvailableThemesWithPaths, getThemeByName, setTheme, type Theme, theme } from "../../modes/theme/theme";
 import type { InteractiveModeContext, InteractiveSelectorDialogOptions } from "../../modes/types";
+import { USER_INTERRUPT_LABEL } from "../../session/messages";
 import { setSessionTerminalTitle, setTerminalTitle } from "../../utils/title-generator";
 
 const MAX_WIDGET_LINES = 10;
@@ -30,6 +32,11 @@ export class ExtensionUiController {
 	#extensionTerminalInputUnsubscribers = new Set<() => void>();
 	#hookWidgetsAbove = new Map<string, ExtensionUiComponent>();
 	#hookWidgetsBelow = new Map<string, ExtensionUiComponent>();
+	// Single-file dialog surface (`editorContainer` + focus) is shared by the
+	// selector / input / editor modals, so only one may be presented at a time;
+	// the rest queue. See `#presentDialog`.
+	#dialogActive = false;
+	#dialogQueue: Array<() => void> = [];
 	constructor(private ctx: InteractiveModeContext) {}
 
 	/**
@@ -118,7 +125,7 @@ export class ExtensionUiController {
 		const contextActions: ExtensionContextActions = {
 			getModel: () => this.ctx.session.model,
 			isIdle: () => !this.ctx.session.isStreaming,
-			abort: () => this.ctx.session.abort(),
+			abort: () => this.ctx.session.abort({ reason: USER_INTERRUPT_LABEL }),
 			hasPendingMessages: () => this.ctx.session.queuedMessageCount > 0,
 			shutdown: () => {
 				// Defer the actual teardown to the main loop, which calls
@@ -136,7 +143,7 @@ export class ExtensionUiController {
 			reload: async () => {
 				await this.ctx.session.reload();
 				this.ctx.chatContainer.clear();
-				this.ctx.renderInitialMessages(undefined, { clearTerminalHistory: true });
+				this.ctx.renderInitialMessages({ clearTerminalHistory: true });
 				await this.ctx.reloadTodos();
 				this.ctx.showStatus("Reloaded session");
 			},
@@ -164,7 +171,7 @@ export class ExtensionUiController {
 
 				// Reset and update status line
 				this.ctx.statusLine.invalidate();
-				this.ctx.statusLine.setSessionStartTime(Date.now());
+				this.ctx.statusLine.resetActiveTime();
 				this.ctx.updateEditorTopBorder();
 				this.ctx.ui.requestRender();
 
@@ -193,7 +200,7 @@ export class ExtensionUiController {
 
 				// Update UI
 				this.ctx.chatContainer.clear();
-				this.ctx.renderInitialMessages(undefined, { clearTerminalHistory: true });
+				this.ctx.renderInitialMessages({ clearTerminalHistory: true });
 				await this.ctx.reloadTodos();
 				this.ctx.editor.setText(result.selectedText);
 				this.ctx.showStatus("Branched to new session");
@@ -208,7 +215,7 @@ export class ExtensionUiController {
 
 				// Update UI
 				this.ctx.chatContainer.clear();
-				this.ctx.renderInitialMessages(undefined, { clearTerminalHistory: true });
+				this.ctx.renderInitialMessages({ clearTerminalHistory: true });
 				await this.ctx.reloadTodos();
 				if (result.editorText && !this.ctx.editor.getText().trim()) {
 					this.ctx.editor.setText(result.editorText);
@@ -226,7 +233,7 @@ export class ExtensionUiController {
 				}
 				setSessionTerminalTitle(this.ctx.sessionManager.getSessionName(), this.ctx.sessionManager.getCwd());
 				this.ctx.chatContainer.clear();
-				this.ctx.renderInitialMessages(undefined, { clearTerminalHistory: true });
+				this.ctx.renderInitialMessages({ clearTerminalHistory: true });
 				await this.ctx.reloadTodos();
 				return { cancelled: false };
 			},
@@ -355,7 +362,7 @@ export class ExtensionUiController {
 		const contextActions: ExtensionContextActions = {
 			getModel: () => this.ctx.session.model,
 			isIdle: () => !this.ctx.session.isStreaming,
-			abort: () => this.ctx.session.abort(),
+			abort: () => this.ctx.session.abort({ reason: USER_INTERRUPT_LABEL }),
 			hasPendingMessages: () => this.ctx.session.queuedMessageCount > 0,
 			shutdown: () => {
 				// Defer the actual teardown to the main loop, which calls
@@ -373,7 +380,7 @@ export class ExtensionUiController {
 			reload: async () => {
 				await this.ctx.session.reload();
 				this.ctx.chatContainer.clear();
-				this.ctx.renderInitialMessages(undefined, { clearTerminalHistory: true });
+				this.ctx.renderInitialMessages({ clearTerminalHistory: true });
 				await this.ctx.reloadTodos();
 				this.ctx.showStatus("Reloaded session");
 			},
@@ -423,7 +430,7 @@ export class ExtensionUiController {
 
 				// Update UI
 				this.ctx.chatContainer.clear();
-				this.ctx.renderInitialMessages(undefined, { clearTerminalHistory: true });
+				this.ctx.renderInitialMessages({ clearTerminalHistory: true });
 				await this.ctx.reloadTodos();
 				this.ctx.editor.setText(result.selectedText);
 				this.ctx.showStatus("Branched to new session");
@@ -438,7 +445,7 @@ export class ExtensionUiController {
 
 				// Update UI
 				this.ctx.chatContainer.clear();
-				this.ctx.renderInitialMessages(undefined, { clearTerminalHistory: true });
+				this.ctx.renderInitialMessages({ clearTerminalHistory: true });
 				await this.ctx.reloadTodos();
 				if (result.editorText && !this.ctx.editor.getText().trim()) {
 					this.ctx.editor.setText(result.editorText);
@@ -455,7 +462,7 @@ export class ExtensionUiController {
 					return { cancelled: true };
 				}
 				this.ctx.chatContainer.clear();
-				this.ctx.renderInitialMessages(undefined, { clearTerminalHistory: true });
+				this.ctx.renderInitialMessages({ clearTerminalHistory: true });
 				await this.ctx.reloadTodos();
 				return { cancelled: false };
 			},
@@ -488,10 +495,15 @@ export class ExtensionUiController {
 						sessionManager: this.ctx.session.sessionManager,
 						modelRegistry: this.ctx.session.modelRegistry,
 						model: this.ctx.session.model,
+						models: createExtensionModelQuery(
+							this.ctx.session.modelRegistry,
+							this.ctx.session.settings,
+							() => this.ctx.session.model,
+						),
 						isIdle: () => !this.ctx.session.isStreaming,
 						hasPendingMessages: () => this.ctx.session.queuedMessageCount > 0,
 						abort: () => {
-							this.ctx.session.abort();
+							this.ctx.session.abort({ reason: USER_INTERRUPT_LABEL });
 						},
 						shutdown: () => {
 							// Signal shutdown request
@@ -530,58 +542,47 @@ export class ExtensionUiController {
 		dialogOptions?: InteractiveSelectorDialogOptions,
 		extra?: { slider?: HookSelectorSlider },
 	): Promise<string | undefined> {
-		const { promise, finish, attachAbort } = this.#createHookDialogState(
-			() => this.hideHookSelector(),
-			dialogOptions?.signal,
-		);
-		const maxVisible = Math.max(4, Math.min(15, this.ctx.ui.terminal.rows - 12));
-		this.ctx.hookSelector = new HookSelectorComponent(
-			title,
-			options,
-			option => {
-				this.hideHookSelector();
-				finish(option);
-			},
-			() => {
-				this.hideHookSelector();
-				finish(undefined);
-			},
-			{
-				onLeft: dialogOptions?.onLeft
-					? () => {
-							this.hideHookSelector();
-							dialogOptions.onLeft?.();
-							finish(undefined);
-						}
-					: undefined,
-				onRight: dialogOptions?.onRight
-					? () => {
-							this.hideHookSelector();
-							dialogOptions.onRight?.();
-							finish(undefined);
-						}
-					: undefined,
-				onExternalEditor: dialogOptions?.onExternalEditor,
-				helpText: dialogOptions?.helpText,
-				initialIndex: dialogOptions?.initialIndex,
-				timeout: dialogOptions?.timeout,
-				onTimeout: dialogOptions?.onTimeout,
-				tui: this.ctx.ui,
-				outline: dialogOptions?.outline,
-				disabledIndices: dialogOptions?.disabledIndices,
-				selectionMarker: dialogOptions?.selectionMarker,
-				checkedIndices: dialogOptions?.checkedIndices,
-				markableCount: dialogOptions?.markableCount,
-				maxVisible,
-				slider: extra?.slider,
-			},
-		);
-		this.ctx.editorContainer.clear();
-		this.ctx.editorContainer.addChild(this.ctx.hookSelector);
-		this.ctx.ui.setFocus(this.ctx.hookSelector);
-		this.ctx.ui.requestRender();
-		attachAbort();
-		return promise;
+		return this.#presentDialog(dialogOptions?.signal, settle => {
+			const maxVisible = Math.max(4, Math.min(15, this.ctx.ui.terminal.rows - 12));
+			this.ctx.hookSelector = new HookSelectorComponent(
+				title,
+				options,
+				option => settle(option),
+				() => settle(undefined),
+				{
+					onLeft: dialogOptions?.onLeft
+						? () => {
+								dialogOptions.onLeft?.();
+								settle(undefined);
+							}
+						: undefined,
+					onRight: dialogOptions?.onRight
+						? () => {
+								dialogOptions.onRight?.();
+								settle(undefined);
+							}
+						: undefined,
+					onExternalEditor: dialogOptions?.onExternalEditor,
+					helpText: dialogOptions?.helpText,
+					initialIndex: dialogOptions?.initialIndex,
+					timeout: dialogOptions?.timeout,
+					onTimeout: dialogOptions?.onTimeout,
+					tui: this.ctx.ui,
+					outline: dialogOptions?.outline,
+					disabledIndices: dialogOptions?.disabledIndices,
+					selectionMarker: dialogOptions?.selectionMarker,
+					checkedIndices: dialogOptions?.checkedIndices,
+					markableCount: dialogOptions?.markableCount,
+					maxVisible,
+					slider: extra?.slider,
+				},
+			);
+			this.ctx.editorContainer.clear();
+			this.ctx.editorContainer.addChild(this.ctx.hookSelector);
+			this.ctx.ui.setFocus(this.ctx.hookSelector);
+			this.ctx.ui.requestRender();
+			return () => this.hideHookSelector();
+		});
 	}
 	/**
 	 * Hide the hook selector.
@@ -611,33 +612,24 @@ export class ExtensionUiController {
 		placeholder?: string,
 		dialogOptions?: ExtensionUIDialogOptions,
 	): Promise<string | undefined> {
-		const { promise, finish, attachAbort } = this.#createHookDialogState(
-			() => this.hideHookInput(),
-			dialogOptions?.signal,
-		);
-		this.ctx.hookInput = new HookInputComponent(
-			title,
-			placeholder,
-			value => {
-				this.hideHookInput();
-				finish(value);
-			},
-			() => {
-				this.hideHookInput();
-				finish(undefined);
-			},
-			{
-				timeout: dialogOptions?.timeout,
-				onTimeout: dialogOptions?.onTimeout,
-				tui: this.ctx.ui,
-			},
-		);
-		this.ctx.editorContainer.clear();
-		this.ctx.editorContainer.addChild(this.ctx.hookInput);
-		this.ctx.ui.setFocus(this.ctx.hookInput);
-		this.ctx.ui.requestRender();
-		attachAbort();
-		return promise;
+		return this.#presentDialog(dialogOptions?.signal, settle => {
+			this.ctx.hookInput = new HookInputComponent(
+				title,
+				placeholder,
+				value => settle(value),
+				() => settle(undefined),
+				{
+					timeout: dialogOptions?.timeout,
+					onTimeout: dialogOptions?.onTimeout,
+					tui: this.ctx.ui,
+				},
+			);
+			this.ctx.editorContainer.clear();
+			this.ctx.editorContainer.addChild(this.ctx.hookInput);
+			this.ctx.ui.setFocus(this.ctx.hookInput);
+			this.ctx.ui.requestRender();
+			return () => this.hideHookInput();
+		});
 	}
 
 	/**
@@ -661,31 +653,21 @@ export class ExtensionUiController {
 		dialogOptions?: ExtensionUIDialogOptions,
 		editorOptions?: { promptStyle?: boolean },
 	): Promise<string | undefined> {
-		const { promise, finish, attachAbort } = this.#createHookDialogState(
-			() => this.hideHookEditor(),
-			dialogOptions?.signal,
-		);
-		this.ctx.hookEditor = new HookEditorComponent(
-			this.ctx.ui,
-			title,
-			prefill,
-			value => {
-				this.hideHookEditor();
-				finish(value);
-			},
-			() => {
-				this.hideHookEditor();
-				finish(undefined);
-			},
-			editorOptions,
-		);
-
-		this.ctx.editorContainer.clear();
-		this.ctx.editorContainer.addChild(this.ctx.hookEditor);
-		this.ctx.ui.setFocus(this.ctx.hookEditor);
-		this.ctx.ui.requestRender();
-		attachAbort();
-		return promise;
+		return this.#presentDialog(dialogOptions?.signal, settle => {
+			this.ctx.hookEditor = new HookEditorComponent(
+				this.ctx.ui,
+				title,
+				prefill,
+				value => settle(value),
+				() => settle(undefined),
+				editorOptions,
+			);
+			this.ctx.editorContainer.clear();
+			this.ctx.editorContainer.addChild(this.ctx.hookEditor);
+			this.ctx.ui.setFocus(this.ctx.hookEditor);
+			this.ctx.ui.requestRender();
+			return () => this.hideHookEditor();
+		});
 	}
 
 	/**
@@ -830,43 +812,88 @@ export class ExtensionUiController {
 
 	#applyCustomMessageDisplay(wasStreaming: boolean, shouldDisplay: boolean | undefined): void {
 		// For non-streaming cases with display=true, update UI
-		// (streaming cases update via message_end event)
-		if (!wasStreaming && shouldDisplay) {
+		// (streaming cases update via message_end event).
+		// Gate on initialChatRendered (#1955): an extension's session_start
+		// sendMessage({display:true}) runs before renderInitialMessages, which would
+		// re-render from session entries AND re-append via preserveExistingChat,
+		// duplicating the message. After the initial render the rebuild must run.
+		if (!wasStreaming && shouldDisplay && this.ctx.initialChatRendered) {
 			this.ctx.rebuildChatFromMessages();
 		}
 	}
 
-	#createHookDialogState(
-		hide: () => void,
+	/**
+	 * Present a modal dialog on the shared editor surface, serializing against any
+	 * dialog already open. `present` builds the component, swaps it into
+	 * `editorContainer`, steals focus, and returns a `hide` closure; it is invoked
+	 * with a single `settle` callback that the component fires on submit/cancel.
+	 *
+	 * Because selector / input / editor all clear `editorContainer` and re-focus,
+	 * showing a second one while the first is open would orphan the first — its
+	 * promise would hang until the caller's signal aborts. So at most one dialog is
+	 * presented at a time and the rest queue (FIFO). `settle` (or an abort) hides
+	 * the current dialog and hands the surface to the next queued request. A request
+	 * whose signal aborts before its turn resolves `undefined` and is never shown.
+	 */
+	#presentDialog(
 		signal: AbortSignal | undefined,
-	): {
-		promise: Promise<string | undefined>;
-		finish: (value: string | undefined) => void;
-		attachAbort: () => void;
-	} {
-		const { promise, resolve } = Promise.withResolvers<string | undefined>();
+		present: (settle: (value: string | undefined) => void) => () => void,
+	): Promise<string | undefined> {
+		const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
 		let settled = false;
-		const onAbort = () => {
-			hide();
-			if (!settled) {
-				settled = true;
-				resolve(undefined);
-			}
-		};
-		const finish = (value: string | undefined) => {
+		let started = false;
+		let hide: (() => void) | undefined;
+
+		function onAbort(): void {
+			settle(undefined);
+		}
+
+		const settle = (value: string | undefined): void => {
 			if (settled) return;
 			settled = true;
 			signal?.removeEventListener("abort", onAbort);
+			if (started) {
+				hide?.();
+				this.#dialogActive = false;
+				this.#advanceDialogQueue();
+			}
 			resolve(value);
 		};
-		const attachAbort = () => {
-			if (!signal) return;
-			if (signal.aborted) {
-				onAbort();
-			} else {
-				signal.addEventListener("abort", onAbort, { once: true });
+
+		const startPresentation = (): void => {
+			if (settled) {
+				// Aborted before its turn arrived — never present, hand off the surface.
+				this.#advanceDialogQueue();
+				return;
+			}
+			started = true;
+			this.#dialogActive = true;
+			try {
+				hide = present(settle);
+			} catch (error) {
+				settled = true;
+				signal?.removeEventListener("abort", onAbort);
+				this.#dialogActive = false;
+				reject(error);
+				this.#advanceDialogQueue();
 			}
 		};
-		return { promise, finish, attachAbort };
+
+		if (signal?.aborted) {
+			resolve(undefined);
+			return promise;
+		}
+		signal?.addEventListener("abort", onAbort, { once: true });
+
+		if (this.#dialogActive) {
+			this.#dialogQueue.push(startPresentation);
+		} else {
+			startPresentation();
+		}
+		return promise;
+	}
+
+	#advanceDialogQueue(): void {
+		this.#dialogQueue.shift()?.();
 	}
 }

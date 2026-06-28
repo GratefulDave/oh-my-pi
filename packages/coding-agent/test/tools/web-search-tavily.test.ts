@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import type { AuthStorage } from "@oh-my-pi/pi-ai";
-import { hookFetch } from "@oh-my-pi/pi-utils";
-import { searchTavily } from "../../src/web/search/providers/tavily";
-import type { SearchProviderError } from "../../src/web/search/types";
+import { searchTavily } from "@oh-my-pi/pi-coding-agent/web/search/providers/tavily";
+import type { SearchProviderError } from "@oh-my-pi/pi-coding-agent/web/search/types";
 
 describe("Tavily web search provider", () => {
 	beforeEach(() => {
@@ -40,7 +39,7 @@ describe("Tavily web search provider", () => {
 	it("maps Tavily responses into SearchResponse and forwards recency filters", async () => {
 		let requestBody: Record<string, unknown> | null = null;
 
-		using _hook = hookFetch(async (_input, init) => {
+		const fetchMock = async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
 			requestBody = JSON.parse(String(init?.body ?? "null")) as Record<string, unknown>;
 			return new Response(
 				JSON.stringify({
@@ -61,9 +60,14 @@ describe("Tavily web search provider", () => {
 				}),
 				{ status: 200, headers: { "Content-Type": "application/json" } },
 			);
-		});
+		};
 
-		const response = await searchTavily({ ...makeParams("latest ai news"), numSearchResults: 2, recency: "week" });
+		const response = await searchTavily({
+			...makeParams("latest ai news"),
+			numSearchResults: 2,
+			recency: "week",
+			fetch: fetchMock,
+		});
 		// Recency must not couple to topic — topic should be absent (Tavily defaults to general)
 		expect(requestBody).toMatchObject({
 			query: "latest ai news",
@@ -95,16 +99,78 @@ describe("Tavily web search provider", () => {
 		expect(response.sources[0]?.ageSeconds).toBeTypeOf("number");
 	});
 
+	it("retries recency-filtered empty responses without time_range", async () => {
+		const requestBodies: Record<string, unknown>[] = [];
+		const responses = [
+			new Response(JSON.stringify({ answer: "", request_id: "empty-month", results: [] }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			}),
+			new Response(
+				JSON.stringify({
+					answer: "Fallback Tavily answer",
+					request_id: "fallback-without-time-range",
+					results: [
+						{
+							title: "Latest release notes",
+							url: "https://example.com/release-notes",
+							content: "Release note snippet",
+						},
+					],
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			),
+		];
+
+		const fetchMock = async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+			requestBodies.push(JSON.parse(String(init?.body ?? "null")) as Record<string, unknown>);
+			const response = responses.shift();
+			if (!response) throw new Error("unexpected extra Tavily request");
+			return response;
+		};
+
+		const response = await searchTavily({
+			...makeParams("Oh My Pi omp latest release notes advisor"),
+			numSearchResults: 5,
+			recency: "month",
+			fetch: fetchMock,
+		});
+
+		expect(requestBodies).toHaveLength(2);
+		expect(requestBodies[0]).toMatchObject({
+			query: "Oh My Pi omp latest release notes advisor",
+			max_results: 5,
+			time_range: "month",
+		});
+		expect(requestBodies[1]).toMatchObject({
+			query: "Oh My Pi omp latest release notes advisor",
+			max_results: 5,
+		});
+		expect(requestBodies[1]).not.toHaveProperty("time_range");
+		expect(response).toMatchObject({
+			provider: "tavily",
+			answer: "Fallback Tavily answer",
+			requestId: "fallback-without-time-range",
+			sources: [
+				{
+					title: "Latest release notes",
+					url: "https://example.com/release-notes",
+					snippet: "Release note snippet",
+				},
+			],
+		});
+	});
+
 	it("surfaces structured API errors", async () => {
-		using _hook = hookFetch(
-			() =>
+		const fetchMock = (): Promise<Response> =>
+			Promise.resolve(
 				new Response(JSON.stringify({ detail: { error: "invalid api key" } }), {
 					status: 401,
 					headers: { "Content-Type": "application/json" },
 				}),
-		);
+			);
 
-		await expect(searchTavily(makeParams("bad auth"))).rejects.toEqual(
+		await expect(searchTavily({ ...makeParams("bad auth"), fetch: fetchMock })).rejects.toEqual(
 			expect.objectContaining({
 				provider: "tavily",
 				status: 401,

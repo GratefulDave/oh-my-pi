@@ -3,15 +3,17 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
-import { AuthStorage, Effort, getBundledModel, type Model } from "@oh-my-pi/pi-ai";
+import { AuthStorage, Effort, type Model } from "@oh-my-pi/pi-ai";
+import { buildModel } from "@oh-my-pi/pi-catalog/build";
+import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { CustomTool } from "@oh-my-pi/pi-coding-agent/extensibility/custom-tools/types";
 import { createAgentSession } from "@oh-my-pi/pi-coding-agent/sdk";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
-import { Snowflake } from "@oh-my-pi/pi-utils";
-import * as z from "zod/v4";
-import { TOOL_DISCOVERY_AUTO_THRESHOLD } from "../src/tool-discovery/mode";
+import { TOOL_DISCOVERY_AUTO_THRESHOLD } from "@oh-my-pi/pi-coding-agent/tool-discovery/mode";
+import { removeSyncWithRetries, Snowflake } from "@oh-my-pi/pi-utils";
+import { type } from "arktype";
 
 function createMcpCustomTool(name: string, serverName: string, mcpToolName: string): CustomTool {
 	return {
@@ -20,7 +22,7 @@ function createMcpCustomTool(name: string, serverName: string, mcpToolName: stri
 		description: `Tool ${mcpToolName} from ${serverName}`,
 		mcpServerName: serverName,
 		mcpToolName,
-		parameters: z.object({ query: z.string() }),
+		parameters: type({ query: "string" }),
 		async execute() {
 			return { content: [{ type: "text", text: `${name} executed` }] };
 		},
@@ -28,19 +30,19 @@ function createMcpCustomTool(name: string, serverName: string, mcpToolName: stri
 }
 
 function createReasoningModel(): Model<"openai-responses"> {
-	return {
+	return buildModel({
 		id: "mock-reasoning",
 		name: "mock-reasoning",
 		api: "openai-responses",
 		provider: "openai",
 		baseUrl: "https://example.invalid",
 		reasoning: true,
-		thinking: { mode: "effort", minLevel: Effort.Medium, maxLevel: Effort.High },
+		thinking: { mode: "effort", efforts: [Effort.Medium, Effort.High] },
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 8192,
 		maxTokens: 2048,
-	};
+	});
 }
 
 const oldSessionMtime = new Date("2000-01-01T00:00:00.000Z");
@@ -65,7 +67,7 @@ describe("createAgentSession MCP discovery prompt gating", () => {
 	afterAll(() => {
 		authStorage.close();
 		if (registryDir && fs.existsSync(registryDir)) {
-			fs.rmSync(registryDir, { recursive: true, force: true });
+			removeSyncWithRetries(registryDir);
 		}
 	});
 
@@ -76,7 +78,7 @@ describe("createAgentSession MCP discovery prompt gating", () => {
 
 	afterEach(() => {
 		if (tempDir && fs.existsSync(tempDir)) {
-			fs.rmSync(tempDir, { recursive: true, force: true });
+			removeSyncWithRetries(tempDir);
 		}
 	});
 
@@ -152,9 +154,51 @@ describe("createAgentSession MCP discovery prompt gating", () => {
 
 		const prompt = session.systemPrompt.join("\n");
 		const searchTool = session.agent.state.tools.find(tool => tool.name === "search_tool_bm25");
-		expect(session.getActiveToolNames()).not.toContain("find");
+		expect(session.getActiveToolNames()).not.toContain("search");
 		expect(prompt).toContain("call `search_tool_bm25` before concluding no such tool exists");
 		expect(searchTool?.description).toContain("Total discoverable tools available:");
+	});
+
+	it("exposes task under tools.discoveryMode all when task.eager is preferred", async () => {
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir: tempDir,
+			modelRegistry,
+			sessionManager: SessionManager.inMemory(),
+			settings: Settings.isolated({ "tools.discoveryMode": "all", "task.eager": "preferred" }),
+			model: getBundledModel("openai", "gpt-4o-mini"),
+			disableExtensionDiscovery: true,
+			skills: [],
+			contextFiles: [],
+			promptTemplates: [],
+			slashCommands: [],
+			enableMCP: false,
+			enableLsp: false,
+		});
+
+		expect(session.getActiveToolNames()).toContain("task");
+		await session.dispose();
+	});
+
+	it("hides task under tools.discoveryMode all when task.eager is default", async () => {
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir: tempDir,
+			modelRegistry,
+			sessionManager: SessionManager.inMemory(),
+			settings: Settings.isolated({ "tools.discoveryMode": "all" }),
+			model: getBundledModel("openai", "gpt-4o-mini"),
+			disableExtensionDiscovery: true,
+			skills: [],
+			contextFiles: [],
+			promptTemplates: [],
+			slashCommands: [],
+			enableMCP: false,
+			enableLsp: false,
+		});
+
+		expect(session.getActiveToolNames()).not.toContain("task");
+		await session.dispose();
 	});
 
 	it("preserves explicitly requested MCP tools in discovery mode", async () => {
@@ -247,7 +291,7 @@ describe("createAgentSession MCP discovery prompt gating", () => {
 
 		const searchTool = session.agent.state.tools.find(tool => tool.name === "search_tool_bm25");
 		expect(searchTool?.description).toContain("Total discoverable tools available: 1.");
-		expect(searchTool?.description).toContain("- `server_name`");
+		expect(searchTool?.description).toContain("Discoverable MCP servers in this session: github (1 tool).");
 	});
 
 	it("prunes deactivated builtin discoveries so they can be rediscovered", async () => {
@@ -267,15 +311,15 @@ describe("createAgentSession MCP discovery prompt gating", () => {
 			enableLsp: false,
 		});
 
-		expect(await session.activateDiscoveredTools(["find"])).toEqual(["find"]);
-		expect(session.getSelectedDiscoveredToolNames()).toContain("find");
+		expect(await session.activateDiscoveredTools(["grep"])).toEqual(["grep"]);
+		expect(session.getSelectedDiscoveredToolNames()).toContain("grep");
 
 		await session.setActiveToolsByName(["read", "search_tool_bm25"]);
 
-		expect(session.getActiveToolNames()).not.toContain("find");
-		expect(session.getSelectedDiscoveredToolNames()).not.toContain("find");
-		expect(await session.activateDiscoveredTools(["find"])).toEqual(["find"]);
-		expect(session.getActiveToolNames()).toContain("find");
+		expect(session.getActiveToolNames()).not.toContain("grep");
+		expect(session.getSelectedDiscoveredToolNames()).not.toContain("grep");
+		expect(await session.activateDiscoveredTools(["grep"])).toEqual(["grep"]);
+		expect(session.getActiveToolNames()).toContain("grep");
 	});
 	it("restores explicit MCP, thinking, and service-tier entries when resuming without rewriting the session file", async () => {
 		const firstManager = SessionManager.create(tempDir, tempDir);

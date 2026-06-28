@@ -3,13 +3,15 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { readModelCache, writeModelCache } from "../src/model-cache";
-import type { Model } from "../src/types";
+import type { Model } from "@oh-my-pi/pi-ai/types";
+import { buildModel } from "@oh-my-pi/pi-catalog/build";
+import { readModelCache, writeModelCache } from "@oh-my-pi/pi-catalog/model-cache";
+import { removeWithRetries } from "../../utils/src/temp";
 
 const TTL_MS = 24 * 60 * 60 * 1000;
 
 function createModel(id: string, name: string): Model<"openai-completions"> {
-	return {
+	return buildModel({
 		id,
 		name,
 		api: "openai-completions",
@@ -25,7 +27,7 @@ function createModel(id: string, name: string): Model<"openai-completions"> {
 		},
 		contextWindow: 4096,
 		maxTokens: 1024,
-	};
+	});
 }
 
 describe("model cache migrations", () => {
@@ -39,7 +41,7 @@ describe("model cache migrations", () => {
 
 	afterEach(async () => {
 		if (tempDir) {
-			await fs.rm(tempDir, { recursive: true, force: true });
+			await removeWithRetries(tempDir);
 			tempDir = "";
 			dbPath = "";
 		}

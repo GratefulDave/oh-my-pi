@@ -13,6 +13,7 @@ const BUN_TOOL_SUBCOMMANDS: &[&str] =
 	&["tsc", "eslint", "biome", "next", "prettier", "prisma", "jest", "vitest", "playwright"];
 const BUN_CPP_TOOL_SUBCOMMANDS: &[&str] = &["cmake", "ctest", "ninja", "gtest", "gtest-parallel"];
 
+#[must_use]
 pub fn supports(program: &str, subcommand: Option<&str>) -> bool {
 	match program {
 		"bun" => subcommand.is_some_and(|subcommand| {
@@ -30,6 +31,7 @@ pub fn supports(program: &str, subcommand: Option<&str>) -> bool {
 	}
 }
 
+#[must_use]
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	let subcommand = ctx.subcommand;
 	if matches!((ctx.program, subcommand), ("bun", Some(subcommand)) if is_non_exec_package_subcommand(subcommand))
@@ -251,9 +253,9 @@ fn compact_bun_check_output(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32)
 	}
 	let omitted = nonzero_exits.len() + diagnostics.len();
 	if omitted > 40 {
-		out.push_str("… ");
+		out.push_str("[…");
 		out.push_str(&(omitted - 40).to_string());
-		out.push_str(" diagnostic lines omitted\n");
+		out.push_str(" diagnostic lines elided…]\n");
 	}
 	Some(out)
 }
@@ -586,5 +588,150 @@ mod tests {
 		assert!(out.text.contains("PASS emitted by build"));
 		assert!(out.text.contains("✓ emitted by build"));
 		assert!(out.text.contains("error: failed"));
+	}
+
+	// --- bun test failure — failure lines and summary survive ---
+
+	#[test]
+	fn bun_test_failure_keeps_fail_file_and_summary() {
+		// `bun test` failure: FAIL lines, error text, and the totals line
+		// must survive.  Passing checkmarks must be stripped.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let bun_ctx = ctx("bun", Some("test"), "bun test", &cfg);
+		let input = concat!(
+			"✓ auth.test.ts > login passes (12ms)\n",
+			"✓ auth.test.ts > logout ok (8ms)\n",
+			"FAIL auth.test.ts\n",
+			"● register fails when email taken\n",
+			"  Error: expected status 409, got 200\n",
+			"      at auth.test.ts:88:5\n",
+			"Tests 1 failed, 2 passed (33ms)\n",
+		);
+
+		let out = filter(&bun_ctx, input, 1);
+
+		assert!(
+			!out.text.contains("✓ auth.test.ts > login"),
+			"passing lines must be stripped: {:?}",
+			out.text
+		);
+		assert!(out.text.contains("FAIL auth.test.ts"), "FAIL line must survive: {:?}", out.text);
+		assert!(
+			out.text.contains("Error: expected status 409"),
+			"error body must survive: {:?}",
+			out.text
+		);
+		assert!(out.text.contains("Tests 1 failed"), "summary line must survive: {:?}", out.text);
+		assert!(out.text.contains("2 passed"), "passed count must survive: {:?}", out.text);
+	}
+
+	#[test]
+	fn bun_test_success_strips_all_pass_lines() {
+		// On success all ✓ lines are noise — the agent only needs the summary.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let bun_ctx = ctx("bun", Some("test"), "bun test", &cfg);
+		let input = concat!(
+			"✓ foo.test.ts > passes (5ms)\n",
+			"✓ bar.test.ts > also passes (3ms)\n",
+			"Tests 2 passed (8ms)\n",
+		);
+
+		let out = filter(&bun_ctx, input, 0);
+
+		assert!(
+			!out.text.contains("✓ foo.test.ts"),
+			"passing lines must be stripped: {:?}",
+			out.text
+		);
+		assert!(
+			!out.text.contains("✓ bar.test.ts"),
+			"passing lines must be stripped: {:?}",
+			out.text
+		);
+		// Summary or some indication of passing must survive.
+		assert!(
+			out.text.contains("passed") || !out.changed,
+			"summary must survive or output unchanged"
+		);
+	}
+
+	// --- bun check failure — diagnostic lines survive, noise stripped ---
+
+	#[test]
+	fn bun_check_failure_keeps_diagnostic_and_emits_failed_status() {
+		// `bun check` (routed via `bun run check:ts`) with real type errors
+		// must surface the diagnostic lines and emit a `failed` verdict.
+		// Package-manager download noise and `Exited with code 0` lines
+		// must not appear.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let bun_ctx = ctx("bun", Some("run"), "bun run check:ts", &cfg);
+		let input = concat!(
+			"$ bun run --workspaces check\n",
+			"@oh-my-pi/pi-utils check: $ tsgo -p tsconfig.json --noEmit\n",
+			"@oh-my-pi/pi-utils check: Exited with code 0\n",
+			"@oh-my-pi/pi-coding-agent check: $ tsgo -p tsconfig.json --noEmit\n",
+			"src/tools/bash.ts(42,7): error TS2322: Type 'string' is not assignable to type \
+			 'number'.\n",
+			"@oh-my-pi/pi-coding-agent check: Exited with code 1\n",
+		);
+
+		let out = filter(&bun_ctx, input, 1);
+
+		assert!(out.text.contains("failed"), "failed verdict must appear: {:?}", out.text);
+		assert!(out.text.contains("error TS2322"), "diagnostic must survive: {:?}", out.text);
+		assert!(
+			!out.text.contains("tsgo -p"),
+			"internal command lines must be stripped: {:?}",
+			out.text
+		);
+		// Nonzero exit lines are preserved as evidence (code 0 exits are stripped).
+		assert!(
+			out.text.contains("Exited with code 1"),
+			"nonzero exit line must survive as evidence: {:?}",
+			out.text
+		);
+		assert!(
+			!out.text.contains("Exited with code 0"),
+			"zero exit noise must be stripped: {:?}",
+			out.text
+		);
+	}
+
+	#[test]
+	fn bun_check_success_emits_passed_status_and_no_noise() {
+		// Clean `bun run check:ts` (all packages exit 0) must compact to a
+		// single `passed` summary line without biome/tsgo details.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let bun_ctx = ctx("bun", Some("run"), "bun run check:ts", &cfg);
+		let input = concat!(
+			"$ bun run --workspaces check\n",
+			"Checked 1690 files in 371ms. No fixes applied.\n",
+			"@oh-my-pi/pi-utils check: Checked 40 files in 11ms. No fixes applied.\n",
+			"@oh-my-pi/pi-utils check: $ tsgo -p tsconfig.json --noEmit\n",
+			"@oh-my-pi/pi-utils check: Exited with code 0\n",
+			"@oh-my-pi/pi-coding-agent check: Checked 1178 files in 287ms. No fixes applied.\n",
+			"@oh-my-pi/pi-coding-agent check: $ tsgo -p tsconfig.json --noEmit\n",
+			"@oh-my-pi/pi-coding-agent check: Exited with code 0\n",
+		);
+
+		let out = filter(&bun_ctx, input, 0);
+
+		assert!(out.changed, "clean check must be compacted");
+		assert!(out.text.contains("passed"), "passed verdict must appear: {:?}", out.text);
+		assert!(
+			!out.text.contains("No fixes applied"),
+			"biome noise must be stripped: {:?}",
+			out.text
+		);
+		assert!(
+			!out.text.contains("tsgo -p"),
+			"internal command lines must be stripped: {:?}",
+			out.text
+		);
+		assert!(
+			!out.text.contains("Exited with code"),
+			"exit noise must be stripped: {:?}",
+			out.text
+		);
 	}
 }

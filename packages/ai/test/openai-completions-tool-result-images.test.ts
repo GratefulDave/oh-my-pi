@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { getBundledModel } from "@oh-my-pi/pi-ai/models";
 import { convertMessages } from "@oh-my-pi/pi-ai/providers/openai-completions";
-import type { ResolvedOpenAICompat } from "@oh-my-pi/pi-ai/providers/openai-completions-compat";
 import { NON_VISION_IMAGE_PLACEHOLDER } from "@oh-my-pi/pi-ai/providers/vision-guard";
 import type { AssistantMessage, Context, Model, ToolResultMessage, Usage } from "@oh-my-pi/pi-ai/types";
+import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
+import type { ResolvedOpenAICompat } from "@oh-my-pi/pi-catalog/types";
 
 const emptyUsage: Usage = {
 	input: 0,
@@ -22,6 +22,8 @@ const compat: ResolvedOpenAICompat = {
 	reasoningEffortMap: {},
 	supportsUsageInStreaming: true,
 	supportsToolChoice: true,
+	supportsForcedToolChoice: true,
+	supportsNamedToolChoice: true,
 	disableReasoningOnForcedToolChoice: false,
 	disableReasoningOnToolChoice: false,
 	maxTokensField: "max_completion_tokens",
@@ -30,15 +32,32 @@ const compat: ResolvedOpenAICompat = {
 	requiresThinkingAsText: false,
 	requiresMistralToolIds: false,
 	thinkingFormat: "openai",
+	reasoningDisableMode: "lowest-effort",
+	omitReasoningEffort: false,
+	includeEncryptedReasoning: true,
+	filterReasoningHistory: false,
 	reasoningContentField: "reasoning_content",
 	requiresReasoningContentForToolCalls: false,
+	requiresReasoningContentForAllAssistantTurns: false,
 	allowsSyntheticReasoningContentForToolCalls: true,
+	replayReasoningContent: false,
+	qwenPreserveThinking: false,
 	requiresAssistantContentForToolCalls: false,
 	openRouterRouting: {},
 	vercelGatewayRouting: {},
 	extraBody: {},
 	supportsStrictMode: true,
 	toolStrictMode: "none",
+	supportsReasoningParams: true,
+	alwaysSendMaxTokens: false,
+	isOpenRouterHost: false,
+	isVercelGatewayHost: false,
+	wireModelIdMode: "raw",
+	stripDeepseekSpecialTokens: false,
+	reasoningDeltasMayBeCumulative: false,
+	emptyLengthFinishIsContextError: false,
+	usesOpenAIToolCallIdLimit: false,
+	dropThinkingWhenReasoningEffort: false,
 };
 
 function buildToolResult(toolCallId: string, timestamp: number): ToolResultMessage {

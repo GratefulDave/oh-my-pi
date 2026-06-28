@@ -16,6 +16,7 @@
  * itself stays credential-free.
  */
 import { readSseJson } from "@oh-my-pi/pi-utils";
+import * as AIError from "../error";
 import type {
 	Api,
 	AssistantMessage,
@@ -58,7 +59,7 @@ function buildWireOptions(options: SimpleStreamOptions | undefined): Record<stri
 	return wire;
 }
 
-async function decodeGatewayError(response: Response): Promise<Error> {
+async function decodeGatewayError(response: Response): Promise<AIError.AuthGatewayError> {
 	const status = response.status;
 	let body: unknown;
 	try {
@@ -71,16 +72,20 @@ async function decodeGatewayError(response: Response): Promise<Error> {
 		if (typeof err === "object" && err !== null) {
 			const message = (err as { message?: unknown }).message;
 			const type = (err as { type?: unknown }).type;
-			const out = new Error(typeof message === "string" ? message : `auth-gateway ${status}`);
-			(out as { status?: number; type?: string }).status = status;
-			if (typeof type === "string") (out as { type?: string }).type = type;
-			return out;
+			return new AIError.AuthGatewayError(
+				typeof message === "string" ? message : `auth-gateway ${status}`,
+				status,
+				response.headers,
+				typeof type === "string" ? type : undefined,
+			);
 		}
 	}
 	const text = typeof body === "string" ? body : JSON.stringify(body);
-	const err = new Error(`auth-gateway ${status}: ${text || response.statusText}`);
-	(err as { status?: number }).status = status;
-	return err;
+	return new AIError.AuthGatewayError(
+		`auth-gateway ${status}: ${text || response.statusText}`,
+		status,
+		response.headers,
+	);
 }
 
 /**
@@ -91,7 +96,7 @@ async function decodeGatewayError(response: Response): Promise<Error> {
  */
 function resolveStreamUrl(model: Model<Api>): string {
 	if (!model.baseUrl) {
-		throw new Error(
+		throw new AIError.ConfigurationError(
 			`pi-native transport requires \`baseUrl\` on model ${model.id} (set it on the provider config in models.yml)`,
 		);
 	}
@@ -154,7 +159,7 @@ export function streamPiNative<TApi extends Api>(
 				typeof options?.apiKey === "string" ? options.apiKey : undefined,
 			);
 			const body = JSON.stringify({
-				modelId: model.id,
+				modelId: `${model.provider}/${model.id}`,
 				context,
 				options: buildWireOptions(options),
 				stream: true,
@@ -166,7 +171,9 @@ export function streamPiNative<TApi extends Api>(
 				return;
 			}
 			if (!response.body) {
-				stream.fail(new Error("auth-gateway returned empty body"));
+				stream.fail(
+					new AIError.AuthGatewayError("auth-gateway returned empty body", response.status, response.headers),
+				);
 				return;
 			}
 

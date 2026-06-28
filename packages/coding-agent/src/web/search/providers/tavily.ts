@@ -4,7 +4,7 @@
  * Uses Tavily's agent-focused search API to return structured results with an
  * optional synthesized answer.
  */
-import { type ApiKey, type AuthStorage, getEnvApiKey, withAuth } from "@oh-my-pi/pi-ai";
+import { type ApiKey, type AuthStorage, type FetchImpl, getEnvApiKey, withAuth } from "@oh-my-pi/pi-ai";
 import type { SearchResponse, SearchSource } from "../../../web/search/types";
 import { SearchProviderError } from "../../../web/search/types";
 import { clampNumResults, dateToAgeSeconds } from "../utils";
@@ -21,6 +21,7 @@ export interface TavilySearchParams {
 	num_results?: number;
 	recency?: "day" | "week" | "month" | "year";
 	signal?: AbortSignal;
+	fetch?: FetchImpl;
 }
 
 interface TavilySearchResult {
@@ -89,7 +90,7 @@ export function buildRequestBody(params: TavilySearchParams): Record<string, unk
 }
 
 async function callTavilySearch(apiKey: string, params: TavilySearchParams): Promise<TavilySearchResponse> {
-	const response = await fetch(TAVILY_SEARCH_URL, {
+	const response = await (params.fetch ?? fetch)(TAVILY_SEARCH_URL, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
@@ -119,24 +120,7 @@ async function callTavilySearch(apiKey: string, params: TavilySearchParams): Pro
 	return (await response.json()) as TavilySearchResponse;
 }
 
-/** Execute Tavily web search. */
-export async function searchTavily(params: SearchParams): Promise<SearchResponse> {
-	const tavilyParams: TavilySearchParams = {
-		query: params.query,
-		num_results: params.numSearchResults ?? params.limit,
-		recency: params.recency,
-		signal: params.signal,
-	};
-	const keyOrResolver: ApiKey = params.authStorage.resolver("tavily", {
-		sessionId: params.sessionId,
-	});
-
-	const numResults = clampNumResults(tavilyParams.num_results, DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS);
-	const response = await withAuth(keyOrResolver, key => callTavilySearch(key, tavilyParams), {
-		signal: params.signal,
-		missingKeyMessage:
-			'Tavily credentials not found. Set TAVILY_API_KEY or configure an API key for provider "tavily".',
-	});
+function toSearchResponse(response: TavilySearchResponse, numResults: number): SearchResponse {
 	const sources: SearchSource[] = [];
 
 	for (const result of response.results ?? []) {
@@ -157,6 +141,41 @@ export async function searchTavily(params: SearchParams): Promise<SearchResponse
 		requestId: response.request_id ?? undefined,
 		authMode: "api_key",
 	};
+}
+
+function hasRenderableResponse(response: SearchResponse): boolean {
+	if (response.answer?.trim()) return true;
+	return response.sources.length > 0;
+}
+
+/** Execute Tavily web search. */
+export async function searchTavily(params: SearchParams): Promise<SearchResponse> {
+	const tavilyParams: TavilySearchParams = {
+		query: params.query,
+		num_results: params.numSearchResults ?? params.limit,
+		recency: params.recency,
+		signal: params.signal,
+		fetch: params.fetch,
+	};
+	const keyOrResolver: ApiKey = params.authStorage.resolver("tavily", {
+		sessionId: params.sessionId,
+	});
+
+	const numResults = clampNumResults(tavilyParams.num_results, DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS);
+	const authOptions = {
+		signal: params.signal,
+		missingKeyMessage:
+			'Tavily credentials not found. Set TAVILY_API_KEY or configure an API key for provider "tavily".',
+	};
+	const callWithAuth = (searchParams: TavilySearchParams) =>
+		withAuth(keyOrResolver, key => callTavilySearch(key, searchParams), authOptions);
+
+	const response = toSearchResponse(await callWithAuth(tavilyParams), numResults);
+	if (!tavilyParams.recency || hasRenderableResponse(response)) {
+		return response;
+	}
+
+	return toSearchResponse(await callWithAuth({ ...tavilyParams, recency: undefined }), numResults);
 }
 
 /** Search provider for Tavily web search. */

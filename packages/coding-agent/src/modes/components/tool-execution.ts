@@ -8,6 +8,7 @@ import {
 	Image,
 	ImageProtocol,
 	imageFallback,
+	type NativeScrollbackLiveRegion,
 	Spacer,
 	TERMINAL,
 	Text,
@@ -16,9 +17,10 @@ import {
 import { getProjectDir, logger, sanitizeText } from "@oh-my-pi/pi-utils";
 import { EDIT_MODE_STRATEGIES, type EditMode, type PerFileDiffPreview } from "../../edit";
 import type { Theme } from "../../modes/theme/theme";
-import { theme } from "../../modes/theme/theme";
+import { getThemeEpoch, theme } from "../../modes/theme/theme";
 import { BASH_DEFAULT_PREVIEW_LINES } from "../../tools/bash";
 import { EVAL_DEFAULT_PREVIEW_LINES } from "../../tools/eval";
+import { isWaitingPollDetails } from "../../tools/job";
 import {
 	formatArgsInline,
 	JSON_TREE_MAX_DEPTH_COLLAPSED,
@@ -29,10 +31,16 @@ import {
 	JSON_TREE_SCALAR_LEN_EXPANDED,
 	renderJsonTreeLines,
 } from "../../tools/json-tree";
-import { formatExpandHint, replaceTabs, resolveImageOptions, truncateToWidth } from "../../tools/render-utils";
+import {
+	formatExpandHint,
+	formatStatusIcon,
+	replaceTabs,
+	resolveImageOptions,
+	truncateToWidth,
+} from "../../tools/render-utils";
 import { toolRenderers } from "../../tools/renderers";
-import { TODO_STRIKE_TOTAL_FRAMES } from "../../tools/todo";
-import { isFramedBlockComponent, renderStatusLine } from "../../tui";
+import { TODO_STRIKE_TOTAL_FRAMES, type TodoToolDetails } from "../../tools/todo";
+import { isFramedBlockComponent, renderStatusLine, WidthAwareText } from "../../tui";
 import { sanitizeWithOptionalSixelPassthrough } from "../../utils/sixel";
 import { renderDiff } from "./diff";
 
@@ -65,6 +73,28 @@ function stripTrailingUnbalancedRemoval(diff: string | undefined): string | unde
 	if (!hasTrailingUnbalanced) return diff;
 	if (lastAddIdx === -1) return "";
 	return lines.slice(0, lastAddIdx + 1).join("\n");
+}
+
+type DisplaceableToolName = "job" | "todo";
+
+function isTodoToolDetails(details: unknown): details is TodoToolDetails {
+	return (
+		typeof details === "object" &&
+		details !== null &&
+		"phases" in details &&
+		Array.isArray((details as { phases?: unknown }).phases)
+	);
+}
+
+function displaceableToolName(
+	toolName: string,
+	result: { details?: unknown; isError?: boolean },
+	isPartial: boolean,
+): DisplaceableToolName | undefined {
+	if (result.isError === true) return undefined;
+	if (toolName === "job" && isWaitingPollDetails(result.details)) return "job";
+	if (toolName === "todo" && !isPartial && isTodoToolDetails(result.details)) return "todo";
+	return undefined;
 }
 
 function stabilizeStreamingPreviews(previews: PerFileDiffPreview[]): PerFileDiffPreview[] {
@@ -102,6 +132,14 @@ function rawTextInputFromPartialJson(partialJson: unknown): string | undefined {
 	return partialJson;
 }
 
+/** Read the streamed raw-JSON buffer a tool block stashes on its args, narrowed
+ *  rather than cast: a missing or non-string `__partialJson` yields `undefined`. */
+function partialJsonOf(args: unknown): string | undefined {
+	if (args == null || typeof args !== "object" || !("__partialJson" in args)) return undefined;
+	const value = args.__partialJson;
+	return typeof value === "string" ? value : undefined;
+}
+
 function getArgsWithStreamedTextInput(args: unknown): unknown {
 	if (args == null || typeof args !== "object") return args;
 	const record = args as Record<string, unknown>;
@@ -110,11 +148,23 @@ function getArgsWithStreamedTextInput(args: unknown): unknown {
 	return input === undefined ? args : { ...record, input };
 }
 
+/**
+ * Transcript-side probe telling a block whether it is still inside the live
+ * (repaintable) region. Implemented by `TranscriptContainer`; injected rather
+ * than imported so the component stays decoupled from the transcript.
+ */
+export interface TranscriptLiveRegionProbe {
+	isBlockInLiveRegion(component: Component): boolean;
+}
+
 export interface ToolExecutionOptions {
 	snapshots?: SnapshotStore;
 	showImages?: boolean; // default: true (only used if terminal supports images)
 	editFuzzyThreshold?: number;
 	editAllowFuzzy?: boolean;
+	/** Live-region probe used to settle detached task progress once the block
+	 * leaves the repaintable transcript region. */
+	liveRegion?: TranscriptLiveRegionProbe;
 }
 
 export interface ToolExecutionHandle {
@@ -132,14 +182,19 @@ export interface ToolExecutionHandle {
 	setExpanded(expanded: boolean): void;
 }
 
-/** Drive pending-tool redraws at 30fps so the running `task` row's shimmered
- * subagent name stays smooth without spending twice the frame budget. The TUI
- * throttles at the same cadence, and static frames diff to a no-op redraw at
- * ~zero cost. */
-const SPINNER_RENDER_INTERVAL_MS = 1000 / 30;
+/** Drive pending-tool redraws at 30fps for live tool headers and displaceable
+ * poll blocks. The TUI throttles at the same cadence, and static frames diff to
+ * a no-op redraw at ~zero cost. */
+export const SPINNER_RENDER_INTERVAL_MS = 1000 / 30;
 /** Advance the spinner glyph at its classic ~12.5fps step, decoupled from the
  * render cadence (mirrors `Loader`). */
-const SPINNER_GLYPH_ADVANCE_MS = 80;
+export const SPINNER_GLYPH_ADVANCE_MS = 80;
+
+/** Phase-locked spinner glyph index shared by every live tool block so parallel
+ * spinners advance in lockstep instead of each tracking its own start time. */
+export function sharedSpinnerFrame(frameCount: number, now: number = performance.now()): number {
+	return frameCount > 0 ? Math.floor(now / SPINNER_GLYPH_ADVANCE_MS) % frameCount : 0;
+}
 
 // Stable per-instance counter so each tool execution's inline images get a
 // graphics id that survives child re-creation (the image budget keys off it).
@@ -148,9 +203,9 @@ let toolExecutionInstanceSeq = 0;
 /**
  * Component that renders a tool call with its result (updateable)
  */
-export class ToolExecutionComponent extends Container {
+export class ToolExecutionComponent extends Container implements NativeScrollbackLiveRegion {
 	#contentBox: Box; // Used for custom tools and bash visual truncation
-	#contentText: Text; // For built-in tools (with its own padding/bg)
+	#contentText: WidthAwareText; // Generic fallback (no custom/built-in renderer)
 	#multiFileBoxes: (Box | Spacer)[] = []; // Extra boxes for multi-file edit results
 	#imageComponents: Image[] = [];
 	#imageSpacers: Spacer[] = [];
@@ -164,6 +219,22 @@ export class ToolExecutionComponent extends Container {
 	#editAllowFuzzy: boolean | undefined;
 	#snapshots?: SnapshotStore;
 	#isPartial = true;
+	#resultVersion = 0;
+	#lastDisplayKey: string | undefined;
+	// Bumped whenever a render input that #rebuildDisplay consumes but the memo
+	// key cannot cheaply hash changes: streamed call args, the async edit-diff
+	// preview, and Kitty PNG conversions. Folded into the dirty key so those
+	// updates are not swallowed by the memo (see #updateDisplay).
+	#displayInputVersion = 0;
+	// Set once #rebuildDisplay has populated the display. Replaces a
+	// #contentBox.children.length probe so the memo fast-path also covers the
+	// #contentText fallback path (which leaves #contentBox empty).
+	#displayBuilt = false;
+	// Number of Image children the last rebuild emitted. Only when this is > 0 does
+	// the memo key fold in viewport-dependent image sizing (resolveImageOptions),
+	// so a terminal resize re-shapes image-bearing results to rescale them without
+	// forcing the common image-free result to re-shape on every resize tick.
+	#renderedImageCount = 0;
 	#tool?: AgentTool;
 	#ui: TUI;
 	#cwd: string;
@@ -179,12 +250,15 @@ export class ToolExecutionComponent extends Container {
 	#editDiffLastArgsKey?: string;
 	// Latest in-flight streaming diff recompute, captured so it can be awaited.
 	#editDiffInFlight?: Promise<void>;
+	/** Set when newer args arrived while a preview compute was in flight; the
+	 *  drain loop re-runs once the current compute settles, so a slow diff
+	 *  coalesces streamed ticks instead of being aborted by each one. */
+	#editDiffDirty = false;
 	// Cached converted images for Kitty protocol (which requires PNG), keyed by index
 	#convertedImages: Map<number, { data: string; mimeType: string }> = new Map();
 	// Spinner animation for partial task results
 	#spinnerFrame?: number;
 	#spinnerInterval?: NodeJS.Timeout;
-	#lastSpinnerAdvanceAt = 0;
 	// Todo write completion strikethrough reveal animation
 	#todoStrikeInterval?: NodeJS.Timeout;
 	// Track if args are still being streamed (for edit/write spinner)
@@ -194,6 +268,19 @@ export class ToolExecutionComponent extends Container {
 	// sealed the block stays in the transcript's repaintable live region so a
 	// late result still repaints instead of stranding the streaming preview.
 	#sealed = false;
+	// Tool result snapshots that may be superseded by a later same-tool call
+	// while still in the transcript live region. `job` uses this for repeated
+	// all-running polls; `todo` uses it for per-turn state snapshots so only the
+	// latest list remains visible.
+	#displaceableByToolName: DisplaceableToolName | undefined;
+	// Probe into the owning transcript (absent outside the interactive
+	// transcript, e.g. in tests): whether this block is still repaintable.
+	#liveRegion?: TranscriptLiveRegionProbe;
+	// One-way latch for a detached (`async.state === "running"`) task block
+	// that left the transcript live region: its rows are commit-eligible
+	// history, so progress renders static gray and further partial snapshots are
+	// dropped (see #maybeFreezeBackgroundTask).
+	#backgroundTaskFrozen = false;
 	#renderState: {
 		spinnerFrame?: number;
 		expanded: boolean;
@@ -220,10 +307,12 @@ export class ToolExecutionComponent extends Container {
 		this.#editFuzzyThreshold = options.editFuzzyThreshold;
 		this.#editAllowFuzzy = options.editAllowFuzzy;
 		this.#snapshots = options.snapshots;
+		this.#liveRegion = options.liveRegion;
 		this.#tool = tool;
 		this.#ui = ui;
 		this.#cwd = cwd;
 		this.#args = args;
+		this.#editMode = resolveEditModeForTool(toolName, tool);
 
 		// Always create both - contentBox for custom tools/bash/tools with renderers, contentText for other built-ins.
 		// paddingY is 1 so background-tinted blocks (custom/extension tools and the
@@ -231,7 +320,7 @@ export class ToolExecutionComponent extends Container {
 		// strips PLAIN-blank edges, so framed/minimal blocks (no bg set) drop these
 		// lines and keep their tight spacing — only tinted lines survive.
 		this.#contentBox = new Box(0, 1);
-		this.#contentText = new Text("", 1, 1);
+		this.#contentText = new WidthAwareText(contentWidth => this.#formatToolExecution(contentWidth), 1, 1);
 
 		// Use Box for custom tools or built-in tools that have renderers
 		const hasRenderer = toolName in toolRenderers;
@@ -241,11 +330,12 @@ export class ToolExecutionComponent extends Container {
 		} else {
 			this.addChild(this.#contentText);
 		}
-
-		this.#editMode = resolveEditModeForTool(toolName, tool);
+		// Tool blocks are visually distinct cards (background-tinted or framed),
+		// so keep their horizontal padding even when the user enables tight layout.
+		this.setIgnoreTight(true);
 
 		this.#updateDisplay();
-		this.#editDiffInFlight = this.#runPreviewDiff();
+		this.#schedulePreviewDiff();
 	}
 
 	updateArgs(args: any, _toolCallId?: string): void {
@@ -255,8 +345,9 @@ export class ToolExecutionComponent extends Container {
 		// signals "nothing meaningful changed" and the renderer can skip.
 		if (args === this.#args) return;
 		this.#args = args;
+		this.#displayInputVersion++;
 		this.#updateSpinnerAnimation();
-		this.#editDiffInFlight = this.#runPreviewDiff();
+		this.#schedulePreviewDiff();
 		this.#updateDisplay();
 	}
 
@@ -267,7 +358,7 @@ export class ToolExecutionComponent extends Container {
 	setArgsComplete(_toolCallId?: string): void {
 		this.#argsComplete = true;
 		this.#updateSpinnerAnimation();
-		this.#editDiffInFlight = this.#runPreviewDiff();
+		this.#schedulePreviewDiff();
 	}
 
 	/**
@@ -281,7 +372,32 @@ export class ToolExecutionComponent extends Container {
 		await this.#editDiffInFlight;
 	}
 
-	async #runPreviewDiff(): Promise<void> {
+	/**
+	 * Schedule a streaming diff preview recompute, coalescing bursts of
+	 * `updateArgs` into one compute at a time: run the current compute to
+	 * completion and re-run only after it settles when newer args arrived, never
+	 * cancelling an in-flight compute on a fresh tick. The reveal controller pushes
+	 * args ~30fps and a whole-file hashline/large-file diff can outlast a frame, so
+	 * cancel-per-tick would starve every compute and no preview would land until
+	 * args complete. Coalescing lets each diff land, so the preview tracks the
+	 * stream at the rate the diffs can sustain.
+	 */
+	#schedulePreviewDiff(): void {
+		this.#editDiffDirty = true;
+		if (this.#editDiffInFlight) return;
+		this.#editDiffInFlight = this.#drainPreviewDiff().finally(() => {
+			this.#editDiffInFlight = undefined;
+		});
+	}
+
+	async #drainPreviewDiff(): Promise<void> {
+		while (this.#editDiffDirty) {
+			this.#editDiffDirty = false;
+			await this.#computePreviewDiff();
+		}
+	}
+
+	async #computePreviewDiff(): Promise<void> {
 		const editMode = this.#editMode;
 		if (!editMode) return;
 		const strategy = EDIT_MODE_STRATEGIES[editMode];
@@ -291,7 +407,7 @@ export class ToolExecutionComponent extends Container {
 		if (args == null || typeof args !== "object") return;
 
 		const previewArgs = getArgsWithStreamedTextInput(args);
-		const partialJson = (previewArgs as { __partialJson?: string }).__partialJson;
+		const partialJson = partialJsonOf(previewArgs);
 		let effectiveArgs: unknown;
 		try {
 			effectiveArgs = strategy.extractCompleteEdits(previewArgs, partialJson);
@@ -321,7 +437,8 @@ export class ToolExecutionComponent extends Container {
 		if (argsKey === this.#editDiffLastArgsKey) return;
 		this.#editDiffLastArgsKey = argsKey;
 
-		this.#editDiffAbort?.abort();
+		// Single-flight (the drain loop never overlaps computes), so this controller
+		// only ever cancels the live compute on teardown via `stopAnimation`.
 		const controller = new AbortController();
 		this.#editDiffAbort = controller;
 
@@ -339,6 +456,7 @@ export class ToolExecutionComponent extends Container {
 			if (controller.signal.aborted) return;
 			if (previews) {
 				this.#editDiffPreview = isStreaming ? stabilizeStreamingPreviews(previews) : previews;
+				this.#displayInputVersion++;
 				this.#updateDisplay();
 				this.#ui.requestRender();
 			}
@@ -357,8 +475,19 @@ export class ToolExecutionComponent extends Container {
 		isPartial = false,
 		_toolCallId?: string,
 	): void {
+		// A detached task spawn keeps streaming progress snapshots after the
+		// block froze (left the transcript live region). Drop them: the rows are
+		// static gray history now, and repainting would rewrite rows the engine
+		// may already have committed to native scrollback. The terminal snapshot
+		// (async completed/failed → isPartial=false) still applies so a block
+		// that is still on screen settles on real results.
+		if (isPartial && this.#toolName === "task" && this.#maybeFreezeBackgroundTask()) {
+			return;
+		}
 		this.#result = result;
+		this.#resultVersion++;
 		this.#isPartial = isPartial;
+		this.#displaceableByToolName = displaceableToolName(this.#toolName, result, isPartial);
 		// When tool is complete, ensure args are marked complete so spinner stops
 		if (!isPartial) {
 			this.#argsComplete = true;
@@ -406,6 +535,7 @@ export class ToolExecutionComponent extends Container {
 				.toBase64()
 				.then(data => {
 					this.#convertedImages.set(index, { data, mimeType: "image/png" });
+					this.#displayInputVersion++;
 					this.#updateDisplay();
 					this.#ui.requestRender();
 				})
@@ -416,40 +546,34 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	/**
-	 * Start or stop spinner animation based on whether this is a partial task result.
+	 * Start or stop spinner animation for result states that visibly tick.
 	 */
 	#updateSpinnerAnimation(): void {
-		// Spinner for: task tool with partial result, or edit/write while args streaming
+		// Spinner for: task tool with partial result, edit/write while args
+		// streaming, or a still-running job poll. Todo snapshots stay live for
+		// displacement but should remain visually static.
 		const isStreamingArgs = !this.#argsComplete && (isEditLikeToolName(this.#toolName) || this.#toolName === "write");
 		const isBackgroundAsyncRunning =
 			(this.#result?.details as { async?: { state?: string } } | undefined)?.async?.state === "running";
 		const isBackgroundAsyncTask = this.#toolName === "task" && isBackgroundAsyncRunning;
 		const isPartialTask = this.#isPartial && this.#toolName === "task" && !isBackgroundAsyncTask;
-		const needsSpinner = isStreamingArgs || isPartialTask;
+		// Detached async task progress rows are static now; progress snapshots
+		// still call #maybeFreezeBackgroundTask before applying so rows settle
+		// once the block leaves the live region.
+		const needsSpinner = isStreamingArgs || isPartialTask || this.#displaceableByToolName === "job";
 		if (needsSpinner && !this.#spinnerInterval) {
-			const now = performance.now();
 			const frameCount = theme.spinnerFrames.length;
-			this.#lastSpinnerAdvanceAt = now;
-			if (frameCount > 0 && this.#spinnerFrame === undefined) {
-				this.#spinnerFrame = 0;
-				this.#renderState.spinnerFrame = 0;
-			}
+			const frame = sharedSpinnerFrame(frameCount);
+			this.#spinnerFrame = frame;
+			this.#renderState.spinnerFrame = frame;
 			this.#spinnerInterval = setInterval(() => {
+				// If a detached task interval from an older render path is still live,
+				// stop it the instant the block leaves the repaintable region.
+				if (this.#maybeFreezeBackgroundTask()) return;
 				const now = performance.now();
 				const frameCount = theme.spinnerFrames.length;
-				// Redraw at 30fps for a smooth `task` name shimmer, but keep the spinner
-				// glyph phase-locked to its classic ~12.5fps cadence. Advancing the
-				// anchor by elapsed frames instead of resetting to `now` avoids the
-				// 30fps timer quantizing the glyph down to one step every three ticks.
-				if (frameCount > 0) {
-					const elapsed = now - this.#lastSpinnerAdvanceAt;
-					if (elapsed >= SPINNER_GLYPH_ADVANCE_MS) {
-						const steps = Math.floor(elapsed / SPINNER_GLYPH_ADVANCE_MS);
-						this.#spinnerFrame = ((this.#spinnerFrame ?? 0) + steps) % frameCount;
-						this.#renderState.spinnerFrame = this.#spinnerFrame;
-						this.#lastSpinnerAdvanceAt += steps * SPINNER_GLYPH_ADVANCE_MS;
-					}
-				}
+				this.#spinnerFrame = sharedSpinnerFrame(frameCount, now);
+				this.#renderState.spinnerFrame = this.#spinnerFrame;
 				this.#ui.requestRender();
 			}, SPINNER_RENDER_INTERVAL_MS);
 		} else if (!needsSpinner && this.#spinnerInterval) {
@@ -463,6 +587,26 @@ export class ToolExecutionComponent extends Container {
 				this.#renderState.spinnerFrame = undefined;
 			}
 		}
+	}
+
+	/**
+	 * Freeze a detached (`async.state === "running"`) task block once it leaves
+	 * the transcript's live region. Past that seam its rows are commit-eligible
+	 * native-scrollback history: repaint the progress rows static gray and drop
+	 * further partial snapshots. One-way — blocks never re-enter the live
+	 * region. Returns whether the block is frozen.
+	 */
+	#maybeFreezeBackgroundTask(): boolean {
+		if (this.#backgroundTaskFrozen) return true;
+		if (this.#toolName !== "task" || this.#liveRegion === undefined) return false;
+		const asyncState = (this.#result?.details as { async?: { state?: string } } | undefined)?.async?.state;
+		if (asyncState !== "running") return false;
+		if (this.#liveRegion.isBlockInLiveRegion(this)) return false;
+		this.#backgroundTaskFrozen = true;
+		this.#updateSpinnerAnimation();
+		this.#updateDisplay();
+		this.#ui.requestRender();
+		return true;
 	}
 
 	#updateTodoStrikeAnimation(): void {
@@ -503,6 +647,17 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	/**
+	 * Standalone harnesses may mount a tool component directly under `TUI`
+	 * instead of inside `TranscriptContainer`. In that shape the component must
+	 * report its own live-region seam for provisional previews, or the core
+	 * renderer treats it like shell output and commits tail-window edit/eval/bash
+	 * previews to immutable native scrollback before the result replaces them.
+	 */
+	getNativeScrollbackLiveRegionStart(): number | undefined {
+		return !this.isTranscriptBlockFinalized() && !this.isTranscriptBlockCommitStable() ? 0 : undefined;
+	}
+
+	/**
 	 * Whether this block has reached a terminal state for transcript freezing.
 	 * Reports `false` while it can still visually change so the
 	 * {@link TranscriptContainer} keeps it inside the repaintable live region:
@@ -513,11 +668,60 @@ export class ToolExecutionComponent extends Container {
 	isTranscriptBlockFinalized(): boolean {
 		if (this.#sealed) return true;
 		if (this.#result === undefined) return false;
+		// A displaceable snapshot stays live: its rows are kept out of native
+		// scrollback so a follow-up tool call can remove the block.
+		if (this.#displaceableByToolName) return false;
 		if (!this.#isPartial) return true;
 		// Partial result: a background async tool is accepted to freeze (the agent
 		// continues while it runs and would otherwise pin an unbounded live region);
 		// a foreground tool streaming partial output stays live until it finishes.
 		return (this.#result.details as { async?: { state?: string } } | undefined)?.async?.state === "running";
+	}
+
+	/**
+	 * Whether this still-live block's settled rows may enter native scrollback
+	 * (see `FinalizableBlock.isTranscriptBlockCommitStable`). Renderers classify
+	 * pending views by durability instead of by tool name: a provisional view is
+	 * allowed to be useful on screen, but finalization may replace or re-anchor
+	 * it wholesale, so committing any of its rows would strand stale preview
+	 * bytes in immutable scrollback. Non-provisional views stream rows whose
+	 * committed prefix survives the remaining transitions.
+	 */
+	isTranscriptBlockCommitStable(): boolean {
+		if (this.#displaceableByToolName) return false;
+		if (this.isTranscriptBlockFinalized()) return true;
+		// `provisionalPendingPreview` describes only the PENDING call preview
+		// (`renderCall`, before any result): the result render may re-anchor it
+		// wholesale, so its rows must never commit. Once a (streaming partial)
+		// result exists the result renderer is usually the live shape — its body
+		// is top-anchored and grows append-only, and `deriveLiveCommitState`
+		// gates per-row durability — so the block is commit-stable like any
+		// settled stream. Gating the flag on the pending phase is what keeps a
+		// collapsed streaming eval/bash/ssh whose box outgrows the viewport from
+		// stranding its head: while commit-unstable its scrolled-off top
+		// committed nowhere and repainted nowhere, so it read as truncated until
+		// ctrl+o (expanded) flipped it stable.
+		//
+		// Renderers whose partial-result chrome (header glyph, frame state)
+		// differs from the final result render set `provisionalPartialResult`
+		// to opt out of stream-commit while `isPartial` holds: the ratchet
+		// would otherwise promote the stable partial chrome to native scrollback
+		// after `STABLE_PREFIX_COMMIT_FRAMES` and leave it stranded above the
+		// final frame once the chrome flips. Once the result settles
+		// (`isPartial === false`) the block is commit-stable again.
+		if (this.#result !== undefined) {
+			if (this.#isPartial) {
+				const tool = this.#tool as { provisionalPartialResult?: boolean } | undefined;
+				const provisionalPartialResult =
+					tool?.provisionalPartialResult ?? toolRenderers[this.#toolName]?.provisionalPartialResult;
+				if (provisionalPartialResult) return false;
+			}
+			return true;
+		}
+		const tool = this.#tool as { provisionalPendingPreview?: boolean | "collapsed" } | undefined;
+		const provisionalPendingPreview =
+			tool?.provisionalPendingPreview ?? toolRenderers[this.#toolName]?.provisionalPendingPreview;
+		return provisionalPendingPreview !== true && (provisionalPendingPreview !== "collapsed" || this.#expanded);
 	}
 
 	/**
@@ -528,9 +732,29 @@ export class ToolExecutionComponent extends Container {
 	seal(): void {
 		if (this.#sealed) return;
 		this.#sealed = true;
+		this.#displaceableByToolName = undefined;
+		// A sealed detached task is abandoned history: settle its progress rows
+		// on static gray.
+		this.#backgroundTaskFrozen = true;
 		this.stopAnimation();
 		this.#updateDisplay();
 		this.#ui.requestRender();
+	}
+
+	/**
+	 * Whether this block is a supersedable result snapshot that has not been
+	 * sealed. Such a block never finalized, so none of its rows entered native
+	 * scrollback and the whole block can be removed when a follow-up matching
+	 * tool call supersedes it.
+	 */
+	isDisplaceableBlock(): boolean {
+		return this.#displaceableByToolName !== undefined && !this.#sealed;
+	}
+
+	canBeDisplacedBy(nextToolName: string | undefined): boolean {
+		return (
+			this.#displaceableByToolName !== undefined && this.#displaceableByToolName === nextToolName && !this.#sealed
+		);
 	}
 
 	/**
@@ -546,6 +770,9 @@ export class ToolExecutionComponent extends Container {
 		this.#stopTodoStrikeAnimation();
 		this.#editDiffAbort?.abort();
 		this.#editDiffAbort = undefined;
+		// Drop any queued rerun so the drain loop exits instead of recomputing a
+		// preview for a torn-down block after its in-flight compute is aborted.
+		this.#editDiffDirty = false;
 	}
 
 	setExpanded(expanded: boolean): void {
@@ -564,6 +791,29 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	#updateDisplay(): void {
+		// `TERMINAL.imageProtocol` is resolved by an async capability probe during
+		// TUI startup, so a result rendered before it lands must re-shape once it
+		// does (it gates Image children vs text fallback in #rebuildDisplay); keyed
+		// here for the same reason markdown.ts keys its render cache on it.
+		const key = `${this.#resultVersion}|${this.#expanded}|${this.#isPartial}|${this.#spinnerFrame ?? "-"}|${this.#showImages}|${getThemeEpoch()}|${this.#displayInputVersion}|${this.#backgroundTaskFrozen}|${TERMINAL.imageProtocol ?? "-"}|${this.#imageSizeKey()}`;
+		if (key === this.#lastDisplayKey && this.#displayBuilt) return;
+		this.#lastDisplayKey = key;
+
+		this.#rebuildDisplay();
+		this.#displayBuilt = true;
+	}
+
+	// Viewport-/settings-dependent image sizing folded into the memo key only when
+	// the last rebuild actually emitted images, so a terminal resize re-shapes an
+	// image-bearing result (to rescale it) without re-shaping every image-free
+	// result on each resize tick.
+	#imageSizeKey(): string {
+		if (this.#renderedImageCount === 0) return "-";
+		const o = resolveImageOptions();
+		return `${o.maxWidthCells}:${o.maxHeightCells ?? "-"}`;
+	}
+
+	#rebuildDisplay(): void {
 		// Sync shared mutable render state for component closures
 		this.#renderState.expanded = this.#expanded;
 		this.#renderState.isPartial = this.#isPartial;
@@ -703,9 +953,11 @@ export class ToolExecutionComponent extends Container {
 					this.#multiFileBoxes.push(pendingSpacer);
 					this.addChild(pendingSpacer);
 					const pendingBox = new Box(0, 0);
+					const spinner =
+						this.#spinnerFrame !== undefined ? formatStatusIcon("running", theme, this.#spinnerFrame) : "";
 					const pendingText = renderStatusLine(
 						{
-							icon: "pending",
+							iconOverride: spinner,
 							title: "Edit",
 							description: theme.fg("dim", `${remaining} more file${remaining > 1 ? "s" : ""} pending…`),
 						},
@@ -762,9 +1014,11 @@ export class ToolExecutionComponent extends Container {
 				}
 			}
 		} else {
-			// Other built-in tools: use Text directly with caching
+			// Generic fallback (no custom/built-in renderer). WidthAwareText
+			// reformats at render time so output fills the actual terminal width
+			// instead of a fixed column cap.
 			this.#contentText.setCustomBgFn(stateBgFn);
-			this.#contentText.setText(this.#formatToolExecution());
+			this.#contentText.invalidate();
 		}
 
 		// Handle images (same for both custom and built-in)
@@ -807,6 +1061,7 @@ export class ToolExecutionComponent extends Container {
 				}
 			}
 		}
+		this.#renderedImageCount = this.#imageComponents.length;
 	}
 
 	#getCallArgsForRender(): any {
@@ -858,6 +1113,9 @@ export class ToolExecutionComponent extends Container {
 			// draws every dispatched agent as a progress/result line, so tell
 			// `renderCall` to drop its duplicate streaming preview list.
 			context.hasResult = Boolean(this.#result);
+			// Out of the transcript live region: progress rows render static gray
+			// (see task/render.ts).
+			context.frozen = this.#backgroundTaskFrozen;
 		} else if (isEditLikeToolName(this.#toolName)) {
 			context.editMode = this.#editMode;
 			const previews = this.#editDiffPreview;
@@ -912,14 +1170,17 @@ export class ToolExecutionComponent extends Container {
 	/**
 	 * Format a generic tool execution (fallback for tools without custom renderers)
 	 */
-	#formatToolExecution(): string {
+	#formatToolExecution(contentWidth: number): string {
 		const lines: string[] = [];
-		const icon = this.#isPartial ? "pending" : this.#result?.isError ? "error" : "success";
+		const icon = this.#isPartial ? "pending" : this.#result?.isError ? "error" : "done";
 		lines.push(renderStatusLine({ icon, title: this.#toolLabel }, theme));
 
 		const argsObject = this.#args && typeof this.#args === "object" ? (this.#args as Record<string, unknown>) : null;
 		if (!this.#expanded && argsObject && Object.keys(argsObject).length > 0) {
-			const preview = formatArgsInline(argsObject, 70);
+			// Budget the inline preview against the render width, leaving room for
+			// the ` └─ ` connector prefix instead of a fixed cap.
+			const inlineBudget = Math.max(20, contentWidth - Bun.stringWidth(theme.tree.last) - 2);
+			const preview = formatArgsInline(argsObject, inlineBudget);
 			if (preview) {
 				lines.push(` ${theme.fg("dim", theme.tree.last)} ${theme.fg("dim", preview)}`);
 			}
@@ -979,7 +1240,7 @@ export class ToolExecutionComponent extends Container {
 		const displayLines = outputLines.slice(0, maxOutputLines);
 
 		for (const line of displayLines) {
-			lines.push(theme.fg("toolOutput", truncateToWidth(replaceTabs(line), 80)));
+			lines.push(theme.fg("toolOutput", truncateToWidth(replaceTabs(line), contentWidth)));
 		}
 
 		if (outputLines.length > maxOutputLines) {

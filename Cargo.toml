@@ -1,10 +1,10 @@
 [workspace]
-members = ["crates/*"]
-exclude = ["crates/brush-core-vendored", "crates/brush-builtins-vendored"]
+members = ["crates/pi-*", "crates/vendor/*"]
+exclude = ["crates/vendor/brush-core", "crates/vendor/brush-builtins"]
 resolver = "3"
 
 [workspace.package]
-version = "15.10.3"
+version = "16.2.4"
 edition = "2024"
 license = "MIT"
 authors = ["Can Boluk"]
@@ -12,15 +12,20 @@ homepage = "https://omp.sh/"
 repository = "https://github.com/can1357/oh-my-pi"
 
 [patch.crates-io]
-brush-core = { path = "crates/brush-core-vendored" }
-brush-builtins = { path = "crates/brush-builtins-vendored" }
+brush-core = { path = "crates/vendor/brush-core" }
+brush-builtins = { path = "crates/vendor/brush-builtins" }
 
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = true
-panic = "abort"
+# Unwind (not abort) so panics in vendored uutils code and napi-rs functions
+# are catchable: the uutils boundary (pi-shell coreutils) and napi-rs's per-call
+# catch_unwind turn a panic into a failed command / JS error instead of killing
+# the host process. Recoverable uutils panics are kept out of the crash report
+# by the crash hook (see crates/pi-natives/src/crash_handler.rs).
+panic = "unwind"
 
 [profile.ci]
 inherits = "release"
@@ -166,8 +171,8 @@ too_many_lines = "allow"     # Arbitrary limits don't account for necessary comp
 pi-ast = { path = "crates/pi-ast" }
 pi-iso = { path = "crates/pi-iso" }
 pi-shell = { path = "crates/pi-shell" }
-brush-core = { path = "crates/brush-core-vendored" }
-brush-builtins = { path = "crates/brush-builtins-vendored" }
+brush-core = { path = "crates/vendor/brush-core" }
+brush-builtins = { path = "crates/vendor/brush-builtins" }
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Async Runtime & Concurrency
@@ -182,6 +187,7 @@ tokio-util = { version = "0.7", features = ["full"] }
 # ──────────────────────────────────────────────────────────────────────────────
 # Serialization & Data Formats
 # ──────────────────────────────────────────────────────────────────────────────
+base64 = "0.22"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 toml = "1.1"
@@ -274,11 +280,13 @@ image = { version = "0.25", default-features = false, features = [
    "gif",
    "webp",
 ] }
+png = "0.18"
 inferno = { version = "0.12", default-features = false }
 syntect = { version = "5.3", default-features = false, features = [
    "default-syntaxes",
    "default-themes",
    "regex-fancy",
+   "yaml-load",
 ] }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -315,7 +323,9 @@ tree-sitter-dart = "0.2"
 tree-sitter-diff = "0.1"
 tree-sitter-dockerfile = { version = "0.2.0", package = "tree-sitter-dockerfile-updated" }
 tree-sitter-elixir = "0.3"
+tree-sitter-elisp = "1.6.1"
 tree-sitter-erlang = "0.16.0"
+tree-sitter-fortran = "0.6.0"
 tree-sitter-go = "0.25"
 tree-sitter-graphql = "0.1.0"
 tree-sitter-haskell = "0.23"

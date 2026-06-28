@@ -133,6 +133,7 @@ export const enum PiGenAIAttr {
 	RequestMessages = "pi.gen_ai.request.messages",
 	ResponseText = "pi.gen_ai.response.text",
 	ResponseToolCalls = "pi.gen_ai.response.tool_calls",
+	ResponseUpstreamProvider = "pi.gen_ai.response.upstream_provider",
 	UsageTotalTokens = "pi.gen_ai.usage.total_tokens",
 	UsageServerSideTools = "pi.gen_ai.usage.server_tool_requests",
 	CostEstimatedUsd = "pi.gen_ai.cost.estimated_usd",
@@ -730,7 +731,7 @@ export interface ChatRequestSnapshot {
 	readonly reasoningEffort?: string;
 	readonly toolChoice?: ToolChoice;
 	readonly tools?: readonly { readonly name: string }[];
-	readonly systemPrompt?: readonly string[];
+	readonly systemPrompt?: string | readonly string[];
 	readonly messages?: readonly Message[];
 }
 
@@ -795,6 +796,11 @@ function applyContentCaptureForResponse(telemetry: AgentTelemetry, span: Span, m
 	}
 }
 
+function normalizeSystemPromptParts(systemPrompt: string | readonly string[] | undefined): readonly string[] {
+	if (!systemPrompt) return [];
+	return typeof systemPrompt === "string" ? [systemPrompt] : systemPrompt;
+}
+
 function serializeRequestMessagesForTelemetry(
 	telemetry: AgentTelemetry,
 	request: ChatRequestSnapshot,
@@ -802,10 +808,8 @@ function serializeRequestMessagesForTelemetry(
 	const serializer = telemetry.config.contentSerializer?.requestMessages;
 	if (serializer) return callContentSerializer(telemetry, "requestMessages", () => serializer(request));
 	const messages: TelemetryMessageSummary[] = [];
-	if (request.systemPrompt) {
-		for (const text of request.systemPrompt)
-			messages.push({ role: "system", content: summarizeTelemetryValue(text) });
-	}
+	for (const text of normalizeSystemPromptParts(request.systemPrompt))
+		messages.push({ role: "system", content: summarizeTelemetryValue(text) });
 	if (request.messages) {
 		for (const message of request.messages) {
 			messages.push({ role: message.role, content: summarizeTelemetryValue(message.content) });
@@ -873,8 +877,8 @@ interface OtelOutputMessage extends OtelInputMessage {
 }
 
 function serializeFullSystemInstructionsForTelemetry(request: ChatRequestSnapshot): string | undefined {
-	const systemPrompt = request.systemPrompt;
-	if (!systemPrompt || systemPrompt.length === 0) return undefined;
+	const systemPrompt = normalizeSystemPromptParts(request.systemPrompt);
+	if (systemPrompt.length === 0) return undefined;
 	return stringifyJsonAttribute(systemPrompt.map(text => ({ type: "text", content: text }) satisfies OtelMessagePart));
 }
 
@@ -1189,6 +1193,9 @@ export function failChatSpan(
 function applyChatResponseAttributes(span: Span, message: AssistantMessage): void {
 	span.setAttribute(GenAIAttr.ResponseModel, message.model);
 	if (message.responseId) span.setAttribute(GenAIAttr.ResponseId, message.responseId);
+	if (message.upstreamProvider) {
+		span.setAttribute(PiGenAIAttr.ResponseUpstreamProvider, message.upstreamProvider);
+	}
 	if (message.ttft != null) span.setAttribute(GenAIAttr.ResponseTimeToFirstChunk, message.ttft / 1000);
 	const finishReason = mapStopReason(message.stopReason);
 	if (finishReason) span.setAttribute(GenAIAttr.ResponseFinishReasons, [finishReason]);
@@ -1869,7 +1876,8 @@ export function finishInvokeAgentSpan(
 
 /**
  * Invoke {@link AgentTelemetryConfig.onRunEnd} on `telemetry` if set. Throws
- are caught and logged via `console.warn` — telemetry callbacks NEVER turn a
+ * are caught and surfaced via the `onTelemetryWarning` hook (falling back to `console.warn`
+ * when no hook is set) — telemetry callbacks NEVER turn a
  * successful agent run into a failed one. Idempotent at the call site via
  * {@link AgentRunCollector.markRunEnded}; callers must check that before
  * calling this helper.

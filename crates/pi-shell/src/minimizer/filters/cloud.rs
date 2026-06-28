@@ -28,16 +28,24 @@ const SENSITIVE_AWS_KEYS: &[&str] = &[
 	"ResponseMetadata",
 ];
 
+#[must_use]
 pub fn supports(program: &str, _subcommand: Option<&str>) -> bool {
 	matches!(program, "aws" | "curl" | "wget" | "psql")
 }
 
+#[must_use]
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	let cleaned = primitives::strip_ansi(input);
 	let text = match ctx.program {
 		"aws" => filter_aws(ctx, &cleaned, exit_code),
-		"curl" | "wget" => filter_http_transfer(&cleaned, exit_code),
-		"psql" => filter_psql(&cleaned, exit_code),
+		"curl" | "wget" => filter_http_transfer(ctx, &cleaned, exit_code),
+		"psql" => {
+			if is_psql_machine_readable(ctx.command) {
+				cleaned
+			} else {
+				filter_psql(&cleaned, exit_code)
+			}
+		},
 		_ => head_tail_dedup(&cleaned, 80, 40),
 	};
 
@@ -68,7 +76,22 @@ fn is_s3_ls(command: &str) -> bool {
 	false
 }
 
+/// Returns `true` when an AWS CLI invocation streams object content via a
+/// `-` positional (stdout download `aws s3 cp s3://bucket/key -`, or stdin
+/// upload `aws s3 cp - s3://bucket/key`). In that mode the captured text is
+/// the object body, not CLI progress, so `strip_transfer_progress` must not
+/// run. Any bare `-` token triggers passthrough — even when trailing options
+/// follow the positional (`aws s3 cp s3://bucket/key - --request-payer
+/// requester`); a false positive only skips minimization, which is safe.
+fn is_aws_stdout_pipe(command: &str) -> bool {
+	command.split_whitespace().any(|token| token == "-")
+}
+
 fn filter_aws(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> String {
+	if is_aws_stdout_pipe(ctx.command) {
+		return input.to_string();
+	}
+
 	let without_progress = strip_transfer_progress(input);
 	// Only the `ls` listing form should be reshaped into a bucket/date table;
 	// `aws s3 cp`/`sync`/`rm` emit progress/result lines (`upload: ... to
@@ -451,7 +474,7 @@ fn compact_aws_generic(root: &Value) -> Option<String> {
 		let mut out =
 			compact_named_rows(&columns.iter().map(String::as_str).collect::<Vec<_>>(), &values);
 		if rows.len() > MAX_AWS_ROWS {
-			let _ = writeln!(out, "... +{} more {name}", rows.len() - MAX_AWS_ROWS);
+			let _ = writeln!(out, "[…{} {name} elided…]", rows.len() - MAX_AWS_ROWS);
 		}
 		return Some(out);
 	}
@@ -536,7 +559,7 @@ fn compact_named_rows(headers: &[&str], rows: &[Vec<String>]) -> String {
 		out.push('\n');
 	}
 	if rows.len() > MAX_AWS_ROWS {
-		let _ = writeln!(out, "... +{} more rows", rows.len() - MAX_AWS_ROWS);
+		let _ = writeln!(out, "[…{} rows elided…]", rows.len() - MAX_AWS_ROWS);
 	}
 	out
 }
@@ -687,7 +710,7 @@ fn compact_aws_cloudwatch_events(events: &[&Value]) -> String {
 	for event in events {
 		let ts = event
 			.get("timestamp")
-			.and_then(|v| v.as_i64())
+			.and_then(serde_json::Value::as_i64)
 			.map_or_else(|| "?".to_string(), epoch_ms_to_iso);
 		let msg = event.get("message").and_then(|v| v.as_str()).unwrap_or("?");
 		// Truncate long messages
@@ -738,9 +761,7 @@ fn compact_aws_dynamodb_items(items: &[&serde_json::Map<String, Value>]) -> Stri
 		out.push('\n');
 	}
 	if items.len() > 40 {
-		out.push_str("… ");
-		out.push_str(&(items.len() - 40).to_string());
-		out.push_str(" item(s) omitted …\n");
+		let _ = writeln!(out, "[…{} items elided…]", items.len() - 40);
 	}
 	let _ = writeln!(out, "{} item(s)", items.len());
 	out
@@ -827,8 +848,37 @@ fn push_json_scalar(out: &mut String, value: &Value) {
 	}
 }
 
-fn filter_http_transfer(input: &str, _exit_code: i32) -> String {
-	strip_transfer_progress(input)
+fn filter_http_transfer(ctx: &MinimizerCtx<'_>, input: &str, _exit_code: i32) -> String {
+	if http_transfer_suppresses_progress(ctx) {
+		input.to_string()
+	} else {
+		strip_transfer_progress(input)
+	}
+}
+
+fn http_transfer_suppresses_progress(ctx: &MinimizerCtx<'_>) -> bool {
+	ctx.command
+		.split_whitespace()
+		.any(|token| match ctx.program {
+			"curl" => {
+				token == "--silent"
+					|| token == "--no-progress-meter"
+					|| token.starts_with('-') && !token.starts_with("--") && token.contains('s')
+			},
+			"wget" => {
+				token == "--quiet"
+					|| token.starts_with('-') && !token.starts_with("--") && token.contains('q')
+			},
+			_ => false,
+		})
+}
+
+/// Returns `true` when the psql invocation requests machine-readable
+/// (unaligned, tuples-only, or CSV) output that must not be truncated.
+fn is_psql_machine_readable(command: &str) -> bool {
+	command
+		.split_whitespace()
+		.any(|t| matches!(t, "-A" | "--no-align" | "-t" | "--tuples-only" | "--csv"))
 }
 
 fn filter_psql(input: &str, exit_code: i32) -> String {
@@ -958,7 +1008,7 @@ fn compact_line(line: &str, max_chars: usize) -> String {
 	let edge = max_chars / 2;
 	let start: String = chars.iter().take(edge).collect();
 	let end: String = chars.iter().skip(chars.len() - edge).collect();
-	format!("{start} … {} chars omitted … {end}", chars.len() - edge * 2)
+	format!("{start}[…{}ch elided…]{end}", chars.len() - edge * 2)
 }
 
 fn looks_like_table(input: &str) -> bool {
@@ -1021,7 +1071,7 @@ fn compact_delimited_table(input: &str, max_rows: usize) -> String {
 		}
 	}
 	if data_rows > max_rows {
-		out.push(format!("… {} more rows", data_rows - max_rows));
+		out.push(format!("[…{} rows elided…]", data_rows - max_rows));
 	}
 	join_lines(out)
 }
@@ -1062,7 +1112,7 @@ fn compact_psql_table(input: &str) -> String {
 	}
 
 	if data_rows > MAX_PSQL_ROWS {
-		out.push(format!("... +{} more rows", data_rows - MAX_PSQL_ROWS));
+		out.push(format!("[…{} rows elided…]", data_rows - MAX_PSQL_ROWS));
 	}
 	out.extend(row_count_lines);
 	join_lines(out)
@@ -1100,7 +1150,7 @@ fn compact_psql_expanded(input: &str) -> String {
 	}
 	flush_record(&mut out, &mut current, records);
 	if records > MAX_PSQL_ROWS {
-		out.push(format!("... +{} more records", records - MAX_PSQL_ROWS));
+		out.push(format!("[…{} records elided…]", records - MAX_PSQL_ROWS));
 	}
 	out.extend(row_count_lines);
 	join_lines(out)
@@ -1200,6 +1250,14 @@ mod tests {
 		MinimizerCtx { program, subcommand: None, command: program, config: cfg }
 	}
 
+	fn ctx_command<'a>(
+		program: &'a str,
+		command: &'a str,
+		cfg: &'a MinimizerConfig,
+	) -> MinimizerCtx<'a> {
+		MinimizerCtx { program, subcommand: None, command, config: cfg }
+	}
+
 	fn aws_ctx<'a>(
 		subcommand: &'a str,
 		command: &'a str,
@@ -1241,6 +1299,26 @@ mod tests {
 		let expected = "100% real body\n[{\"id\":1}]\n";
 		let out = filter(&ctx, input, 0);
 		assert_eq!(out.text, expected);
+	}
+
+	#[test]
+	fn curl_silent_preserves_body_lines_that_look_like_progress() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx_command("curl", "curl -s https://example.test/body", &cfg);
+		let input = "% Total legitimate response header\n100%[body]\n";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn wget_quiet_preserves_body_lines_that_look_like_progress() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = ctx_command("wget", "wget -qO- https://example.test/body", &cfg);
+		let input = "--body marker with https://example.test\n100%[body]\n";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
 	}
 
 	#[test]
@@ -1287,6 +1365,24 @@ mod tests {
 		}
 		let out = filter(&ctx, &input, 0);
 		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn aws_s3_cp_to_stdout_preserves_body() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 cp s3://bucket/file.json -", &cfg);
+		let input = "{\"key\": \"value\", \"% Total\": 100}\n";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed, "stdout pipe body must not be rewritten: {:?}", out.text);
+	}
+
+	#[test]
+	fn aws_s3_cp_to_stdout_with_trailing_options_preserves_body() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = aws_ctx("s3", "aws s3 cp s3://bucket/file.json - --request-payer requester", &cfg);
+		let input = "{\"key\": \"value\", \"% Total\": 100}\n";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed, "stdout pipe body must not be rewritten: {:?}", out.text);
 	}
 
 	#[test]
@@ -1383,7 +1479,8 @@ mod tests {
 		assert!(out.text.contains("age=42"));
 		assert!(out.text.contains("active=true"));
 		assert!(out.text.contains("tags=[a,b]"));
-		assert!(out.text.contains("meta={city:Paris}"));
+		const META_ATTR: &str = "meta={city:Paris}";
+		assert!(out.text.contains(META_ATTR));
 		assert!(out.text.contains("1 item(s)"));
 	}
 
@@ -1560,7 +1657,7 @@ mod tests {
 	fn sensitive_aws_keys_never_leak_from_generic() {
 		let mut fields = String::new();
 		for key in SENSITIVE_AWS_KEYS {
-			fields.push_str(&format!(r#""{key}":"LEAK_SENTINEL","#));
+			let _ = write!(fields, r#""{key}":"LEAK_SENTINEL","#);
 		}
 		let input = format!(r#"{{"Unknowns":[{{"Name":"safe",{fields}"Status":"ok"}}]}}"#);
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { readImageFromClipboard, readMacFileUrlsFromClipboard } from "@oh-my-pi/pi-coding-agent/utils/clipboard";
 import * as native from "@oh-my-pi/pi-natives";
 import type { Subprocess } from "bun";
-import { readImageFromClipboard } from "../../src/utils/clipboard";
 
 type SpawnOptions = Bun.SpawnOptions.SpawnOptions<
 	Bun.SpawnOptions.Writable,
@@ -147,6 +147,21 @@ describe("readImageFromClipboard dispatch", () => {
 		expect(nativeSpy).not.toHaveBeenCalled();
 	});
 
+	it("uses the PowerShell bridge on native Windows when arboard has no image payload", async () => {
+		setPlatform("win32");
+		const calls: SpawnCall[] = [];
+		spyPowershell(calls, RED_1X1_PNG_BASE64);
+		vi.spyOn(native, "readImageFromClipboard").mockResolvedValue(null);
+
+		const image = await readImageFromClipboard();
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.cmd[0]).toBe("powershell.exe");
+		expect(image?.mimeType).toBe("image/png");
+		expect(Array.from(image!.data.subarray(0, 8))).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+		expect(calls[0]?.cmd).toContain("-Sta");
+	});
+
 	it("delegates straight to the native bridge on non-WSL linux with a display", async () => {
 		setPlatform("linux");
 		process.env.DISPLAY = ":0";
@@ -168,5 +183,42 @@ describe("readImageFromClipboard dispatch", () => {
 		expect(await readImageFromClipboard()).toBeNull();
 		expect(spawnSpy).not.toHaveBeenCalled();
 		expect(nativeSpy).not.toHaveBeenCalled();
+	});
+});
+
+describe("readMacFileUrlsFromClipboard", () => {
+	it("returns an empty list on non-darwin platforms without spawning osascript", async () => {
+		setPlatform("linux");
+		const cp = await import("node:child_process");
+		const execSpy = vi.spyOn(cp, "execSync");
+
+		expect(await readMacFileUrlsFromClipboard()).toEqual([]);
+		expect(execSpy).not.toHaveBeenCalled();
+	});
+
+	it("splits osascript output into one path per non-empty line on darwin", async () => {
+		setPlatform("darwin");
+		const cp = await import("node:child_process");
+		const execSpy = vi
+			.spyOn(cp, "execSync")
+			.mockReturnValue("/Users/me/Pictures/photo.png\n/Users/me/Pictures/clip.jpg\n\n");
+
+		const paths = await readMacFileUrlsFromClipboard();
+
+		expect(paths).toEqual(["/Users/me/Pictures/photo.png", "/Users/me/Pictures/clip.jpg"]);
+		expect(execSpy).toHaveBeenCalledTimes(1);
+		const [cmd, options] = execSpy.mock.calls[0] ?? [];
+		expect(cmd).toBe("osascript -");
+		expect((options as { input?: string } | undefined)?.input).toContain("«class furl»");
+	});
+
+	it("returns an empty list when osascript throws (e.g. binary missing)", async () => {
+		setPlatform("darwin");
+		const cp = await import("node:child_process");
+		vi.spyOn(cp, "execSync").mockImplementation(() => {
+			throw new Error("osascript: command not found");
+		});
+
+		expect(await readMacFileUrlsFromClipboard()).toEqual([]);
 	});
 });

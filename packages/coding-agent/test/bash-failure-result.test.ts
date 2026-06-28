@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { ToolSession } from "../src/tools";
-import { BashTool } from "../src/tools/bash";
+import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
+import { BashTool } from "@oh-my-pi/pi-coding-agent/tools/bash";
 
 function makeSession(): ToolSession {
 	return {
@@ -17,8 +17,8 @@ function makeSession(): ToolSession {
 				if (key === "bash.stripTrailingHeadTail") return false;
 				if (key === "astGrep.enabled") return false;
 				if (key === "astEdit.enabled") return false;
-				if (key === "search.enabled") return false;
-				if (key === "find.enabled") return false;
+				if (key === "grep.enabled") return false;
+				if (key === "glob.enabled") return false;
 				return undefined;
 			},
 			getBashInterceptorRules() {

@@ -7,6 +7,7 @@ import {
 	cleanOutput,
 	configuredLlmWillHandleCall,
 	llmAvailable,
+	type RemoteLlmOptions,
 } from "./local-llm";
 import { getMnemopiRuntimeOptions } from "./runtime-options";
 
@@ -32,10 +33,6 @@ function llmEnabled(): boolean {
 
 function hostLlmEnabled(): boolean {
 	return envBool("MNEMOPI_HOST_LLM_ENABLED", false);
-}
-
-function llmBaseUrl(): string {
-	return env("MNEMOPI_LLM_BASE_URL").replace(/\/+$/, "");
 }
 
 function llmMaxTokens(): number {
@@ -179,7 +176,15 @@ export function heuristicExtractFacts(text: string): string[] {
 		if (value !== undefined) addUnique(facts, `The user prefers ${value}`);
 		value = /\bi (?:hate|dislike|do not like|don't like)\s+([^,.!?;]+)/i.exec(c)?.[1];
 		if (value !== undefined) addUnique(facts, `The user dislikes ${value}`);
-		const instruction = /\b(always|never)\s+([^,.!?;]+)/i.exec(c);
+		// Require an explicit `i` or `you` subject before `always|never`. The
+		// other heuristics in this block all need an `i` subject (`i live in …`,
+		// `i use …`) which keeps them from matching narrative prose; the
+		// `Instruction:` pattern used to match any `always|never` token, so
+		// assistant prose like "the panel never populates" became stored as a
+		// user `Instruction:` memory (coding-agent issue #3372). Subject
+		// constraint mirrors how the rest of the heuristics filter for first- /
+		// second-person assertions and keeps narrative third-person prose out.
+		const instruction = /\b(?:i|you)\s+(always|never)\s+([^,.!?;]+)/i.exec(c);
 		if (instruction?.[1] !== undefined && instruction[2] !== undefined) {
 			addUnique(facts, `Instruction: ${instruction[1].toLowerCase()} ${instruction[2]}`);
 		}
@@ -231,7 +236,7 @@ async function localFallback(prompt: string, sourceText: string, diag = getDiagn
 	return [];
 }
 
-export async function extractFacts(text: string | null | undefined): Promise<string[]> {
+export async function extractFacts(text: string | null | undefined, options: RemoteLlmOptions = {}): Promise<string[]> {
 	const diag = getDiagnostics();
 	if (typeof text !== "string" || text.trim() === "") {
 		return [];
@@ -300,23 +305,21 @@ export async function extractFacts(text: string | null | undefined): Promise<str
 		return [];
 	}
 
-	if (llmEnabled() && llmBaseUrl() !== "") {
-		diag.recordAttempt("remote");
-		try {
-			const raw = await callRemoteLlm(prompt, 0);
-			if (raw !== null) {
-				const facts = parseFacts(cleanOutput(raw));
-				if (facts.length > 0) {
-					diag.recordSuccess("remote", facts.length);
-					diag.recordCall({ succeeded: true });
-					return facts;
-				}
+	diag.recordAttempt("remote");
+	try {
+		const raw = await callRemoteLlm(prompt, 0, options);
+		if (raw !== null) {
+			const facts = parseFacts(cleanOutput(raw));
+			if (facts.length > 0) {
+				diag.recordSuccess("remote", facts.length);
+				diag.recordCall({ succeeded: true });
+				return facts;
 			}
-			diag.recordNoOutput("remote");
-		} catch (exc) {
-			diag.recordFailure("remote", exc, "remote_call_raised");
-			console.warn(`extractFacts: remote LLM raised: ${safeForLog(exc)}`);
 		}
+		diag.recordNoOutput("remote");
+	} catch (exc) {
+		diag.recordFailure("remote", exc, "remote_call_raised");
+		console.warn(`extractFacts: remote LLM raised: ${safeForLog(exc)}`);
 	}
 
 	return localFallback(prompt, text, diag);

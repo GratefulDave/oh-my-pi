@@ -16,7 +16,9 @@ import { Buffer } from "node:buffer";
 import * as os from "node:os";
 import * as path from "node:path";
 import { $envpos, isEnoent, logger } from "@oh-my-pi/pi-utils";
+import * as AIError from "../error";
 import type { FetchImpl } from "../types";
+import { raceWithSignal } from "../utils/abort";
 
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
@@ -82,7 +84,7 @@ async function loadAdcCredentials(): Promise<{ source: string; creds: AdcFileCre
 	if (gacPath) {
 		const creds = await readJsonFile<AdcFileCredentials>(gacPath);
 		if (!creds) {
-			throw new Error(`GOOGLE_APPLICATION_CREDENTIALS points to a missing file: ${gacPath}`);
+			throw new AIError.ConfigurationError(`GOOGLE_APPLICATION_CREDENTIALS points to a missing file: ${gacPath}`);
 		}
 		return { source: `gac:${gacPath}`, creds };
 	}
@@ -102,7 +104,7 @@ function pemToPkcs8(pem: string): Uint8Array<ArrayBuffer> {
 		.replace(/-----BEGIN [^-]+-----/g, "")
 		.replace(/-----END [^-]+-----/g, "")
 		.replace(/\s+/g, "");
-	if (!body) throw new Error("Invalid PEM: empty body");
+	if (!body) throw new AIError.ConfigurationError("Invalid PEM: empty body");
 	return Uint8Array.fromBase64(body);
 }
 
@@ -192,7 +194,11 @@ async function postForToken(
 	});
 	if (!response.ok) {
 		const detail = await response.text().catch(() => "");
-		throw new Error(`Google OAuth token exchange failed (${response.status}): ${detail}`);
+		throw new AIError.OAuthError(`Google OAuth token exchange failed (${response.status}): ${detail}`, {
+			kind: "token-exchange",
+			provider: "google-vertex",
+			status: response.status,
+		});
 	}
 	return (await response.json()) as TokenResponse;
 }
@@ -238,7 +244,11 @@ async function resolveAccessTokenUncached(
 			);
 			if (!response.ok) {
 				const detail = await response.text().catch(() => "");
-				throw new Error(`Google Impersonation token exchange failed (${response.status}): ${detail}`);
+				throw new AIError.OAuthError(`Google Impersonation token exchange failed (${response.status}): ${detail}`, {
+					kind: "token-exchange",
+					provider: "google-vertex",
+					status: response.status,
+				});
 			}
 			const data = (await response.json()) as { accessToken: string; expireTime: string };
 			const expiresIn = Math.max(0, Math.floor((new Date(data.expireTime).getTime() - Date.now()) / 1000));
@@ -253,10 +263,18 @@ async function resolveAccessTokenUncached(
 	}
 	const metadata = await fetchMetadataToken(signal, fetchImpl);
 	if (metadata) return { source: "metadata", token: metadata };
-	throw new Error(
+	throw new AIError.MissingApiKeyError(
+		undefined,
 		"Vertex AI requires Application Default Credentials. Set GOOGLE_APPLICATION_CREDENTIALS, run `gcloud auth application-default login`, or run on a GCE/Cloud Run instance with a service account.",
 	);
 }
+
+/**
+ * Bound for the detached (signal-free) shared token resolution: a hung OAuth
+ * exchange or metadata fetch must not pin the inflight slot forever — every
+ * later call would await the stuck promise until process restart.
+ */
+const SHARED_TOKEN_RESOLVE_TIMEOUT_MS = 30_000;
 
 /**
  * Returns a Bearer access token suitable for the `Authorization` header on Vertex AI calls.
@@ -277,11 +295,17 @@ export async function getVertexAccessToken(options?: { signal?: AbortSignal; fet
 
 	const cacheKey = "vertex-adc";
 	const existing = inflight.get(cacheKey);
-	if (existing) return existing;
+	if (existing) return raceWithSignal(existing, options?.signal);
 
+	// Deliberately resolve without any caller's signal: the in-flight promise is shared
+	// by every concurrent caller, so aborting one request must not fail the whole batch.
+	// Each caller races its own signal against the shared promise instead.
 	const promise = (async () => {
 		try {
-			const { source, token } = await resolveAccessTokenUncached(options?.signal, fetchImpl);
+			const { source, token } = await resolveAccessTokenUncached(
+				AbortSignal.timeout(SHARED_TOKEN_RESOLVE_TIMEOUT_MS),
+				fetchImpl,
+			);
 			const expiresAtMs = Date.now() + Math.max(0, token.expires_in * 1000);
 			tokenCache.set(source, { token: token.access_token, expiresAtMs });
 			logger.debug("vertex.adc acquired access token", { source, expiresInSec: token.expires_in });
@@ -291,7 +315,7 @@ export async function getVertexAccessToken(options?: { signal?: AbortSignal; fet
 		}
 	})();
 	inflight.set(cacheKey, promise);
-	return promise;
+	return raceWithSignal(promise, options?.signal);
 }
 
 /** Test seam: clears every cached token. */

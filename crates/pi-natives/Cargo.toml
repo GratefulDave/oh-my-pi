@@ -16,6 +16,7 @@ workspace = true
 anyhow.workspace = true
 arboard.workspace = true
 ast-grep-core.workspace = true
+base64.workspace = true
 clap.workspace = true
 dashmap.workspace = true
 globset.workspace = true
@@ -35,7 +36,9 @@ phf.workspace = true
 pi-ast.workspace = true
 pi-iso.workspace = true
 pi-shell.workspace = true
+pi-uutils-ctx = { path = "../pi-uutils-ctx" }
 portable-pty.workspace = true
+png.workspace = true
 rayon.workspace = true
 regex.workspace = true
 serde.workspace = true

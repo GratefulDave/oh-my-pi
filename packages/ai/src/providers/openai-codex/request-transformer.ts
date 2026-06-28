@@ -1,17 +1,25 @@
-import type { Effort } from "../../effort";
-import { requireSupportedEffort } from "../../model-thinking";
+import type { Effort } from "@oh-my-pi/pi-catalog/effort";
+import { requireSupportedEffort } from "@oh-my-pi/pi-catalog/model-thinking";
 import type { Api, Model } from "../../types";
+
+/** Reasoning replay scope for the Codex Responses API (`reasoning.context`). */
+export type CodexReasoningContext = "auto" | "current_turn" | "all_turns";
 
 export interface ReasoningConfig {
 	effort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 	summary?: "auto" | "concise" | "detailed";
+	context?: CodexReasoningContext;
 }
 
 export interface CodexRequestOptions {
 	reasoningEffort?: ReasoningConfig["effort"];
 	reasoningSummary?: ReasoningConfig["summary"] | null;
+	/** Explicit `reasoning.context` override; defaults to `all_turns` for every Codex request when unset. */
+	reasoningContext?: CodexReasoningContext;
 	textVerbosity?: "low" | "medium" | "high";
 	include?: string[];
+	/** Responses Lite transport contract: strips image detail and disables parallel tool calling, mirroring codex-rs. */
+	responsesLite?: boolean;
 }
 
 export interface InputItem {
@@ -33,12 +41,10 @@ export interface RequestBody {
 	input?: InputItem[];
 	tools?: unknown;
 	tool_choice?: unknown;
-	temperature?: number;
-	top_p?: number;
-	top_k?: number;
-	min_p?: number;
-	presence_penalty?: number;
-	repetition_penalty?: number;
+	// Sampling controls (temperature/top_p/top_k/min_p/presence_penalty/
+	// repetition_penalty/frequency_penalty/stop) are intentionally absent: the
+	// Codex backend rejects every one with a 400 `Unsupported parameter`, so
+	// the transformer never sets them (#3117).
 	reasoning?: Partial<ReasoningConfig>;
 	text?: {
 		verbosity?: "low" | "medium" | "high";
@@ -46,9 +52,31 @@ export interface RequestBody {
 	include?: string[];
 	prompt_cache_key?: string;
 	prompt_cache_retention?: "in_memory" | "24h";
+	client_metadata?: Record<string, string>;
 	max_output_tokens?: number;
 	max_completion_tokens?: number;
+	service_tier?: "auto" | "default" | "flex" | "scale" | "priority" | null;
 	[key: string]: unknown;
+}
+
+function containsInputImage(value: unknown): boolean {
+	if (!value || typeof value !== "object") return false;
+	if ((value as { type?: unknown }).type === "input_image") return true;
+	if (Array.isArray(value)) {
+		for (const item of value) {
+			if (containsInputImage(item)) return true;
+		}
+		return false;
+	}
+	for (const item of Object.values(value)) {
+		if (containsInputImage(item)) return true;
+	}
+	return false;
+}
+
+/** Returns whether a Codex request can use the text-only Responses Lite transport. */
+export function shouldUseCodexResponsesLite(body: RequestBody, requested: boolean | undefined): boolean {
+	return requested === true && !containsInputImage(body.input);
 }
 
 function getReasoningConfig(model: Model<Api>, options: CodexRequestOptions): ReasoningConfig {
@@ -105,8 +133,8 @@ function orphanFunctionOutputToMessage(item: InputItem, callId: string): InputIt
  * Repair both halves of unpaired tool exchanges so the Responses input grammar
  * stays valid — the API rejects either orphan with a 400:
  *
- * - `function_call_output` with no matching `function_call` → folded into an
- *   assistant message (`400 No tool call found for function call output …`).
+ * - `function_call_output` / `custom_tool_call_output` with no matching call →
+ *   folded into an assistant message (`400 No tool call found for … output`).
  *   Regression of #472 / #1351.
  * - `function_call` / `custom_tool_call` with no matching `*_output` → a
  *   placeholder output is synthesized immediately after the call
@@ -131,7 +159,11 @@ function repairToolCallPairs(input: InputItem[]): InputItem[] {
 	for (const item of input) {
 		const callId = typeof item.call_id === "string" ? item.call_id : undefined;
 
-		if (item.type === "function_call_output" && callId !== undefined && !callIds.has(callId)) {
+		if (
+			(item.type === "function_call_output" || item.type === "custom_tool_call_output") &&
+			callId !== undefined &&
+			!callIds.has(callId)
+		) {
 			repaired.push(orphanFunctionOutputToMessage(item, callId));
 			continue;
 		}
@@ -151,6 +183,29 @@ function repairToolCallPairs(input: InputItem[]): InputItem[] {
 		}
 	}
 	return repaired;
+}
+
+/**
+ * Responses Lite requests must not pin image detail levels: codex-rs strips
+ * `detail` from every input image (message content and tool outputs) before
+ * sending, letting the server choose.
+ */
+function stripImageDetails(input: InputItem[]): void {
+	for (const item of input) {
+		for (const collection of [item.content, item.output]) {
+			if (!Array.isArray(collection)) continue;
+			for (const part of collection) {
+				if (
+					part &&
+					typeof part === "object" &&
+					(part as { type?: unknown }).type === "input_image" &&
+					"detail" in part
+				) {
+					part.detail = undefined;
+				}
+			}
+		}
+	}
 }
 
 export async function transformRequestBody(
@@ -181,19 +236,34 @@ export async function transformRequestBody(
 		body.input = [...developerMessages, ...body.input];
 	}
 
+	const responsesLite = shouldUseCodexResponsesLite(body, options.responsesLite);
+	if (responsesLite) {
+		if (Array.isArray(body.input)) {
+			stripImageDetails(body.input);
+		}
+		// Responses Lite does not support parallel tool calling; codex-rs forces
+		// it off (`prompt.parallel_tool_calls && !use_responses_lite`).
+		if (body.tools !== undefined) {
+			body.parallel_tool_calls = false;
+		}
+	}
+
 	if (options.reasoningEffort !== undefined) {
 		const reasoningConfig = getReasoningConfig(model, options);
 		body.reasoning = {
 			...body.reasoning,
 			...reasoningConfig,
 		};
+		// Default reasoning replay to `all_turns` for every Codex request,
+		// mirroring codex-rs; an explicit `reasoningContext` overrides it.
+		body.reasoning.context = options.reasoningContext ?? "all_turns";
 	} else {
 		delete body.reasoning;
 	}
 
 	body.text = {
 		...body.text,
-		verbosity: options.textVerbosity || "low",
+		verbosity: options.textVerbosity || "high",
 	};
 
 	const include = Array.isArray(options.include) ? [...options.include] : [];

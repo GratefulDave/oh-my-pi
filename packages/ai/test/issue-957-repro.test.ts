@@ -2,13 +2,11 @@ import { afterEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { AuthStorage, SqliteAuthCredentialStore } from "../src/auth-storage";
-import * as kimiOauth from "../src/utils/oauth/kimi";
-
-const originalFetch = global.fetch;
+import { AuthStorage, SqliteAuthCredentialStore } from "@oh-my-pi/pi-ai/auth-storage";
+import * as kimiOauth from "@oh-my-pi/pi-ai/registry/oauth/kimi";
+import { removeWithRetries } from "../../utils/src/temp";
 
 afterEach(() => {
-	global.fetch = originalFetch;
 	vi.restoreAllMocks();
 });
 
@@ -31,20 +29,24 @@ describe("issue #957 - Kimi OAuth refresh", () => {
 		const issuedAt = 1_700_000_000_000;
 		vi.spyOn(Date, "now").mockReturnValue(issuedAt);
 		vi.spyOn(kimiOauth, "getKimiCommonHeaders").mockReturnValue(kimiHeadersStub);
-
-		global.fetch = (async (_input: string | URL, init?: RequestInit) => {
-			const params = new URLSearchParams(String(init?.body));
-			expect(params.get("grant_type")).toBe("refresh_token");
-			expect(params.get("refresh_token")).toBe("refresh-0");
-			return new Response(
-				JSON.stringify({
-					access_token: "access-1",
-					refresh_token: "refresh-1",
-					expires_in: 60 * 60,
-				}),
-				{ status: 200, headers: { "Content-Type": "application/json" } },
-			);
-		}) as unknown as typeof fetch;
+		vi.spyOn(globalThis, "fetch").mockImplementation(
+			Object.assign(
+				async (_input: string | URL | Request, init?: RequestInit) => {
+					const params = new URLSearchParams(String(init?.body));
+					expect(params.get("grant_type")).toBe("refresh_token");
+					expect(params.get("refresh_token")).toBe("refresh-0");
+					return new Response(
+						JSON.stringify({
+							access_token: "access-1",
+							refresh_token: "refresh-1",
+							expires_in: 60 * 60,
+						}),
+						{ status: 200, headers: { "Content-Type": "application/json" } },
+					);
+				},
+				{ preconnect: fetch.preconnect },
+			),
+		);
 
 		const refreshed = await kimiOauth.refreshKimiToken("refresh-0");
 
@@ -62,20 +64,25 @@ describe("issue #957 - Kimi OAuth refresh", () => {
 		vi.spyOn(kimiOauth, "getKimiCommonHeaders").mockReturnValue(kimiHeadersStub);
 
 		let refreshCalls = 0;
-		global.fetch = (async (_input: string | URL, init?: RequestInit) => {
-			refreshCalls += 1;
-			const params = new URLSearchParams(String(init?.body));
-			expect(params.get("grant_type")).toBe("refresh_token");
-			expect(params.get("refresh_token")).toBe("refresh-stored");
-			return new Response(
-				JSON.stringify({
-					access_token: "access-refreshed",
-					refresh_token: "refresh-refreshed",
-					expires_in: 60 * 60,
-				}),
-				{ status: 200, headers: { "Content-Type": "application/json" } },
-			);
-		}) as unknown as typeof fetch;
+		vi.spyOn(globalThis, "fetch").mockImplementation(
+			Object.assign(
+				async (_input: string | URL | Request, init?: RequestInit) => {
+					refreshCalls += 1;
+					const params = new URLSearchParams(String(init?.body));
+					expect(params.get("grant_type")).toBe("refresh_token");
+					expect(params.get("refresh_token")).toBe("refresh-stored");
+					return new Response(
+						JSON.stringify({
+							access_token: "access-refreshed",
+							refresh_token: "refresh-refreshed",
+							expires_in: 60 * 60,
+						}),
+						{ status: 200, headers: { "Content-Type": "application/json" } },
+					);
+				},
+				{ preconnect: fetch.preconnect },
+			),
+		);
 
 		const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-ai-issue-957-"));
 		const store = await SqliteAuthCredentialStore.open(path.join(tempDir, "agent.db"));
@@ -106,7 +113,7 @@ describe("issue #957 - Kimi OAuth refresh", () => {
 			}
 		} finally {
 			store.close();
-			await fs.rm(tempDir, { recursive: true, force: true });
+			await removeWithRetries(tempDir);
 		}
 	});
 });

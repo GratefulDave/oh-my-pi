@@ -6,10 +6,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { disableProvider, enableProvider } from "../../src/capability";
-import { clearCache as clearFsCache } from "../../src/capability/fs";
-import { clearClaudePluginRootsCache } from "../../src/discovery/helpers";
-import { discoverAgents } from "../../src/task/discovery";
+import { disableProvider, enableProvider } from "@oh-my-pi/pi-coding-agent/capability";
+import { clearCache as clearFsCache } from "@oh-my-pi/pi-coding-agent/capability/fs";
+import { clearClaudePluginRootsCache } from "@oh-my-pi/pi-coding-agent/discovery/helpers";
+import { discoverAgents } from "@oh-my-pi/pi-coding-agent/task/discovery";
+import { removeSyncWithRetries } from "@oh-my-pi/pi-utils";
 
 const PLUGIN_AGENT_MD = [
 	"---",
@@ -59,7 +60,7 @@ describe("discoverAgents — claude-plugins disabled provider", () => {
 	});
 
 	afterEach(() => {
-		fs.rmSync(tempHome, { recursive: true, force: true });
+		removeSyncWithRetries(tempHome);
 		// Restore global state so other tests in the suite are not affected.
 		enableProvider("claude-plugins");
 		clearFsCache();

@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "bun:test";
-import type { SegmentContext } from "../src/modes/components/status-line/segments";
-import { renderSegment } from "../src/modes/components/status-line/segments";
-import { initTheme, theme } from "../src/modes/theme/theme";
+import type { SegmentContext } from "@oh-my-pi/pi-coding-agent/modes/components/status-line/segments";
+import { renderSegment } from "@oh-my-pi/pi-coding-agent/modes/components/status-line/segments";
+import { initTheme, theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 
 beforeAll(async () => {
 	await initTheme();
@@ -16,10 +16,12 @@ function createCtx(usage: Partial<SegmentContext["usageStats"]>): SegmentContext
 			sessionManager: undefined,
 		} as unknown as SegmentContext["session"],
 		width: 120,
+		compactThinkingLevel: false,
 		options: {},
 		planMode: null,
 		loopMode: null,
 		goalMode: null,
+		collab: null,
 		usageStats: {
 			input: 0,
 			output: 0,
@@ -31,10 +33,12 @@ function createCtx(usage: Partial<SegmentContext["usageStats"]>): SegmentContext
 			...usage,
 		},
 		contextPercent: 0,
+		contextTokens: 0,
 		contextWindow: 0,
 		autoCompactEnabled: false,
 		subagentCount: 0,
-		sessionStartTime: Date.now(),
+		activeMs: 0,
+		activeRepo: null,
 		git: {
 			branch: null,
 			status: null,

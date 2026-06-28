@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "bun:test";
+import { describe, expect, it } from "bun:test";
+import { renderDemotedThinking } from "@oh-my-pi/pi-ai/dialect";
 import { streamGoogle } from "@oh-my-pi/pi-ai/providers/google";
-import type { Context, Model } from "@oh-my-pi/pi-ai/types";
-import { hookFetch } from "@oh-my-pi/pi-utils";
+import type { Context, FetchImpl, Model } from "@oh-my-pi/pi-ai/types";
+import { buildModel } from "@oh-my-pi/pi-catalog/build";
 
-const model: Model<"google-generative-ai"> = {
+const model: Model<"google-generative-ai"> = buildModel({
 	id: "gemini-3-pro-preview",
 	name: "Gemini 3 Pro Preview",
 	api: "google-generative-ai",
@@ -14,32 +15,26 @@ const model: Model<"google-generative-ai"> = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	contextWindow: 200_000,
 	maxTokens: 32_000,
-};
+});
 
 async function captureGooglePayload(
 	context: Context,
 ): Promise<{ config: { systemInstruction?: unknown }; contents: unknown[] }> {
 	let captured: { config: { systemInstruction?: unknown }; contents: unknown[] } | undefined;
-	// Intercept the outgoing REST call so the streamGoogle promise resolves cleanly without
-	// hitting the network. The test only validates `onPayload` (which fires before fetch).
-	using _hook = hookFetch(
-		async () => new Response("", { status: 200, headers: { "content-type": "text/event-stream" } }),
-	);
+	const fetchMock: FetchImpl = async () =>
+		new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
 
 	await streamGoogle(model, context, {
 		apiKey: "test-key",
 		onPayload: payload => {
 			captured = payload as { config: { systemInstruction?: unknown }; contents: unknown[] };
 		},
+		fetch: fetchMock,
 	}).result();
 
 	expect(captured).toBeDefined();
 	return captured!;
 }
-
-afterEach(() => {
-	vi.restoreAllMocks();
-});
 
 describe("Google provider system prompts", () => {
 	it("sends every system prompt block as systemInstruction text parts", async () => {
@@ -83,5 +78,34 @@ describe("Google provider system prompts", () => {
 			parts: [{ thought: true, text: "prior thought", thoughtSignature: "QUJDRA==" }],
 		});
 		expect(payload.contents).toHaveLength(1);
+	});
+
+	it("demotes same-model unsigned thinking instead of emitting an unsigned thought part", async () => {
+		const payload = await captureGooglePayload({
+			messages: [
+				{
+					role: "assistant",
+					api: "google-generative-ai",
+					provider: "google",
+					model: model.id,
+					content: [{ type: "thinking", thinking: "unsigned prior thought" }],
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "stop",
+					timestamp: 1,
+				},
+			],
+		});
+
+		expect(payload.contents[0]).toEqual({
+			role: "model",
+			parts: [{ text: renderDemotedThinking(model.id, "unsigned prior thought") }],
+		});
 	});
 });

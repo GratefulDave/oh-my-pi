@@ -5,10 +5,17 @@ import {
 	extractFactsSafe,
 	heuristicExtractFacts,
 	parseFacts,
-} from "../src/core/extraction";
-import { getExtractionStats, resetExtractionStats } from "../src/core/extraction/diagnostics";
-import { CallableLlmBackend, resetHostLlmBackendForTests, setHostLlmBackend } from "../src/core/llm-backends";
-import { type ResolvedMnemopiRuntimeOptions, withMnemopiRuntimeOptions } from "../src/core/runtime-options";
+} from "@oh-my-pi/pi-mnemopi/core/extraction";
+import { getExtractionStats, resetExtractionStats } from "@oh-my-pi/pi-mnemopi/core/extraction/diagnostics";
+import {
+	CallableLlmBackend,
+	resetHostLlmBackendForTests,
+	setHostLlmBackend,
+} from "@oh-my-pi/pi-mnemopi/core/llm-backends";
+import {
+	type ResolvedMnemopiRuntimeOptions,
+	withMnemopiRuntimeOptions,
+} from "@oh-my-pi/pi-mnemopi/core/runtime-options";
 
 const OLD_ENV = { ...process.env };
 function restoreEnv(): void {
@@ -111,5 +118,22 @@ describe("structured extraction", () => {
 			"The user lives in Berlin",
 			"The user uses TypeScript",
 		]);
+	});
+
+	it("captures `Instruction:` facts only when a subject precedes always/never", () => {
+		// Subject-led imperatives are still captured.
+		expect(heuristicExtractFacts("I never use semicolons and you always wrap lines at 100.")).toEqual([
+			"Instruction: never use semicolons",
+			"Instruction: always wrap lines at 100",
+		]);
+	});
+
+	it("ignores subjectless always/never sentences (issue #3372)", () => {
+		// Pre-fix this would have produced `Instruction: never activates` and
+		// `Instruction: never populates …` from assistant narrative prose.
+		const transcript =
+			"[role: assistant]\nso reorder never activates and the panel never populates (because pointer events fire before the drop handler binds).\n[assistant:end]";
+		const facts = heuristicExtractFacts(transcript);
+		expect(facts.some(f => f.startsWith("Instruction:"))).toBe(false);
 	});
 });

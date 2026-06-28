@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "bun:test";
+import { afterEach, beforeAll, describe, expect, it, vi } from "bun:test";
 import type { AssistantMessage } from "@oh-my-pi/pi-ai";
+import { AssistantMessageComponent } from "@oh-my-pi/pi-coding-agent/modes/components/assistant-message";
 import {
 	buildDisplayMessage,
 	CATCHUP_FRAMES,
@@ -9,6 +10,11 @@ import {
 	StreamingRevealController,
 	visibleUnits,
 } from "@oh-my-pi/pi-coding-agent/modes/controllers/streaming-reveal";
+import { initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+
+beforeAll(async () => {
+	await initTheme(false);
+});
 
 function makeUsage(): AssistantMessage["usage"] {
 	return {
@@ -52,9 +58,11 @@ function thinkingAt(message: AssistantMessage, index: number): string {
 
 class RecordingComponent {
 	messages: AssistantMessage[] = [];
+	transientFlags: Array<boolean | undefined> = [];
 
-	updateContent(message: AssistantMessage): void {
+	updateContent(message: AssistantMessage, opts?: { transient?: boolean }): void {
 		this.messages.push(message);
+		this.transientFlags.push(opts?.transient);
 	}
 }
 
@@ -66,11 +74,14 @@ function latestMessage(component: RecordingComponent): AssistantMessage {
 	return message;
 }
 
-function makeController(options: { smooth?: boolean; hideThinking?: boolean; requestRender?: () => void } = {}) {
+function makeController(
+	options: { smooth?: boolean; hideThinking?: boolean; proseOnly?: () => boolean; requestRender?: () => void } = {},
+) {
 	const component = new RecordingComponent();
 	const controller = new StreamingRevealController({
 		getSmoothStreaming: () => options.smooth ?? true,
 		getHideThinkingBlock: () => options.hideThinking ?? false,
+		getProseOnlyThinking: options.proseOnly ?? (() => true),
 		requestRender: options.requestRender ?? (() => {}),
 	});
 	return { component, controller };
@@ -102,6 +113,46 @@ describe("streaming reveal", () => {
 		expect(display.content[0]).toBe(thinkingBlock);
 		expect(thinkingAt(display, 0)).toBe("thought");
 		expect(textAt(display, 1)).toBe("a");
+	});
+
+	it("excludes dot-only reasoning placeholders from the reveal budget", () => {
+		const thinkingBlock = { type: "thinking" as const, thinking: "...", thinkingSignature: "reasoning_content" };
+		const target = makeMessage([thinkingBlock, { type: "text", text: "answer" }]);
+
+		expect(visibleUnits(target, false)).toBe("answer".length);
+		const display = buildDisplayMessage(target, 1, false);
+
+		expect(display.content[0]).toBe(thinkingBlock);
+		expect(textAt(display, 1)).toBe("a");
+	});
+
+	it("keeps pure-code thinking visible as an ascii ellipsis", () => {
+		const target = makeMessage([
+			{ type: "thinking", thinking: "```js\nconst x = 1;\n```" },
+			{ type: "text", text: "answer" },
+		]);
+
+		expect(visibleUnits(target, false)).toBe("...answer".length);
+		const display = buildDisplayMessage(target, 3, false);
+
+		expect(thinkingAt(display, 0)).toBe("...");
+		expect(textAt(display, 1)).toBe("");
+
+		const component = new AssistantMessageComponent(display);
+		expect(Bun.stripANSI(component.render(80).join("\n"))).toContain("...");
+	});
+
+	it("refreshes prose-only setting during unsmoothed streaming updates", () => {
+		let proseOnly = true;
+		const target = makeMessage([{ type: "thinking", thinking: "```js\nconst x = 1;\n```" }]);
+		const { component, controller } = makeController({ smooth: false, proseOnly: () => proseOnly });
+
+		controller.begin(component, target);
+		expect(thinkingAt(latestMessage(component), 0)).toBe("...");
+
+		proseOnly = false;
+		controller.setTarget(target);
+		expect(thinkingAt(latestMessage(component), 0)).toBe("```js\nconst x = 1;\n```");
 	});
 
 	it("smooths thinking content when thinking is shown", () => {
@@ -151,6 +202,24 @@ describe("streaming reveal", () => {
 		}
 	});
 
+	it("keeps grapheme counts correct when an append extends the final cluster", () => {
+		vi.useFakeTimers();
+		const { component, controller } = makeController();
+
+		controller.begin(component, makeMessage([{ type: "text", text: "" }]));
+		controller.setTarget(makeMessage([{ type: "text", text: "ab👨" }]));
+		vi.advanceTimersByTime(STREAMING_REVEAL_FRAME_MS);
+		// The appended ZWJ sequence merges into the previous final grapheme:
+		// "👨" + "\u200D👩" becomes a single cluster, so the cached per-block
+		// count must re-segment from that cluster, not just add the suffix.
+		controller.setTarget(makeMessage([{ type: "text", text: "ab👨\u200D👩x" }]));
+		for (let i = 0; i < 6; i++) {
+			vi.advanceTimersByTime(STREAMING_REVEAL_FRAME_MS);
+		}
+
+		expect(textAt(latestMessage(component), 0)).toBe("ab👨\u200D👩x");
+	});
+
 	it("renders full targets immediately when smoothing is disabled", () => {
 		vi.useFakeTimers();
 		const requestRender = vi.fn();
@@ -166,19 +235,26 @@ describe("streaming reveal", () => {
 		expect(requestRender).not.toHaveBeenCalled();
 	});
 
-	it("ticks increasing prefixes at the render cadence", () => {
+	it("marks unsmoothed in-flight updates as transient", () => {
+		const { component, controller } = makeController({ smooth: false });
+
+		controller.begin(component, makeMessage([{ type: "text", text: "chunk" }]));
+		controller.setTarget(makeMessage([{ type: "text", text: "chunky" }]));
+
+		expect(component.transientFlags).toEqual([true, true]);
+	});
+
+	it("keeps smooth catch-up renders transient until the final message_end render", () => {
 		vi.useFakeTimers();
-		const requestRender = vi.fn();
-		const { component, controller } = makeController({ requestRender });
+		const { component, controller } = makeController();
 
 		controller.begin(component, makeMessage([{ type: "text", text: "" }]));
-		controller.setTarget(makeMessage([{ type: "text", text: "abcdefghi" }]));
+		controller.setTarget(makeMessage([{ type: "text", text: "abc" }]));
+		vi.advanceTimersByTime(STREAMING_REVEAL_FRAME_MS);
 
-		vi.advanceTimersByTime(STREAMING_REVEAL_FRAME_MS);
 		expect(textAt(latestMessage(component), 0)).toBe("abc");
-		vi.advanceTimersByTime(STREAMING_REVEAL_FRAME_MS);
-		expect(textAt(latestMessage(component), 0)).toBe("abcdef");
-		expect(requestRender).toHaveBeenCalledTimes(2);
+		expect(component.transientFlags).not.toHaveLength(0);
+		expect(component.transientFlags.every(flag => flag === true)).toBe(true);
 	});
 
 	it("stop halts pending ticker updates", () => {

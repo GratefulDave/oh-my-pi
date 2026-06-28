@@ -1,5 +1,7 @@
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
-import { getSupportedEfforts, type Model, modelsAreEqual } from "@oh-my-pi/pi-ai";
+import type { Model } from "@oh-my-pi/pi-ai";
+import { getSupportedEfforts } from "@oh-my-pi/pi-catalog/model-thinking";
+import { modelsAreEqual } from "@oh-my-pi/pi-catalog/models";
 import {
 	Container,
 	fuzzyFilter,
@@ -7,6 +9,7 @@ import {
 	Input,
 	matchesKey,
 	ScrollView,
+	type SgrMouseEvent,
 	Spacer,
 	type Tab,
 	TabBar,
@@ -16,8 +19,8 @@ import {
 } from "@oh-my-pi/pi-tui";
 import { formatNumber } from "@oh-my-pi/pi-utils";
 import type { ModelRegistry } from "../../config/model-registry";
-import { getKnownRoleIds, getRoleInfo, MODEL_ROLE_IDS, MODEL_ROLES } from "../../config/model-registry";
 import { getModelMatchPreferences, resolveModelRoleValue } from "../../config/model-resolver";
+import { getKnownRoleIds, getRoleInfo, MODEL_ROLE_IDS, MODEL_ROLES } from "../../config/model-roles";
 import type { Settings } from "../../config/settings";
 import { type ThemeColor, theme } from "../../modes/theme/theme";
 import { matchesSelectDown, matchesSelectUp } from "../../modes/utils/keybinding-matchers";
@@ -142,6 +145,9 @@ function formatProviderTabLabel(providerId: string): string {
 function createProviderTab(providerId: string): ProviderTabState {
 	return { id: providerId, label: formatProviderTabLabel(providerId), providerId };
 }
+const TEMPORARY_MODEL_PICKER_HINT =
+	"Temporary model selection is session-only. Use Alt+M or /model for role models (default/smol/plan/task/slow/custom roles).";
+
 /**
  * Component that renders a model selector with provider tabs and context menu.
  * - Tab/Arrow Left/Right: Switch between provider tabs
@@ -169,7 +175,12 @@ export class ModelSelectorComponent extends Container {
 	#tui: TUI;
 	#scopedModels: ReadonlyArray<ScopedModelItem>;
 	#temporaryOnly: boolean;
+	#directSelect: boolean;
+	#pickerHint: string | undefined;
 	#currentContextTokens: number;
+	#listLineOffset = 0;
+	#listStartIndex = 0;
+	#listVisibleCount = 0;
 
 	#menuRoleActions: MenuRoleAction[] = [];
 
@@ -177,9 +188,9 @@ export class ModelSelectorComponent extends Container {
 	#providers: ProviderTabState[] = STATIC_PROVIDER_TABS;
 	#activeTabIndex: number = 0;
 	#refreshingProviders: Set<string> = new Set();
-	#scheduledProviderRefreshes: Map<string, ReturnType<typeof setTimeout>> = new Map();
+	#scheduledProviderRefreshes: Map<string, Timer> = new Map();
 	#refreshSpinnerFrame: number = 0;
-	#refreshSpinnerInterval?: NodeJS.Timeout;
+	#refreshSpinnerInterval?: Timer;
 
 	// Context menu state
 	#isMenuOpen: boolean = false;
@@ -195,7 +206,13 @@ export class ModelSelectorComponent extends Container {
 		scopedModels: ReadonlyArray<ScopedModelItem>,
 		onSelect: RoleSelectCallback,
 		onCancel: () => void,
-		options?: { temporaryOnly?: boolean; initialSearchInput?: string; currentContextTokens?: number },
+		options?: {
+			temporaryOnly?: boolean;
+			directSelect?: boolean;
+			pickerHint?: string;
+			initialSearchInput?: string;
+			currentContextTokens?: number;
+		},
 	) {
 		super();
 
@@ -206,6 +223,8 @@ export class ModelSelectorComponent extends Container {
 		this.#onSelectCallback = onSelect;
 		this.#onCancelCallback = onCancel;
 		this.#temporaryOnly = options?.temporaryOnly ?? false;
+		this.#directSelect = options?.directSelect ?? false;
+		this.#pickerHint = options?.pickerHint;
 		const currentContextTokens = options?.currentContextTokens ?? 0;
 		this.#currentContextTokens =
 			Number.isFinite(currentContextTokens) && currentContextTokens > 0 ? Math.floor(currentContextTokens) : 0;
@@ -228,6 +247,13 @@ export class ModelSelectorComponent extends Container {
 				: "Only showing models with configured API keys (see README for details)";
 		this.addChild(new Text(theme.fg("warning", hintText), 0, 0));
 		this.addChild(new Spacer(1));
+		if (this.#temporaryOnly) {
+			this.addChild(new Text(theme.fg("muted", TEMPORARY_MODEL_PICKER_HINT), 0, 0));
+			this.addChild(new Spacer(1));
+		} else if (this.#directSelect && this.#pickerHint) {
+			this.addChild(new Text(theme.fg("muted", this.#pickerHint), 0, 0));
+			this.addChild(new Spacer(1));
+		}
 
 		// Create header container for tab bar
 		this.#headerContainer = new Container();
@@ -263,21 +289,26 @@ export class ModelSelectorComponent extends Container {
 		// Add bottom border
 		this.addChild(new DynamicBorder());
 
-		// Load models and do initial render
-		this.#loadModels().then(() => {
-			this.#buildProviderTabs();
-			this.#updateTabBar();
-			// Always apply the current search query — the user may have typed
-			// while models were loading asynchronously.
-			const currentQuery = this.#searchInput.getValue();
-			if (currentQuery) {
-				this.#filterModels(currentQuery);
-			} else {
-				this.#updateList();
-			}
-			// Request re-render after models are loaded
-			this.#tui.requestRender();
-		});
+		// Hydrate synchronously from the current registry snapshot so the first
+		// Enter after opening the selector acts on cached models instead of being
+		// dropped while the offline refresh promise is still pending. This stays
+		// on the open path, so it must remain cheap — heavy lifting lives in the
+		// registry's one-pass getCanonicalModelSelections.
+		this.#syncFromRegistryState();
+
+		// Reconcile with cached discovery state in the background. A --models
+		// scope is registry-independent, so the offline reload would only repeat
+		// the synchronous hydration above.
+		if (this.#scopedModels.length === 0) {
+			this.#modelRegistry
+				.refresh("offline")
+				.then(() => this.#syncFromRegistryState())
+				.catch(error => {
+					this.#errorMessage = error instanceof Error ? error.message : String(error);
+					this.#updateList();
+				})
+				.finally(() => this.#tui.requestRender());
+		}
 	}
 
 	#buildMenuRoleActions(): void {
@@ -477,37 +508,30 @@ export class ModelSelectorComponent extends Container {
 
 		const candidates = models.map(item => item.model);
 		this.#loadRoleModels(candidates);
-		const canonicalRecords = this.#modelRegistry.getCanonicalModels({
+		const canonicalSelections = this.#modelRegistry.getCanonicalModelSelections({
 			availableOnly: this.#scopedModels.length === 0,
 			candidates,
 		});
-		const canonicalModels = canonicalRecords
-			.map(record => {
-				const selectedModel = this.#modelRegistry.resolveCanonicalModel(record.id, {
-					availableOnly: this.#scopedModels.length === 0,
-					candidates,
-				});
-				if (!selectedModel) return undefined;
-				const searchText = [
-					record.id,
-					record.name,
-					selectedModel.provider,
-					selectedModel.id,
-					selectedModel.name,
-					...record.variants.flatMap(variant => [variant.selector, variant.model.name]),
-				].join(" ");
-				return {
-					kind: "canonical" as const,
-					id: record.id,
-					model: selectedModel,
-					selector: record.id,
-					variantCount: record.variants.length,
-					searchText,
-					normalizedSearchText: normalizeSearchText(searchText),
-					compactSearchText: compactSearchText(searchText),
-				};
-			})
-			.filter((item): item is CanonicalModelItem => item !== undefined);
+		const canonicalModels = canonicalSelections.map(({ record, model: selectedModel }): CanonicalModelItem => {
+			const searchText = [
+				record.id,
+				record.name,
+				selectedModel.provider,
+				selectedModel.id,
+				selectedModel.name,
+				...record.variants.flatMap(variant => [variant.selector, variant.model.name]),
+			].join(" ");
+			return {
+				kind: "canonical",
+				id: record.id,
+				model: selectedModel,
+				selector: record.id,
+				variantCount: record.variants.length,
+				searchText,
+				normalizedSearchText: normalizeSearchText(searchText),
+				compactSearchText: compactSearchText(searchText),
+			};
+		});
 
 		this.#sortModels(models);
 		this.#sortCanonicalModels(canonicalModels);
@@ -523,12 +547,27 @@ export class ModelSelectorComponent extends Container {
 		);
 	}
 
-	async #loadModels(): Promise<void> {
-		if (this.#scopedModels.length === 0) {
-			// Reload config and cached discovery state without blocking on live provider refresh
-			await this.#modelRegistry.refresh("offline");
-		}
+	/**
+	 * Rebuild the visible model lists from the registry's in-memory state.
+	 * Re-entrant: runs once synchronously at construction and again whenever a
+	 * background refresh lands, so it re-applies the live search query and pins
+	 * the highlighted item by selector — a refresh that reorders or inserts
+	 * models must not yank the user's selection out from under a pending Enter.
+	 */
+	#syncFromRegistryState(): void {
+		const selectedKey = this.#getSelectedItem()?.selector;
 		this.#loadModelsFromCurrentRegistryState();
+		this.#buildProviderTabs();
+		this.#updateTabBar();
+		this.#applyTabFilter();
+		if (selectedKey) {
+			const visibleItems = this.#getVisibleItems();
+			const restoredIndex = visibleItems.findIndex(item => item.selector === selectedKey);
+			if (restoredIndex >= 0 && restoredIndex !== this.#selectedIndex) {
+				this.#selectedIndex = this.#coerceSelectedIndex(restoredIndex, visibleItems);
+				this.#updateList();
+			}
+		}
 	}
 
 	#buildProviderTabs(): void {
@@ -631,10 +670,7 @@ export class ModelSelectorComponent extends Container {
 			// here must stay purely in-memory — do not call modelRegistry.refresh()
 			// again or tab switches will pay an extra whole-registry reload after the
 			// network round-trip completes.
-			this.#loadModelsFromCurrentRegistryState();
-			this.#buildProviderTabs();
-			this.#updateTabBar();
-			this.#applyTabFilter();
+			this.#syncFromRegistryState();
 		} catch (error) {
 			this.#errorMessage = error instanceof Error ? error.message : String(error);
 			this.#updateList();
@@ -686,9 +722,17 @@ export class ModelSelectorComponent extends Container {
 		return this.#getActiveTabId() === CANONICAL_TAB;
 	}
 
-	#isModelOverContextLimit(model: Model): boolean {
+	#isModelOverCurrentContext(model: Model): boolean {
 		const contextWindow = model.contextWindow ?? 0;
 		return this.#currentContextTokens > 0 && contextWindow > 0 && this.#currentContextTokens > contextWindow;
+	}
+
+	#isModelOverContextLimit(model: Model): boolean {
+		return this.#temporaryOnly && this.#isModelOverCurrentContext(model);
+	}
+
+	#formatCurrentContextLimitSuffix(model: Model): string {
+		return ` ${theme.status.disabled} context>${formatNumber(model.contextWindow ?? 0).toLowerCase()}`;
 	}
 
 	#isItemDisabled(item: ModelItem | CanonicalModelItem): boolean {
@@ -699,7 +743,7 @@ export class ModelSelectorComponent extends Container {
 		if (!this.#isModelOverContextLimit(model)) {
 			return "";
 		}
-		return ` ${theme.status.disabled} context>${formatNumber(model.contextWindow).toLowerCase()}`;
+		return this.#formatCurrentContextLimitSuffix(model);
 	}
 
 	#getVisibleItems(): ReadonlyArray<ModelItem | CanonicalModelItem> {
@@ -906,6 +950,8 @@ export class ModelSelectorComponent extends Container {
 			Math.min(this.#selectedIndex - Math.floor(maxVisible / 2), visibleItems.length - maxVisible),
 		);
 		const endIndex = Math.min(startIndex + maxVisible, visibleItems.length);
+		this.#listStartIndex = startIndex;
+		this.#listVisibleCount = Math.max(0, endIndex - startIndex);
 
 		const showProvider = this.#getActiveTabId() === ALL_TAB;
 
@@ -924,7 +970,8 @@ export class ModelSelectorComponent extends Container {
 			// Build role badges. Solid badges are configured; outlined badges are auto-selected defaults.
 			const roleBadgeTokens: string[] = [];
 			for (const role of MODEL_ROLE_IDS) {
-				const { tag, color } = getRoleInfo(role, this.#settings);
+				const { tag, color, hidden } = getRoleInfo(role, this.#settings);
+				if (hidden) continue;
 				const assigned = this.#roles[role];
 				if (!tag || !assigned || !modelsAreEqual(assigned.model, item.model)) continue;
 
@@ -1004,7 +1051,7 @@ export class ModelSelectorComponent extends Container {
 			const limitWarning = this.#isItemDisabled(selected)
 				? theme.fg(
 						"dim",
-						` — current context ${formatNumber(this.#currentContextTokens).toLowerCase()} > ${formatNumber(selected.model.contextWindow).toLowerCase()} limit`,
+						` — current context ${formatNumber(this.#currentContextTokens).toLowerCase()} > ${formatNumber(selected.model.contextWindow ?? 0).toLowerCase()} limit`,
 					)
 				: "";
 			this.#listContainer.addChild(
@@ -1033,6 +1080,19 @@ export class ModelSelectorComponent extends Container {
 			: this.#filteredModels[this.#selectedIndex];
 	}
 
+	#coerceMenuSelectedIndex(index: number): number {
+		const maxIndex = this.#menuRoleActions.length - 1;
+		if (maxIndex < 0) {
+			return 0;
+		}
+		return Math.max(0, Math.min(index, maxIndex));
+	}
+
+	#moveMenuSelection(delta: number, _selectedItem: ModelItem | CanonicalModelItem, optionCount: number): void {
+		this.#menuSelectedIndex = (this.#menuSelectedIndex + delta + optionCount) % optionCount;
+		this.#updateMenu();
+	}
+
 	#openMenu(): void {
 		const selectedItem = this.#getSelectedItem();
 		if (!selectedItem || this.#isItemDisabled(selectedItem)) return;
@@ -1040,7 +1100,11 @@ export class ModelSelectorComponent extends Container {
 		this.#isMenuOpen = true;
 		this.#menuStep = "role";
 		this.#menuSelectedRole = null;
-		this.#menuSelectedIndex = 0;
+		this.#menuSelectedIndex = this.#coerceMenuSelectedIndex(0);
+		// Collapse the model list while the action/thinking menu is open so the
+		// menu owns the full viewport instead of stacking below a now-irrelevant
+		// (and often off-screen) list.
+		this.#listContainer.clear();
 		this.#updateMenu();
 	}
 
@@ -1049,6 +1113,8 @@ export class ModelSelectorComponent extends Container {
 		this.#menuStep = "role";
 		this.#menuSelectedRole = null;
 		this.#menuContainer.clear();
+		// Restore the model list that #openMenu collapsed.
+		this.#updateList();
 	}
 
 	#updateMenu(): void {
@@ -1076,14 +1142,24 @@ export class ModelSelectorComponent extends Container {
 				? `  Thinking for: ${selectedRoleName} (${selectedItem.id})`
 				: `  Action for: ${selectedItem.id}`;
 		const hintText = showingThinking ? "  Enter: confirm  Esc: back" : "  Enter: continue  Esc: cancel";
-		const menuWidth = Math.max(
+		// Window the option list so a long action/thinking menu scrolls inside the
+		// viewport instead of running off the bottom of the screen.
+		const maxVisible = this.#getMenuVisibleCount(optionLines.length);
+		const needsScroll = optionLines.length > maxVisible;
+		const startIndex = needsScroll
+			? Math.max(0, Math.min(this.#menuSelectedIndex - Math.floor(maxVisible / 2), optionLines.length - maxVisible))
+			: 0;
+		const endIndex = needsScroll ? startIndex + maxVisible : optionLines.length;
+		const contentWidth = Math.max(
 			visibleWidth(headerText),
 			visibleWidth(hintText),
 			...optionLines.map(line => visibleWidth(line)),
 		);
+		// Reserve one column for the scrollbar when the list overflows.
+		const menuWidth = contentWidth + (needsScroll ? 1 : 0);
 
 		this.#menuContainer.addChild(new Spacer(1));
-		this.#menuContainer.addChild(new Text(theme.fg("border", theme.boxSharp.horizontal.repeat(menuWidth)), 0, 0));
+		this.#menuContainer.addChild(new Text(theme.fg("border", theme.boxRound.horizontal.repeat(menuWidth)), 0, 0));
 		if (showingThinking && this.#menuSelectedRole) {
 			this.#menuContainer.addChild(
 				new Text(
@@ -1097,17 +1173,93 @@ export class ModelSelectorComponent extends Container {
 		}
 		this.#menuContainer.addChild(new Spacer(1));
 
-		for (let i = 0; i < optionLines.length; i++) {
+		const visibleRows: string[] = [];
+		for (let i = startIndex; i < endIndex; i++) {
 			const lineText = optionLines[i];
-			if (!lineText) continue;
+			if (lineText === undefined) continue;
 			const isSelected = i === this.#menuSelectedIndex;
-			const line = isSelected ? theme.fg("accent", lineText) : theme.fg("muted", lineText);
-			this.#menuContainer.addChild(new Text(line, 0, 0));
+			visibleRows.push(isSelected ? theme.fg("accent", lineText) : theme.fg("muted", lineText));
+		}
+		if (needsScroll) {
+			const sv = new ScrollView(visibleRows, {
+				height: visibleRows.length,
+				scrollbar: "auto",
+				totalRows: optionLines.length,
+				theme: { track: t => theme.fg("muted", t), thumb: t => theme.fg("accent", t) },
+			});
+			sv.setScrollOffset(startIndex);
+			for (const row of sv.render(menuWidth)) {
+				this.#menuContainer.addChild(new Text(row, 0, 0));
+			}
+		} else {
+			for (const row of visibleRows) {
+				this.#menuContainer.addChild(new Text(row, 0, 0));
+			}
 		}
 
 		this.#menuContainer.addChild(new Spacer(1));
 		this.#menuContainer.addChild(new Text(theme.fg("dim", hintText), 0, 0));
-		this.#menuContainer.addChild(new Text(theme.fg("border", theme.boxSharp.horizontal.repeat(menuWidth)), 0, 0));
+		this.#menuContainer.addChild(new Text(theme.fg("border", theme.boxRound.horizontal.repeat(menuWidth)), 0, 0));
+	}
+
+	#getMenuVisibleCount(optionCount: number): number {
+		// Rows the selector chrome and the menu's own header/hint/borders/spacers
+		// consume, leaving the remainder of the viewport for the scrollable option
+		// window. Without a known terminal height (e.g. tests) show every option.
+		const MENU_CHROME_ROWS = 19;
+		const MIN_VISIBLE_OPTIONS = 4;
+		const terminalRows = this.#tui.terminal?.rows ?? 0;
+		if (!Number.isFinite(terminalRows) || terminalRows <= 0) return optionCount;
+		return Math.max(MIN_VISIBLE_OPTIONS, Math.min(optionCount, terminalRows - MENU_CHROME_ROWS));
+	}
+
+	/**
+	 * Concatenate children like Container.render, recording where the model list
+	 * lands so routed mouse events can be hit-tested against it.
+	 */
+	override render(width: number): readonly string[] {
+		const lines: string[] = [];
+		for (const child of this.children) {
+			const childLines = child.render(Math.max(1, width));
+			if (child === this.#listContainer) {
+				this.#listLineOffset = lines.length;
+			}
+			lines.push(...childLines);
+		}
+		return lines;
+	}
+
+	routeMouse(event: SgrMouseEvent, line: number, _col: number): void {
+		if (this.#isMenuOpen) return;
+
+		if (event.wheel !== null) {
+			this.#moveSelection(event.wheel);
+			return;
+		}
+
+		const listLine = line - this.#listLineOffset;
+		if (listLine < 0 || listLine >= this.#listVisibleCount) return;
+
+		const index = this.#listStartIndex + listLine;
+		const item = this.#getVisibleItems()[index];
+		if (!item || this.#isItemDisabled(item)) return;
+
+		if (event.motion) {
+			if (index !== this.#selectedIndex) {
+				this.#selectedIndex = index;
+				this.#updateList();
+			}
+			return;
+		}
+
+		if (event.leftClick) {
+			this.#selectedIndex = index;
+			if (this.#temporaryOnly || this.#directSelect) {
+				this.#handleSelect(item, null);
+			} else {
+				this.#openMenu();
+			}
+		}
 	}
 
 	handleInput(keyData: string): void {
@@ -1133,12 +1285,12 @@ export class ModelSelectorComponent extends Container {
 			return;
 		}
 
-		// Enter - open context menu or select directly in temporary mode
+		// Enter - open context menu or select directly in temporary/direct-select mode
 		if (matchesKey(keyData, "enter") || matchesKey(keyData, "return") || keyData === "\n") {
 			const selectedItem = this.#getSelectedItem();
 			if (selectedItem && !this.#isItemDisabled(selectedItem)) {
-				if (this.#temporaryOnly) {
-					// In temporary mode, skip menu and select directly
+				if (this.#temporaryOnly || this.#directSelect) {
+					// In temporary/direct-select mode, skip menu and select directly
 					this.#handleSelect(selectedItem, null);
 				} else {
 					this.#openMenu();
@@ -1168,14 +1320,12 @@ export class ModelSelectorComponent extends Container {
 		if (optionCount === 0) return;
 
 		if (matchesSelectUp(keyData)) {
-			this.#menuSelectedIndex = (this.#menuSelectedIndex - 1 + optionCount) % optionCount;
-			this.#updateMenu();
+			this.#moveMenuSelection(-1, selectedItem, optionCount);
 			return;
 		}
 
 		if (matchesSelectDown(keyData)) {
-			this.#menuSelectedIndex = (this.#menuSelectedIndex + 1) % optionCount;
-			this.#updateMenu();
+			this.#moveMenuSelection(1, selectedItem, optionCount);
 			return;
 		}
 

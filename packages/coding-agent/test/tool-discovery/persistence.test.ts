@@ -1,12 +1,15 @@
 import { describe, expect, it } from "bun:test";
-import type { DiscoverableTool } from "../../src/tool-discovery/tool-index";
-import { buildDiscoverableToolSearchIndex } from "../../src/tool-discovery/tool-index";
+import type { DiscoverableTool } from "@oh-my-pi/pi-coding-agent/tool-discovery/tool-index";
+import {
+	buildDiscoverableToolSearchIndex,
+	searchDiscoverableTools,
+} from "@oh-my-pi/pi-coding-agent/tool-discovery/tool-index";
 
 describe("generic index: DiscoverableTool round-trip", () => {
 	const tools: DiscoverableTool[] = [
 		{
-			name: "find",
-			label: "find",
+			name: "glob",
+			label: "glob",
 			summary: "Find files matching a glob pattern",
 			source: "builtin",
 			schemaKeys: ["pattern", "path"],
@@ -23,19 +26,17 @@ describe("generic index: DiscoverableTool round-trip", () => {
 	];
 
 	it("builds and searches without loss", () => {
-		const { searchDiscoverableTools } = require("../../src/tool-discovery/tool-index");
 		const index = buildDiscoverableToolSearchIndex(tools);
 		expect(index.documents).toHaveLength(2);
 
 		const findResults = searchDiscoverableTools(index, "find files", 3);
-		expect(findResults.some((r: any) => r.tool.name === "find")).toBe(true);
+		expect(findResults.some((r: any) => r.tool.name === "glob")).toBe(true);
 
 		const ghResults = searchDiscoverableTools(index, "github search", 3);
 		expect(ghResults.some((r: any) => r.tool.name === "mcp__gh_search")).toBe(true);
 	});
 
 	it("preserves source field in search results", () => {
-		const { searchDiscoverableTools } = require("../../src/tool-discovery/tool-index");
 		const index = buildDiscoverableToolSearchIndex(tools);
 		const results = searchDiscoverableTools(index, "github", 3);
 		const ghResult = results.find((r: any) => r.tool.name === "mcp__gh_search");

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { DiscoverableTool } from "../../src/tool-discovery/tool-index";
+import type { DiscoverableTool } from "@oh-my-pi/pi-coding-agent/tool-discovery/tool-index";
 import {
 	buildDiscoverableToolSearchIndex,
 	collectDiscoverableTools,
@@ -10,7 +10,8 @@ import {
 	searchDiscoverableTools,
 	selectDiscoverableToolNamesByServer,
 	summarizeDiscoverableTools,
-} from "../../src/tool-discovery/tool-index";
+} from "@oh-my-pi/pi-coding-agent/tool-discovery/tool-index";
+import { type } from "arktype";
 
 // ─── Minimal AgentTool stub ───────────────────────────────────────────────────
 
@@ -114,6 +115,14 @@ describe("getDiscoverableTool", () => {
 		});
 		const result = getDiscoverableTool(tool);
 		// sorted alphabetically
+		expect(result!.schemaKeys).toEqual(["alpha", "beta", "gamma"]);
+	});
+
+	it("extracts schema keys from Zod-schema parameters via wire conversion", () => {
+		const tool = makeAgentTool("foo", {
+			parameters: type({ gamma: "string", alpha: "number?", beta: "boolean" }),
+		});
+		const result = getDiscoverableTool(tool);
 		expect(result!.schemaKeys).toEqual(["alpha", "beta", "gamma"]);
 	});
 });
@@ -252,8 +261,8 @@ describe("BM25 search", () => {
 			schemaKeys: ["channel", "text"],
 		},
 		{
-			name: "find",
-			label: "find",
+			name: "glob",
+			label: "glob",
 			summary: "Find files and directories matching a glob pattern",
 			source: "builtin",
 			schemaKeys: ["pattern", "path"],
@@ -275,7 +284,7 @@ describe("BM25 search", () => {
 
 	it("finds built-in tools too", () => {
 		const results = searchDiscoverableTools(index, "find files", 5);
-		expect(results.some(r => r.tool.name === "find")).toBe(true);
+		expect(results.some(r => r.tool.name === "glob")).toBe(true);
 	});
 
 	it("respects the limit", () => {

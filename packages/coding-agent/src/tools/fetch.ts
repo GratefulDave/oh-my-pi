@@ -3,11 +3,10 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
-import type { ImageContent, TextContent } from "@oh-my-pi/pi-ai";
+import type { FetchImpl, ImageContent, TextContent } from "@oh-my-pi/pi-ai";
 import { htmlToMarkdown } from "@oh-my-pi/pi-natives";
 import { type Component, Text } from "@oh-my-pi/pi-tui";
 import { $which, ptree, truncate } from "@oh-my-pi/pi-utils";
-import { parseHTML } from "linkedom";
 import { LRUCache } from "lru-cache/raw";
 import type { Settings } from "../config/settings";
 import { readEditableNotebookText } from "../edit/notebook";
@@ -18,14 +17,14 @@ import type { AgentStorage } from "../session/agent-storage";
 import { DEFAULT_MAX_BYTES, truncateHead } from "../session/streaming-output";
 import { renderStatusLine, urlHyperlink } from "../tui";
 import { CachedOutputBlock, markFramedBlockComponent } from "../tui/output-block";
+import { webpExclusionForModel } from "../utils/image-loading";
 import { formatDimensionNote, resizeImage } from "../utils/image-resize";
 import { ensureTool } from "../utils/tools-manager";
+import { type ArchiveFormat, listArchiveRoot, sniffArchiveFormat } from "../utils/zip";
 import { extractWithParallel, findParallelApiKey, getParallelExtractContent } from "../web/parallel";
-import { specialHandlers } from "../web/scrapers";
-import type { RenderResult } from "../web/scrapers/types";
-import { finalizeOutput, loadPage, looksLikeHtml, MAX_OUTPUT_CHARS } from "../web/scrapers/types";
+import type { RenderResult, SpecialHandler } from "../web/scrapers/types";
+import { finalizeOutput, loadPage, looksLikeHtml, MAX_BYTES, MAX_OUTPUT_CHARS } from "../web/scrapers/types";
 import { convertWithMarkit, fetchBinary } from "../web/scrapers/utils";
-import { type ArchiveFormat, listArchiveRoot, sniffArchiveFormat } from "./archive-reader";
 import { applyListLimit } from "./list-limit";
 import { formatStyledArtifactReference, type OutputMeta } from "./output-meta";
 import { type LineRange, parseLineRanges } from "./path-utils";
@@ -51,34 +50,9 @@ const CONVERTIBLE_MIMES = new Set([
 	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 	"application/rtf",
 	"application/epub+zip",
-	"image/png",
-	"image/jpeg",
-	"image/gif",
-	"image/webp",
-	"audio/mpeg",
-	"audio/wav",
-	"audio/ogg",
 ]);
 
-const CONVERTIBLE_EXTENSIONS = new Set([
-	".pdf",
-	".doc",
-	".docx",
-	".ppt",
-	".pptx",
-	".xls",
-	".xlsx",
-	".rtf",
-	".epub",
-	".png",
-	".jpg",
-	".jpeg",
-	".gif",
-	".webp",
-	".mp3",
-	".wav",
-	".ogg",
-]);
+const CONVERTIBLE_EXTENSIONS = new Set([".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".rtf", ".epub"]);
 
 const NOTEBOOK_MIMES = new Set(["application/x-ipynb+json"]);
 const NOTEBOOK_EXTENSIONS = new Set([".ipynb"]);
@@ -191,7 +165,7 @@ export interface ParsedReadUrlTarget {
 
 /** Recognize a single selector token (`raw` or one/many line ranges). */
 function isUrlSelectorToken(token: string): boolean {
-	if (token === "raw") return true;
+	if (token.toLowerCase() === "raw") return true;
 	try {
 		return parseLineRanges(token) !== null;
 	} catch {
@@ -213,7 +187,7 @@ export function parseReadUrlTarget(readPath: string): ParsedReadUrlTarget | null
 	let raw = false;
 	let ranges: readonly LineRange[] | undefined;
 	for (const sel of embedded?.sels ?? []) {
-		if (sel === "raw") {
+		if (sel.toLowerCase() === "raw") {
 			raw = true;
 			continue;
 		}
@@ -549,7 +523,8 @@ function cleanFeedText(text: string): string {
 /**
  * Parse RSS/Atom feed to markdown
  */
-function parseFeedToMarkdown(content: string, maxItems = 10): string {
+async function parseFeedToMarkdown(content: string, maxItems = 10): Promise<string> {
+	const { parseHTML } = await import("linkedom");
 	try {
 		const doc = parseHTML(content).document;
 
@@ -637,6 +612,7 @@ export async function renderHtmlToText(
 	settings: Settings,
 	userSignal: AbortSignal | undefined,
 	storage: AgentStorage | null,
+	fetchOverride?: FetchImpl,
 ): Promise<{ content: string; ok: boolean; method: string }> {
 	const overallSignal = ptree.combineSignals(userSignal, timeout * 1000);
 	const execOptions = {
@@ -650,6 +626,7 @@ export async function renderHtmlToText(
 	// Per-attempt budget for remote endpoints so one stall cannot consume the
 	// whole reader-mode budget and starve the local fallbacks.
 	const remoteSignal = () => ptree.combineSignals(userSignal, remoteBudgetMs);
+	const fetchImpl = fetchOverride ?? fetch;
 
 	const runners: Record<FetchProvider, () => Promise<string | null>> = {
 		// Purely local, no network/subprocess: still works on already-loaded HTML
@@ -670,14 +647,20 @@ export async function renderHtmlToText(
 			if (!findParallelApiKey(storage)) return null;
 			const parallelResult = await extractWithParallel(
 				[url],
-				{ objective: "Extract the main content", excerpts: true, fullContent: false, signal: remoteSignal() },
+				{
+					objective: "Extract the main content",
+					excerpts: true,
+					fullContent: false,
+					signal: remoteSignal(),
+					fetch: fetchImpl,
+				},
 				storage,
 			);
 			const firstDocument = parallelResult.results[0];
 			return firstDocument ? getParallelExtractContent(firstDocument) : null;
 		},
 		jina: async () => {
-			const response = await fetch(`https://r.jina.ai/${url}`, {
+			const response = await fetchImpl(`https://r.jina.ai/${url}`, {
 				headers: { Accept: "text/markdown" },
 				signal: remoteSignal(),
 			});
@@ -797,6 +780,21 @@ function isArchiveHint(mime: string, extensionHint: string): boolean {
 	return ARCHIVE_MIMES.has(mime) || ARCHIVE_EXTENSIONS.has(extensionHint);
 }
 
+/**
+ * Content types whose payload renderUrl always re-fetches via fetchBinary.
+ * Skipping the initial body read for them avoids downloading and
+ * string-decoding huge binaries (PDFs, archives, images) twice.
+ */
+function shouldSkipBodyDownload(contentType: string): boolean {
+	return (
+		CONVERTIBLE_MIMES.has(contentType) ||
+		NOTEBOOK_MIMES.has(contentType) ||
+		SQLITE_MIMES.has(contentType) ||
+		ARCHIVE_MIMES.has(contentType) ||
+		SUPPORTED_INLINE_IMAGE_MIME_TYPES.has(contentType)
+	);
+}
+
 function getArchiveFormatHint(mime: string, extensionHint: string): ArchiveFormat | undefined {
 	if (extensionHint === ".zip" || mime === "application/zip" || mime === "application/x-zip-compressed") {
 		return "zip";
@@ -893,6 +891,7 @@ async function tryRenderBinaryPayload(
 	mime: string,
 	extHint: string,
 	rawContent: string,
+	bodySkipped: boolean,
 	timeout: number,
 	signal: AbortSignal | undefined,
 	fetchedAt: string,
@@ -901,7 +900,7 @@ async function tryRenderBinaryPayload(
 	const hasNotebookHint = isNotebookHint(mime, extHint);
 	const hasSqliteHint = isSqliteHint(mime, extHint);
 	const hasArchiveHint = isArchiveHint(mime, extHint);
-	const rawLooksBinary = sampleLooksBinary(rawContent);
+	const rawLooksBinary = bodySkipped || sampleLooksBinary(rawContent);
 	if (!hasNotebookHint && !hasSqliteHint && !hasArchiveHint && !rawLooksBinary) {
 		return null;
 	}
@@ -1019,6 +1018,18 @@ async function tryRenderBinaryPayload(
 // Unified Special Handler Dispatch
 // =============================================================================
 
+let specialHandlersPromise: Promise<SpecialHandler[]> | undefined;
+
+/**
+ * Lazily load the site-specific scraper handlers. The scrapers barrel eagerly
+ * imports ~80 site modules, none of which are needed until the first fetch that
+ * requires a special handler, so we keep them out of the cold-startup graph.
+ */
+function loadSpecialHandlers(): Promise<SpecialHandler[]> {
+	specialHandlersPromise ??= import("../web/scrapers").then(m => m.specialHandlers);
+	return specialHandlersPromise;
+}
+
 /**
  * Try all special handlers
  */
@@ -1028,6 +1039,7 @@ async function handleSpecialUrls(
 	signal: AbortSignal | undefined,
 	storage: AgentStorage | null,
 ): Promise<FetchRenderResult | null> {
+	const specialHandlers = await loadSpecialHandlers();
 	for (const handler of specialHandlers) {
 		if (signal?.aborted) {
 			throw new ToolAbortError();
@@ -1052,6 +1064,8 @@ async function renderUrl(
 	settings: Settings,
 	signal: AbortSignal | undefined,
 	storage: AgentStorage | null,
+	fetchOverride?: FetchImpl,
+	excludeWebP?: true,
 ): Promise<FetchRenderResult> {
 	const notes: string[] = [];
 	const fetchedAt = new Date().toISOString();
@@ -1083,7 +1097,7 @@ async function renderUrl(
 	}
 
 	// Step 2: Fetch page
-	const response = await loadPage(url, { timeout, signal });
+	const response = await loadPage(url, { timeout, signal, skipBodyForContentType: shouldSkipBodyDownload });
 	if (signal?.aborted) {
 		throw new ToolAbortError();
 	}
@@ -1096,11 +1110,17 @@ async function renderUrl(
 			content: "",
 			fetchedAt,
 			truncated: false,
-			notes: [response.status ? `Failed to fetch URL (HTTP ${response.status})` : "Failed to fetch URL"],
+			notes: [
+				response.status ? `Failed to fetch URL (HTTP ${response.status})` : "Failed to fetch URL",
+				...(response.error ? [`Cause: ${response.error}`] : []),
+			],
 		};
 	}
 
 	const { finalUrl, content: rawContent } = response;
+	if (response.truncated) {
+		notes.push(`Response body exceeded ${formatBytes(MAX_BYTES)} and was cut mid-stream; content is incomplete`);
+	}
 	const mime = normalizeMime(response.contentType);
 	const extHint = getExtensionHint(finalUrl);
 
@@ -1111,45 +1131,25 @@ async function renderUrl(
 			notes.push(
 				`Image MIME type ${imageMimeType} is unsupported for inline model serialization; returning text metadata only`,
 			);
-			const shouldTryConvertibleFallback = isConvertible(mime, extHint);
-			if (shouldTryConvertibleFallback) {
-				notes.push("Attempting binary conversion fallback for unsupported image MIME type");
-			} else {
-				notes.push("Falling back to textual rendering from initial response");
-			}
-			skipConvertibleBinaryRetry = !shouldTryConvertibleFallback;
+			notes.push("Falling back to textual rendering from initial response");
+			skipConvertibleBinaryRetry = true;
 		} else {
 			const binary = await fetchBinary(finalUrl, timeout, signal);
 			if (binary.ok) {
 				notes.push("Fetched image binary");
-				const conversionExtension = getExtensionHint(finalUrl, binary.contentDisposition) || extHint;
-				let convertedText: string | null = null;
-				const converted = await convertWithMarkit(binary.buffer, conversionExtension, timeout, signal);
-				if (converted.ok) {
-					if (converted.content.trim().length > 50) {
-						notes.push("Converted with markit");
-						convertedText = converted.content;
-					} else {
-						notes.push("markit conversion produced no usable output");
-					}
-				} else if (converted.error) {
-					notes.push(`markit conversion failed: ${converted.error}`);
-				} else {
-					notes.push("markit conversion failed");
-				}
 
 				if (binary.buffer.byteLength > MAX_INLINE_IMAGE_SOURCE_BYTES) {
 					notes.push(
 						`Image exceeds inline source limit (${binary.buffer.byteLength} bytes > ${MAX_INLINE_IMAGE_SOURCE_BYTES} bytes)`,
 					);
 					const output = finalizeOutput(
-						convertedText ?? `Fetched image content (${imageMimeType}), but it is too large to inline render.`,
+						`Fetched image content (${imageMimeType}), but it is too large to inline render.`,
 					);
 					return {
 						url,
 						finalUrl,
 						contentType: imageMimeType,
-						method: convertedText ? "markit" : "image-too-large",
+						method: "image-too-large",
 						content: output.content,
 						fetchedAt,
 						truncated: output.truncated,
@@ -1159,22 +1159,20 @@ async function renderUrl(
 
 				const resized = await resizeImage(
 					{ type: "image", data: Buffer.from(binary.buffer).toBase64(), mimeType: imageMimeType },
-					{ maxBytes: MAX_INLINE_IMAGE_OUTPUT_BYTES },
+					{ maxBytes: MAX_INLINE_IMAGE_OUTPUT_BYTES, excludeWebP },
 				);
 				const isDecodedImage =
 					resized.originalWidth > 0 && resized.originalHeight > 0 && resized.width > 0 && resized.height > 0;
 				if (!isDecodedImage) {
 					notes.push(`Fetched payload could not be decoded as ${imageMimeType}; returning text metadata only`);
 					const output = finalizeOutput(
-						convertedText ??
-							rawContent ??
-							`Fetched payload was labeled ${imageMimeType}, but bytes were not a valid image.`,
+						rawContent ?? `Fetched payload was labeled ${imageMimeType}, but bytes were not a valid image.`,
 					);
 					return {
 						url,
 						finalUrl,
 						contentType: imageMimeType,
-						method: convertedText ? "markit" : "image-invalid",
+						method: "image-invalid",
 						content: output.content,
 						fetchedAt,
 						truncated: output.truncated,
@@ -1186,13 +1184,13 @@ async function renderUrl(
 						`Image exceeds inline output limit after resize (${resized.buffer.length} bytes > ${MAX_INLINE_IMAGE_OUTPUT_BYTES} bytes)`,
 					);
 					const output = finalizeOutput(
-						convertedText ?? `Fetched image content (${imageMimeType}), but it is too large to inline render.`,
+						`Fetched image content (${imageMimeType}), but it is too large to inline render.`,
 					);
 					return {
 						url,
 						finalUrl,
 						contentType: imageMimeType,
-						method: convertedText ? "markit" : "image-too-large",
+						method: "image-too-large",
 						content: output.content,
 						fetchedAt,
 						truncated: output.truncated,
@@ -1201,7 +1199,7 @@ async function renderUrl(
 				}
 
 				const dimensionNote = formatDimensionNote(resized);
-				let imageSummary = convertedText ?? `Fetched image content (${resized.mimeType}).`;
+				let imageSummary = `Fetched image content (${resized.mimeType}).`;
 				if (dimensionNote) {
 					imageSummary += `\n${dimensionNote}`;
 				}
@@ -1267,6 +1265,7 @@ async function renderUrl(
 		mime,
 		extHint,
 		rawContent,
+		response.bodySkipped === true,
 		timeout,
 		signal,
 		fetchedAt,
@@ -1312,7 +1311,7 @@ async function renderUrl(
 	}
 
 	if (isFeed || (isXml && (rawContent.includes("<rss") || rawContent.includes("<feed")))) {
-		const parsed = parseFeedToMarkdown(rawContent);
+		const parsed = await parseFeedToMarkdown(rawContent);
 		const output = finalizeOutput(parsed);
 		return {
 			url,
@@ -1405,7 +1404,7 @@ async function renderUrl(
 			const altResult = await loadPage(resolved, { timeout, signal });
 			if (altResult.ok && altResult.content.trim().length > 200) {
 				notes.push(`Used feed alternate: ${resolved}`);
-				const parsed = parseFeedToMarkdown(altResult.content);
+				const parsed = await parseFeedToMarkdown(altResult.content);
 				const output = finalizeOutput(parsed);
 				return {
 					url,
@@ -1425,7 +1424,15 @@ async function renderUrl(
 		}
 
 		// 5E: Render HTML via the reader-backend chain (native/trafilatura/lynx/parallel/jina)
-		const htmlResult = await renderHtmlToText(finalUrl, rawContent, timeout, settings, signal, storage);
+		const htmlResult = await renderHtmlToText(
+			finalUrl,
+			rawContent,
+			timeout,
+			settings,
+			signal,
+			storage,
+			fetchOverride,
+		);
 		if (!htmlResult.ok) {
 			notes.push("html rendering failed (no reader backend produced usable output)");
 
@@ -1626,7 +1633,16 @@ async function buildReadUrlCacheEntry(
 	}
 
 	const storage = session.settings.getStorage();
-	const result = await renderUrl(url, effectiveTimeout, raw, session.settings, signal, storage);
+	const result = await renderUrl(
+		url,
+		effectiveTimeout,
+		raw,
+		session.settings,
+		signal,
+		storage,
+		session.fetch,
+		webpExclusionForModel(session.getActiveModel?.()),
+	);
 	const output = buildUrlReadOutput(result, result.content);
 	const artifactId = options?.ensureArtifact ? await persistReadUrlArtifact(session, output) : undefined;
 

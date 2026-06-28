@@ -11,6 +11,7 @@ import { formatHashlineHeader, formatNumberedLines, type SnapshotStore } from "@
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { formatAge, formatBytes, readImageMetadata } from "@oh-my-pi/pi-utils";
+import { canonicalSnapshotKey } from "../edit/file-snapshot-store";
 import { normalizeToLF } from "../edit/normalize";
 import type { FileMentionMessage } from "../session/messages";
 import {
@@ -23,7 +24,7 @@ import { resolveReadPath } from "../tools/path-utils";
 import { formatDimensionNote, resizeImage } from "./image-resize";
 
 /** Regex to match @filepath patterns in text */
-const FILE_MENTION_REGEX = /@([^\s@]+)/g;
+const FILE_MENTION_REGEX = /@(?:"([^"]+)"|'([^']+)'|([^\s@]+))/g;
 const LEADING_PUNCTUATION_REGEX = /^[`"'([{<]+/;
 const TRAILING_PUNCTUATION_REGEX = /[)\]}>.,;:!?"'`]+$/;
 const MENTION_BOUNDARY_REGEX = /[\s([{<"'`]/;
@@ -167,7 +168,10 @@ export function extractFileMentions(text: string): string[] {
 		const index = match.index ?? 0;
 		if (!isMentionBoundary(text, index)) continue;
 
-		const cleaned = sanitizeMentionPath(match[1]);
+		const rawPath = match[1] ?? match[2] ?? match[3];
+		if (!rawPath) continue;
+
+		const cleaned = match[1] !== undefined || match[2] !== undefined ? rawPath.trim() : sanitizeMentionPath(rawPath);
 		if (!cleaned) continue;
 
 		mentions.push(cleaned);
@@ -259,7 +263,7 @@ export async function generateFileMentionMessages(
 			const normalized = snapshotStore ? normalizeToLF(content) : content;
 			let { output, lineCount } = buildTextOutput(normalized);
 			if (snapshotStore) {
-				const tag = snapshotStore.record(absolutePath, normalized);
+				const tag = snapshotStore.record(canonicalSnapshotKey(absolutePath), normalized);
 				output = `${formatHashlineHeader(resolvedPath, tag)}\n${formatNumberedLines(output)}`;
 			}
 			files.push({ path: resolvedPath, content: output, lineCount });

@@ -11,10 +11,12 @@ use std::fmt::Write;
 
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
 
+#[must_use]
 pub fn supports(program: &str, _subcommand: Option<&str>) -> bool {
 	matches!(program, "rustfmt")
 }
 
+#[must_use]
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	// Kill-switch parity (M2): legacy_filters_active=true skips this
 	// filter so callers can rollback without recompile.
@@ -70,14 +72,14 @@ fn condense_rustfmt(input: &str, exit_code: i32) -> String {
 		files.iter().filter(|f| seen.insert(**f)).collect()
 	};
 	let total = unique.len();
-	let _ = writeln!(out, "{total} files reformatted ({total} with diffs):");
+	let _ = writeln!(out, "{total} files reformatted:");
 	for file in unique.iter().take(3) {
 		out.push_str("  ");
 		out.push_str(file);
 		out.push('\n');
 	}
 	if total > 3 {
-		let _ = writeln!(out, "  … {} more", total - 3);
+		let _ = writeln!(out, "  […{} files elided…]", total - 3);
 	}
 	out
 }
@@ -112,7 +114,7 @@ mod tests {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let mut input = String::new();
 		for i in 0..50 {
-			input.push_str(&format!("Diff in src/file_{i}.rs at line 10:\n"));
+			let _ = writeln!(input, "Diff in src/file_{i}.rs at line 10:");
 			for _ in 0..8 {
 				input.push_str("-    old line\n");
 				input.push_str("+    new line\n");
@@ -123,7 +125,7 @@ mod tests {
 		assert!(out.changed);
 		assert!(out.text.contains("50 files reformatted"));
 		assert!(out.text.contains("src/file_0.rs"));
-		assert!(out.text.contains("… 47 more"));
+		assert!(out.text.contains("[…47 files elided…]"));
 		// Diff bodies must be elided.
 		assert!(!out.text.contains("old line"));
 		// Savings ratio ≥ 0.7
@@ -147,20 +149,19 @@ mod tests {
 		// Simulate a long usage/error dump with no `Diff in ` headers.
 		let mut input = String::new();
 		for i in 0..400 {
-			input.push_str(&format!("error: usage line {i}\n"));
+			let _ = writeln!(input, "error: usage line {i}");
 		}
 		let out = filter(&context, &input, 1);
 		assert!(out.changed);
 		// head_tail_lines(input, 80, 40) keeps 120 lines + marker.
-		assert!(out.text.contains("lines omitted"));
+		assert!(out.text.contains("ln elided…]"));
 	}
 
 	#[test]
 	fn rustfmt_legacy_filters_active_passes_through() {
 		// Kill-switch parity (M2).
-		let mut cfg = MinimizerConfig::default();
-		cfg.enabled = true;
-		cfg.legacy_filters_active = true;
+		let cfg =
+			MinimizerConfig { enabled: true, legacy_filters_active: true, ..Default::default() };
 		let context = ctx("rustfmt", "rustfmt --check src/", &cfg);
 		let input = "Diff in src/a.rs at line 1:\n-old\n+new\n";
 		let out = filter(&context, input, 1);

@@ -7,8 +7,9 @@ import {
 	AuthStorage,
 	REMOTE_REFRESH_SENTINEL,
 	SqliteAuthCredentialStore,
-} from "../src/auth-storage";
-import * as oauthUtils from "../src/utils/oauth";
+} from "@oh-my-pi/pi-ai/auth-storage";
+import * as oauthUtils from "@oh-my-pi/pi-ai/registry/oauth";
+import { removeWithRetries } from "../../utils/src/temp";
 
 describe("AuthStorage broker sentinel refresh", () => {
 	let tempDir = "";
@@ -43,7 +44,7 @@ describe("AuthStorage broker sentinel refresh", () => {
 		store = undefined;
 		authStorage = undefined;
 		if (tempDir) {
-			await fs.rm(tempDir, { recursive: true, force: true });
+			await removeWithRetries(tempDir);
 			tempDir = "";
 		}
 	});

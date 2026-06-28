@@ -1,10 +1,11 @@
 //! Conservative text filters for system-style commands.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Write as _};
 
 use super::git;
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
 
+#[must_use]
 pub fn supports(program: &str) -> bool {
 	matches!(
 		program,
@@ -23,11 +24,22 @@ pub fn supports(program: &str) -> bool {
 	)
 }
 
+#[must_use]
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	let cleaned = primitives::strip_ansi(input);
 	let command = ctx.program;
 	let text = match command {
-		"env" => compact_env(&cleaned),
+		"env" => {
+			if ctx
+				.command
+				.split_whitespace()
+				.any(|t| t == "-0" || t == "--null")
+			{
+				cleaned
+			} else {
+				compact_env(&cleaned)
+			}
+		},
 		"log" => compact_log(&cleaned),
 		"deps" => compact_dependency_output(&cleaned),
 		"summary" => compact_summary_output(&cleaned, exit_code),
@@ -213,7 +225,7 @@ struct LogLine {
 	count:    usize,
 }
 
-fn normalize_log_line(line: &str) -> String {
+pub(super) fn normalize_log_line(line: &str) -> String {
 	let without_timestamp = strip_leading_timestamp(line.trim());
 	let mut out = String::new();
 	for token in without_timestamp.split_whitespace() {
@@ -300,6 +312,41 @@ fn flush_digits(out: &mut String, digits: &mut String) {
 	digits.clear();
 }
 
+pub(super) fn compact_log_lines(
+	input: &str,
+	head: usize,
+	tail: usize,
+	key_fn: impl Fn(&str) -> String,
+) -> String {
+	let mut unique: Vec<LogLine> = Vec::new();
+	let mut by_key: HashMap<String, usize> = HashMap::new();
+
+	for (idx, line) in input.lines().enumerate() {
+		let key = if line.trim().is_empty() {
+			// Blank lines are section separators; do not globally deduplicate them.
+			// drop_repeated_blank_lines already collapsed consecutive blanks.
+			format!("<blank-{idx}>")
+		} else {
+			let key = key_fn(line);
+			if key.is_empty() {
+				line.to_string()
+			} else {
+				key
+			}
+		};
+		if let Some(index) = by_key.get(&key).copied() {
+			if let Some(entry) = unique.get_mut(index) {
+				entry.count += 1;
+			}
+		} else {
+			by_key.insert(key, unique.len());
+			unique.push(LogLine { original: line.to_string(), count: 1 });
+		}
+	}
+
+	render_counted_lines(&unique, head, tail)
+}
+
 fn render_counted_lines(lines: &[LogLine], head: usize, tail: usize) -> String {
 	let mut out = String::new();
 	if lines.len() <= head + tail {
@@ -311,9 +358,7 @@ fn render_counted_lines(lines: &[LogLine], head: usize, tail: usize) -> String {
 	for line in lines.iter().take(head) {
 		push_counted_line(&mut out, &line.original, line.count);
 	}
-	out.push_str("… ");
-	out.push_str(&(lines.len() - head - tail).to_string());
-	out.push_str(" unique lines omitted …\n");
+	let _ = writeln!(out, "[…{} unique lines elided…]", lines.len() - head - tail);
 	for line in lines.iter().skip(lines.len() - tail) {
 		push_counted_line(&mut out, &line.original, line.count);
 	}
@@ -703,9 +748,7 @@ fn compact_format_output(input: &str) -> String {
 			out.push('\n');
 		}
 		if files.len() > 50 {
-			out.push_str("… ");
-			out.push_str(&(files.len() - 50).to_string());
-			out.push_str(" more files\n");
+			let _ = writeln!(out, "[…{} files elided…]", files.len() - 50);
 		}
 	}
 	if errors.is_empty() && summary.is_empty() && files.is_empty() {
@@ -1026,7 +1069,7 @@ Time        0.42s
 		assert!(out.text.contains("errors:"));
 		assert!(out.text.contains("failed to parse src/bad.py"));
 		assert!(out.text.contains("files:"));
-		assert!(out.text.contains("more files"));
+		assert!(out.text.contains("[…50 files elided…]"));
 	}
 
 	#[test]

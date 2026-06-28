@@ -4,6 +4,7 @@ use std::fmt::Write as _;
 
 use crate::minimizer::{MinimizerCtx, MinimizerOutput, primitives};
 
+#[must_use]
 pub fn supports(subcommand: Option<&str>) -> bool {
 	matches!(
 		subcommand,
@@ -29,6 +30,7 @@ pub fn supports(subcommand: Option<&str>) -> bool {
 	)
 }
 
+#[must_use]
 pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerOutput {
 	if is_show_path_content(ctx.command) || is_stash_patch(ctx.command) {
 		return MinimizerOutput::passthrough(input);
@@ -38,6 +40,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 	let text = match ctx.subcommand {
 		Some("status") if is_status_machine_format(ctx.command) => cleaned,
 		Some("status") => condense_status(&cleaned),
+		Some("diff") if has_token(ctx.command, "--summary") => cleaned,
 		Some("diff") if is_stat_format(ctx.command) => condense_diff_stat(&cleaned),
 		Some("diff") => {
 			if exit_code == 0 {
@@ -52,6 +55,7 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		},
 		Some("show") if is_show_custom_format(ctx.command) => cleaned,
 		Some("show") => condense_show(&cleaned),
+		Some("log") if is_log_custom_format(ctx.command) => cleaned,
 		Some("log") => condense_log(&cleaned, 32, 16),
 		// Non-listing branch formats produce single values or one-liner
 		// confirmations (e.g. `--show-current` → `main`, `--delete` →
@@ -64,7 +68,16 @@ pub fn filter(ctx: &MinimizerCtx<'_>, input: &str, exit_code: i32) -> MinimizerO
 		Some("tag") if is_tag_non_listing(ctx.command) => cleaned,
 		Some("tag") => primitives::compact_listing(&cleaned, 40),
 		Some("stash") => condense_stash(ctx.command, &cleaned, exit_code),
-		Some("worktree") => cleaned,
+		Some("worktree") => {
+			if has_token(ctx.command, "--porcelain")
+				|| has_token(ctx.command, "-z")
+				|| has_token(ctx.command, "--null")
+			{
+				cleaned
+			} else {
+				condense_worktree(&cleaned)
+			}
+		},
 		Some("push") if has_token(ctx.command, "--porcelain") => cleaned,
 		Some("push") => condense_push(&cleaned, exit_code),
 		Some("pull") => condense_pull(&cleaned, exit_code),
@@ -130,9 +143,11 @@ fn has_flag(command: &str, flag: &str) -> bool {
 }
 
 fn is_status_machine_format(command: &str) -> bool {
-	command
-		.split_whitespace()
-		.any(|part| matches!(part, "--porcelain" | "--porcelain=v1" | "--porcelain=v2"))
+	command.split_whitespace().any(|part| {
+		matches!(part, "--porcelain" | "--porcelain=v1" | "--porcelain=v2" | "--null")
+			|| part == "-z"
+			|| part.starts_with('-') && !part.starts_with("--") && part.contains('z')
+	})
 }
 
 fn is_stat_format(command: &str) -> bool {
@@ -181,7 +196,7 @@ fn compact_diff_listing(input: &str, mode: DiffListingMode) -> String {
 		if !is_diff_listing_line(mode, line) {
 			return input.to_string();
 		}
-		entries.push(primitives::truncate_line(line, 160));
+		entries.push(line.to_string());
 	}
 
 	if entries.len() <= DIFF_LISTING_LIMIT {
@@ -194,7 +209,7 @@ fn compact_diff_listing(input: &str, mode: DiffListingMode) -> String {
 		out.push_str(entry);
 		out.push('\n');
 	}
-	let _ = writeln!(out, "… {} files omitted …", entries.len() - DIFF_LISTING_LIMIT);
+	let _ = writeln!(out, "[…{} files elided…]", entries.len() - DIFF_LISTING_LIMIT);
 	out
 }
 
@@ -208,13 +223,15 @@ fn is_diff_listing_line(mode: DiffListingMode, line: &str) -> bool {
 
 #[derive(Default)]
 struct StatusSummary {
-	branch:    Option<String>,
-	clean:     bool,
-	staged:    usize,
-	unstaged:  usize,
-	untracked: usize,
-	conflicts: usize,
-	paths:     Vec<String>,
+	branch:     Option<String>,
+	stash:      Option<String>,
+	divergence: Option<String>,
+	clean:      bool,
+	staged:     usize,
+	unstaged:   usize,
+	untracked:  usize,
+	conflicts:  usize,
+	paths:      Vec<String>,
 }
 
 fn condense_status(input: &str) -> String {
@@ -233,6 +250,10 @@ fn condense_status(input: &str) -> String {
 		if trimmed.is_empty() {
 			continue;
 		}
+		if let Some(branch) = line.strip_prefix("## ") {
+			summary.branch = Some(branch.to_string());
+			continue;
+		}
 		if parse_short_status_line(line, &mut summary) {
 			continue;
 		}
@@ -240,11 +261,31 @@ fn condense_status(input: &str) -> String {
 			summary.branch = Some(branch.to_string());
 			continue;
 		}
+		if trimmed.starts_with("Your branch is ahead")
+			|| trimmed.starts_with("Your branch is behind")
+			|| trimmed.starts_with("Your branch and")
+			|| trimmed.starts_with("HEAD detached")
+		{
+			summary.divergence = Some(trimmed.to_string());
+			continue;
+		}
+		if trimmed.starts_with("Your stash currently has ") {
+			summary.stash = Some(trimmed.to_string());
+			continue;
+		}
 		if trimmed.starts_with("nothing to commit") || trimmed == "working tree clean" {
 			summary.clean = true;
 			continue;
 		}
-		if let Some(detected) = detect_status_state(trimmed) {
+		// Only detect in-progress state headers OUTSIDE the "Untracked files:"
+		// section. Real `git status` prints these blocks before/after the file
+		// listings, never as untracked entries; but several progress phrases
+		// ("Last command done", "Next command to do", "No commands remaining")
+		// are plausible filenames, so an untracked file so named would otherwise
+		// be mis-read as `state: rebasing` and swallowed via the `continue`
+		// below, losing the real untracked count. Gating on `!in_untracked`
+		// lets such filenames fall through to the untracked path handling.
+		if !in_untracked && let Some(detected) = detect_status_state(trimmed) {
 			if state.is_none() {
 				state = Some(detected);
 			}
@@ -298,7 +339,20 @@ fn condense_status(input: &str) -> String {
 	}
 }
 fn detect_status_state(line: &str) -> Option<&str> {
-	if line.starts_with("You are currently rebasing") {
+	if line.starts_with("You are currently rebasing")
+		// Interactive-rebase sub-states all print under the same in-progress
+		// rebase header in default long-format `git status`; collapse them to
+		// the single `rebasing` label so an interactive-rebase edit/split is not
+		// mistaken for a clean tree. "You are currently editing a commit"/"…
+		// splitting the commit" are the rebase-edit/-split phase lines, and the
+		// "Last command done"/"Next command to do"/"No commands remaining"
+		// progress lines accompany them.
+		|| line.starts_with("You are currently editing")
+		|| line.starts_with("You are currently splitting")
+		|| line.starts_with("Last command done")
+		|| line.starts_with("Next command to do")
+		|| line.starts_with("No commands remaining")
+	{
 		Some("rebasing")
 	} else if line.starts_with("You are currently cherry-picking") {
 		Some("cherry-pick")
@@ -310,6 +364,11 @@ fn detect_status_state(line: &str) -> Option<&str> {
 		Some("am")
 	} else if line.starts_with("You are in a sparse checkout") {
 		Some("sparse-checkout")
+	} else if line.starts_with("All conflicts fixed but you are still merging") {
+		// Distinct from `merge-conflict`: the merge is staged and ready to
+		// conclude with `git commit`, so surface a separate "ready to commit"
+		// label rather than implying unresolved conflicts.
+		Some("merge (ready to commit)")
 	} else if line == "You have unmerged paths." {
 		Some("merge-conflict")
 	} else {
@@ -329,6 +388,9 @@ fn parse_short_status_line(line: &str, summary: &mut StatusSummary) -> bool {
 	}
 	if status == "  " {
 		return false;
+	}
+	if status == "!!" {
+		return true;
 	}
 	if status == "??" {
 		summary.untracked += 1;
@@ -406,6 +468,8 @@ fn push_status_path(summary: &mut StatusSummary, label: &str, path: &str) {
 
 const fn status_has_no_signal(summary: &StatusSummary) -> bool {
 	summary.branch.is_none()
+		&& summary.stash.is_none()
+		&& summary.divergence.is_none()
 		&& !summary.clean
 		&& summary.staged == 0
 		&& summary.unstaged == 0
@@ -418,6 +482,14 @@ fn format_status_summary(summary: &StatusSummary) -> String {
 	if let Some(branch) = &summary.branch {
 		out.push_str("branch ");
 		out.push_str(branch);
+		out.push('\n');
+	}
+	if let Some(div) = &summary.divergence {
+		out.push_str(div);
+		out.push('\n');
+	}
+	if let Some(stash) = &summary.stash {
+		out.push_str(stash);
 		out.push('\n');
 	}
 	if summary.clean && summary.paths.is_empty() {
@@ -440,9 +512,7 @@ fn format_status_summary(summary: &StatusSummary) -> String {
 		out.push('\n');
 	}
 	if summary.paths.len() > 40 {
-		out.push_str("… ");
-		out.push_str(&(summary.paths.len() - 40).to_string());
-		out.push_str(" paths omitted\n");
+		let _ = writeln!(out, "[…{} paths elided…]", summary.paths.len() - 40);
 	}
 	out
 }
@@ -459,9 +529,7 @@ fn condense_log(input: &str, head: usize, tail: usize) -> String {
 			for entry in entries.iter().take(head) {
 				push_log_entry(&mut out, entry);
 			}
-			out.push_str("… ");
-			out.push_str(&(entries.len() - head - tail).to_string());
-			out.push_str(" commits omitted …\n");
+			let _ = writeln!(out, "[…{} commits elided…]", entries.len() - head - tail);
 			for entry in entries.iter().skip(entries.len() - tail) {
 				push_log_entry(&mut out, entry);
 			}
@@ -493,19 +561,30 @@ struct LogEntry {
 	hash:    String,
 	subject: String,
 	body:    Vec<String>,
+	/// Body lines dropped past the per-commit body cap, surfaced as an explicit
+	/// `[…Nln elided…]` marker instead of being silently lost.
+	elided:  usize,
 }
+
+/// Soft cap on rendered subject/body line width. Long commit subjects and body
+/// lines are truncated through `truncate_line`, which appends a `…[+N]`
+/// dropped-char marker so the elision is visible rather than silent.
+const LOG_LINE_WIDTH: usize = 160;
 
 fn push_log_entry(out: &mut String, entry: &LogEntry) {
 	out.push_str(&entry.hash);
 	if !entry.subject.is_empty() {
 		out.push(' ');
-		out.push_str(&entry.subject);
+		out.push_str(&primitives::truncate_line(&entry.subject, LOG_LINE_WIDTH));
 	}
 	out.push('\n');
 	for line in &entry.body {
 		out.push_str("  ");
-		out.push_str(line);
+		out.push_str(&primitives::truncate_line(line, LOG_LINE_WIDTH));
 		out.push('\n');
+	}
+	if entry.elided > 0 {
+		let _ = writeln!(out, "  […{}ln elided…]", entry.elided);
 	}
 }
 
@@ -526,6 +605,7 @@ fn parse_log_entries(input: &str) -> Vec<LogEntry> {
 				hash:    short_hash(hash),
 				subject: subject.to_string(),
 				body:    Vec::new(),
+				elided:  0,
 			});
 			continue;
 		}
@@ -539,8 +619,15 @@ fn parse_log_entries(input: &str) -> Vec<LogEntry> {
 		}
 		if entry.subject.is_empty() {
 			entry.subject = trimmed.to_string();
-		} else if entry.body.len() < 3 && !is_git_trailer(trimmed) {
-			entry.body.push(trimmed.to_string());
+		} else if !is_git_trailer(trimmed) {
+			// Real (non-trailer) body lines past the 3-line cap are tallied so
+			// `push_log_entry` can emit an explicit `[…Nln elided…]` marker
+			// rather than dropping them silently.
+			if entry.body.len() < 3 {
+				entry.body.push(trimmed.to_string());
+			} else {
+				entry.elided += 1;
+			}
 		}
 	}
 
@@ -719,6 +806,10 @@ fn is_show_custom_format(command: &str) -> bool {
 		|| has_token(command, "--dirstat")
 }
 
+fn is_log_custom_format(command: &str) -> bool {
+	has_flag(command, "--format") || has_flag(command, "--pretty") || has_token(command, "--oneline")
+}
+
 fn condense_branch(input: &str) -> String {
 	let mut current: Option<String> = None;
 	let mut local = Vec::new();
@@ -833,9 +924,7 @@ pub(crate) fn compact_diff_output(input: &str) -> String {
 		out.push('\n');
 	}
 	if files.len() > 20 {
-		out.push_str("… ");
-		out.push_str(&(files.len() - 20).to_string());
-		out.push_str(" files omitted from stat\n");
+		let _ = writeln!(out, "[…{} files from stat elided…]", files.len() - 20);
 	}
 	out.push_str(&format_file_count(files.len()));
 	out.push_str(" changed, ");
@@ -859,21 +948,15 @@ pub(crate) fn compact_diff_output(input: &str) -> String {
 				out.push('\n');
 			}
 			if hunk.lines.len() > 6 {
-				out.push_str("  … ");
-				out.push_str(&(hunk.lines.len() - 6).to_string());
-				out.push_str(" changed lines omitted\n");
+				let _ = writeln!(out, "  […{} changed lines elided…]", hunk.lines.len() - 6);
 			}
 		}
 		if file.hunks.len() > 8 {
-			out.push_str("  … ");
-			out.push_str(&(file.hunks.len() - 8).to_string());
-			out.push_str(" hunks omitted\n");
+			let _ = writeln!(out, "  […{} hunks elided…]", file.hunks.len() - 8);
 		}
 	}
 	if files.len() > 12 {
-		out.push_str("\n… ");
-		out.push_str(&(files.len() - 12).to_string());
-		out.push_str(" files omitted from changes\n");
+		let _ = writeln!(out, "\n[…{} files from changes elided…]", files.len() - 12);
 	}
 	out
 }
@@ -1012,11 +1095,31 @@ fn condense_noisy_output(input: &str) -> String {
 
 fn condense_commit(input: &str, exit_code: i32) -> String {
 	if exit_code == 0 {
+		let mut hash = None;
+		let mut stat = None;
 		for line in input.lines() {
 			let trimmed = line.trim();
-			if let Some(hash) = parse_commit_hash(trimmed) {
-				return format!("ok {hash}\n");
+			if hash.is_none()
+				&& let Some(found) = parse_commit_hash(trimmed)
+			{
+				hash = Some(found);
+				continue;
 			}
+			// Default `git commit` success prints a "N files changed, …" stat line
+			// below the "[branch hash] msg" line; fold it back into the summary so
+			// the files/insertions signal survives the condense.
+			if stat.is_none() {
+				stat = parse_stat_summary(trimmed);
+			}
+		}
+		if let Some(hash) = hash {
+			return match stat {
+				Some((files, added, deleted)) => {
+					format!("ok {hash} ({files} files +{added} -{deleted})\n")
+				},
+				// `--quiet` (or otherwise stat-less) success keeps the bare hash.
+				None => format!("ok {hash}\n"),
+			};
 		}
 		// No commit hash found — likely a `--dry-run` invocation that exits 0
 		// but prints a status-style listing instead of a "[branch hash]" line.
@@ -1025,7 +1128,7 @@ fn condense_commit(input: &str, exit_code: i32) -> String {
 	}
 
 	if input.contains("nothing to commit") {
-		return "ok (nothing to commit)\n".to_string();
+		return format!("nothing to commit (exit {exit_code})\n");
 	}
 
 	condense_noisy_output(input)
@@ -1065,8 +1168,21 @@ fn is_remote_progress(line: &str) -> bool {
 }
 
 fn extract_pushed_ref(line: &str) -> Option<&str> {
-	let (_before, after_arrow) = line.split_once(" -> ")?;
-	after_arrow.split_whitespace().next()
+	if let Some((_before, after_arrow)) = line.split_once(" -> ") {
+		return after_arrow.split_whitespace().next();
+	}
+	let deleted = line.split_once("[deleted]")?.1.trim();
+	deleted.split_whitespace().next()
+}
+
+fn is_fetch_ref_update(line: &str) -> bool {
+	let Some((_before, after_arrow)) = line.split_once(" -> ") else {
+		return false;
+	};
+	after_arrow
+		.split_whitespace()
+		.next()
+		.is_some_and(|dest| dest != "FETCH_HEAD")
 }
 
 fn condense_push(input: &str, exit_code: i32) -> String {
@@ -1097,9 +1213,10 @@ fn condense_push(input: &str, exit_code: i32) -> String {
 				out.push('\n');
 				continue;
 			}
-			// Keep ref update lines: "* [new ...]", branch setup, or "hash..hash ref ->
-			// ref"
+			// Keep ref update lines: "* [new ...]", "- [deleted] ...", branch setup,
+			// or "hash..hash ref -> ref"
 			if trimmed.starts_with("* [new")
+				|| trimmed.starts_with("- [deleted]")
 				|| trimmed.starts_with("Branch ")
 				|| trimmed.contains(" -> ")
 			{
@@ -1180,7 +1297,7 @@ fn condense_diff_stat(input: &str) -> String {
 		out.push('\n');
 	}
 	if entries.len() > 20 {
-		let _ = writeln!(out, "… {} files omitted …", entries.len() - 20);
+		let _ = writeln!(out, "[…{} files elided…]", entries.len() - 20);
 	}
 	out
 }
@@ -1233,17 +1350,17 @@ fn condense_fetch(input: &str, exit_code: i32) -> String {
 				kept.push(trimmed.to_string());
 				continue;
 			}
-			// Branch fetch lines: " * branch       name -> FETCH_HEAD" or "   hash..hash
-			// name -> name"
+			// Branch fetch lines: " * branch       name -> FETCH_HEAD", " * [new branch]
+			// name -> origin/name", or "   hash..hash name -> name"
 			if trimmed.starts_with('*') || trimmed.starts_with(" *") {
-				if trimmed.contains("..") {
+				if is_fetch_ref_update(trimmed) {
 					updates += 1;
 				}
 				kept.push(trimmed.to_string());
 				continue;
 			}
 			if trimmed.contains(" -> ") && (trimmed.starts_with('-') || trimmed.contains("..")) {
-				if trimmed.contains("..") {
+				if is_fetch_ref_update(trimmed) {
 					updates += 1;
 				}
 				kept.push(trimmed.to_string());
@@ -1305,13 +1422,18 @@ fn condense_stash(command: &str, input: &str, exit_code: i32) -> String {
 		if sub == "push" || sub == "save" {
 			return "ok stashed\n".to_string();
 		}
-		if sub == "apply"
-			|| sub == "pop"
-			|| sub == "drop"
-			|| sub == "branch"
-			|| sub == "clear"
-			|| sub == "create"
-		{
+		if sub == "apply" || sub == "pop" || sub == "branch" {
+			let compacted = condense_status(input);
+			return if compacted == input {
+				input.to_string()
+			} else {
+				compacted
+			};
+		}
+		if sub == "create" {
+			return input.to_string();
+		}
+		if sub == "drop" || sub == "clear" {
 			return format!("ok stash {sub}\n");
 		}
 		// Default: compact listing fallback
@@ -1377,6 +1499,88 @@ fn stash_subcommand(command: &str) -> &str {
 	""
 }
 
+const WORKTREE_LIMIT: usize = 20;
+
+fn condense_worktree(input: &str) -> String {
+	// Home is re-derived from the environment (never shelled out) so a leading
+	// `$HOME` in worktree paths can be abbreviated to `~`. Falls back to no
+	// abbreviation when `HOME` is unset.
+	let home = std::env::var("HOME").unwrap_or_default();
+	condense_worktree_with_home(input, &home)
+}
+
+/// Condense `git worktree` output, shape-detected from the OUTPUT rather than
+/// the args so it covers both `worktree list` and bare confirmations.
+///
+/// Listing-shaped lines (`<abs-path> <hash> [<branch>]`, plus the `(bare)` and
+/// `(detached HEAD)` variants) get a leading `$HOME` abbreviated to `~` and are
+/// capped with an elided-count marker. Any non-listing output (`add`'s
+/// "Preparing worktree…"/"HEAD is now at …" confirmations, errors) is left to
+/// `condense_noisy_output`/passthrough so its meaning is preserved.
+fn condense_worktree_with_home(input: &str, home: &str) -> String {
+	let mut entries = Vec::new();
+	for line in input.lines() {
+		if line.trim().is_empty() {
+			continue;
+		}
+		if !is_worktree_listing_line(line) {
+			// Not a listing: confirmation / error / progress — hand off untouched.
+			return condense_noisy_output(input);
+		}
+		entries.push(abbreviate_worktree_home(line, home));
+	}
+
+	if entries.is_empty() {
+		return input.to_string();
+	}
+
+	let mut out = String::new();
+	for entry in entries.iter().take(WORKTREE_LIMIT) {
+		out.push_str(entry);
+		out.push('\n');
+	}
+	if entries.len() > WORKTREE_LIMIT {
+		let _ = writeln!(out, "[…{} worktrees elided…]", entries.len() - WORKTREE_LIMIT);
+	}
+	out
+}
+
+/// A `git worktree list` row is `<abs-path>  <hash> [<branch>]`, with the
+/// trailing column being `(bare)` for a bare repo or `(detached HEAD)` for a
+/// detached worktree. The discriminator: an absolute first token followed by a
+/// hex hash or the literal `(bare)`.
+fn is_worktree_listing_line(line: &str) -> bool {
+	let mut parts = line.split_whitespace();
+	let Some(path) = parts.next() else {
+		return false;
+	};
+	if !path.starts_with('/') {
+		return false;
+	}
+	let Some(second) = parts.next() else {
+		return false;
+	};
+	second == "(bare)" || is_short_hex(second)
+}
+
+fn is_short_hex(token: &str) -> bool {
+	token.len() >= 7 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn abbreviate_worktree_home(line: &str, home: &str) -> String {
+	if home.is_empty() {
+		return line.to_string();
+	}
+	// Only abbreviate a leading `$HOME` path prefix; a bare `$HOME` exactly is
+	// rendered as `~`. Mid-line occurrences are left untouched.
+	if let Some(rest) = line.strip_prefix(home)
+		&& (rest.is_empty() || rest.starts_with(['/', ' ', '\t']))
+	{
+		return format!("~{rest}");
+	}
+	line.to_string()
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -1410,6 +1614,49 @@ mod tests {
 	}
 
 	#[test]
+	fn short_status_with_branch_preserves_branch_summary() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status -sb", &cfg);
+		let input = "## main...origin/main [ahead 2]\n M src/main.rs\n";
+		let out = filter(&ctx, input, 0);
+		assert!(out.changed);
+		assert_eq!(
+			out.text,
+			"branch main...origin/main [ahead 2]\nstaged 0, unstaged 1, untracked 0\nM src/main.rs\n",
+		);
+	}
+
+	#[test]
+	fn status_null_output_is_passthrough() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status -sz", &cfg);
+		let input = " M src/main.rs\0?? scratch.txt\0";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn short_status_ignored_only_preserves_output() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status --short --ignored", &cfg);
+		let input = "!! ignored.log\n!! target/\n";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn short_status_ignored_rows_do_not_count_dirty() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status --short --ignored", &cfg);
+		let input = " M src/main.rs\n!! ignored.log\n";
+		let out = filter(&ctx, input, 0);
+		assert!(out.changed);
+		assert_eq!(out.text, "staged 0, unstaged 1, untracked 0\nM src/main.rs\n");
+	}
+
+	#[test]
 	fn long_status_clean_is_compacted() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("status"), "git status", &cfg);
@@ -1419,6 +1666,18 @@ mod tests {
 
 		assert!(out.changed);
 		assert_eq!(out.text, "branch main\nclean\n");
+	}
+
+	#[test]
+	fn long_status_show_stash_preserves_requested_stash_info() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status --show-stash", &cfg);
+		let input = "On branch main\nYour branch is up to date with 'origin/main'.\n\nYour stash \
+		             currently has 2 entries\n\nnothing to commit, working tree clean\n";
+		let out = filter(&ctx, input, 0);
+
+		assert!(out.changed);
+		assert_eq!(out.text, "branch main\nYour stash currently has 2 entries\nclean\n");
 	}
 
 	#[test]
@@ -1466,9 +1725,10 @@ mod tests {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx =
 			test_ctx(Some("tag"), "git tag --format=%(refname:short)|%(taggerdate:short)", &cfg);
-		let input = (0..45)
-			.map(|idx| format!("v1.{idx}|2026-06-06\n"))
-			.collect::<String>();
+		let input = (0..45).fold(String::new(), |mut s, idx| {
+			let _ = writeln!(s, "v1.{idx}|2026-06-06");
+			s
+		});
 
 		let out = filter(&ctx, &input, 0);
 
@@ -1480,9 +1740,10 @@ mod tests {
 	fn tag_delete_output_is_passthrough() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("tag"), "git tag -d v1.0 v1.1", &cfg);
-		let input = (0..45)
-			.map(|idx| format!("Deleted tag 'v1.{idx}' (was abc1234)\n"))
-			.collect::<String>();
+		let input = (0..45).fold(String::new(), |mut s, idx| {
+			let _ = writeln!(s, "Deleted tag 'v1.{idx}' (was abc1234)");
+			s
+		});
 
 		let out = filter(&ctx, &input, 0);
 
@@ -1494,7 +1755,10 @@ mod tests {
 	fn tag_listing_is_compacted() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("tag"), "git tag --list", &cfg);
-		let input = (0..45).map(|idx| format!("v1.{idx}\n")).collect::<String>();
+		let input = (0..45).fold(String::new(), |mut s, idx| {
+			let _ = writeln!(s, "v1.{idx}");
+			s
+		});
 
 		let out = filter(&ctx, &input, 0);
 
@@ -1513,6 +1777,51 @@ mod tests {
 			1,
 		);
 		assert_eq!(out.text, "remote: Counting objects: 1 (×2)\nerror: failed\n");
+	}
+
+	#[test]
+	fn fetch_output_counts_new_refs_as_updates() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("fetch"), "git fetch origin", &cfg);
+		let out = filter(
+			&ctx,
+			"From github.com:can1357/oh-my-pi\n * [new branch]      feature -> origin/feature\n",
+			0,
+		);
+		assert!(out.changed);
+		assert!(
+			out.text
+				.contains("* [new branch]      feature -> origin/feature")
+		);
+		assert!(out.text.contains("ok fetched, 1 update"));
+		assert!(!out.text.contains("up-to-date"));
+	}
+
+	#[test]
+	fn push_output_keeps_deleted_refs() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("push"), "git push origin --delete old-branch", &cfg);
+		let out =
+			filter(&ctx, "To github.com:can1357/oh-my-pi.git\n - [deleted]         old-branch\n", 0);
+		assert!(out.changed);
+		assert!(out.text.contains("- [deleted]         old-branch"));
+		assert!(out.text.contains("ok old-branch"));
+	}
+
+	#[test]
+	fn stash_apply_preserves_changed_paths() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("stash"), "git stash apply", &cfg);
+		let out = filter(
+			&ctx,
+			"On branch main\nChanges not staged for commit:\n  modified:   src/main.rs\n\nno changes \
+			 added to commit\n",
+			0,
+		);
+		assert!(out.changed);
+		assert!(out.text.contains("branch main"));
+		assert!(out.text.contains("M src/main.rs"));
+		assert!(!out.text.contains("ok stash apply"));
 	}
 
 	#[test]
@@ -1595,7 +1904,7 @@ mod tests {
 			input.push('\n');
 		}
 		let out = filter(&ctx, &input, 0);
-		assert!(out.text.contains("… 22 commits omitted …"));
+		assert!(out.text.contains("[…22 commits elided…]"));
 		assert!(out.text.contains("abcdef1 message 0"));
 		assert!(!out.text.contains("message 47"));
 		assert!(out.text.contains("abcdef1 message 69"));
@@ -1636,6 +1945,41 @@ mod tests {
 		assert!(out.text.contains("Fixes #123"));
 		assert!(!out.text.contains("Signed-off-by"));
 		assert!(!out.text.contains("Co-authored-by"));
+	}
+
+	#[test]
+	fn log_long_subject_is_truncated_with_dropped_marker() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("log"), "git log", &cfg);
+		let long_subject = "x".repeat(200);
+		let input = format!(
+			"commit abcdef1234567890\nAuthor: A <a@x.com>\nDate: today\n\n    {long_subject}\n"
+		);
+		let out = filter(&ctx, &input, 0);
+		// 200 chars → first 160 kept, 40 dropped, surfaced by truncate_line's marker.
+		assert!(
+			out.text
+				.contains(&format!("abcdef1 {}…[+40]", "x".repeat(160))),
+			"{:?}",
+			out.text
+		);
+		assert!(!out.text.contains(&long_subject), "full subject must not survive");
+	}
+
+	#[test]
+	fn log_body_over_cap_shows_elided_marker() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("log"), "git log", &cfg);
+		// Subject + 5 body lines: 3 kept, 2 past the cap surfaced as a marker.
+		let input = "commit abcdef1234567890\nAuthor: A <a@x.com>\nDate: today\n\n    feat: add \
+		             API\n\n    body line one\n    body line two\n    body line three\n    body \
+		             line four\n    body line five\n";
+		let out = filter(&ctx, input, 0);
+		assert!(out.text.contains("abcdef1 feat: add API"), "{:?}", out.text);
+		assert!(out.text.contains("body line one"));
+		assert!(out.text.contains("body line three"));
+		assert!(!out.text.contains("body line four"), "{:?}", out.text);
+		assert!(out.text.contains("[…2ln elided…]"), "{:?}", out.text);
 	}
 
 	#[test]
@@ -1702,7 +2046,7 @@ mod tests {
 		assert!(out.text.contains("src/file-0.rs\n"));
 		assert!(out.text.contains("src/file-19.rs\n"));
 		assert!(!out.text.contains("src/file-20.rs\n"));
-		assert!(out.text.contains("… 6 files omitted …"));
+		assert!(out.text.contains("[…6 files elided…]"));
 	}
 
 	#[test]
@@ -1720,10 +2064,8 @@ mod tests {
 			if idx % 3 == 0 {
 				input.push_str(".rs\tnew-");
 				input.push_str(&idx.to_string());
-				input.push_str(".rs\n");
-			} else {
-				input.push_str(".rs\n");
 			}
+			input.push_str(".rs\n");
 		}
 
 		let out = filter(&ctx, &input, 0);
@@ -1733,7 +2075,30 @@ mod tests {
 		assert!(out.text.contains("R100\told-0.rs\tnew-0.rs\n"));
 		assert!(out.text.contains("M\tpath-1.rs\n"));
 		assert!(!out.text.contains("path-20.rs\n"));
-		assert!(out.text.contains("… 4 files omitted …"));
+		assert!(out.text.contains("[…4 files elided…]"));
+	}
+
+	#[test]
+	fn diff_stat_summary_preserves_extended_summary_lines() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("diff"), "git diff --stat --summary", &cfg);
+		let input = " foo | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 foo\n";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn log_custom_format_preserves_machine_readable_hashes() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("log"), "git log --format=%H -n 100", &cfg);
+		let mut input = String::new();
+		for idx in 0..80 {
+			let _ = writeln!(input, "{idx:040x}");
+		}
+		let out = filter(&ctx, &input, 0);
+		assert!(!out.changed);
+		assert_eq!(out.text, input);
 	}
 
 	#[test]
@@ -1758,7 +2123,7 @@ mod tests {
 		assert!(out.text.contains("1\t0\tsrc/file-0.rs\n"));
 		assert!(out.text.contains("20\t5\tsrc/file-19.rs\n"));
 		assert!(!out.text.contains("src/file-20.rs\n"));
-		assert!(out.text.contains("… 2 files omitted …"));
+		assert!(out.text.contains("[…2 files elided…]"));
 	}
 
 	#[test]
@@ -1784,7 +2149,7 @@ mod tests {
 	}
 
 	#[test]
-	fn commit_success_compacts_to_hash_only() {
+	fn commit_success_compacts_to_hash_with_stat_summary() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("commit"), "git commit -m msg", &cfg);
 		let input = "\
@@ -1795,9 +2160,30 @@ mod tests {
 ";
 		let out = filter(&ctx, input, 0);
 
-		assert_eq!(out.text, "ok 5f490f764\n");
+		// Best-of: the change summary from the stat line is folded into `ok <hash>`.
+		assert_eq!(out.text, "ok 5f490f764 (70 files +3081 -403)\n");
 		assert!(!out.text.contains("files changed"));
 		assert!(!out.text.contains("create mode"));
+	}
+
+	#[test]
+	fn commit_success_with_stat_appends_change_summary() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("commit"), "git commit -m msg", &cfg);
+		// Default `git commit` success body: "[branch hash] msg" + stat line.
+		let input = "[main 1a2b3c4] msg\n 3 files changed, 10 insertions(+), 2 deletions(-)\n";
+		let out = filter(&ctx, input, 0);
+		assert_eq!(out.text, "ok 1a2b3c4 (3 files +10 -2)\n");
+	}
+
+	#[test]
+	fn commit_success_without_stat_keeps_bare_hash() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("commit"), "git commit -m msg --quiet", &cfg);
+		// `--quiet` suppresses the stat line; the bare hash summary is preserved.
+		let input = "[main 1a2b3c4] msg\n";
+		let out = filter(&ctx, input, 0);
+		assert_eq!(out.text, "ok 1a2b3c4\n");
 	}
 
 	#[test]
@@ -1807,7 +2193,7 @@ mod tests {
 		let input = "On branch main\nnothing to commit, working tree clean\n";
 		let out = filter(&ctx, input, 1);
 
-		assert_eq!(out.text, "ok (nothing to commit)\n");
+		assert_eq!(out.text, "nothing to commit (exit 1)\n");
 	}
 
 	#[test]
@@ -1981,6 +2367,39 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 	}
 
 	#[test]
+	fn status_detects_interactive_rebase_edit() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status", &cfg);
+		// Realistic default long-format body for an interactive-rebase `edit` stop.
+		let input = "On branch feature\n\ninteractive rebase in progress; onto abc1234\nLast \
+		             command done (1 command done):\n   edit abc123 some message\nNo commands \
+		             remaining.\nYou are currently editing a commit while rebasing branch 'feature' \
+		             on 'abc1234'.\n  (use \"git commit --amend\" to amend the current commit)\n  \
+		             (use \"git rebase --continue\" once you are satisfied with your \
+		             changes)\n\nnothing to commit, working tree clean\n";
+		let out = filter(&ctx, input, 0);
+		assert!(out.changed);
+		assert!(out.text.starts_with("state: rebasing\n"), "{:?}", out.text);
+		assert!(out.text.contains("branch feature"));
+	}
+
+	#[test]
+	fn status_detects_merge_all_conflicts_fixed() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status", &cfg);
+		// Realistic default long-format body after all merge conflicts are resolved.
+		let input = "On branch main\n\nAll conflicts fixed but you are still merging.\n  (use \"git \
+		             commit\" to conclude merge)\n\nChanges to be committed:\n  modified:   \
+		             src/main.rs\n";
+		let out = filter(&ctx, input, 0);
+		assert!(out.changed);
+		assert!(out.text.starts_with("state: merge (ready to commit)\n"), "{:?}", out.text);
+		// Distinct from the unresolved-conflict label.
+		assert!(!out.text.contains("merge-conflict"));
+		assert!(out.text.contains("M src/main.rs"));
+	}
+
+	#[test]
 	fn status_state_not_emitted_when_no_state() {
 		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
 		let ctx = test_ctx(Some("status"), "git status", &cfg);
@@ -1990,6 +2409,25 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		assert!(out.changed);
 		assert!(!out.text.contains("state:"));
 		assert_eq!(out.text, "branch main\nclean\n");
+	}
+
+	#[test]
+	fn status_untracked_file_named_like_rebase_progress_not_misread_as_state() {
+		// A clean tree whose only untracked file is named like a rebase
+		// progress line must NOT be reported as `state: rebasing`, and the
+		// untracked file must still be counted. Regression for the
+		// detect_status_state false positive inside the untracked section.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("status"), "git status", &cfg);
+		let input = "On branch main\nUntracked files:\n  (use \"git add <file>...\" to include in \
+		             what will be committed)\n\tNext command to do.md\n";
+		let out = filter(&ctx, input, 0);
+		assert!(out.changed);
+		// Pre-fix this body was reported as `state: rebasing` with the filename
+		// swallowed; the fix keeps state detection out of the untracked section.
+		assert!(!out.text.contains("state:"), "{:?}", out.text);
+		assert!(out.text.contains("untracked 1"), "{:?}", out.text);
+		assert!(out.text.contains("?? Next command to do.md"), "{:?}", out.text);
 	}
 
 	// --- Pull summaries ---
@@ -2145,7 +2583,7 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		let ctx = test_ctx(Some("stash"), "git stash apply", &cfg);
 		let input = "On branch main\nnothing to commit, working tree clean\n";
 		let out = filter(&ctx, input, 0);
-		assert_eq!(out.text, "ok stash apply\n");
+		assert_eq!(out.text, "branch main\nclean\n");
 	}
 
 	#[test]
@@ -2154,7 +2592,7 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		let ctx = test_ctx(Some("stash"), "git stash pop", &cfg);
 		let input = "Dropped refs/stash@{0} (abc1234...)\n";
 		let out = filter(&ctx, input, 0);
-		assert_eq!(out.text, "ok stash pop\n");
+		assert_eq!(out.text, input);
 	}
 
 	#[test]
@@ -2172,7 +2610,7 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		let ctx = test_ctx(Some("stash"), "git stash branch new-branch", &cfg);
 		let input = "Switched to a new branch 'new-branch'\nDropped refs/stash@{0}\n";
 		let out = filter(&ctx, input, 0);
-		assert_eq!(out.text, "ok stash branch\n");
+		assert_eq!(out.text, input);
 	}
 
 	#[test]
@@ -2224,5 +2662,181 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 		let ctx = test_ctx(Some("stash"), "git stash list", &cfg);
 		let out = filter(&ctx, "", 0);
 		assert!(!out.changed);
+	}
+
+	// --- Log failure passthrough ---
+
+	#[test]
+	fn log_failure_keeps_diagnostics() {
+		// `git log` on a bad rev fails with exit 128.  The filter must not
+		// silently swallow the error into a zero-entry commit listing.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("log"), "git log --oneline badref", &cfg);
+		let input = "fatal: ambiguous argument 'badref': unknown revision or path not in the \
+		             working tree.\nfatal: bad default revision 'HEAD'\n";
+
+		let out = filter(&ctx, input, 128);
+
+		assert!(out.text.contains("fatal:"), "error header must survive: {:?}", out.text);
+		assert!(out.text.contains("badref"), "offending ref must survive: {:?}", out.text);
+		assert!(!out.text.contains("commits elided"), "must not fabricate commit listing on error");
+	}
+
+	#[test]
+	fn log_oneline_short_run_emits_all_entries() {
+		// A short log that fits within head+tail should emit all entries
+		// without any "elided" line, and each entry should carry the
+		// 7-char short hash followed by the subject.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("log"), "git log -5", &cfg);
+		let input = "\
+commit abcdef1234567890\nAuthor: A <a@x.com>\nDate: today\n    feat: first\ncommit \
+		             1111111111111111\nAuthor: A <a@x.com>\nDate: today\n    fix: second\ncommit \
+		             2222222222222222\nAuthor: A <a@x.com>\nDate: today\n    chore: third\n";
+
+		let out = filter(&ctx, input, 0);
+
+		assert!(!out.text.contains("commits elided"));
+		assert!(out.text.contains("abcdef1 feat: first"), "{:?}", out.text);
+		assert!(out.text.contains("1111111 fix: second"), "{:?}", out.text);
+		assert!(out.text.contains("2222222 chore: third"), "{:?}", out.text);
+		assert!(!out.text.contains("Author:"), "author noise must be stripped");
+		assert!(!out.text.contains("Date:"), "date noise must be stripped");
+	}
+
+	// --- Merge/rebase error preservation ---
+
+	#[test]
+	fn merge_conflict_failure_keeps_diagnostics() {
+		// `git merge` that ends in conflicts must surface the conflict
+		// paths, not be silently compacted into an empty success message.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("merge"), "git merge feat/x", &cfg);
+		let input = "\
+Auto-merging src/lib.rs\nCONFLICT (content): Merge conflict in src/lib.rs\nAutomatic merge failed; \
+		             fix conflicts and then commit the result.\n";
+
+		let out = filter(&ctx, input, 1);
+
+		assert!(out.text.contains("CONFLICT"), "conflict marker must survive: {:?}", out.text);
+		assert!(out.text.contains("src/lib.rs"), "conflict path must survive: {:?}", out.text);
+		assert!(!out.text.contains("ok"), "must not emit an ok summary on failure");
+	}
+
+	#[test]
+	fn rebase_conflict_failure_keeps_diagnostics() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("rebase"), "git rebase main", &cfg);
+		let input = "\
+error: could not apply abc1234... fix: something\nhint: Resolve all conflicts manually, mark them \
+		             as resolved with\nhint: \"git add/rm <conflicted_files>\", then run \"git \
+		             rebase --continue\".\nCONFLICT (content): Merge conflict in src/config.rs\n";
+
+		let out = filter(&ctx, input, 1);
+
+		assert!(out.text.contains("CONFLICT"), "conflict marker must survive: {:?}", out.text);
+		assert!(out.text.contains("error:"), "error line must survive: {:?}", out.text);
+		assert!(out.text.contains("src/config.rs"), "conflict path must survive: {:?}", out.text);
+	}
+
+	// --- Push porcelain passthrough ---
+
+	// --- Worktree condense ---
+
+	#[test]
+	fn worktree_list_caps_and_abbreviates_home() {
+		let home = "/home/alice";
+		let mut input = String::new();
+		// 22 listing entries under $HOME, including a bare and a detached-HEAD row.
+		input.push_str("/home/alice/repo                  abc1234 (bare)\n");
+		input.push_str("/home/alice/repo-detached         def5678 (detached HEAD)\n");
+		for idx in 0..20 {
+			let _ = writeln!(
+				input,
+				"/home/alice/wt-{idx:02}                    aaaaaaa{idx:02} [wt-{idx}]"
+			);
+		}
+		let out = condense_worktree_with_home(&input, home);
+
+		// Leading $HOME abbreviated to '~'.
+		assert!(out.starts_with("~/repo "), "{out:?}");
+		assert!(out.contains("~/repo-detached "));
+		assert!(out.contains("(bare)"));
+		assert!(out.contains("(detached HEAD)"));
+		assert!(!out.contains("/home/alice"), "no absolute $HOME paths should survive: {out:?}");
+		// 22 entries → capped at 20 with a 2-elided marker.
+		assert!(out.contains("[…2 worktrees elided…]"), "{out:?}");
+		assert_eq!(out.lines().filter(|l| l.starts_with('~')).count(), 20);
+	}
+
+	#[test]
+	fn worktree_add_confirmation_passes_through() {
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("worktree"), "git worktree add ../wt feature", &cfg);
+		// `worktree add` confirmation is not listing-shaped; it must survive.
+		let input = "Preparing worktree (new branch 'feature')\nHEAD is now at abc1234 commit msg\n";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed, "{:?}", out.text);
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn worktree_porcelain_passthrough() {
+		// `git worktree list --porcelain` emits machine-readable records;
+		// the minimizer must not insert "[…Nln elided…]" markers.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("worktree"), "git worktree list --porcelain", &cfg);
+		let input = "worktree /home/user/project\nHEAD abc1234def\nbranch \
+		             refs/heads/main\n\nworktree /home/user/other\nHEAD 567890ab\nbranch \
+		             refs/heads/feat\n";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed, "porcelain worktree listing must pass through unchanged");
+		assert_eq!(out.text, input, "porcelain worktree listing must pass through");
+	}
+
+	#[test]
+	fn worktree_null_passthrough() {
+		// `git worktree list -z` also produces machine-readable NUL-delimited output.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("worktree"), "git worktree list -z", &cfg);
+		let input = "worktree /home/user/project\0HEAD abc1234def\0branch refs/heads/main\0";
+		let out = filter(&ctx, input, 0);
+		assert!(!out.changed, "-z worktree output must pass through unchanged");
+		assert_eq!(out.text, input);
+	}
+
+	#[test]
+	fn worktree_non_porcelain_still_condensed() {
+		// Normal (non-porcelain) listing should still go through the condenser.
+		// Build 22 listing-shaped entries so the cap (20) is exceeded; the condenser
+		// would insert an "[…N worktrees elided…]" marker that a passthrough would
+		// never emit.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("worktree"), "git worktree list", &cfg);
+		let mut input = String::new();
+		for idx in 0..22usize {
+			let _ = writeln!(input, "/repo/wt-{idx:02}  aaaaaaa{idx:02} [branch-{idx}]");
+		}
+		let out = filter(&ctx, &input, 0);
+		assert!(
+			out.text.contains("worktrees elided"),
+			"non-porcelain output over the cap must show elided marker; got: {:?}",
+			out.text
+		);
+	}
+
+	#[test]
+	fn push_porcelain_output_is_passthrough() {
+		// Scripts that parse `git push --porcelain` rely on the exact byte
+		// sequence; the minimizer must not touch it.
+		let cfg = MinimizerConfig { enabled: true, ..Default::default() };
+		let ctx = test_ctx(Some("push"), "git push --porcelain origin main", &cfg);
+		let input =
+			"To github.com:user/repo.git\n=\trefs/heads/main:refs/heads/main\t[up to date]\nDone\n";
+
+		let out = filter(&ctx, input, 0);
+
+		assert!(!out.changed, "porcelain output must not be rewritten");
+		assert_eq!(out.text, input);
 	}
 }

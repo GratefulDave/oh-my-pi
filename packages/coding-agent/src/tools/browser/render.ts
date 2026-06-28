@@ -23,7 +23,7 @@ interface BrowserRenderArgs {
 	code?: string;
 	all?: boolean;
 	kill?: boolean;
-	app?: { path?: string; cdp_url?: string; target?: string };
+	app?: { path?: string; cdp_url?: string; target?: string; cmux?: boolean; surface?: string };
 	viewport?: { width: number; height: number; scale?: number };
 	timeout?: number;
 }
@@ -36,6 +36,9 @@ interface BrowserRenderContext {
 function describeBrowser(args: BrowserRenderArgs, details: BrowserToolDetails | undefined): string | undefined {
 	if (args.app?.cdp_url) return `connected ${args.app.cdp_url}`;
 	if (args.app?.path) return `spawned ${shortenPath(args.app.path)}`;
+	if (args.app?.cmux !== false && (args.app?.cmux === true || args.app?.surface)) {
+		return args.app.surface ? `cmux ${args.app.surface}` : "cmux";
+	}
 	switch (details?.browser) {
 		case "headless":
 			return "headless";
@@ -43,6 +46,8 @@ function describeBrowser(args: BrowserRenderArgs, details: BrowserToolDetails | 
 			return "spawned";
 		case "connected":
 			return "connected";
+		case "cmux":
+			return "cmux";
 		default:
 			return undefined;
 	}
@@ -66,7 +71,7 @@ function dropTrailingBlankLines(text: string): string {
 function appendLine(component: Component, line: string | undefined): Component {
 	if (!line) return component;
 	const wrapped = {
-		render: (width: number): string[] => {
+		render: (width: number): readonly string[] => {
 			const base = component.render(width);
 			return [...base, line];
 		},
@@ -95,7 +100,7 @@ function renderRunCell(
 
 	let cached: { key: bigint; width: number; lines: string[] } | undefined;
 	return markFramedBlockComponent({
-		render: (width: number): string[] => {
+		render: (width: number): readonly string[] => {
 			const expanded = options.renderContext?.expanded ?? options.expanded;
 			const previewLines = options.renderContext?.previewLines ?? BROWSER_DEFAULT_PREVIEW_LINES;
 			const key = new Hasher()
@@ -146,7 +151,7 @@ function renderOpenOrCloseLine(
 	const action = (details?.action ?? args.action ?? "open") as "open" | "close" | "run";
 	const status = cellStatus(isPartial, isError);
 	const icon =
-		status === "complete" ? "success" : status === "error" ? "error" : status === "running" ? "running" : "pending";
+		status === "complete" ? "done" : status === "error" ? "error" : status === "running" ? "running" : "pending";
 
 	let title: string;
 	if (action === "close") {
@@ -163,7 +168,10 @@ function renderOpenOrCloseLine(
 	const url = details?.url ?? args.url;
 	if (url) meta.push(shortenPath(url));
 
-	const header = renderStatusLine({ icon, title, meta }, theme);
+	const header =
+		status === "complete"
+			? renderStatusLine({ iconOverride: theme.styledSymbol("tool.browser", "accent"), title, meta }, theme)
+			: renderStatusLine({ icon, title, meta }, theme);
 	if (!output) return new Text(header, 0, 0);
 	const outputLines = output.split("\n").map(line => theme.fg("toolOutput", replaceTabs(line)));
 	return new Text([header, ...outputLines].join("\n"), 0, 0);

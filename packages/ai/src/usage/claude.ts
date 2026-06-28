@@ -1,4 +1,7 @@
 import { scheduler } from "node:timers/promises";
+import { toNumber } from "@oh-my-pi/pi-catalog/utils";
+import * as AIError from "../error";
+import { claudeCodeVersion } from "../providers/anthropic";
 import type {
 	CredentialRankingStrategy,
 	UsageAmount,
@@ -10,7 +13,7 @@ import type {
 	UsageStatus,
 	UsageWindow,
 } from "../usage";
-import { isRecord, toNumber } from "../utils";
+import { isRecord } from "../utils";
 
 const DEFAULT_ENDPOINT = "https://api.anthropic.com/api/oauth";
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
@@ -24,7 +27,7 @@ const CLAUDE_HEADERS = {
 	"anthropic-beta":
 		"claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,advanced-tool-use-2025-11-20,effort-2025-11-24,extended-cache-ttl-2025-04-11",
 	"content-type": "application/json",
-	"user-agent": "claude-cli/2.1.160 (external, cli)",
+	"user-agent": `claude-cli/${claudeCodeVersion} (external, cli)`,
 	connection: "keep-alive",
 } as const;
 
@@ -146,7 +149,7 @@ function hasUsageData(payload: ClaudeUsageResponse): boolean {
 }
 
 function isRetryableStatus(status: number): boolean {
-	return status === 429 || (status >= 500 && status < 600);
+	return AIError.isTransientStatus(status);
 }
 
 function isAbortError(error: unknown, signal?: AbortSignal): boolean {
