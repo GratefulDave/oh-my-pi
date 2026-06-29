@@ -176,11 +176,12 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 						// of the cluster IS the argument.
 						const attached = optChars.slice(clusterIdx);
 						if (attached.length > 0) {
-							// argument is attached — consumed entirely; stop cluster loop
+							// argument is attached — whole token consumed; advance past it
+							idx++;
 							consumedRest = true;
 							break;
 						}
-						// argument is the next token
+						// argument is the next (separate) token
 						idx++;
 						if (idx < tokens.length) idx++;
 						consumedRest = true;

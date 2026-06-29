@@ -175,6 +175,15 @@ describe("bash minimizer gain writer", () => {
 		// -v takes no argument (verbose), so the next token is the command
 		expect(inferBashMinimizerMissedFilter("env -v bun test")).toBe("bun");
 	});
+
+	test("handles attached env -C (chdir) and -u (unset) operands", () => {
+		// -C with attached directory (e.g. env -C/tmp bun test)
+		expect(inferBashMinimizerMissedFilter("env -C/tmp bun test")).toBe("bun");
+		// -u with attached name (e.g. env -uFOO git status)
+		expect(inferBashMinimizerMissedFilter("env -uFOO git status")).toBe("git");
+		// clustered flags before attached -C operand
+		expect(inferBashMinimizerMissedFilter("env -iC/tmp node server.js")).toBe("node");
+	});
 });
 
 describe("makeMinimizedSaveHandler + didSave gate contract", () => {
