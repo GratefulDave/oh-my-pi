@@ -1,6 +1,18 @@
 #!/usr/bin/env zsh
 set -euo pipefail
 
+# Ensure nightly cargo (required for #![feature(alloc_error_hook)]) is found
+# before Homebrew's stable cargo. rustup shims don't activate when a system
+# cargo is earlier in PATH. We read rust-toolchain.toml if present, else pick
+# any installed nightly.
+if [[ -f "${0:A:h}/rust-toolchain.toml" ]]; then
+	_tc_channel=$(awk -F'"' '/^channel/{print $2}' "${0:A:h}/rust-toolchain.toml")
+	_tc_arch="$(rustc --print host-target 2>/dev/null || uname -m)-apple-darwin"
+	_tc_path="$HOME/.rustup/toolchains/${_tc_channel}-${_tc_arch}/bin"
+	[[ -d "$_tc_path" ]] && export PATH="$_tc_path:$PATH"
+	unset _tc_channel _tc_arch _tc_path
+fi
+
 repo_dir="${0:A:h}"
 binary="$repo_dir/packages/coding-agent/dist/omp"
 link_dir="$HOME/.local/bin"
