@@ -389,6 +389,7 @@ import * as bundledPiCodingAgentEditNormalize from "@oh-my-pi/pi-coding-agent/ed
 import * as bundledPiCodingAgentEditNotebook from "@oh-my-pi/pi-coding-agent/edit/notebook";
 import * as bundledPiCodingAgentEditReadFile from "@oh-my-pi/pi-coding-agent/edit/read-file";
 import * as bundledPiCodingAgentEditRenderer from "@oh-my-pi/pi-coding-agent/edit/renderer";
+import * as bundledPiCodingAgentEditSnapshotDetails from "@oh-my-pi/pi-coding-agent/edit/snapshot-details";
 import * as bundledPiCodingAgentEditStreaming from "@oh-my-pi/pi-coding-agent/edit/streaming";
 import * as bundledPiCodingAgentEval from "@oh-my-pi/pi-coding-agent/eval";
 import * as bundledPiCodingAgentEvalJsContextManager from "@oh-my-pi/pi-coding-agent/eval/js/context-manager";
@@ -775,6 +776,7 @@ import * as bundledPiCodingAgentTaskOmpCommand from "@oh-my-pi/pi-coding-agent/t
 import * as bundledPiCodingAgentTaskOutputManager from "@oh-my-pi/pi-coding-agent/task/output-manager";
 import * as bundledPiCodingAgentTaskParallel from "@oh-my-pi/pi-coding-agent/task/parallel";
 import * as bundledPiCodingAgentTaskPersistedRevive from "@oh-my-pi/pi-coding-agent/task/persisted-revive";
+import * as bundledPiCodingAgentTaskProviderConcurrency from "@oh-my-pi/pi-coding-agent/task/provider-concurrency";
 import * as bundledPiCodingAgentTaskRender from "@oh-my-pi/pi-coding-agent/task/render";
 import * as bundledPiCodingAgentTaskRenderer from "@oh-my-pi/pi-coding-agent/task/renderer";
 import * as bundledPiCodingAgentTaskRepairArgs from "@oh-my-pi/pi-coding-agent/task/repair-args";
@@ -1983,6 +1985,9 @@ export const BUNDLED_PI_REGISTRY: Readonly<Record<string, Readonly<Record<string
 	"@oh-my-pi/pi-coding-agent/edit/renderer": bundledPiCodingAgentEditRenderer as unknown as Readonly<
 		Record<string, unknown>
 	>,
+	"@oh-my-pi/pi-coding-agent/edit/snapshot-details": bundledPiCodingAgentEditSnapshotDetails as unknown as Readonly<
+		Record<string, unknown>
+	>,
 	"@oh-my-pi/pi-coding-agent/edit/streaming": bundledPiCodingAgentEditStreaming as unknown as Readonly<
 		Record<string, unknown>
 	>,
@@ -2833,6 +2838,8 @@ export const BUNDLED_PI_REGISTRY: Readonly<Record<string, Readonly<Record<string
 	"@oh-my-pi/pi-coding-agent/task/persisted-revive": bundledPiCodingAgentTaskPersistedRevive as unknown as Readonly<
 		Record<string, unknown>
 	>,
+	"@oh-my-pi/pi-coding-agent/task/provider-concurrency":
+		bundledPiCodingAgentTaskProviderConcurrency as unknown as Readonly<Record<string, unknown>>,
 	"@oh-my-pi/pi-coding-agent/task/render": bundledPiCodingAgentTaskRender as unknown as Readonly<
 		Record<string, unknown>
 	>,
