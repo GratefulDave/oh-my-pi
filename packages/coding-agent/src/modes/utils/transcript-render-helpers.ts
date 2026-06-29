@@ -254,3 +254,50 @@ export function assistantUsageIsBilled(usage: AssistantAgentMessage["usage"]): b
 	if ((usage.premiumRequests ?? 0) > 0) return true;
 	return false;
 }
+
+export const SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE = "subagent-hud-summary";
+
+export interface SubagentHudSummaryRow {
+	id: string;
+	roleLabel: string;
+	label: string;
+	status: "completed" | "failed" | "aborted";
+	toolCount: number;
+	tokenLabel: string;
+	durationLabel: string;
+	failureReason?: string;
+}
+
+export interface SubagentHudSummaryDetails {
+	emittedAt: number;
+	rows: SubagentHudSummaryRow[];
+}
+
+/**
+ * Render a `subagent-hud-summary` custom message as a transcript block.
+ * Header line shows the settle count; each row shows role badge, label, and
+ * status-colored metrics (success for completed, error for failed/aborted).
+ */
+export function buildSubagentHudSummaryBlock(message: CustomOrHookMessage): TranscriptBlock {
+	const details = (message as CustomMessage<SubagentHudSummaryDetails>).details;
+	const block = new TranscriptBlock();
+	// Header line: dim settle count
+	block.addChild(new Text(theme.fg("dim", typeof message.content === "string" ? message.content : ""), 0, 0));
+	for (const row of details?.rows ?? []) {
+		const metricColor = row.status === "completed" ? ("success" as const) : ("error" as const);
+		const glyph =
+			row.status === "completed"
+				? theme.styledSymbol("status.done", "success")
+				: theme.styledSymbol("status.error", "error");
+		const badge = theme.fg("accent", `[${row.roleLabel}]`);
+		const label = theme.fg("accent", row.label);
+		const tools = theme.fg(metricColor, `${row.toolCount} tool use(s)`);
+		const tokens = theme.fg(metricColor, row.tokenLabel);
+		const duration = theme.fg(metricColor, row.durationLabel);
+		block.addChild(new Text(`  ${glyph} ${badge} ${label}  ${tools}  ${tokens}  ${duration}`, 1, 0));
+		if (row.failureReason) {
+			block.addChild(new Text(`    ${theme.fg("error", row.failureReason)}`, 1, 0));
+		}
+	}
+	return block;
+}

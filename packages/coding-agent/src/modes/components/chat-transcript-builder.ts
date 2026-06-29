@@ -34,8 +34,10 @@ import {
 	buildAsyncResultBlock,
 	buildFileMentionBlock,
 	buildIrcMessageCard,
+	buildSubagentHudSummaryBlock,
 	normalizeToolArgs,
 	resolveAssistantErrorPresentation,
+	SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
 	splitAssistantMessageToolTimeline,
 } from "../utils/transcript-render-helpers";
 import { createAdvisorMessageCard } from "./advisor-message";
@@ -496,6 +498,10 @@ export class ChatTranscriptBuilder {
 			message.customType === "irc:relay"
 		) {
 			this.container.addChild(buildIrcMessageCard(message, () => this.#expanded));
+			return;
+		}
+		if (message.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE) {
+			this.container.addChild(buildSubagentHudSummaryBlock(message));
 			return;
 		}
 		if (message.customType === "advisor") {
