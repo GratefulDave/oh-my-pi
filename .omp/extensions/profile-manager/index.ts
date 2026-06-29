@@ -4,10 +4,8 @@
  * Provides `/pm` (profile-manager) as a profile management slash command
  * that lives outside the OMP source tree and survives upstream pulls.
  *
- * Runs on stock OMP: profiles are persisted directly to `.omp/settings.json`
- * (the `activeModelProfile` + `modelProfiles` schema) and the active model is
- * switched through the public ExtensionAPI (`setModel` / `setThinkingLevel`).
- * No LEX fork binary or fork-only imports are required.
+ * Storage: ~/.omp/agent/config.yml (YAML, primary — what the binary reads)
+ * Fallback: ~/.omp/agent/settings.json (legacy JSON, migrated on first write)
  *
  * Subcommands:
  *   /pm              — interactive selector
@@ -16,8 +14,10 @@
  *   /pm create <name> — snapshot current model config as a named profile
  *   /pm use <name>    — switch to a profile (applies model + thinking level)
  *   /pm delete <name> — delete a profile
+ *   /pm model [role]  — pick a model for a role in the active profile
  */
 
+import { YAML } from "bun";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -50,10 +50,21 @@ interface OmpSettings {
 	[key: string]: unknown;
 }
 
+interface LiveSettings {
+	set(path: string, value: unknown): void;
+}
+
+interface LivePiExports {
+	settings?: LiveSettings;
+}
+
 const DEFAULT_PROFILE_NAME = "default";
 
 /** Valid ThinkingLevel suffixes (mirrors @oh-my-pi/pi-agent-core ThinkingLevel). */
-const THINKING_LEVELS = new Set(["inherit", "off", "auto", "minimal", "low", "medium", "high", "xhigh"]);
+const THINKING_LEVELS: Record<string, true> = {
+	inherit: true, off: true, auto: true, minimal: true,
+	low: true, medium: true, high: true, xhigh: true,
+};
 
 /** Profile config keys snapshotted from top-level settings by `create`. */
 const PROFILE_KEYS = ["modelRoles", "defaultThinkingLevel", "enabledModels", "cycleOrder", "modelProviderOrder"] as const;
@@ -78,6 +89,19 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 		}
 	});
 
+	// Re-apply when switching sessions so the profile follows you across projects.
+	pi.on("session_switch", async (_event, ctx) => {
+		try {
+			const settings = readSettings(ctx);
+			const active = settings.activeModelProfile;
+			if (!active || active === DEFAULT_PROFILE_NAME) return;
+			const profile = getProfiles(settings)[active];
+			if (profile) await applyProfile(pi, ctx, profile);
+		} catch {
+			// Best-effort; protect session switch.
+		}
+	});
+
 	pi.registerCommand("pm", {
 		description: "Manage named model profiles",
 		handler: async (args, ctx) => {
@@ -91,7 +115,8 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 				if (action === "create") return await handleCreate(pi, ctx, tokens.slice(1));
 				if (action === "use") return await handleUse(pi, ctx, tokens[1]);
 				if (action === "delete") return await handleDelete(pi, ctx, tokens[1]);
-				notify(pi, "Usage: /pm [list|show|create|use|delete] [name]");
+				if (action === "model") return await handleModel(pi, ctx, tokens[1]);
+				notify(pi, "Usage: /pm [list|show|create|use|delete|model] [name]");
 			} catch (err) {
 				notify(pi, `Error: ${err instanceof Error ? err.message : String(err)}`);
 			}
@@ -99,51 +124,90 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 	});
 }
 
-// ── settings store (.omp/settings.json I/O) ───────────────────────────────────
+// ── settings store (config.yml primary, settings.json fallback) ───────────────
 //
-// Profiles are GLOBAL: stored at the user level (~/.omp/agent/settings.json) so
-// they persist across every project, not just the directory where they were
-// created. Reads merge user-level + project-level (project overrides on name
-// clash) so a repo can still pin its own profile; writes always go to the user
-// file and touch ONLY the profile keys, preserving extensions/disabledProviders
-// and anything else already in it. This mirrors the file the binary loads user
-// settings from (settings.ts -> #agentDir/settings.json).
+// The OMP binary reads ~/.omp/agent/config.yml as the authoritative settings
+// source in v16+. Settings written only to settings.json are silently ignored.
+// Profile-manager must therefore read/write config.yml so that modelRoles,
+// activeModelProfile, and modelProfiles actually take effect at runtime.
+//
+// Migration: on first write, any modelProfiles found in settings.json are
+// merged into config.yml so profiles created on older builds survive.
 
-function userSettingsPath(): string {
-	return path.join(os.homedir(), ".omp", "agent", "settings.json");
+function activeAgentDir(): string {
+	return process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".omp", "agent");
+}
+
+function userConfigYmlPath(): string {
+	return path.join(activeAgentDir(), "config.yml");
+}
+
+function legacySettingsJsonPath(): string {
+	return path.join(activeAgentDir(), "settings.json");
 }
 
 function projectSettingsPath(ctx: ExtensionContext): string {
 	return path.join(ctx.cwd, ".omp", "settings.json");
 }
 
-function readSettingsFile(file: string): OmpSettings {
+function readYamlFile(file: string): OmpSettings {
 	try {
-		const raw = fs.readFileSync(file, "utf8");
-		const parsed = JSON.parse(raw);
-		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-			return parsed as OmpSettings;
-		}
+		const parsed = YAML.parse(fs.readFileSync(file, "utf8"));
+		return (parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}) as OmpSettings;
 	} catch {
-		// Missing or unreadable file → treat as empty.
+		return {};
 	}
-	return {};
 }
 
+function readJsonFile(file: string): OmpSettings {
+	try {
+		const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+		return (parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}) as OmpSettings;
+	} catch {
+		return {};
+	}
+}
+
+/**
+ * Read the merged settings that the profile-manager sees:
+ *  1. config.yml (authoritative — what the binary runs on)
+ *  2. Overlay any modelProfiles from settings.json (migration source)
+ *  3. Project .omp/settings.json overlay for project-level profiles/active
+ */
 function readSettings(ctx: ExtensionContext): OmpSettings {
-	const user = readSettingsFile(userSettingsPath());
-	const project = readSettingsFile(projectSettingsPath(ctx));
+	const yml = readYamlFile(userConfigYmlPath());
+	const json = readJsonFile(legacySettingsJsonPath());
+	const project = readJsonFile(projectSettingsPath(ctx));
+
+	// Merge profile maps: yml wins on key collision at user level;
+	// project shadows same-named user profiles.
+	const userProfiles: Record<string, ModelProfile> = {
+		...(json.modelProfiles ?? {}),
+		...(yml.modelProfiles ?? {}),
+	};
+	const allProfiles: Record<string, ModelProfile> = {
+		...userProfiles,
+		...(project.modelProfiles ?? {}),
+	};
+
 	return {
-		...user,
+		// config.yml is the live settings base
+		...yml,
+		// project-level keys shadow user-level
 		...project,
-		// Union the profile maps so user-global and project profiles both show;
-		// a project profile shadows a same-named user profile.
-		modelProfiles: { ...(user.modelProfiles ?? {}), ...(project.modelProfiles ?? {}) },
-		// Project active selection wins if present, else the user-level one.
-		activeModelProfile: project.activeModelProfile ?? user.activeModelProfile,
+		// Re-apply model config keys from yml (project shouldn't shadow these for
+		// the active model — only profiles should)
+		modelRoles: project.modelRoles ?? yml.modelRoles,
+		defaultThinkingLevel: project.defaultThinkingLevel ?? yml.defaultThinkingLevel,
+		enabledModels: project.enabledModels ?? yml.enabledModels,
+		cycleOrder: project.cycleOrder ?? yml.cycleOrder,
+		modelProviderOrder: project.modelProviderOrder ?? yml.modelProviderOrder,
+		modelProfiles: allProfiles,
+		activeModelProfile: project.activeModelProfile ?? yml.activeModelProfile ?? json.activeModelProfile,
 	};
 }
-function copyProfileKeys(target: OmpSettings, source: OmpSettings): void {
+
+function copyProfileKeys(target: OmpSettings, source: ModelProfile): void {
 	if (source.modelRoles !== undefined) target.modelRoles = { ...source.modelRoles };
 	if (source.defaultThinkingLevel !== undefined) target.defaultThinkingLevel = source.defaultThinkingLevel;
 	if (source.enabledModels !== undefined) target.enabledModels = [...source.enabledModels];
@@ -151,31 +215,42 @@ function copyProfileKeys(target: OmpSettings, source: OmpSettings): void {
 	if (source.modelProviderOrder !== undefined) target.modelProviderOrder = [...source.modelProviderOrder];
 }
 
-function applyProfileToSettings(settings: OmpSettings, profile: ModelProfile): void {
-	copyProfileKeys(settings, profile);
-}
-
-
+/**
+ * Write profile changes to config.yml (authoritative).
+ * Migrates any modelProfiles from settings.json on first write.
+ * Also syncs the project .omp/settings.json if it has activeModelProfile.
+ */
 function writeSettings(ctx: ExtensionContext, settings: OmpSettings): void {
-	// Persist only the profile keys to the user file; preserve everything else
-	// already there (extensions[], disabledProviders, …).
-	const file = userSettingsPath();
-	const existing = readSettingsFile(file);
-	existing.modelProfiles = settings.modelProfiles;
+	const ymlFile = userConfigYmlPath();
+	const jsonFile = legacySettingsJsonPath();
+
+	// Read current config.yml base; merge in any profiles still only in settings.json.
+	const existing = readYamlFile(ymlFile);
+	const legacyJson = readJsonFile(jsonFile);
+
+	// Migrate profiles from JSON → YAML on first encounter.
+	const migratedProfiles: Record<string, ModelProfile> = {
+		...(legacyJson.modelProfiles ?? {}),
+		...(existing.modelProfiles ?? {}),
+		...(settings.modelProfiles ?? {}),
+	};
+
+	existing.modelProfiles = migratedProfiles;
 	copyProfileKeys(existing, settings);
+
 	if (settings.activeModelProfile !== undefined) {
 		existing.activeModelProfile = settings.activeModelProfile;
 	} else {
 		delete existing.activeModelProfile;
 	}
-	fs.mkdirSync(path.dirname(file), { recursive: true });
-	fs.writeFileSync(file, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
 
-	// A project-level activeModelProfile shadows the user-level choice. If this
-	// project already has one, keep it and its live top-level profile keys in
-	// sync so `/pm use X` survives restart instead of snapping back later.
+	fs.mkdirSync(path.dirname(ymlFile), { recursive: true });
+	fs.writeFileSync(ymlFile, YAML.stringify(existing, null, 2), "utf8");
+
+	// If the project .omp/settings.json has its own activeModelProfile, keep it
+	// in sync so `/pm use X` survives a restart when the project file is also read.
 	const projectFile = projectSettingsPath(ctx);
-	const project = readSettingsFile(projectFile);
+	const project = readJsonFile(projectFile);
 	if ("activeModelProfile" in project) {
 		copyProfileKeys(project, settings);
 		if (settings.activeModelProfile !== undefined) {
@@ -211,7 +286,7 @@ function splitModelSelector(selector: string): { id: string; thinkingLevel?: str
 	const colonIdx = selector.lastIndexOf(":");
 	if (colonIdx !== -1) {
 		const suffix = selector.slice(colonIdx + 1);
-		if (THINKING_LEVELS.has(suffix)) {
+		if (suffix in THINKING_LEVELS) {
 			return { id: selector.slice(0, colonIdx), thinkingLevel: suffix };
 		}
 	}
@@ -234,17 +309,27 @@ function resolveModel(ctx: ExtensionContext, id: string): Model | undefined {
 }
 
 /**
- * Apply a profile's active model + thinking level via the public ExtensionAPI.
- * Returns a status string describing what was applied (or why it was skipped).
+ * Apply a profile to the live session:
+ * 1. Override all model roles in-memory (overrideModelRoles — immediate session state).
+ * 2. Switch the active model (setModel).
+ * 3. Set thinking level.
  *
- * NOTE: Only the `default` model role and thinking level can be applied live —
- * the public ExtensionAPI exposes no setter for secondary model roles,
- * cycleOrder, enabledModels, or modelProviderOrder. Those persist to
- * settings.json for the binary to consume on load/reload.
+ * Disk writes happen before this function; callers also sync the live Settings
+ * singleton so `/models` sees the selected profile without requiring a restart.
+ *
+ * Returns a status string suitable for display.
  */
+function syncLiveModelSettings(pi: ExtensionAPI, settings: OmpSettings): void {
+	const liveSettings = (pi.pi as LivePiExports).settings;
+	if (!liveSettings) return;
+	for (const key of PROFILE_KEYS) {
+		const value = settings[key];
+		if (value !== undefined) liveSettings.set(key, structuredClone(value));
+	}
+}
+
 async function applyProfile(pi: ExtensionAPI, ctx: ExtensionContext, profile: ModelProfile): Promise<string> {
-	// Apply ALL roles (default + smol/plan/slow/…) live for sub-agent dispatch.
-	// overrideModelRoles is the fork's intended mechanism (in-memory, no disk).
+	// Override ALL roles live so subagent dispatching uses the profile's full role map.
 	if (profile.modelRoles && Object.keys(profile.modelRoles).length > 0) {
 		pi.overrideModelRoles(profile.modelRoles);
 	}
@@ -254,16 +339,24 @@ async function applyProfile(pi: ExtensionAPI, ctx: ExtensionContext, profile: Mo
 
 	const { id, thinkingLevel } = splitModelSelector(selector);
 	const model = resolveModel(ctx, id);
-	if (!model) return `Profile saved, but model "${id}" is not available in this session.`;
+	if (!model) {
+		const allModels = ctx.modelRegistry.getAll();
+		const providerModels = allModels.filter(m => m.provider === id.split("/")[0]);
+		return `Profile saved, but model "${id}" not in registry (${allModels.length} total; ${providerModels.length} from provider "${id.split("/")[0]}").`;
+	}
 
 	const ok = await pi.setModel(model);
-	if (!ok) return `Profile saved, but no API key is configured for ${model.provider}/${model.id}.`;
+	if (!ok) {
+		const allAuth = ctx.models.list();
+		const providerAuth = allAuth.filter(m => m.provider === model.provider);
+		return `Profile saved, but setModel returned false for "${id}" (${providerAuth.length} authenticated from this provider; ${allAuth.length} total authenticated).`;
+	}
 
 	const level = thinkingLevel ?? profile.defaultThinkingLevel;
-	if (level && level !== "auto" && THINKING_LEVELS.has(level)) {
+	if (level && level !== "auto" && level in THINKING_LEVELS) {
 		pi.setThinkingLevel(level as Parameters<ExtensionAPI["setThinkingLevel"]>[0]);
 	}
-	return `Switched model to ${model.provider}/${model.id}${level ? ` (${level})` : ""}.`;
+	return `Switched to ${model.provider}/${model.id}${level ? ` (${level})` : ""}.`;
 }
 
 /** Snapshot the current model config (live model + top-level settings) into a profile. */
@@ -298,24 +391,35 @@ async function handleNoArg(pi: ExtensionAPI, ctx: ExtensionCommandContext): Prom
 	if (!ctx.hasUI) return printList(pi, ctx);
 
 	const settings = readSettings(ctx);
-	const active = settings.activeModelProfile;
+	const active = settings.activeModelProfile ?? DEFAULT_PROFILE_NAME;
 	const names = profileNames(settings);
-	const choices = [DEFAULT_PROFILE_NAME, ...names.filter(n => n !== DEFAULT_PROFILE_NAME), "Create new profile..."];
-	const choice = await ctx.ui.select("Model profiles", choices);
+	const allNames = [DEFAULT_PROFILE_NAME, ...names.filter(n => n !== DEFAULT_PROFILE_NAME)];
+	const profileOptions = allNames.map(n => ({
+		label: `${active === n || (n === DEFAULT_PROFILE_NAME && !settings.activeModelProfile) ? "* " : "  "}${n}`,
+		description: n === DEFAULT_PROFILE_NAME ? "Global settings (no profile)" : undefined,
+	}));
+	const CREATE_LABEL = "  Create new profile...";
+	const choices = [...profileOptions, { label: CREATE_LABEL, description: "Snapshot current model config" }];
+	const choice = await ctx.ui.select("Model profiles", choices, {
+		helpText: "Type to filter · Enter to select · * = active",
+	});
 	if (!choice) return;
 
-	if (choice === "Create new profile...") {
+	// Strip the leading "* " or "  " marker.
+	const chosenName = choice.replace(/^\*?\s+/, "").trim();
+
+	if (chosenName === "Create new profile...") {
 		const name = await ctx.ui.input("Create model profile", "Profile name");
 		if (!name) return;
 		return handleCreate(pi, ctx, [name]);
 	}
 
-	if (choice === DEFAULT_PROFILE_NAME) return handleUse(pi, ctx, DEFAULT_PROFILE_NAME);
-	if (active === choice) {
-		notify(pi, `Already on profile: ${choice}`);
+	if (chosenName === DEFAULT_PROFILE_NAME) return handleUse(pi, ctx, DEFAULT_PROFILE_NAME);
+	if (active === chosenName) {
+		notify(pi, `Already on profile: ${chosenName}`);
 		return;
 	}
-	return handleUse(pi, ctx, choice);
+	return handleUse(pi, ctx, chosenName);
 }
 
 function printList(pi: ExtensionAPI, ctx: ExtensionCommandContext): void {
@@ -373,8 +477,9 @@ async function handleCreate(pi: ExtensionAPI, ctx: ExtensionCommandContext, args
 
 	if (activate) {
 		settings.activeModelProfile = name;
-		applyProfileToSettings(settings, profiles[name]);
+		copyProfileKeys(settings, profiles[name]);
 		writeSettings(ctx, settings);
+		syncLiveModelSettings(pi, settings);
 		const status = await applyProfile(pi, ctx, profiles[name]);
 		notify(pi, `Created and switched to profile: ${name}. ${status}`);
 	} else {
@@ -391,7 +496,16 @@ async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName
 	const settings = readSettings(ctx);
 
 	if (rawName === DEFAULT_PROFILE_NAME) {
+		const profile = getProfiles(settings)[DEFAULT_PROFILE_NAME];
 		delete settings.activeModelProfile;
+		if (profile) {
+			copyProfileKeys(settings, profile);
+			writeSettings(ctx, settings);
+			syncLiveModelSettings(pi, settings);
+			const status = await applyProfile(pi, ctx, profile);
+			notify(pi, `Active profile: ${DEFAULT_PROFILE_NAME}. ${status}`);
+			return;
+		}
 		writeSettings(ctx, settings);
 		notify(pi, `Active profile: ${DEFAULT_PROFILE_NAME}`);
 		return;
@@ -404,8 +518,9 @@ async function handleUse(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawName
 		return;
 	}
 	settings.activeModelProfile = name;
-	applyProfileToSettings(settings, profile);
+	copyProfileKeys(settings, profile);
 	writeSettings(ctx, settings);
+	syncLiveModelSettings(pi, settings);
 	const status = await applyProfile(pi, ctx, profile);
 	notify(pi, `Active profile: ${name}. ${status}`);
 }
@@ -427,4 +542,107 @@ async function handleDelete(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawN
 	if (settings.activeModelProfile === name) delete settings.activeModelProfile;
 	writeSettings(ctx, settings);
 	notify(pi, `Deleted profile: ${name}`);
+}
+
+/**
+ * /pm model [role] — pick a model for a role in the active profile.
+ * Role defaults to "smol" when omitted.
+ */
+async function handleModel(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawRole: string | undefined): Promise<void> {
+	const role = rawRole?.trim() || "smol";
+	const settings = readSettings(ctx);
+	const active = settings.activeModelProfile;
+	if (!active || active === DEFAULT_PROFILE_NAME) {
+		notify(pi, "No named profile active. Use /pm use <name> first.");
+		return;
+	}
+	const profiles = getProfiles(settings);
+	const profile = profiles[active];
+	if (!profile) {
+		notify(pi, `Profile "${active}" not found in settings.`);
+		return;
+	}
+
+	const currentSelector = profile.modelRoles?.[role];
+
+	if (!ctx.hasUI) {
+		notify(pi, `Profile "${active}" — role "${role}": ${currentSelector ?? "(not set)"}`);
+		return;
+	}
+
+	// Build model list, pre-filtered by the profile's enabledModels if set.
+	const allModels = ctx.models.list();
+	const enabledGlobs = profile.enabledModels;
+	const filtered = enabledGlobs
+		? allModels.filter(m => {
+				const full = `${m.provider}/${m.id}`;
+				return enabledGlobs.some(glob => {
+					if (glob.endsWith("/*")) return m.provider === glob.slice(0, -2);
+					return full === glob || m.id === glob;
+				});
+		  })
+		: allModels;
+
+	if (filtered.length === 0) {
+		notify(pi, `No models available for profile "${active}" (check enabledModels).`);
+		return;
+	}
+
+	const currentBase = currentSelector?.split(":")[0];
+	const sorted = [...filtered].sort((a, b) => {
+		const aFull = `${a.provider}/${a.id}`;
+		const bFull = `${b.provider}/${b.id}`;
+		if (currentBase && aFull === currentBase) return -1;
+		if (currentBase && bFull === currentBase) return 1;
+		return aFull.localeCompare(bFull);
+	});
+
+	const options = sorted.map(m => {
+		const full = `${m.provider}/${m.id}`;
+		const isCurrent = currentBase === full;
+		return {
+			label: `${isCurrent ? "* " : "  "}${full}`,
+			description: m.name ?? m.id,
+		};
+	});
+
+	const chosen = await ctx.ui.select(
+		`Set "${role}" model for profile "${active}"`,
+		options,
+		{ initialIndex: 0, helpText: "Type to filter · Enter to select · Esc to cancel" },
+	);
+	if (!chosen) return;
+
+	const chosenFull = chosen.replace(/^\*?\s+/, "");
+
+	let newSelector = chosenFull;
+	if (currentSelector && currentBase === chosenFull) {
+		newSelector = currentSelector;
+	} else {
+		const thinkingLevel = await promptThinkingLevel(ctx, chosenFull);
+		if (thinkingLevel) newSelector = `${chosenFull}:${thinkingLevel}`;
+	}
+
+	profile.modelRoles = { ...(profile.modelRoles ?? {}), [role]: newSelector };
+	settings.modelProfiles = { ...profiles, [active]: profile };
+	if (settings.activeModelProfile === active) {
+		settings.modelRoles = { ...(settings.modelRoles ?? {}), [role]: newSelector };
+	}
+	writeSettings(ctx, settings);
+	syncLiveModelSettings(pi, settings);
+	const status = await applyProfile(pi, ctx, profile);
+	notify(pi, `Profile "${active}" — role "${role}" → ${newSelector}. ${status}`);
+}
+
+async function promptThinkingLevel(ctx: ExtensionCommandContext, modelFull: string): Promise<string | undefined> {
+	const options = [
+		{ label: "(none)", description: "No thinking level suffix" },
+		{ label: "low", description: ":low" },
+		{ label: "medium", description: ":medium" },
+		{ label: "high", description: ":high" },
+		{ label: "xhigh", description: ":xhigh" },
+	];
+	const chosen = await ctx.ui.select(`Thinking level for ${modelFull}`, options, { initialIndex: 0 });
+	if (!chosen || chosen === "(none)") return undefined;
+	return chosen;
 }

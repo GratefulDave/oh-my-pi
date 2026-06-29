@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Symlink the repo's compiled extension bundles into ~/.omp/agent/extensions/
-// and register them in ~/.omp/agent/config.yml + settings.json (USER scope) so
-// omp loads them from ANY working directory — independent of this repo.
+// and register them in ~/.omp/agent/settings.json (USER scope) so omp loads
+// them from ANY working directory — independent of this repo.
 //
 //   bun scripts/install-user-extensions.ts            # install (build first!)
 //   bun scripts/install-user-extensions.ts --dry-run  # show what would happen
@@ -10,7 +10,6 @@
 // Paths registered use ~ so they stay portable; the loader expands ~ and keeps
 // absolute paths as-is (resolveAgainst in omp-extension-roots.ts).
 
-import { YAML } from "bun";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
@@ -29,7 +28,6 @@ const REPO = path.resolve(import.meta.dir, "..");
 const HOME = homedir();
 const USER_DIR = path.join(HOME, ".omp", "agent");
 const EXT_DIR = path.join(USER_DIR, "extensions");
-const USER_CONFIG = path.join(USER_DIR, "config.yml");
 const USER_SETTINGS = path.join(USER_DIR, "settings.json");
 const DRY = process.argv.includes("--dry-run");
 
@@ -52,14 +50,6 @@ async function readJson<T>(p: string): Promise<T | null> {
 		return null;
 	}
 }
-async function readYaml(p: string): Promise<Record<string, unknown> | null> {
-	try {
-		const parsed = YAML.parse(await fs.readFile(p, "utf8"));
-		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
-	} catch {
-		return null;
-	}
-}
 
 function isManagedExtensionPath(value: string, managedNames: Set<string>): boolean {
 	return (
@@ -69,10 +59,10 @@ function isManagedExtensionPath(value: string, managedNames: Set<string>): boole
 	);
 }
 
-function mergeExtensionList(previous: unknown, managedNames: Set<string>): string[] {
+function mergeExtensionList(previous: unknown, managedNames: Set<string>, registeredExtensions: string[]): string[] {
 	const existing = Array.isArray(previous) ? previous.filter((value): value is string => typeof value === "string") : [];
 	const unmanaged = existing.filter(value => !isManagedExtensionPath(value, managedNames));
-	return Array.from(new Set([...unmanaged, ...registered]));
+	return Array.from(new Set([...unmanaged, ...registeredExtensions]));
 }
 
 function normalizeAntigravityConfig(value: unknown, key = ""): unknown {
@@ -136,6 +126,11 @@ async function verifyLink(dest: string, src: string): Promise<string | null> {
 	return null;
 }
 
+export async function removeStaleManagedDiscoveryFiles(destDir: string, entryFile: string): Promise<void> {
+	const stale = ["package.json", "index.ts"].filter(file => file !== entryFile);
+	await Promise.all(stale.map(file => fs.rm(path.join(destDir, file), { force: true })));
+}
+
 async function discoverPackageExtensionSources(): Promise<string[]> {
 	const packagesDir = path.join(REPO, "packages");
 	const entries = await fs.readdir(packagesDir, { withFileTypes: true }).catch(() => []);
@@ -155,101 +150,99 @@ async function discoverPackageExtensionSources(): Promise<string[]> {
 	return sources;
 }
 
-const repoSettings = await readJson<RepoSettings>(path.join(REPO, ".omp", "settings.json"));
-const configuredSources = repoSettings?.extensions ?? [];
-const configuredNames = new Set(configuredSources.map(extName));
-const manifestSources = await discoverPackageExtensionSources();
-const sources = [...configuredSources];
-for (const rel of manifestSources) {
-	if (configuredNames.has(extName(rel))) continue;
-	sources.push(rel);
-}
-if (sources.length === 0) {
-	console.error("No extensions found in repo .omp/settings.json#extensions or package manifests");
-	process.exit(1);
-}
-
-const registered: string[] = [];
-const missing: string[] = [];
-
-for (const rel of sources) {
-	const src = path.resolve(REPO, rel);
-	const name = extName(rel);
-	const file = path.basename(rel);
-	const destDir = path.join(EXT_DIR, name);
-	const dest = path.join(destDir, file);
-	const tildePath = path.join("~/.omp/agent/extensions", name, file);
-
-	if (!(await pathExists(src))) {
-		missing.push(rel);
-		console.warn(`SKIP  ${name}: bundle not built -> ${rel}  (run: just build-exts)`);
-		continue;
+async function main(): Promise<void> {
+	const repoSettings = await readJson<RepoSettings>(path.join(REPO, ".omp", "settings.json"));
+	const configuredSources = repoSettings?.extensions ?? [];
+	const configuredNames = new Set(configuredSources.map(extName));
+	const manifestSources = await discoverPackageExtensionSources();
+	const sources = [...configuredSources];
+	for (const rel of manifestSources) {
+		if (configuredNames.has(extName(rel))) continue;
+		sources.push(rel);
+	}
+	if (sources.length === 0) {
+		console.error("No extensions found in repo .omp/settings.json#extensions or package manifests");
+		process.exit(1);
 	}
 
-	console.log(`${DRY ? "[dry] " : ""}link  ${rel}  ->  ${tildePath}`);
-	if (!DRY) {
-		await fs.mkdir(destDir, { recursive: true });
-		await fs.rm(dest, { force: true });
-		await fs.symlink(src, dest);
-	}
-	registered.push(tildePath);
-}
+	const registered: string[] = [];
+	const missing: string[] = [];
 
-// Merge into user config stores, preserving external extension paths but making
-// every repo-managed extension authoritative. This repairs stale copies and old
-// checkout paths on every rebuild instead of letting them shadow fresh bundles.
-const managedNames = new Set(registered.map(extName));
-const settingsJson = normalizeAntigravityConfig((await readJson<Record<string, unknown>>(USER_SETTINGS)) ?? {}) as Record<
-	string,
-	unknown
->;
-const settingsJsonExtensions = mergeExtensionList(settingsJson.extensions, managedNames);
-applyActiveProfile(settingsJson);
-settingsJson.extensions = settingsJsonExtensions;
-
-const configYaml = normalizeAntigravityConfig((await readYaml(USER_CONFIG)) ?? {}) as Record<string, unknown>;
-const configYamlExtensions = mergeExtensionList(configYaml.extensions, managedNames);
-configYaml.extensions = configYamlExtensions;
-
-applyActiveProfile(configYaml);
-console.log(`\n${DRY ? "[dry] " : ""}write ${USER_SETTINGS}`);
-console.log(`  extensions (${settingsJsonExtensions.length}):`);
-for (const e of settingsJsonExtensions) console.log(`    ${e}`);
-console.log(`${DRY ? "[dry] " : ""}write ${USER_CONFIG}`);
-console.log(`  extensions (${configYamlExtensions.length}):`);
-for (const e of configYamlExtensions) console.log(`    ${e}`);
-
-if (!DRY) {
-	await fs.mkdir(USER_DIR, { recursive: true });
-	await fs.writeFile(USER_SETTINGS, `${JSON.stringify(settingsJson, null, 2)}\n`);
-	await fs.writeFile(USER_CONFIG, YAML.stringify(configYaml, null, 2));
-}
-
-const verifyErrors: string[] = [];
-if (!DRY) {
 	for (const rel of sources) {
 		const src = path.resolve(REPO, rel);
-		if (!(await pathExists(src))) continue;
 		const name = extName(rel);
 		const file = path.basename(rel);
-		const dest = path.join(EXT_DIR, name, file);
-		const error = await verifyLink(dest, src);
-		if (error) verifyErrors.push(error);
+		const destDir = path.join(EXT_DIR, name);
+		const dest = path.join(destDir, file);
+		const tildePath = path.join("~/.omp/agent/extensions", name, file);
+
+		if (!(await pathExists(src))) {
+			missing.push(rel);
+			console.warn(`SKIP  ${name}: bundle not built -> ${rel}  (run: just build-exts)`);
+			continue;
+		}
+
+		console.log(`${DRY ? "[dry] " : ""}link  ${rel}  ->  ${tildePath}`);
+		if (!DRY) {
+			await fs.mkdir(destDir, { recursive: true });
+			await fs.rm(dest, { force: true });
+			await fs.symlink(src, dest);
+			await removeStaleManagedDiscoveryFiles(destDir, file);
+		}
+		registered.push(tildePath);
 	}
+
+	// Merge into user settings.json, preserving external extension paths but making
+	// every repo-managed extension authoritative. Never rewrite config.yml here:
+	// profiles, model defaults, disabled capabilities, and symlink targets must persist.
+	const managedNames = new Set(registered.map(extName));
+	const settingsJson = normalizeAntigravityConfig((await readJson<Record<string, unknown>>(USER_SETTINGS)) ?? {}) as Record<
+		string,
+		unknown
+	>;
+	const settingsJsonExtensions = mergeExtensionList(settingsJson.extensions, managedNames, registered);
+	applyActiveProfile(settingsJson);
+	settingsJson.extensions = settingsJsonExtensions;
+
+	console.log(`\n${DRY ? "[dry] " : ""}write ${USER_SETTINGS}`);
+	console.log(`  extensions (${settingsJsonExtensions.length}):`);
+	for (const e of settingsJsonExtensions) console.log(`    ${e}`);
+
+	if (!DRY) {
+		await fs.mkdir(USER_DIR, { recursive: true });
+		await fs.writeFile(USER_SETTINGS, `${JSON.stringify(settingsJson, null, 2)}\n`);
+	}
+
+	const verifyErrors: string[] = [];
+	if (!DRY) {
+		for (const rel of sources) {
+			const src = path.resolve(REPO, rel);
+			if (!(await pathExists(src))) continue;
+			const name = extName(rel);
+			const file = path.basename(rel);
+			const dest = path.join(EXT_DIR, name, file);
+			const error = await verifyLink(dest, src);
+			if (error) verifyErrors.push(error);
+		}
+	}
+
+	if (missing.length > 0) {
+		console.error(`\n${missing.length} required extension bundle(s) not built:`);
+		for (const rel of missing) console.error(`  ${rel}`);
+		console.error("Build failed bundles, then re-run:");
+		console.error("  just build-exts && just install-user");
+		process.exit(1);
+	}
+
+	if (verifyErrors.length > 0) {
+		console.error("\nExtension install verification failed:");
+		for (const error of verifyErrors) console.error(`  ${error}`);
+		process.exit(1);
+	}
+
+	console.log(`\nDone. omp now loads these from any cwd. Verified ${registered.length} extension symlink(s).`);
 }
 
-if (missing.length > 0) {
-	console.error(`\n${missing.length} required extension bundle(s) not built:`);
-	for (const rel of missing) console.error(`  ${rel}`);
-	console.error("Build failed bundles, then re-run:");
-	console.error("  just build-exts && just install-user");
-	process.exit(1);
+if (import.meta.main) {
+	await main();
 }
-
-if (verifyErrors.length > 0) {
-	console.error("\nExtension install verification failed:");
-	for (const error of verifyErrors) console.error(`  ${error}`);
-	process.exit(1);
-}
-
-console.log(`\nDone. omp now loads these from any cwd. Verified ${registered.length} extension symlink(s).`);

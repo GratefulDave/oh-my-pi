@@ -11,6 +11,52 @@ print_step() {
 	printf '\n==> %s\n' "$1"
 }
 
+tracked_settings_files=(
+	"$HOME/.omp/agent/config.yml"
+	"$HOME/.lex/agent/config.yml"
+)
+settings_guard_paths=()
+settings_guard_hashes=()
+settings_guard_realpaths=()
+
+settings_hash() {
+	shasum -a 256 "$1" | cut -d ' ' -f 1
+}
+
+capture_settings_guard() {
+	settings_guard_paths=()
+	settings_guard_hashes=()
+	settings_guard_realpaths=()
+	for file in "${tracked_settings_files[@]}"; do
+		if [[ -e "$file" ]]; then
+			settings_guard_paths+=("$file")
+			settings_guard_hashes+=("$(settings_hash "$file")")
+			settings_guard_realpaths+=("${file:A}")
+		fi
+	done
+}
+
+verify_settings_guard() {
+	local current_hash current_realpath
+	for (( i = 1; i <= ${#settings_guard_paths[@]}; i++ )); do
+		if [[ ! -e "${settings_guard_paths[$i]}" ]]; then
+			printf 'error: rebuild removed protected settings file: %s\n' "${settings_guard_paths[$i]}" >&2
+			exit 1
+		fi
+		current_hash="$(settings_hash "${settings_guard_paths[$i]}")"
+		current_realpath="${settings_guard_paths[$i]:A}"
+		if [[ "$current_hash" != "${settings_guard_hashes[$i]}" || "$current_realpath" != "${settings_guard_realpaths[$i]}" ]]; then
+			printf 'error: rebuild changed protected settings file: %s\n' "${settings_guard_paths[$i]}" >&2
+			printf '  before: %s  %s\n' "${settings_guard_hashes[$i]}" "${settings_guard_realpaths[$i]}" >&2
+			printf '  after:  %s  %s\n' "$current_hash" "$current_realpath" >&2
+			printf 'Refusing to finish: rebuild-lex.zsh must not overwrite user config.yml settings.\n' >&2
+			exit 1
+		fi
+	done
+}
+
+capture_settings_guard
+
 print_step "Building fork from $repo_dir"
 cd "$repo_dir"
 
@@ -55,7 +101,7 @@ fi
 print_step "Building profile-manager extension"
 bun build .omp/extensions/profile-manager/index.ts \
 	--outfile .omp/extensions/profile-manager/dist/index.js \
-	--target node --format esm
+	--target bun --format esm
 
 # Refresh the native cache the binary loads from. It is keyed by version
 # string only (~/.omp/natives/<version>/), so a freshly built .node never
@@ -81,12 +127,10 @@ ln -sf "$binary" "$link_dir/lex"
 ln -sf "$binary" "$link_dir/omp"
 
 # Sync the user-level (global) extension wiring so omp/lex behave the same in
-# EVERY directory, not just this repo. The agent reads extensions + model
-# profiles from ~/.omp/agent/settings.json (user level) and <cwd>/.omp
-# (project level). Without this, the global config holds frozen *copies* of the
-# bundles that never update on rebuild -> "it worked, then a rebuild broke it".
-# We symlink each global extension to the freshly built repo dist so every
-# rebuild is picked up automatically with zero copying.
+# EVERY directory, not just this repo. The installer may update
+# ~/.omp/agent/settings.json extension inventory and global extension symlinks,
+# but rebuild-lex.zsh guards ~/.omp/agent/config.yml and
+# ~/.lex/agent/config.yml against any mutation.
 print_step "Installing and verifying global extensions (~/.omp/agent/extensions)"
 bun scripts/install-user-extensions.ts
 
@@ -134,6 +178,8 @@ if [[ ! -f "$antigravity_bundle" ]]; then
 	exit 1
 fi
 printf '  antigravity extension bundle present: %s\n' "$antigravity_bundle"
+verify_settings_guard
+printf '  protected settings YAML unchanged\n'
 
 cat <<'EOF'
 
