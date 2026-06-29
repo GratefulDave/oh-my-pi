@@ -126,28 +126,78 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 	if (tokens.some(t => t === "|" || t === "&" || t === ";" || t === "\n" || t === "\r")) return "compound";
 	let idx = 0;
 	let first = tokens[0] ?? "";
-	// Skip env wrapper and its assignments/flags (e.g. `env -u FOO cmd` or `env FOO=bar cmd`)
+	// Skip env wrapper and its assignments/flags
 	if (first === "env") {
 		idx++;
-		// skip env options and NAME=value pairs; env -u VAR takes a following argument
+		// skip env options and NAME=value pairs
 		while (idx < tokens.length) {
 			const t = tokens[idx]!;
 			if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
 				idx++;
-			} else if (t.startsWith("-")) {
+			} else if (t.startsWith("--")) {
+				// Long options that take a following separate argument.
+				// --unset, --chdir, --split-string consume the next token.
+				// --ignore-environment, --null, --debug do not.
+				const longTakesArg = /^--(unset|chdir|split-string)$/.test(t);
 				idx++;
-				// Single-char options that take a following argument:
-				// -u (unset), -C (chdir), -S (split-string) take an operand.
-				// No operand: -i (ignore-env), -v (verbose), -0 (null terminator).
-				const takesArg = /^-[a-zA-Z]$/.test(t) && !/^-[iv0]$/.test(t);
-				if (takesArg && idx < tokens.length && !tokens[idx]!.startsWith("-")) {
+				if (longTakesArg && idx < tokens.length) {
 					idx++; // skip the option's argument
 				}
+			} else if (t.startsWith("-") && t.length >= 2 && !t.startsWith("--")) {
+				// Short options (possibly clustered, e.g. -iS or -S'cmd')
+				// Walk character by character through the option cluster.
+				const optChars = t.slice(1); // chars after the leading '-'
+				let clusterIdx = 0;
+				let consumedRest = false;
+				while (clusterIdx < optChars.length) {
+					const ch = optChars[clusterIdx]!;
+					clusterIdx++;
+					if (ch === "S") {
+						// -S takes the rest of this token (attached) or the next token
+						// as a string to re-tokenize and feed as the command.
+						const attached = optChars.slice(clusterIdx); // may be empty
+						const splitArg = attached.length > 0 ? attached : (tokens[idx + 1] ?? "");
+						if (!attached.length) idx++; // consumed next token
+						// Re-tokenize the -S argument as if it were a mini-command.
+						const splitTokens = shellTokens(splitArg);
+						// Skip any leading NAME=value assignments from the re-tokenized args.
+						let splitIdx = 0;
+						while (splitIdx < splitTokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(splitTokens[splitIdx]!)) {
+							splitIdx++;
+						}
+						// Treat the first non-assignment token as the real command.
+						first = splitTokens[splitIdx] ?? "";
+						idx++; // advance past the env token itself
+						consumedRest = true;
+						break;
+					} else if ("Cu".includes(ch)) {
+						// -C (chdir) and -u (unset) each take the next argument when
+						// they appear at the end of the cluster; if attached, the rest
+						// of the cluster IS the argument.
+						const attached = optChars.slice(clusterIdx);
+						if (attached.length > 0) {
+							// argument is attached — consumed entirely; stop cluster loop
+							consumedRest = true;
+							break;
+						}
+						// argument is the next token
+						idx++;
+						if (idx < tokens.length) idx++;
+						consumedRest = true;
+						break;
+					}
+					// -i, -v, -0 and any other single-char flag: no argument, continue cluster
+				}
+				if (!consumedRest) idx++;
+				if (first !== tokens[0]) break; // -S set first already
 			} else {
 				break;
 			}
 		}
-		first = tokens[idx] ?? "";
+		// Only update first from tokens[idx] when -S didn't already set it.
+		if (first === tokens[0]) {
+			first = tokens[idx] ?? "";
+		}
 	}
 	// Skip leading NAME=value env assignments
 	while (first && /^[A-Za-z_][A-Za-z0-9_]*=/.test(first)) {

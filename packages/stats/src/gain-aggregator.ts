@@ -41,7 +41,7 @@ interface MinimizerRecord {
 }
 
 // Paths that carry no tuning signal — temp/internal locations.
-const TEMP_PATH_RE = /\/T\/|\/tmp\/|\/pi-bash-exec|\/omp-bash-exec|\/pi-bash-detach|\/var\/folders\//;
+const TEMP_PATH_RE = /\/T(?:\/|$)|\/tmp(?:\/|$)|\/pi-bash-exec|\/omp-bash-exec|\/pi-bash-detach|\/var\/folders(?:\/|$)/;
 
 // ---------------------------------------------------------------------------
 // Project-match helper
@@ -118,8 +118,8 @@ async function readMinimizerSets(cutoff: number | null, project: string | null):
 			if (project !== null && !matchesProject(rec.cwd, project)) continue;
 
 			if (rec.kind === "missed") {
-				// Unparsed: only "no filter matched" records from meaningful cwds.
-				if (rec.filter === "missed" && !TEMP_PATH_RE.test(rec.cwd ?? "")) {
+				// Unparsed: all missed records from meaningful cwds are filter-tuning candidates.
+				if (!TEMP_PATH_RE.test(rec.cwd ?? "")) {
 					sets.unparsed.push(rec);
 				}
 			} else {
