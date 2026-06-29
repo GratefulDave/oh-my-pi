@@ -224,6 +224,11 @@ import type {
 	TodoItem,
 	TodoPhase,
 } from "./types";
+import {
+	SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+	type SubagentHudSummaryDetails,
+	type SubagentHudSummaryRow,
+} from "./utils/transcript-render-helpers";
 import { UiHelpers } from "./utils/ui-helpers";
 
 const STILL_CLOSING_DELAY_MS = 3_000;
@@ -502,6 +507,21 @@ export function renderSubagentHudLines(sessions: ObservableSession[], columns: n
 
 const CTRL_L_APPEARANCE_RESPONSE_DEADLINE_MS = 2000;
 
+function toSubagentHudSummaryRow(session: ObservableSession): SubagentHudSummaryRow {
+	const tokens = session.progress?.tokens ?? 0;
+	const tokenLabel = tokens > 0 ? `${formatNumber(tokens).toLowerCase()} tokens` : "0 tokens";
+	const durationMs = session.progress?.durationMs ?? 0;
+	const durationLabel = durationMs > 0 ? formatDuration(durationMs) : "0s";
+	return {
+		id: session.id,
+		roleLabel: session.agent ?? "task",
+		label: session.label || session.description || formatTaskId(session.id),
+		status: session.status as "completed" | "failed" | "aborted",
+		toolCount: session.progress?.toolCount ?? 0,
+		tokenLabel,
+		durationLabel,
+	};
+}
 export class InteractiveMode implements InteractiveModeContext {
 	session: AgentSession;
 	sessionManager: SessionManager;
@@ -735,6 +755,8 @@ export class InteractiveMode implements InteractiveModeContext {
 	#voicePreviousUseTerminalCursor: boolean | null = null;
 	#resizeHandler?: () => void;
 	#observerRegistry: SessionObserverRegistry;
+	#hadActiveSubagents = false;
+	#emittedSubagentSummaryIds = new Set<string>();
 	#eventBus?: EventBus;
 	#eventBusUnsubscribers: Array<() => void> = [];
 	#observerUiSyncTimer?: NodeJS.Timeout;
@@ -2191,7 +2213,51 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#syncTodoAutoClearTimer();
 		this.#renderTodoList();
 		this.#renderSubagentList();
+		this.#emitSubagentSummaryIfSettled();
 		this.ui.requestRender();
+	}
+	#emitSubagentSummaryIfSettled(): void {
+		const sessions = this.#observerRegistry.getSessions();
+		const hasActiveDetached = sessions.some(
+			session => session.kind === "subagent" && session.status === "active" && session.detached === true,
+		);
+		if (!this.#hadActiveSubagents || hasActiveDetached) {
+			this.#hadActiveSubagents = hasActiveDetached;
+			return;
+		}
+
+		const settled = sessions.filter(
+			session =>
+				session.kind === "subagent" &&
+				session.detached === true &&
+				session.status !== "active" &&
+				!this.#emittedSubagentSummaryIds.has(session.id),
+		);
+		this.#hadActiveSubagents = false;
+		if (settled.length === 0) return;
+
+		const rows = settled.map(toSubagentHudSummaryRow);
+		for (const session of settled) this.#emittedSubagentSummaryIds.add(session.id);
+		const content = `${rows.length} agent${rows.length === 1 ? "" : "s"} settled`;
+		const details: SubagentHudSummaryDetails = { emittedAt: Date.now(), rows };
+		void this.session
+			.sendCustomMessage<SubagentHudSummaryDetails>({
+				customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+				content,
+				display: true,
+				details,
+				attribution: "agent",
+			})
+			.catch(err => logger.debug("subagent HUD summary delivery failed", { err: String(err) }));
+		this.addMessageToChat({
+			role: "custom",
+			customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+			content,
+			display: true,
+			details,
+			attribution: "agent",
+			timestamp: Date.now(),
+		});
 	}
 
 	#cancelObserverUiSyncTimer(): void {
@@ -4890,6 +4956,8 @@ export class InteractiveMode implements InteractiveModeContext {
 	resetObserverRegistry(): void {
 		this.#observerRegistry.resetSessions();
 		this.#observerRegistry.setMainSession(this.sessionManager.getSessionFile() ?? undefined);
+		this.#hadActiveSubagents = false;
+		this.#emittedSubagentSummaryIds.clear();
 	}
 
 	handleBashCommand(command: string, excludeFromContext?: boolean): Promise<void> {

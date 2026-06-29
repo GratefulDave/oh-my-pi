@@ -412,6 +412,10 @@
 
 - Upgraded the bundled omptype schema engine: intersection and pipe operators, bigint and RegExp literals in the string DSL, Standard Schema V1 interop, JSON Schema import via fromJsonSchema(), and richer union/collection error reporting.
 
+### Added
+
+- Added a persistent transcript summary when detached subagents settle, preserving their outcome, role, tool usage, token usage, and duration across transcript rebuilds.
+
 ## [17.2.7] - 2026-08-03
 
 ### Changed
