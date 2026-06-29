@@ -52,8 +52,10 @@ import {
 	buildAsyncResultBlock,
 	buildFileMentionBlock,
 	buildIrcMessageCard,
+	buildSubagentHudSummaryBlock,
 	normalizeToolArgs,
 	resolveAssistantErrorMessage,
+	SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
 } from "./transcript-render-helpers";
 
 type TextBlock = { type: "text"; text: string };
@@ -166,6 +168,10 @@ export class UiHelpers {
 					if (message.customType === COLLAB_PROMPT_MESSAGE_TYPE) {
 						const component = new CollabPromptMessageComponent(message as CustomMessage<CollabPromptDetails>);
 						this.ctx.chatContainer.addChild(component);
+						break;
+					}
+					if (message.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE) {
+						this.ctx.chatContainer.addChild(buildSubagentHudSummaryBlock(message));
 						break;
 					}
 					if (message.customType === SKILL_PROMPT_MESSAGE_TYPE) {

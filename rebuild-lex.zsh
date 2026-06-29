@@ -138,13 +138,19 @@ mkdir -p "$link_dir"
 ln -sf "$binary" "$link_dir/lex"
 ln -sf "$binary" "$link_dir/omp"
 
-# Sync the user-level (global) extension wiring so omp/lex behave the same in
-# EVERY directory, not just this repo. The installer may update
-# ~/.omp/agent/settings.json extension inventory and global extension symlinks,
-# but rebuild-lex.zsh guards ~/.omp/agent/config.yml and
-# ~/.lex/agent/config.yml against any mutation.
-print_step "Installing and verifying global extensions (~/.omp/agent/extensions)"
-bun scripts/install-user-extensions.ts
+# Rebuild personal extensions against the freshly compiled lex binary, then
+# install. Extensions import from @oh-my-pi/pi-coding-agent; a stale bundle
+# breaks /pm, /models, antigravity, and every other extension silently.
+personal_ext_repo="$HOME/PycharmProjects/omp-personal-extensions"
+if [[ -d "$personal_ext_repo" ]]; then
+	print_step "Rebuilding personal extensions ($personal_ext_repo)"
+	bun --cwd="$personal_ext_repo" run build
+	print_step "Installing and verifying global extensions (~/.omp/agent/extensions)"
+	bun --cwd="$personal_ext_repo" run install:user
+else
+	print_step "Installing and verifying global extensions (~/.omp/agent/extensions)"
+	bun scripts/install-user-extensions.ts
+fi
 
 print_step "Minimizer gain installed bundle session-scope smoke test"
 bun run --filter pi-minimizer-gain smoke:installed
