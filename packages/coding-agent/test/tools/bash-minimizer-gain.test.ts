@@ -6,8 +6,8 @@ import { makeMinimizedSaveHandler } from "@oh-my-pi/pi-coding-agent/tools/bash";
 import {
 	appendBashMinimizerGainRecord,
 	getBashMinimizerGainPath,
-	isBashCommandMinimizerEligible,
 	inferBashMinimizerMissedFilter,
+	isBashCommandMinimizerEligible,
 } from "@oh-my-pi/pi-coding-agent/tools/bash-minimizer-gain";
 
 describe("bash minimizer gain writer", () => {

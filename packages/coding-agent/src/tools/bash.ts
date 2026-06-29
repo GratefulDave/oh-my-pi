@@ -26,7 +26,11 @@ import { truncateForPrompt } from "./approval";
 import { applyBashFixups } from "./bash-command-fixup";
 import { type BashInteractiveResult, runInteractiveBashPty } from "./bash-interactive";
 import { checkBashInterception } from "./bash-interceptor";
-import { appendBashMinimizerGainRecord, inferBashMinimizerMissedFilter, isBashCommandMinimizerEligible } from "./bash-minimizer-gain";
+import {
+	appendBashMinimizerGainRecord,
+	inferBashMinimizerMissedFilter,
+	isBashCommandMinimizerEligible,
+} from "./bash-minimizer-gain";
 import { canUseInteractiveBashPty } from "./bash-pty-selection";
 import { expandInternalUrls, type InternalUrlExpansionOptions } from "./bash-skill-urls";
 import { invalidateGithubCacheForBashCommand } from "./gh-cache-invalidation";

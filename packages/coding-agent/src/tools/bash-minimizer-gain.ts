@@ -258,20 +258,14 @@ export function inferBashMinimizerMissedFilter(command: string): string {
  * wildcard over any sequence of characters (same semantics as shell globs on
  * a flat basename).  Compound or unrecognised commands are always ineligible.
  */
-export function isBashCommandMinimizerEligible(
-	command: string,
-	only: string[],
-	except: string[],
-): boolean {
+export function isBashCommandMinimizerEligible(command: string, only: string[], except: string[]): boolean {
 	const filter = inferBashMinimizerMissedFilter(command);
 	// Compound commands, empty results, and env-only wrappers are never minimized.
 	if (filter === "compound" || filter === "missed" || filter === "env") return false;
 	if (only.length === 0 && except.length === 0) return true;
 	const matchesGlob = (pattern: string, value: string): boolean => {
 		if (!pattern.includes("*")) return pattern === value;
-		const re = new RegExp(
-			`^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`,
-		);
+		const re = new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
 		return re.test(value);
 	};
 	if (only.length > 0 && !only.some(p => matchesGlob(p, filter))) return false;
