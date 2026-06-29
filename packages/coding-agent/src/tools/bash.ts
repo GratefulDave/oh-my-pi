@@ -26,7 +26,7 @@ import { truncateForPrompt } from "./approval";
 import { applyBashFixups } from "./bash-command-fixup";
 import { type BashInteractiveResult, runInteractiveBashPty } from "./bash-interactive";
 import { checkBashInterception } from "./bash-interceptor";
-import { appendBashMinimizerGainRecord, inferBashMinimizerMissedFilter } from "./bash-minimizer-gain";
+import { appendBashMinimizerGainRecord, inferBashMinimizerMissedFilter, isBashCommandMinimizerEligible } from "./bash-minimizer-gain";
 import { canUseInteractiveBashPty } from "./bash-pty-selection";
 import { expandInternalUrls, type InternalUrlExpansionOptions } from "./bash-skill-urls";
 import { invalidateGithubCacheForBashCommand } from "./gh-cache-invalidation";
@@ -152,6 +152,9 @@ async function recordBashMinimizerGain(input: {
 }): Promise<void> {
 	if (!input.session.settings.get("shellMinimizer.gainTelemetry")) return;
 	if (!input.session.settings.get("shellMinimizer.enabled")) return;
+	const only = input.session.settings.get("shellMinimizer.only");
+	const except = input.session.settings.get("shellMinimizer.except");
+	if (!isBashCommandMinimizerEligible(input.command, only, except)) return;
 	try {
 		if (input.result.cancelled || input.result.exitCode === undefined) return;
 		if (input.result.totalBytes <= 0) return;
@@ -1099,6 +1102,16 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 				const bridgeNotices: string[] = [];
 				if (finalOutput.truncated) bridgeNotices.push("(output truncated)");
 				for (const notice of pendingNotices) bridgeNotices.push(notice);
+
+				// The native minimizer never runs in the bridge path (execution happens
+				// inside the client terminal, not the agent process).  Record a missed
+				// row so the Gain dashboard accounts for all bash executions.
+				void recordBashMinimizerGain({
+					session: this.session,
+					command,
+					commandCwd,
+					result: bridgeResult,
+				}).catch(() => {});
 
 				return this.#buildCompletedResult(bridgeResult, timeoutSec, {
 					requestedTimeoutSec,

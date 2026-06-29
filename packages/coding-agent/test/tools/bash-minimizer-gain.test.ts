@@ -6,6 +6,7 @@ import { makeMinimizedSaveHandler } from "@oh-my-pi/pi-coding-agent/tools/bash";
 import {
 	appendBashMinimizerGainRecord,
 	getBashMinimizerGainPath,
+	isBashCommandMinimizerEligible,
 	inferBashMinimizerMissedFilter,
 } from "@oh-my-pi/pi-coding-agent/tools/bash-minimizer-gain";
 
@@ -183,6 +184,54 @@ describe("bash minimizer gain writer", () => {
 		expect(inferBashMinimizerMissedFilter("env -uFOO git status")).toBe("git");
 		// clustered flags before attached -C operand
 		expect(inferBashMinimizerMissedFilter("env -iC/tmp node server.js")).toBe("node");
+	});
+});
+
+describe("fd-dup redirect handling", () => {
+	test("2>&1 is not classified as compound", () => {
+		expect(inferBashMinimizerMissedFilter("bun test 2>&1")).toBe("bun");
+	});
+	test(">&2 is not classified as compound", () => {
+		expect(inferBashMinimizerMissedFilter("echo hello >&2")).toBe("echo");
+	});
+	test("cmd >file 2>&1 is not classified as compound", () => {
+		expect(inferBashMinimizerMissedFilter("npm install >out.log 2>&1")).toBe("npm");
+	});
+	test("&>file is not classified as compound", () => {
+		expect(inferBashMinimizerMissedFilter("git diff &>diff.txt")).toBe("git");
+	});
+	test("bare & (background) is still classified as compound", () => {
+		expect(inferBashMinimizerMissedFilter("sleep 10 &")).toBe("compound");
+	});
+	test("pipe is still classified as compound", () => {
+		expect(inferBashMinimizerMissedFilter("ls | grep foo")).toBe("compound");
+	});
+});
+
+describe("isBashCommandMinimizerEligible", () => {
+	test("eligible when only and except are empty", () => {
+		expect(isBashCommandMinimizerEligible("bun test", [], [])).toBe(true);
+	});
+	test("ineligible when only is set and basename not in it", () => {
+		expect(isBashCommandMinimizerEligible("bun test", ["git"], [])).toBe(false);
+	});
+	test("eligible when only is set and basename is in it", () => {
+		expect(isBashCommandMinimizerEligible("git status", ["git"], [])).toBe(true);
+	});
+	test("eligible when only glob pattern matches", () => {
+		expect(isBashCommandMinimizerEligible("bun test", ["bun*"], [])).toBe(true);
+	});
+	test("ineligible when except excludes the basename", () => {
+		expect(isBashCommandMinimizerEligible("git status", [], ["git"])).toBe(false);
+	});
+	test("eligible when only matches and except does not", () => {
+		expect(isBashCommandMinimizerEligible("git status", ["git"], ["bun"])).toBe(true);
+	});
+	test("compound commands are always ineligible", () => {
+		expect(isBashCommandMinimizerEligible("ls | grep foo", [], [])).toBe(false);
+	});
+	test("empty command is always ineligible", () => {
+		expect(isBashCommandMinimizerEligible("", [], [])).toBe(false);
 	});
 });
 

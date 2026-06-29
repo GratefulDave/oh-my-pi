@@ -289,7 +289,7 @@ import {
 import { assertEditableFile } from "../tools/auto-generated-guard";
 import { releaseTabsForOwner } from "../tools/browser/tab-supervisor";
 import { normalizeToolNames } from "../tools/builtin-names";
-import { appendBashMinimizerGainRecord, inferBashMinimizerMissedFilter } from "../tools/bash-minimizer-gain";
+import { appendBashMinimizerGainRecord, inferBashMinimizerMissedFilter, isBashCommandMinimizerEligible } from "../tools/bash-minimizer-gain";
 import { normalizeToolNames } from "../tools/builtin-names";
 import type { CheckpointState } from "../tools/checkpoint";
 import { outputMeta, wrapToolWithMetaNotice } from "../tools/output-meta";
@@ -12879,7 +12879,16 @@ export class AgentSession {
 						kind: "saved",
 						agentDir: this.settings.getAgentDir(),
 					}).catch(() => {});
-				} else if (!result.cancelled && result.exitCode !== undefined && result.totalBytes > 0) {
+				} else if (
+					!result.cancelled &&
+					result.exitCode !== undefined &&
+					result.totalBytes > 0 &&
+					isBashCommandMinimizerEligible(
+						command,
+						this.settings.get("shellMinimizer.only"),
+						this.settings.get("shellMinimizer.except"),
+					)
+				) {
 					void appendBashMinimizerGainRecord({
 						command,
 						cwd,

@@ -65,6 +65,10 @@ export async function appendBashMinimizerGainRecord(input: BashMinimizerGainInpu
  * detects shell operators (`|`, `&`, `;`). Returns token strings; operator
  * tokens are the single characters `|`, `&`, or `;`. Backslash-escaped
  * spaces are treated as word characters, not delimiters.
+ *
+ * fd-dup redirections (`2>&1`, `>&2`, `&>file`, `&>>file`) are treated as
+ * word characters, not shell operators, so `cmd 2>&1` is classified as a
+ * single-command call rather than a compound command.
  */
 function shellTokens(command: string): string[] {
 	const tokens: string[] = [];
@@ -75,18 +79,51 @@ function shellTokens(command: string): string[] {
 		while (i < len && (command[i] === " " || command[i] === "\t")) i++;
 		if (i >= len) break;
 		const ch0 = command[i];
-		// unquoted shell operators become single-character tokens
-		if (ch0 === "|" || ch0 === "&" || ch0 === ";" || ch0 === "\n" || ch0 === "\r") {
+		// unquoted shell operators become single-character tokens.
+		// Exception: `&` followed immediately by `>` is a redirect prefix (`&>`, `&>>`),
+		// not the shell AND/background operator — treat it as the start of a word token.
+		if (ch0 === "|" || ch0 === ";" || ch0 === "\n" || ch0 === "\r") {
+			tokens.push(ch0);
+			i++;
+			continue;
+		}
+		if (ch0 === "&" && (i + 1 >= len || command[i + 1] !== ">")) {
+			// Bare `&` (background / && operator) — emit as operator token.
 			tokens.push(ch0);
 			i++;
 			continue;
 		}
 		let token = "";
+		// When `&>` or `&>>` starts the word, consume the prefix immediately so
+		// the word builder's inner `&` handler (which requires token.endsWith(">"))
+		// works correctly and we avoid an infinite loop on an empty token.
+		if (ch0 === "&" && i + 1 < len && command[i + 1] === ">") {
+			token += command[i++]; // consume `&`
+			token += command[i++]; // consume `>`
+			if (i < len && command[i] === ">") token += command[i++]; // `&>>`
+		}
 		// consume one word token (may contain quoted spans or escape sequences)
 		while (i < len) {
 			const ch = command[i];
 			if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") break;
-			if (ch === "|" || ch === "&" || ch === ";") break;
+			if (ch === "|" || ch === ";") break;
+			// `&` is an operator unless it is part of a fd-dup redirect: the
+			// token so far ends with `>` (e.g. `2>` or `>`) and this `&` begins
+			// the target fd (`>&1`, `>>&1`).  In that case, consume it as a word
+			// character along with the following fd digits / `-`.
+			if (ch === "&") {
+				if (token.endsWith(">")) {
+					token += ch;
+					i++;
+					// consume the target fd: digit(s) or `-` (close-fd form)
+					while (i < len && (/\d/.test(command[i]!) || command[i] === "-")) {
+						token += command[i++];
+					}
+					continue;
+				}
+				// `&` in the middle of a non-redirect token is a genuine operator.
+				break;
+			}
 			if (ch === "\\") {
 				// backslash escape: next char is a literal word character
 				i++;
@@ -209,4 +246,35 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 	const slash = first.lastIndexOf("/");
 	const name = slash === -1 ? first : first.slice(slash + 1);
 	return name.length === 0 ? "missed" : name;
+}
+
+/**
+ * Returns whether a command is eligible for native minimization under the
+ * given `only` / `except` pattern lists (from `ShellMinimizerSettings`).
+ *
+ * The check mirrors what the native minimizer applies: if `only` is non-empty
+ * the command basename must match at least one pattern; if `except` is
+ * non-empty the basename must not match any.  Patterns support `*` as a
+ * wildcard over any sequence of characters (same semantics as shell globs on
+ * a flat basename).  Compound or unrecognised commands are always ineligible.
+ */
+export function isBashCommandMinimizerEligible(
+	command: string,
+	only: string[],
+	except: string[],
+): boolean {
+	const filter = inferBashMinimizerMissedFilter(command);
+	// Compound commands, empty results, and env-only wrappers are never minimized.
+	if (filter === "compound" || filter === "missed" || filter === "env") return false;
+	if (only.length === 0 && except.length === 0) return true;
+	const matchesGlob = (pattern: string, value: string): boolean => {
+		if (!pattern.includes("*")) return pattern === value;
+		const re = new RegExp(
+			`^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`,
+		);
+		return re.test(value);
+	};
+	if (only.length > 0 && !only.some(p => matchesGlob(p, filter))) return false;
+	if (except.length > 0 && except.some(p => matchesGlob(p, filter))) return false;
+	return true;
 }
