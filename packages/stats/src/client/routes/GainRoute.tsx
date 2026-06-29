@@ -175,7 +175,7 @@ function GainBySourcePanel({ bySource }: { bySource: GainDashboardStats["bySourc
 // ---------------------------------------------------------------------------
 
 function formatGainDateLabel(date: string): string {
-	const [, month, day] = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(date) ?? [];
+	const [,, month, day] = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(date) ?? [];
 	if (!month || !day) return date;
 	const monthIndex = Number(month) - 1;
 	const dayNumber = Number(day);
