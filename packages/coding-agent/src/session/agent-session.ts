@@ -535,6 +535,13 @@ export interface AgentSessionConfig {
 	 */
 	transformProviderContext?: (context: Context, model: Model) => Context | Promise<Context>;
 	/**
+	 * Stream wrapper passed to side-channel requests (`/btw`, `/omfg`, IRC
+	 * auto-replies, and handoff generation) so they apply the same provider
+	 * shaping and host-level request wrappers as normal agent turns. Defaults
+	 * to plain `streamSimple` when omitted.
+	 */
+	sideStreamFn?: StreamFn;
+	/**
 	 * Stream wrapper passed to the advisor agent so its requests apply the
 	 * session's `providers.openrouterVariant`, `providers.antigravityEndpoint`,
 	 * `providers.maxInFlightRequests`, and `model.loopGuard.*` settings —
@@ -1459,6 +1466,7 @@ export class AgentSession {
 	#onResponse: SimpleStreamOptions["onResponse"] | undefined;
 	#onSseEvent: SimpleStreamOptions["onSseEvent"] | undefined;
 	#transformProviderContext: ((context: Context, model: Model) => Context | Promise<Context>) | undefined;
+	#sideStreamFn: StreamFn;
 	#advisorStreamFn: StreamFn | undefined;
 	#convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	#rebuildSystemPrompt:
@@ -1788,6 +1796,7 @@ export class AgentSession {
 		this.#requestedToolNames = config.requestedToolNames;
 		this.#transformContext = config.transformContext ?? (messages => messages);
 		this.#transformProviderContext = config.transformProviderContext;
+		this.#sideStreamFn = config.sideStreamFn ?? streamSimple;
 		this.#advisorStreamFn = config.advisorStreamFn;
 		this.#onPayload = config.onPayload;
 		this.rawSseDebugBuffer = config.rawSseDebugBuffer ?? new RawSseDebugBuffer();
@@ -9195,6 +9204,10 @@ export class AgentSession {
 				model,
 				{
 					streamOptions: handoffStreamOptions,
+					completeImpl: async (requestModel, requestContext, requestOptions) => {
+						const stream = await this.#sideStreamFn(requestModel, requestContext, requestOptions);
+						return stream.result();
+					},
 					telemetry: resolveTelemetry(this.agent.telemetry, this.sessionId),
 					// Honor the user's /model thinking selection on the handoff path.
 					// Clamped per-model inside generateHandoffFromContext via
@@ -9502,8 +9515,9 @@ export class AgentSession {
 			// No promotion target available fall through to compaction
 			const compactionSettings = this.settings.getGroup("compaction");
 			if (compactionSettings.enabled && compactionSettings.strategy !== "off") {
-				await this.#dropPersistedAssistantTurn(assistantMessage);
-				return await this.#runAutoCompaction("overflow", true, false, allowDefer, { autoContinue });
+				return await this.#runRecoveryCompactionWithRollback("overflow", assistantMessage, allowDefer, {
+					autoContinue,
+				});
 			}
 			return COMPACTION_CHECK_NONE;
 		}
@@ -9532,12 +9546,11 @@ export class AgentSession {
 
 			const incompleteCompactionSettings = this.settings.getGroup("compaction");
 			if (incompleteCompactionSettings.enabled && incompleteCompactionSettings.strategy !== "off") {
-				await this.#dropPersistedAssistantTurn(assistantMessage);
 				logger.debug("Compaction triggered by response.incomplete (length stop, no promotion target)", {
 					model: `${assistantMessage.provider}/${assistantMessage.model}`,
 					strategy: incompleteCompactionSettings.strategy,
 				});
-				return await this.#runAutoCompaction("incomplete", true, false, allowDefer, {
+				return await this.#runRecoveryCompactionWithRollback("incomplete", assistantMessage, allowDefer, {
 					autoContinue,
 					triggerContextTokens: calculateContextTokens(assistantMessage.usage),
 				});
@@ -9814,6 +9827,40 @@ export class AgentSession {
 	async #dropPersistedAssistantTurn(assistantMessage: AssistantMessage): Promise<void> {
 		await this.#waitForSessionMessagePersistence(assistantMessage);
 		this.#discardAssistantTurn(assistantMessage);
+	}
+
+	/**
+	 * Drop the failed assistant turn from persisted history, run
+	 * {@link #runAutoCompaction} for an `overflow` / `incomplete` recovery, and
+	 * restore the assistant entry if compaction did not actually commit
+	 * anything (no usable model/preparation, hook cancel, or compaction error).
+	 *
+	 * Compaction has to see a clean branch — otherwise its `prepareCompaction`
+	 * pass would keep the failed turn in the kept region and the retry would
+	 * replay it. But a NONE return that was not paired with a fresh compaction
+	 * summary means no recovery is in progress, and leaving the branch
+	 * reparented would erase the only user-visible explanation for why the turn
+	 * stopped. Reverting the drop in that case preserves the transcript while
+	 * still letting a real recovery path own the rewrite.
+	 */
+	async #runRecoveryCompactionWithRollback(
+		reason: "overflow" | "incomplete",
+		assistantMessage: AssistantMessage,
+		allowDefer: boolean,
+		options: { autoContinue: boolean; triggerContextTokens?: number },
+	): Promise<CompactionCheckResult> {
+		const compactionEntryBefore = getLatestCompactionEntry(this.sessionManager.getBranch());
+		await this.#dropPersistedAssistantTurn(assistantMessage);
+		const result = await this.#runAutoCompaction(reason, true, false, allowDefer, options);
+		const recoveryCommitted =
+			result.continuationScheduled || result.deferredHandoff || result.automaticContinuationBlocked === true;
+		if (!recoveryCommitted) {
+			const compactionEntryAfter = getLatestCompactionEntry(this.sessionManager.getBranch());
+			if (compactionEntryAfter === compactionEntryBefore) {
+				this.sessionManager.appendMessage(assistantMessage);
+			}
+		}
+		return result;
 	}
 
 	/**
@@ -10713,6 +10760,18 @@ export class AgentSession {
 						tools: this.agent.state.tools,
 						sessionId: this.sessionId,
 						promptCacheKey: this.sessionId,
+						// Route every summarization HTTP request through the
+						// session's side-stream transport so the provider
+						// concurrency cap (e.g. providers.ollama-cloud.maxConcurrency)
+						// brackets compaction the same way it brackets the live
+						// agent turn — without this, multiple ollama-cloud
+						// subagents auto/manually compacting issued uncapped
+						// summary requests in parallel (chatgpt-codex review on
+						// #3751).
+						completeImpl: async (requestModel, requestContext, requestOptions) => {
+							const stream = await this.#sideStreamFn(requestModel, requestContext, requestOptions);
+							return stream.result();
+						},
 					},
 				);
 			} catch (error) {
@@ -12923,7 +12982,7 @@ export class AgentSession {
 		let providerReplyText = "";
 		let emittedReplyText = "";
 		let assistantMessage: AssistantMessage | undefined;
-		const stream = streamSimple(model, obfuscateProviderContext(this.#obfuscator, context), options);
+		const stream = await this.#sideStreamFn(model, obfuscateProviderContext(this.#obfuscator, context), options);
 		for await (const event of stream) {
 			if (event.type === "text_delta") {
 				providerReplyText += event.delta;
@@ -13541,6 +13600,12 @@ export class AgentSession {
 				metadata: this.agent.metadataForProvider(model.provider),
 				convertToLlm: messages => this.#convertToLlmForSideRequest(messages),
 				telemetry: resolveTelemetry(this.agent.telemetry, this.sessionId),
+				// Same per-provider concurrency cap rationale as the compaction
+				// path above (chatgpt-codex review on #3751).
+				completeImpl: async (requestModel, requestContext, requestOptions) => {
+					const stream = await this.#sideStreamFn(requestModel, requestContext, requestOptions);
+					return stream.result();
+				},
 			});
 			this.#branchSummaryAbortController = undefined;
 			if (result.aborted) {

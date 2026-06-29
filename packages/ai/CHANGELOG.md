@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [16.2.5] - 2026-06-28
+
+### Fixed
+
+- Fixed Google and Cloud Code Assist streams that end without a finish reason (dropped connections or truncated responses) being treated as fatal; they are now classified as transient so the coding agent automatically retries.
+
 ## [16.2.4] - 2026-06-28
 
 ### Added
