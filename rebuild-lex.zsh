@@ -152,6 +152,18 @@ else
 	bun scripts/install-user-extensions.ts
 fi
 
+# settings.json registers profile-manager at extensions/profile-manager/index.js
+# but install-user-extensions.ts removes index.js (it's in STALE_MANAGED_DISCOVERY_FILES)
+# and installs profile-manager.bundle.js instead. Re-create the index.js symlink
+# so the settings.json path keeps working without editing that protected file.
+pm_ext_dir="$HOME/.omp/agent/extensions/profile-manager"
+pm_bundle="$pm_ext_dir/profile-manager.bundle.js"
+pm_index="$pm_ext_dir/index.js"
+if [[ ( -e "$pm_bundle" || -L "$pm_bundle" ) && ! -e "$pm_index" && ! -L "$pm_index" ]]; then
+	ln -sf "$pm_bundle" "$pm_index"
+	printf '  profile-manager: created index.js -> profile-manager.bundle.js\n'
+fi
+
 print_step "Minimizer gain installed bundle session-scope smoke test"
 bun run --filter pi-minimizer-gain smoke:installed
 
