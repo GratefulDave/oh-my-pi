@@ -229,7 +229,7 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("git status", ["git"], ["bun"])).toBe(true);
 	});
 	test("compound commands are always ineligible", () => {
-		expect(isBashCommandMinimizerEligible("ls | grep foo", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("ls | grep foo", [], [])).toBe(false);
 	});
 	test("empty command is always ineligible", () => {
 		expect(isBashCommandMinimizerEligible("", [], [])).toBe(false);

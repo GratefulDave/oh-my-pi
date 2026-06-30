@@ -428,6 +428,8 @@ export function isBashCommandMinimizerEligible(command: string, only: string[], 
 	const filter = inferBashMinimizerMissedFilter(command);
 	// Compound commands, empty results, and bare-prefix results are never minimized.
 	if (filter === "compound" || filter === "missed" || filter === "env") return false;
+	// The native minimizer engine does not attempt piped commands (MinimizerMode::None).
+	if (shellTokens(command).some(t => t === "|")) return false;
 	if (only.length === 0 && except.length === 0) return true;
 	const lower = filter.toLowerCase();
 	if (only.length > 0 && !only.some(p => p.toLowerCase() === lower)) return false;
