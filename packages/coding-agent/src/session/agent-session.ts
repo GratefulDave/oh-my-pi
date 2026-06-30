@@ -12869,6 +12869,9 @@ export class AgentSession {
 
 			this.recordBashResult(command, result, options);
 			if (gainTelemetry && this.settings.get("shellMinimizer.enabled")) {
+				// Skip missed recording for user-shell wrapped commands — the minimizer only
+				// sees the shell wrapper (e.g. zsh -c <command>), not the original command.
+				const isUserShellWrapped = options?.useUserShell === true;
 				if (savedGain.info) {
 					// Flush saved record with real exitCode now that the result is known.
 					const info = savedGain.info;
@@ -12884,6 +12887,7 @@ export class AgentSession {
 						agentDir: this.settings.getAgentDir(),
 					}).catch(() => {});
 				} else if (
+					!isUserShellWrapped &&
 					!result.cancelled &&
 					result.exitCode !== undefined &&
 					result.totalBytes > 0 &&
