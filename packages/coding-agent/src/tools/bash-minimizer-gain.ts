@@ -161,114 +161,177 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 	const tokens = shellTokens(trimmed);
 	// Any unquoted shell operator token means compound command.
 	if (tokens.some(t => t === "|" || t === "&" || t === ";" || t === "\n" || t === "\r")) return "compound";
+
 	let idx = 0;
-	let first = tokens[0] ?? "";
-	// Skip env wrapper and its assignments/flags
-	if (first === "env") {
-		idx++;
-		// skip env options and NAME=value pairs
-		while (idx < tokens.length) {
-			const t = tokens[idx]!;
-			if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
-				idx++;
-			} else if (t.startsWith("--")) {
-				// Long options that take a following separate argument.
-				// --unset, --chdir, --split-string consume the next token.
-				// --ignore-environment, --null, --debug do not.
-				const longTakesArg = /^--(unset|chdir|split-string)$/.test(t);
-				idx++;
-				if (longTakesArg && idx < tokens.length) {
-					idx++; // skip the option's argument
+	let lastLaunchPrefix: string | undefined;
+
+	// Loop: strip NAME=value assignments, then check for a known launch prefix.
+	// Mirrors crates/pi-shell/src/minimizer/detect.rs fn strip_launch_prefix.
+	// eslint-disable-next-line no-constant-condition
+	while (true) {
+		const before = idx;
+
+		// Skip leading NAME=value env assignments at each stage
+		while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) {
+			idx++;
+		}
+
+		const token = tokens[idx];
+		if (!token) break;
+
+		if (token === "env") {
+			lastLaunchPrefix = "env";
+			idx++;
+			// skip env options and remaining NAME=value pairs
+			idx = skipEnvOptionsAndAssignments(tokens, idx);
+		} else if (token === "sudo") {
+			lastLaunchPrefix = "sudo";
+			idx++;
+			// skip sudo flags that take no argument; all sudo options take operands
+			// but after flags the next non-flag token is the command.
+			while (idx < tokens.length && tokens[idx]!.startsWith("-") && tokens[idx]!.length >= 2) {
+				const opt = tokens[idx]!;
+				if (opt === "--" || opt.startsWith("--group=") || opt.startsWith("--prompt=")) {
+					idx++;
+					break;
 				}
-			} else if (t.startsWith("-") && t.length >= 2 && !t.startsWith("--")) {
-				// Short options (possibly clustered, e.g. -iS or -S'cmd')
-				// Walk character by character through the option cluster.
-				const optChars = t.slice(1); // chars after the leading '-'
-				let clusterIdx = 0;
-				let consumedRest = false;
-				while (clusterIdx < optChars.length) {
-					const ch = optChars[clusterIdx]!;
-					clusterIdx++;
-					if (ch === "S") {
-						// -S takes the rest of this token (attached) or the next token
-						// as a string to re-tokenize and feed as the command.
-						const attached = optChars.slice(clusterIdx); // may be empty
-						const splitArg = attached.length > 0 ? attached : (tokens[idx + 1] ?? "");
-						if (!attached.length) idx++; // consumed next token
-						// Re-tokenize the -S argument as if it were a mini-command.
-						const splitTokens = shellTokens(splitArg);
-						// Skip any leading NAME=value assignments from the re-tokenized args.
-						let splitIdx = 0;
-						while (splitIdx < splitTokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(splitTokens[splitIdx]!)) {
-							splitIdx++;
-						}
-						// Treat the first non-assignment token as the real command.
-						first = splitTokens[splitIdx] ?? "";
-						idx++; // advance past the env token itself
-						consumedRest = true;
-						break;
-					} else if ("Cu".includes(ch)) {
-						// -C (chdir) and -u (unset) each take the next argument when
-						// they appear at the end of the cluster; if attached, the rest
-						// of the cluster IS the argument.
-						const attached = optChars.slice(clusterIdx);
-						if (attached.length > 0) {
-							// argument is attached — whole token consumed; advance past it
-							idx++;
-							consumedRest = true;
-							break;
-						}
-						// argument is the next (separate) token
-						idx++;
-						if (idx < tokens.length) idx++;
-						consumedRest = true;
-						break;
-					}
-					// -i, -v, -0 and any other single-char flag: no argument, continue cluster
-				}
-				if (!consumedRest) idx++;
-				if (first !== tokens[0]) break; // -S set first already
-			} else {
-				break;
+				// -A, -b, -E, -H, -K, -P, -S, -V, etc. take no additional argument
+				idx++;
+			}
+		} else if (token === "command") {
+			lastLaunchPrefix = "command";
+			idx++;
+			// -p, -v, -V take no argument
+			while (idx < tokens.length && (tokens[idx] === "-p" || tokens[idx] === "-v" || tokens[idx] === "-V")) {
+				idx++;
+			}
+		} else if (token === "builtin" || token === "noglob") {
+			lastLaunchPrefix = token;
+			idx++;
+		} else if (token === "exec") {
+			lastLaunchPrefix = "exec";
+			idx++;
+			// -a NAME, -c, -l take no separate operand besides -a's argument
+			while (idx < tokens.length && tokens[idx]!.startsWith("-")) {
+				const opt = tokens[idx]!;
+				if (opt === "-a" && idx + 1 < tokens.length) idx++; // -a consumes next token
+				idx++;
+			}
+		} else if (token === "time") {
+			lastLaunchPrefix = "time";
+			idx++;
+			// -p, -o FILE, -a FILE, -f FORMAT consume operands
+			while (idx < tokens.length && tokens[idx]!.startsWith("-")) {
+				const opt = tokens[idx]!;
+				if ((opt === "-o" || opt === "-a" || opt === "-f") && idx + 1 < tokens.length) idx++;
+				idx++;
 			}
 		}
-		// Only update first from tokens[idx] when -S didn't already set it.
-		if (first === tokens[0]) {
-			first = tokens[idx] ?? "";
-		}
+
+		if (idx === before) break;
 	}
-	// Skip leading NAME=value env assignments
-	while (first && /^[A-Za-z_][A-Za-z0-9_]*=/.test(first)) {
-		idx++;
-		first = tokens[idx] ?? "";
-	}
-	if (!first) return "env";
+
+	const first = tokens[idx] ?? "";
+	if (!first) return lastLaunchPrefix ?? "missed";
 	const slash = first.lastIndexOf("/");
 	const name = slash === -1 ? first : first.slice(slash + 1);
 	return name.length === 0 ? "missed" : name;
 }
 
 /**
+ * Skip env options and NAME=value pairs starting at `start` in `tokens`.
+ * Returns the index of the first non-option, non-assignment token.
+ *
+ * Mirrors crates/pi-shell/src/minimizer/detect.rs fn skip_env_options.
+ */
+function skipEnvOptionsAndAssignments(tokens: string[], start: number): number {
+	let idx = start;
+	while (idx < tokens.length) {
+		const t = tokens[idx]!;
+		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
+			idx++;
+		} else if (t.startsWith("--")) {
+			// Long options that take a following separate argument.
+			// --unset, --chdir, --split-string consume the next token.
+			// --ignore-environment, --null, --debug do not.
+			const longTakesArg = /^--(unset|chdir|split-string)$/.test(t);
+			idx++;
+			if (longTakesArg && idx < tokens.length) {
+				idx++; // skip the option's argument
+			}
+		} else if (t.startsWith("-") && t.length >= 2 && !t.startsWith("--")) {
+			// Short options (possibly clustered, e.g. -iS or -S'cmd')
+			// Walk character by character through the option cluster.
+			const optChars = t.slice(1); // chars after the leading '-'
+			let clusterIdx = 0;
+			let consumedRest = false;
+			while (clusterIdx < optChars.length) {
+				const ch = optChars[clusterIdx]!;
+				clusterIdx++;
+				if (ch === "S") {
+					// -S takes the rest of this token (attached) or the next token
+					// as a string to re-tokenize and feed as the command.
+					const attached = optChars.slice(clusterIdx);
+					const splitArg = attached.length > 0 ? attached : (tokens[idx + 1] ?? "");
+					if (!attached.length) idx++; // consumed next token
+					// The -S argument defines the real command — splice it back into
+					// tokens and return past the original env token.
+					const splitTokens = shellTokens(splitArg);
+					// Skip any leading NAME=value assignments from the re-tokenized args.
+					let splitIdx = 0;
+					while (splitIdx < splitTokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(splitTokens[splitIdx]!)) {
+						splitIdx++;
+					}
+					// Splice the split tokens in place of the env token
+					const realCommand = splitTokens.slice(splitIdx);
+					tokens.splice(idx, 1, ...realCommand);
+					consumedRest = true;
+					break;
+				} else if ("Cu".includes(ch)) {
+					// -C (chdir) and -u (unset) each take the next argument when
+					// they appear at the end of the cluster; if attached, the rest
+					// of the cluster IS the argument.
+					const attached = optChars.slice(clusterIdx);
+					if (attached.length > 0) {
+						// argument is attached — whole token consumed; advance past it
+						idx++;
+						consumedRest = true;
+						break;
+					}
+					// argument is the next (separate) token
+					idx++;
+					if (idx < tokens.length) idx++;
+					consumedRest = true;
+					break;
+				}
+				// -i, -v, -0 and any other single-char flag: no argument, continue cluster
+			}
+			if (!consumedRest) idx++;
+			if (consumedRest) continue;
+		} else {
+			break;
+		}
+	}
+	return idx;
+}
+
+/**
  * Returns whether a command is eligible for native minimization under the
  * given `only` / `except` pattern lists (from `ShellMinimizerSettings`).
  *
- * The check mirrors what the native minimizer applies: if `only` is non-empty
- * the command basename must match at least one pattern; if `except` is
- * non-empty the basename must not match any.  Patterns support `*` as a
- * wildcard over any sequence of characters (same semantics as shell globs on
- * a flat basename).  Compound or unrecognised commands are always ineligible.
+ * Mirrors the native minimizer's exact-lowercase membership check:
+ * `is_program_enabled` in `crates/pi-shell/src/minimizer/config.rs` lowercases
+ * the program and `HashSet::contains`-checks `only` and `except`.
+ *
+ * Compound or unrecognised commands are always ineligible.
  */
 export function isBashCommandMinimizerEligible(command: string, only: string[], except: string[]): boolean {
 	const filter = inferBashMinimizerMissedFilter(command);
-	// Compound commands, empty results, and env-only wrappers are never minimized.
+	// Compound commands, empty results, and bare-prefix results are never minimized.
 	if (filter === "compound" || filter === "missed" || filter === "env") return false;
 	if (only.length === 0 && except.length === 0) return true;
-	const matchesGlob = (pattern: string, value: string): boolean => {
-		if (!pattern.includes("*")) return pattern === value;
-		const re = new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
-		return re.test(value);
-	};
-	if (only.length > 0 && !only.some(p => matchesGlob(p, filter))) return false;
-	if (except.length > 0 && except.some(p => matchesGlob(p, filter))) return false;
+	const lower = filter.toLowerCase();
+	if (only.length > 0 && !only.some(p => p.toLowerCase() === lower)) return false;
+	if (except.length > 0 && except.some(p => p.toLowerCase() === lower)) return false;
 	return true;
 }

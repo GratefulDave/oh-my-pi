@@ -218,8 +218,9 @@ describe("isBashCommandMinimizerEligible", () => {
 	test("eligible when only is set and basename is in it", () => {
 		expect(isBashCommandMinimizerEligible("git status", ["git"], [])).toBe(true);
 	});
-	test("eligible when only glob pattern matches", () => {
-		expect(isBashCommandMinimizerEligible("bun test", ["bun*"], [])).toBe(true);
+	test("eligible with exact lowercase matching (mirrors native is_program_enabled)", () => {
+		expect(isBashCommandMinimizerEligible("GIT status", ["git"], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("bun test", ["BUN"], [])).toBe(true);
 	});
 	test("ineligible when except excludes the basename", () => {
 		expect(isBashCommandMinimizerEligible("git status", [], ["git"])).toBe(false);
