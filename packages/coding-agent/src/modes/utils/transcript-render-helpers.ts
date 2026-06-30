@@ -175,30 +175,40 @@ export interface SubagentHudSummaryDetails {
 }
 
 /**
- * Render a `subagent-hud-summary` custom message as a transcript block.
- * Header line shows the settle count; each row shows role badge, label, and
- * status-colored metrics (success for completed, error for failed/aborted).
+ * Render a `subagent-hud-summary` custom message as a transcript block. This is
+ * the settled counterpart to the live anchored Agents HUD: it is inserted into
+ * chat history, so it scrolls away like completed task output.
  */
 export function buildSubagentHudSummaryBlock(message: CustomOrHookMessage): TranscriptBlock {
 	const details = (message as CustomMessage<SubagentHudSummaryDetails>).details;
+	const rows = details?.rows ?? [];
 	const block = new TranscriptBlock();
-	// Header line: dim settle count
-	block.addChild(new Text(theme.fg("dim", typeof message.content === "string" ? message.content : ""), 0, 0));
-	for (const row of details?.rows ?? []) {
+	if (rows.length === 0) return block;
+	block.addChild(new Text(`${theme.fg("dim", "○")} ${theme.fg("dim", "Agents")}`, 0, 0));
+	rows.forEach((row, index) => {
 		const metricColor = row.status === "completed" ? ("success" as const) : ("error" as const);
 		const glyph =
 			row.status === "completed"
 				? theme.styledSymbol("status.done", "success")
 				: theme.styledSymbol("status.error", "error");
+		const connector = index === rows.length - 1 ? theme.tree.last : theme.tree.branch;
 		const badge = theme.fg("accent", `[${row.roleLabel}]`);
-		const label = theme.fg("accent", row.label);
-		const tools = theme.fg(metricColor, `${row.toolCount} tool use(s)`);
-		const tokens = theme.fg(metricColor, row.tokenLabel);
-		const duration = theme.fg(metricColor, row.durationLabel);
-		block.addChild(new Text(`  ${glyph} ${badge} ${label}  ${tools}  ${tokens}  ${duration}`, 1, 0));
+		const label = theme.fg(row.status === "completed" ? "text" : "accent", row.label);
+		const metrics = [
+			`${row.toolCount} tool use${row.toolCount === 1 ? "" : "s"}`,
+			row.tokenLabel,
+			row.durationLabel,
+		].map(value => theme.fg(metricColor, value));
+		block.addChild(
+			new Text(
+				`${theme.fg("dim", connector)} ${glyph} ${badge} ${label} ${theme.sep.dot} ${metrics.join(` ${theme.sep.dot} `)}`,
+				1,
+				0,
+			),
+		);
 		if (row.failureReason) {
-			block.addChild(new Text(`    ${theme.fg("error", row.failureReason)}`, 1, 0));
+			block.addChild(new Text(`  ${theme.tree.hook} ${theme.fg("error", row.failureReason)}`, 1, 0));
 		}
-	}
+	});
 	return block;
 }

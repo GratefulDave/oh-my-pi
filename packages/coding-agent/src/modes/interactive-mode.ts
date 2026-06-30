@@ -126,7 +126,7 @@ import type { HookInputComponent } from "./components/hook-input";
 import type { HookSelectorComponent, HookSelectorSlider } from "./components/hook-selector";
 import { PlanReviewOverlay } from "./components/plan-review-overlay";
 import { StatusLineComponent } from "./components/status-line";
-import type { ToolExecutionHandle } from "./components/tool-execution";
+import { SPINNER_RENDER_INTERVAL_MS, sharedSpinnerFrame, type ToolExecutionHandle } from "./components/tool-execution";
 import { TranscriptContainer } from "./components/transcript-container";
 import { WelcomeComponent, type LspServerInfo as WelcomeLspServerInfo } from "./components/welcome";
 import { BtwController } from "./controllers/btw-controller";
@@ -177,12 +177,12 @@ import type {
 	TodoItem,
 	TodoPhase,
 } from "./types";
-import { UiHelpers } from "./utils/ui-helpers";
 import {
 	SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
 	type SubagentHudSummaryDetails,
 	type SubagentHudSummaryRow,
 } from "./utils/transcript-render-helpers";
+import { UiHelpers } from "./utils/ui-helpers";
 
 const HINT_SHIMMER_PALETTE: ShimmerPalette = {
 	low: "dim",
@@ -331,43 +331,81 @@ class AnchoredLiveContainer extends Container implements NativeScrollbackLiveReg
 const MODEL_CYCLE_TRACK_CLEAR_MS = 4000;
 
 /**
- * Build the anchored subagent HUD block: a bold accent "Subagents" header plus
- * one hooked row per running agent in the same `Id: description` shape the
- * inline task rows use (muted task preview when no description was given).
- * Only detached background spawns are listed: a sync task call blocks the
- * parent turn and its inline tool block already renders progress live, and
- * eval `agent()` spawns are rendered by their own eval cell tree.
- * Returns an empty array when nothing is running so the container can clear.
+ * Build the anchored subagent HUD block. It mirrors the external pi-subagents
+ * widget shape: an "Agents" header, one tree row per live detached subagent,
+ * and a muted activity row. Finished agents are intentionally excluded here;
+ * their final snapshot is emitted into the transcript so it scrolls away like a
+ * completed task block instead of sticking above the editor.
  */
-export function renderSubagentHudLines(sessions: ObservableSession[], columns: number): string[] {
+export function renderSubagentHudLines(sessions: ObservableSession[], columns: number, spinnerFrame = 0): string[] {
 	const running = sessions.filter(
 		session => session.kind === "subagent" && session.status === "active" && session.detached === true,
 	);
 	if (running.length === 0) return [];
 
-	const indent = "  ";
-	const hook = theme.tree.hook;
-	const dot = theme.styledSymbol("status.done", "accent");
-	const lines = ["", indent + theme.bold(theme.fg("accent", "Subagents"))];
+	const width = Math.max(TRUNCATE_LENGTHS.SHORT, columns);
+	const frames = theme.spinnerFrames;
+	const frame = frames.length > 0 ? frames[spinnerFrame % frames.length] : theme.styledSymbol("status.done", "accent");
+	const lines = ["", `${theme.fg("accent", "●")} ${theme.fg("accent", "Agents")}`];
 	running.forEach((session, index) => {
-		const prefix = `${indent}${index === 0 ? hook : " "} `;
+		const isLast = index === running.length - 1;
+		const connector = isLast ? theme.tree.last : theme.tree.branch;
+		const activityConnector = isLast ? "   " : `${theme.tree.vertical}  `;
 		const displayId = formatTaskId(session.id);
-		let line = `${prefix}${dot} ${theme.fg("accent", theme.bold(displayId))}`;
+		const agentLabel = replaceTabs(session.agent || session.progress?.agent || "agent");
 		const description = session.description?.trim() || session.progress?.description?.trim();
-		if (description) {
-			const budget = Math.max(TRUNCATE_LENGTHS.SHORT, columns - visibleWidth(prefix) - visibleWidth(displayId) - 6);
-			line += `${theme.fg("accent", ":")} ${theme.fg("accent", truncateToWidth(replaceTabs(description), budget))}`;
-		} else {
-			// No spawn description: fall back to a muted task preview, same as
-			// the inline task rows when a row has no label.
-			const taskPreview = session.progress?.task?.trim();
-			if (taskPreview) {
-				line += ` ${theme.fg("muted", truncateToWidth(replaceTabs(taskPreview), TRUNCATE_LENGTHS.SHORT))}`;
-			}
-		}
-		lines.push(line);
+		const taskPreview = session.progress?.task?.trim();
+		const label = description
+			? `${theme.fg("accent", theme.bold(displayId))}${theme.fg("accent", ":")} ${theme.fg(
+					"muted",
+					truncateToWidth(replaceTabs(description), TRUNCATE_LENGTHS.SHORT),
+				)}`
+			: `${theme.fg("accent", theme.bold(displayId))}${
+					taskPreview
+						? ` ${theme.fg("muted", truncateToWidth(replaceTabs(taskPreview), TRUNCATE_LENGTHS.SHORT))}`
+						: ""
+				}`;
+		const stats = formatSubagentHudStats(session);
+		const meta = stats ? ` ${theme.sep.dot} ${theme.fg("dim", stats)}` : "";
+		lines.push(
+			truncateToWidth(
+				`${theme.fg("dim", connector)} ${theme.fg("accent", frame)} ${theme.fg(
+					"accent",
+					`[${agentLabel}]`,
+				)} ${label}${meta}`,
+				width,
+			),
+		);
+		lines.push(
+			truncateToWidth(
+				`${theme.fg("dim", activityConnector)}${theme.tree.hook} ${theme.fg("dim", formatSubagentHudActivity(session))}`,
+				width,
+			),
+		);
 	});
 	return lines;
+}
+
+function formatSubagentHudStats(session: ObservableSession): string {
+	const progress = session.progress;
+	if (!progress) return "";
+	const parts: string[] = [];
+	if (progress.toolCount > 0)
+		parts.push(`${formatNumber(progress.toolCount).toLowerCase()} tool use${progress.toolCount === 1 ? "" : "s"}`);
+	if (progress.tokens > 0) parts.push(`${formatNumber(progress.tokens).toLowerCase()} tokens`);
+	if (progress.durationMs > 0) parts.push(formatDuration(progress.durationMs));
+	return parts.join(` ${theme.sep.dot} `);
+}
+
+function formatSubagentHudActivity(session: ObservableSession): string {
+	const progress = session.progress;
+	if (!progress) return "thinking…";
+	if (progress.currentTool) return progress.currentTool;
+	const recentOutput = progress.recentOutput.at(-1)?.trim();
+	if (recentOutput) return truncateToWidth(replaceTabs(recentOutput), TRUNCATE_LENGTHS.CONTENT);
+	const recentTool = progress.recentTools.at(-1)?.tool;
+	if (recentTool) return recentTool;
+	return "thinking…";
 }
 
 function toSubagentHudSummaryRow(session: ObservableSession): SubagentHudSummaryRow {
@@ -377,13 +415,20 @@ function toSubagentHudSummaryRow(session: ObservableSession): SubagentHudSummary
 	const durationLabel = durationMs > 0 ? formatDuration(durationMs) : "0s";
 	return {
 		id: session.id,
-		roleLabel: session.agent ?? "task",
-		label: session.label || session.description || formatTaskId(session.id),
+		roleLabel: session.agent ?? session.progress?.agent ?? "task",
+		label: formatSubagentHudSummaryLabel(session),
 		status: session.status as "completed" | "failed" | "aborted",
 		toolCount: session.progress?.toolCount ?? 0,
 		tokenLabel,
 		durationLabel,
 	};
+}
+
+function formatSubagentHudSummaryLabel(session: ObservableSession): string {
+	const displayId = formatTaskId(session.id);
+	const description =
+		session.description?.trim() || session.progress?.description?.trim() || session.progress?.task?.trim();
+	return description ? `${displayId}: ${replaceTabs(description)}` : displayId;
 }
 
 export class InteractiveMode implements InteractiveModeContext {
@@ -588,6 +633,8 @@ export class InteractiveMode implements InteractiveModeContext {
 	#observerRegistry: SessionObserverRegistry;
 	#hadActiveSubagents = false;
 	#emittedSubagentSummaryIds = new Set<string>();
+	#subagentSpinnerInterval: NodeJS.Timeout | undefined;
+	#subagentSpinnerFrame = 0;
 	#eventBus?: EventBus;
 	#eventBusUnsubscribers: Array<() => void> = [];
 	#agentRegistryUnsubscribe?: () => void;
@@ -1841,9 +1888,34 @@ export class InteractiveMode implements InteractiveModeContext {
 	 */
 	#renderSubagentList(): void {
 		this.subagentContainer.clear();
-		const lines = renderSubagentHudLines(this.#observerRegistry.getSessions(), this.ui.terminal.columns);
+		const sessions = this.#observerRegistry.getSessions();
+		const hasActiveDetached = sessions.some(
+			session => session.kind === "subagent" && session.status === "active" && session.detached === true,
+		);
+		if (hasActiveDetached) {
+			this.#startSubagentSpinner();
+		} else {
+			this.#stopSubagentSpinner();
+		}
+		const lines = renderSubagentHudLines(sessions, this.ui.terminal.columns, this.#subagentSpinnerFrame);
 		if (lines.length === 0) return;
 		this.subagentContainer.addChild(new Text(lines.join("\n"), 1, 0));
+	}
+
+	#startSubagentSpinner(): void {
+		if (this.#subagentSpinnerInterval) return;
+		this.#subagentSpinnerFrame = sharedSpinnerFrame(theme.spinnerFrames.length);
+		this.#subagentSpinnerInterval = setInterval(() => {
+			this.#subagentSpinnerFrame = sharedSpinnerFrame(theme.spinnerFrames.length);
+			this.#renderSubagentList();
+			this.ui.requestRender();
+		}, SPINNER_RENDER_INTERVAL_MS);
+	}
+
+	#stopSubagentSpinner(): void {
+		if (!this.#subagentSpinnerInterval) return;
+		clearInterval(this.#subagentSpinnerInterval);
+		this.#subagentSpinnerInterval = undefined;
 	}
 
 	async #loadTodoList(): Promise<void> {
@@ -3306,8 +3378,8 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.#stopLoadingAnimation(false);
 		}
 		this.#cleanupMicAnimation();
+		this.#stopSubagentSpinner();
 		this.#cancelTodoAutoClearTimer();
-		this.#cancelGoalContinuation();
 		if (this.#sttController) {
 			this.#sttController.dispose();
 			this.#sttController = undefined;
@@ -3904,6 +3976,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#observerRegistry.setMainSession(this.sessionManager.getSessionFile() ?? undefined);
 		this.#hadActiveSubagents = false;
 		this.#emittedSubagentSummaryIds.clear();
+		this.#stopSubagentSpinner();
 	}
 
 	handleBashCommand(command: string, excludeFromContext?: boolean): Promise<void> {

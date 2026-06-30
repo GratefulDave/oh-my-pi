@@ -1,9 +1,10 @@
 /**
  * Contract: the anchored subagent HUD (rendered above the editor, next to the
- * Todos block) lists exactly the running *detached* subagents as
- * `Id: description` rows and yields no output once nothing qualifies, so the
- * block self-clears. Sync task spawns and eval `agent()` spawns are excluded:
- * their progress is already rendered inline (tool block / eval cell).
+ * Todos block) lists live *detached* subagents in the pi-subagents-style
+ * `Agents` tree. Finished subagents yield no anchored output because their
+ * final snapshot belongs in transcript scrollback. Sync task spawns and eval
+ * `agent()` spawns are excluded: their progress is already rendered inline
+ * (tool block / eval cell).
  */
 import { beforeAll, describe, expect, it } from "bun:test";
 import { renderSubagentHudLines } from "@oh-my-pi/pi-coding-agent/modes/interactive-mode";
@@ -89,14 +90,15 @@ describe("subagent HUD lines", () => {
 		await initTheme();
 	});
 
-	it("renders running subagents as Id: description under a Subagents header", () => {
+	it("renders running subagents as agent rows under an Agents header", () => {
 		const out = render([
-			makeSession({ id: "AuthLoader", description: "Refactoring the auth flow" }),
-			makeSession({ id: "SchemaMigrator", description: "Migrating the users table" }),
+			makeSession({ id: "AuthLoader", agent: "task", description: "Refactoring the auth flow" }),
+			makeSession({ id: "SchemaMigrator", agent: "reviewer", description: "Migrating the users table" }),
 		]);
-		expect(out).toContain("Subagents");
-		expect(out).toContain("AuthLoader: Refactoring the auth flow");
-		expect(out).toContain("SchemaMigrator: Migrating the users table");
+		expect(out).toContain("Agents");
+		expect(out).toContain("[task] AuthLoader: Refactoring the auth flow");
+		expect(out).toContain("[reviewer] SchemaMigrator: Migrating the users table");
+		expect(out).toContain("thinking…");
 	});
 
 	it("only shows active subagents and clears once everything finished", () => {
