@@ -15,6 +15,35 @@ const targetArch = Bun.env.TARGET_ARCH || process.arch;
 const configuredVariantRaw = Bun.env.TARGET_VARIANT;
 const isCrossCompile = Boolean(crossTarget) || targetPlatform !== process.platform || targetArch !== process.arch;
 
+// On macOS, Homebrew often installs its own rustc/cargo ahead of ~/.cargo/bin
+// in PATH, so the rustup shim is bypassed and rust-toolchain.toml is never
+// reached — causing E0554 (feature on stable channel). Fix: read the required
+// channel from rust-toolchain.toml and prepend that toolchain's bin dir to
+// PATH, so all child process spawns (cargo metadata, napi build) use the right
+// compiler regardless of the ambient PATH.
+if (!crossTarget && process.platform === "darwin") {
+	const toolchainToml = Bun.file(path.join(repoRoot, "rust-toolchain.toml"));
+	if (await toolchainToml.exists()) {
+		const tomlText = await toolchainToml.text();
+		const channelMatch = /^\s*channel\s*=\s*"([^"]+)"/m.exec(tomlText);
+		if (channelMatch) {
+			const channel = channelMatch[1];
+			const rustupHome = process.env.RUSTUP_HOME ?? path.join(process.env.HOME ?? "~", ".rustup");
+			const hostTriple = process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+			const toolchainBin = path.join(rustupHome, "toolchains", `${channel}-${hostTriple}`, "bin");
+			const toolchainBinAlt = path.join(rustupHome, "toolchains", `nightly-${hostTriple}`, "bin");
+			const targetBin = await Bun.file(path.join(toolchainBin, "rustc")).exists()
+				? toolchainBin
+				: await Bun.file(path.join(toolchainBinAlt, "rustc")).exists()
+					? toolchainBinAlt
+					: null;
+			if (targetBin) {
+				process.env.PATH = `${targetBin}:${process.env.PATH ?? ""}`;
+			}
+		}
+	}
+}
+
 type X64Variant = "modern" | "baseline";
 
 let configuredVariant: X64Variant | undefined;
