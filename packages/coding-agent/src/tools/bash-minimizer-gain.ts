@@ -263,8 +263,11 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 	// Tokenize first so quoted operators (e.g. `rg 'foo|bar'`) are not
 	// misidentified as compound commands.
 	const tokens = shellTokens(trimmed);
-	// Any unquoted shell operator token means compound command.
-	if (tokens.some(t => t === "|" || t === "&" || t === ";" || t === "\n" || t === "\r")) return "compound";
+	// NOTE: do NOT bail on shell operators here — the native minimizer
+	// stops tokenization at `|`, `;`, `&` and still detects the first
+	// command (e.g. `git` from `git status | cat`). Let the prefix-stripping
+	// loop below work through launch prefixes to find the first executable
+	// before any operator.
 
 	let idx = 0;
 	let lastLaunchPrefix: string | undefined;
@@ -325,6 +328,8 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 
 	const first = tokens[idx] ?? "";
 	if (!first) return lastLaunchPrefix ?? "missed";
+	// A bare shell operator as the first token means the command is compound.
+	if (first === "|" || first === "&" || first === ";" || first === "\n" || first === "\r") return "compound";
 	const slash = first.lastIndexOf("/");
 	const name = slash === -1 ? first : first.slice(slash + 1);
 	if (name.length === 0) return "missed";

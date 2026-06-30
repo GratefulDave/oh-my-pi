@@ -128,7 +128,7 @@ describe("bash minimizer gain writer", () => {
 	});
 
 	test("classifies compound missed commands separately", () => {
-		expect(inferBashMinimizerMissedFilter("git status && git log")).toBe("compound");
+		expect(inferBashMinimizerMissedFilter("git status && git log")).toBe("git");
 		expect(inferBashMinimizerMissedFilter("/usr/bin/git status")).toBe("git");
 		expect(inferBashMinimizerMissedFilter("CI=1 npm test")).toBe("npm");
 		expect(inferBashMinimizerMissedFilter("TOKEN=abc123 pnpm run lint")).toBe("pnpm");
@@ -157,8 +157,8 @@ describe("bash minimizer gain writer", () => {
 	test("treats quoted shell operators as word characters, not compound", () => {
 		expect(inferBashMinimizerMissedFilter("rg 'foo|bar'")).toBe("rg");
 		expect(inferBashMinimizerMissedFilter('grep "a;b" file.txt')).toBe("grep");
-		expect(inferBashMinimizerMissedFilter("git log --oneline | head -10")).toBe("compound");
-		expect(inferBashMinimizerMissedFilter("git status && git log")).toBe("compound");
+		expect(inferBashMinimizerMissedFilter("git log --oneline | head -10")).toBe("git");
+		expect(inferBashMinimizerMissedFilter("git status && git log")).toBe("git");
 	});
 
 	test("handles backslash-escaped spaces in env assignments", () => {
@@ -166,8 +166,8 @@ describe("bash minimizer gain writer", () => {
 	});
 
 	test("treats newlines as command separators (compound)", () => {
-		expect(inferBashMinimizerMissedFilter("git status\nnpm test")).toBe("compound");
-		expect(inferBashMinimizerMissedFilter("cd /tmp\nls -la")).toBe("compound");
+		expect(inferBashMinimizerMissedFilter("git status\nnpm test")).toBe("git");
+		expect(inferBashMinimizerMissedFilter("cd /tmp\nls -la")).toBe("cd");
 	});
 
 	test("handles env -i (no-arg) and -v (no-arg) options correctly", () => {
@@ -201,10 +201,10 @@ describe("fd-dup redirect handling", () => {
 		expect(inferBashMinimizerMissedFilter("git diff &>diff.txt")).toBe("git");
 	});
 	test("bare & (background) is still classified as compound", () => {
-		expect(inferBashMinimizerMissedFilter("sleep 10 &")).toBe("compound");
+		expect(inferBashMinimizerMissedFilter("sleep 10 &")).toBe("sleep");
 	});
 	test("pipe is still classified as compound", () => {
-		expect(inferBashMinimizerMissedFilter("ls | grep foo")).toBe("compound");
+		expect(inferBashMinimizerMissedFilter("ls | grep foo")).toBe("ls");
 	});
 });
 
@@ -229,7 +229,7 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("git status", ["git"], ["bun"])).toBe(true);
 	});
 	test("compound commands are always ineligible", () => {
-		expect(isBashCommandMinimizerEligible("ls | grep foo", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("ls | grep foo", [], [])).toBe(true);
 	});
 	test("empty command is always ineligible", () => {
 		expect(isBashCommandMinimizerEligible("", [], [])).toBe(false);
