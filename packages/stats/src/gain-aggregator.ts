@@ -41,7 +41,8 @@ interface MinimizerRecord {
 }
 
 // Paths that carry no tuning signal — temp/internal locations.
-const TEMP_PATH_RE = /\/T(?:\/|$)|\/tmp(?:\/|$)|\/pi-bash-exec|\/omp-bash-exec|\/pi-bash-detach|\/var\/folders(?:\/|$)/;
+const TEMP_PATH_RE =
+	/\/T(?:\/|$)|\/tmp(?:\/|$)|\/pi-bash-exec(?:\/|$)|\/omp-bash-exec(?:\/|$)|\/pi-bash-detach(?:\/|$)|\/var\/folders(?:\/|$)/;
 
 // ---------------------------------------------------------------------------
 // Project-match helper
@@ -110,12 +111,12 @@ async function readMinimizerSets(cutoff: number | null, project: string | null):
 		try {
 			const rec = JSON.parse(line) as MinimizerRecord;
 
-			// Always collect project cwds (unfiltered).
-			if (rec.cwd) sets.projects.add(rec.cwd);
-
 			const ts = new Date(rec.timestamp).getTime();
 			if (cutoff !== null && ts < cutoff) continue;
 			if (project !== null && !matchesProject(rec.cwd, project)) continue;
+
+			// Collect project cwds — after cutoff/project filter keeps selector range-scoped.
+			if (rec.cwd) sets.projects.add(rec.cwd);
 
 			if (rec.kind === "missed") {
 				// Unparsed: all missed records from meaningful cwds are filter-tuning candidates.
