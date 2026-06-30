@@ -718,27 +718,31 @@ async function handleNoArg(
 		DEFAULT_PROFILE_NAME,
 		...names.filter((n) => n !== DEFAULT_PROFILE_NAME),
 	];
-	const profileOptions = allNames.map((n) => ({
-		label: `${active === n || (n === DEFAULT_PROFILE_NAME && !active) ? "* " : "  "}${n}`,
-		description:
-			n === DEFAULT_PROFILE_NAME
-				? "Global settings (no profile)"
-				: n === active && persistedActive && persistedActive !== active
-					? `Pinned by active OMP profile; saved /pm profile is ${persistedActive}`
-					: undefined,
-	}));
-	const CREATE_LABEL = "  Create new profile...";
+	const profileOptions = allNames.map((n) => {
+		const isActive = active === n || (n === DEFAULT_PROFILE_NAME && !active);
+		return {
+			label: `${n}${isActive ? " (active)" : ""}`,
+			description:
+				n === DEFAULT_PROFILE_NAME
+					? "Global settings (no profile)"
+					: isActive && persistedActive && persistedActive !== active
+						? `Pinned by active OMP profile; saved /pm profile is ${persistedActive}`
+						: undefined,
+		};
+	});
+	const CREATE_LABEL = "Create new profile...";
 	const choices = [
 		...profileOptions,
 		{ label: CREATE_LABEL, description: "Snapshot current model config" },
 	];
 	const choice = await ctx.ui.select("Model profiles", choices, {
-		helpText: "Type to filter · Enter to select · * = active",
+		helpText:
+			"Type to filter · Enter to select · active profile is marked inline",
 	});
 	if (!choice) return;
 
-	// Strip the leading "* " or "  " marker that was added for visual indication.
-	const chosenName = choice.replace(/^\*?\s+/, "").trim();
+	// Remove the inline active marker added for visual indication.
+	const chosenName = choice.replace(/\s+\(active\)$/, "").trim();
 
 	if (chosenName === "Create new profile...") {
 		const name = await ctx.ui.input("Create model profile", "Profile name");
@@ -893,7 +897,7 @@ async function handleUse(
 
 /**
  * /pm model [role] — show available models filtered by the active profile's
- * enabledModels, mark the current role assignment with *, allow the user to
+ * enabledModels, mark the current role assignment inline, allow the user to
  * pick a new one. Saves the new role to the active profile and calls applyProfile.
  *
  * Role defaults to "smol" when omitted (the most common adjustment).
@@ -953,7 +957,7 @@ async function handleModel(
 		const full = `${m.provider}/${m.id}`;
 		const isCurrent = currentBase === full;
 		return {
-			label: `${isCurrent ? "* " : "  "}${full}`,
+			label: `${full}${isCurrent ? " (current)" : ""}`,
 			description: m.name ?? m.id,
 		};
 	});
@@ -968,8 +972,8 @@ async function handleModel(
 	);
 	if (!chosen) return;
 
-	// Strip the leading "* " or "  " marker to recover provider/id.
-	const chosenFull = chosen.replace(/^\*?\s+/, "");
+	// Remove the inline current marker to recover provider/id.
+	const chosenFull = chosen.replace(/\s+\(current\)$/, "");
 
 	// Build selector: keep existing thinking level suffix if the model matches.
 	let newSelector = chosenFull;
