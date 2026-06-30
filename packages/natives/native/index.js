@@ -24,7 +24,7 @@ export const Shell = nativeBindings.Shell;
 
 // functions
 export const __ompInstallTokioRuntime = nativeBindings.__ompInstallTokioRuntime;
-export const __piNativesV16_2_7 = nativeBindings.__piNativesV16_2_7;
+export const __piNativesV16_2_8 = nativeBindings.__piNativesV16_2_8;
 export const applyBashFixups = nativeBindings.applyBashFixups;
 export const applyShellMinimizer = nativeBindings.applyShellMinimizer;
 export const astEdit = nativeBindings.astEdit;
