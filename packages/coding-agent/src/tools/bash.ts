@@ -1108,15 +1108,9 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 				for (const notice of pendingNotices) bridgeNotices.push(notice);
 
 				// The native minimizer never runs in the bridge path (execution happens
-				// inside the client terminal, not the agent process).  Record a missed
-				// row so the Gain dashboard accounts for all bash executions.
-				void recordBashMinimizerGain({
-					session: this.session,
-					command,
-					commandCwd,
-					result: bridgeResult,
-				}).catch(() => {});
-
+				// inside the client terminal, not the agent process). Do NOT record a
+				// missed row — it would pollute miss/tuning data with commands the
+				// minimizer never had a chance to process.
 				return this.#buildCompletedResult(bridgeResult, timeoutSec, {
 					requestedTimeoutSec,
 					notices: bridgeNotices,
