@@ -153,6 +153,110 @@ function shellTokens(command: string): string[] {
 	return tokens;
 }
 
+/** Skip the operand value of an option flag. Mirrors `skip_option_value` in the Rust minimizer. */
+function skipOptionValue(tokens: string[], index: number): number {
+	const token = tokens[index];
+	if (!token) return index + 1;
+	// --opt=value → value is attached
+	if (token.startsWith("--") && token.includes("=")) return index + 1;
+	// -uvalue → value is attached to short opt
+	if (token.startsWith("-") && !token.startsWith("--") && token.length > 2) return index + 1;
+	// opt value (separate token)
+	return index + 2;
+}
+
+/** Skip sudo options and their operands. Mirrors `skip_sudo_options` in the Rust minimizer. */
+function skipSudoOptions(tokens: string[], start: number): number {
+	let idx = start;
+	while (idx < tokens.length) {
+		const t = tokens[idx]!;
+		if (t === "--") {
+			idx++;
+			break;
+		}
+		if (t === "-E" || t === "-H" || t === "-n" || t === "-S" || t === "-k" || t === "-K" || t === "-b") {
+			// Flags that take no additional argument
+			idx++;
+			continue;
+		}
+		if (
+			t === "-u" ||
+			t === "--user" ||
+			t === "-g" ||
+			t === "--group" ||
+			t === "-h" ||
+			t === "--host" ||
+			t === "-p" ||
+			t === "--prompt" ||
+			t === "-C" ||
+			t === "--close-from" ||
+			t === "-T" ||
+			t === "--command-timeout"
+		) {
+			idx = skipOptionValue(tokens, idx);
+			continue;
+		}
+		if (
+			t.startsWith("--user=") ||
+			t.startsWith("--group=") ||
+			t.startsWith("--host=") ||
+			t.startsWith("--prompt=") ||
+			t.startsWith("--close-from=") ||
+			t.startsWith("--command-timeout=")
+		) {
+			idx++;
+			continue;
+		}
+		if (t.startsWith("-")) {
+			// Unknown flag — the Rust minimizer returns None here (no identity).
+			// For telemetry, still advance past it to a reasonable fallback.
+			idx = skipOptionValue(tokens, idx);
+			continue;
+		}
+		break;
+	}
+	return idx;
+}
+
+/** Skip command options and return the new index, or null for -v/-V probes. Mirrors `skip_command_options` in the Rust minimizer. */
+function skipCommandOptions(tokens: string[], start: number): number | null {
+	let idx = start;
+	while (idx < tokens.length) {
+		const t = tokens[idx]!;
+		if (t === "--") {
+			return idx + 1;
+		}
+		if (t === "-p") {
+			idx++;
+			continue;
+		}
+		if (t === "-v" || t === "-V") {
+			return null; // probe → no minimizer identity
+		}
+		if (t.startsWith("-")) return null;
+		break;
+	}
+	return idx;
+}
+
+/**
+ * Apply the same program-name normalisations as the native minimizer's
+ * `normalize_program` in `crates/pi-shell/src/minimizer/detect.rs`.
+ */
+function normalizeProgramName(name: string): string {
+	const lowered = name.toLowerCase();
+	switch (lowered) {
+		case "gradlew.bat":
+			return "gradlew";
+		case "mvnw.cmd":
+			return "mvnw";
+		case "docker-compose":
+			return "docker";
+		default:
+			return lowered;
+	}
+}
+
 export function inferBashMinimizerMissedFilter(command: string): string {
 	const trimmed = command.trim();
 	if (trimmed.length === 0) return "missed";
@@ -187,24 +291,12 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 		} else if (token === "sudo") {
 			lastLaunchPrefix = "sudo";
 			idx++;
-			// skip sudo flags that take no argument; all sudo options take operands
-			// but after flags the next non-flag token is the command.
-			while (idx < tokens.length && tokens[idx]!.startsWith("-") && tokens[idx]!.length >= 2) {
-				const opt = tokens[idx]!;
-				if (opt === "--" || opt.startsWith("--group=") || opt.startsWith("--prompt=")) {
-					idx++;
-					break;
-				}
-				// -A, -b, -E, -H, -K, -P, -S, -V, etc. take no additional argument
-				idx++;
-			}
+			idx = skipSudoOptions(tokens, idx);
 		} else if (token === "command") {
+			const commandIdx = skipCommandOptions(tokens, idx + 1);
+			if (commandIdx === null) return "missed"; // -v/-V probe → no minimizer identity
 			lastLaunchPrefix = "command";
-			idx++;
-			// -p, -v, -V take no argument
-			while (idx < tokens.length && (tokens[idx] === "-p" || tokens[idx] === "-v" || tokens[idx] === "-V")) {
-				idx++;
-			}
+			idx = commandIdx;
 		} else if (token === "builtin" || token === "noglob") {
 			lastLaunchPrefix = token;
 			idx++;
@@ -235,7 +327,9 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 	if (!first) return lastLaunchPrefix ?? "missed";
 	const slash = first.lastIndexOf("/");
 	const name = slash === -1 ? first : first.slice(slash + 1);
-	return name.length === 0 ? "missed" : name;
+	if (name.length === 0) return "missed";
+	// Apply native-program normalization (e.g. gradlew.bat → gradlew)
+	return normalizeProgramName(name);
 }
 
 /**
