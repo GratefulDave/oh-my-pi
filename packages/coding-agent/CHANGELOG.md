@@ -115,6 +115,10 @@
 - Fixed the bash interceptor blocking `echo` / `printf` redirects to `/dev/null`, `/dev/tty`, `/dev/stdout`, and `/dev/stderr` device sinks while still directing real file writes to the write tool. ([#3763](https://github.com/can1357/oh-my-pi/issues/3763))
 - Fixed long snapcompact sessions re-sending multi-megabyte standing image archives on every provider request by enforcing a per-request frame byte budget, letting auto-compaction fall back to context-full summaries when snapcompact output is too large, and omitting legacy over-budget frames from rebuilt LLM contexts. ([#3792](https://github.com/can1357/oh-my-pi/issues/3792))
 
+### Added
+
+- Added bash minimizer gain telemetry (`shellMinimizer.gainTelemetry`): when enabled (default **off**), appends JSONL records to `~/.omp/agent/minimizer-gain.jsonl` for every bash execution — `kind:"saved"` when the shell minimizer compressed output, `kind:"missed"` when it did not. Records include `sessionId`, `cwd`, `command`, `filter`, `inputBytes`, `outputBytes`, `exitCode`, and `timestamp`. Off by default; the setting description documents that the raw command string is recorded verbatim and may contain credentials ([#3691](https://github.com/can1357/oh-my-pi/pull/3691)).
+
 ## [16.2.7] - 2026-06-30
 
 ### Breaking Changes
@@ -158,10 +162,6 @@
 - Fixed the DuckDuckGo web_search provider returning empty results for non-encyclopedic queries by switching from the Instant Answer API to parsing the HTML frontend, and added clear error handling for bot-challenge throttling.
 - Fixed Windows --extension paths with spaces or \\?\ prefixes being truncated or incorrectly passed to Bun import/spawn APIs.
 - Fixed /mcp reauth compatibility with Cloudflare by aligning OAuth prompt behavior with the reference MCP SDK and updating the client label to oh-my-pi.
-
-### Added
-
-- Added bash minimizer gain telemetry (`shellMinimizer.gainTelemetry`): when enabled (default **off**), appends JSONL records to `~/.omp/agent/minimizer-gain.jsonl` for every bash execution — `kind:"saved"` when the shell minimizer compressed output, `kind:"missed"` when it did not. Records include `sessionId`, `cwd`, `command`, `filter`, `inputBytes`, `outputBytes`, `exitCode`, and `timestamp`. Off by default; the setting description documents that the raw command string is recorded verbatim and may contain credentials ([#3691](https://github.com/can1357/oh-my-pi/pull/3691)).
 
 ## [16.2.5] - 2026-06-28
 

@@ -113,10 +113,12 @@ async function readMinimizerSets(cutoff: number | null, project: string | null):
 
 			const ts = new Date(rec.timestamp).getTime();
 			if (cutoff !== null && ts < cutoff) continue;
-			if (project !== null && !matchesProject(rec.cwd, project)) continue;
 
-			// Collect project cwds — after cutoff/project filter keeps selector range-scoped.
+			// Collect range-scoped project cwds before the per-project filter so the
+			// selector still shows other projects in the active time range.
 			if (rec.cwd) sets.projects.add(rec.cwd);
+
+			if (project !== null && !matchesProject(rec.cwd, project)) continue;
 
 			if (rec.kind === "missed") {
 				// Unparsed: all missed records from meaningful cwds are filter-tuning candidates.
