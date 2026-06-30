@@ -256,3 +256,35 @@ Location: `packages/*/CHANGELOG.md` (per package).
 2. Run `bun run release`.
 
 The script handles version bump, CHANGELOG finalization, commit, tag, publish, and adding new `[Unreleased]` sections.
+
+## Fork Maintenance
+
+### Rust toolchain on macOS (Homebrew conflict)
+
+**Symptom**: `bun run build` fails with `error[E0554]: #![feature] may not be used on the stable release channel` during `@oh-my-pi/pi-natives` compilation.
+
+**Root cause**: Homebrew installs its own `rustc`/`cargo` (`stable`, e.g. `1.96.0`) at `/opt/homebrew/bin/`, which appears before `~/.cargo/bin` in the default macOS PATH. These are **not** rustup shims — they completely ignore `rust-toolchain.toml` and `RUSTUP_TOOLCHAIN`. The napi build calls the wrong compiler.
+
+**Fix (already applied)**: `packages/natives/scripts/build-native.ts` reads `rust-toolchain.toml` at startup and prepends the matching nightly toolchain's bin dir to `process.env.PATH` before any cargo/napi invocations. This propagates to all child processes and works from any shell without sourcing `.zshrc`. Commit: `c32bc1be0`.
+
+**`rebuild-lex.zsh` backup**: Lines 8–14 also prepend the nightly bin to PATH at the top of the script, so the `bun run build` invocation inside the script inherits the correct PATH even if the `build-native.ts` fix were removed.
+
+**Do NOT**:
+- Uninstall Homebrew's Rust (breaks other tools).
+- Set `RUSTUP_TOOLCHAIN` as an env var workaround — Homebrew's binaries ignore it entirely.
+- Rely on `.zshrc` PATH ordering — new terminal sessions may not have sourced it before running `bun run build` directly.
+
+**Verification**:
+```bash
+# Should show nightly (1.97.0-nightly or newer), not Homebrew stable
+bun run --filter '@oh-my-pi/pi-natives' build
+# "Build complete." = success; "E0554" = wrong rustc still in play
+```
+
+### Personal extensions
+
+Extensions live in `~/PycharmProjects/omp-personal-extensions/` (separate repo, not a workspace package). After any `rebuild_lex`, personal extension bundles must be rebuilt against the new binary — they import from `@oh-my-pi/pi-coding-agent` and break silently if stale.
+
+`rebuild-lex.zsh` handles this automatically (lines 141–153): it calls `bun run build` then `bun run install:user` in the personal extensions repo if it exists.
+
+**Protected configs**: `~/.omp/agent/config.yml` and `~/.lex/agent/config.yml` are hash-guarded by `rebuild-lex.zsh` — the script will refuse to finish if either file changes during the build. Do not edit these files from code.
