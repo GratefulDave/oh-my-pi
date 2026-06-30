@@ -1,0 +1,45 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { removeStaleManagedDiscoveryFiles } from "./install-user-extensions";
+
+
+describe("removeStaleManagedDiscoveryFiles", () => {
+	let tempDir = "";
+
+	beforeEach(async () => {
+		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-managed-extension-"));
+	});
+
+	afterEach(async () => {
+		if (tempDir) {
+			await fs.rm(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("removes stale manifests and source entrypoints that override a rebuilt bundle", async () => {
+		await Promise.all([
+			fs.writeFile(path.join(tempDir, "package.json"), "{}\n"),
+			fs.writeFile(path.join(tempDir, "index.ts"), "export default null;\n"),
+			fs.writeFile(path.join(tempDir, "index.js"), "// keep\n"),
+			fs.writeFile(path.join(tempDir, "notes.txt"), "keep\n"),
+		]);
+
+		await removeStaleManagedDiscoveryFiles(tempDir, "index.js");
+
+		expect(await Bun.file(path.join(tempDir, "package.json")).exists()).toBe(false);
+		expect(await Bun.file(path.join(tempDir, "index.ts")).exists()).toBe(false);
+		expect(await Bun.file(path.join(tempDir, "index.js")).exists()).toBe(true);
+		expect(await Bun.file(path.join(tempDir, "notes.txt")).text()).toBe("keep\n");
+	});
+});
+
+it("keeps repo settings free of managed .omp extension bundle duplicates", async () => {
+	const repoRoot = path.resolve(import.meta.dir, "..");
+	const settings = (await Bun.file(path.join(repoRoot, ".omp", "settings.json")).json()) as {
+		extensions?: unknown;
+	};
+	const extensions = Array.isArray(settings.extensions) ? settings.extensions.filter((value): value is string => typeof value === "string") : [];
+	expect(extensions.filter(entry => /^\.omp\/extensions\/(?!profile-manager\/)[^/]+\/dist\/index\.js$/.test(entry))).toEqual([]);
+});

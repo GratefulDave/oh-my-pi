@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "_managed_by": "library",
+        "matcher": "Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /Users/davidandrews/PycharmProjects/the-library/hooks/claude/code-intel-router-pretooluse.mjs"
+          }
+        ]
+      }
+    ]
+  }
+}

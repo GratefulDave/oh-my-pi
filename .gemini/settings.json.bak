@@ -1,0 +1,89 @@
+{
+  "mcpServers": {
+    "context-mode": {
+      "command": "/Users/davidandrews/.local/bin/context-mode-mcp"
+    },
+    "auggie": {
+      "command": "/Users/davidandrews/.local/bin/auggie-mcp",
+      "args": [
+        "--mcp",
+        "--mcp-auto-workspace"
+      ],
+      "env": {
+        "PATH": "/Users/davidandrews/.local/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "linear": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.linear.app/mcp"
+      ]
+    },
+    "grep-app": {},
+    "ast-grep": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/ast-grep/ast-grep-mcp",
+        "ast-grep-server"
+      ]
+    },
+    "context7": {},
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ]
+    },
+    "codemap": {
+      "command": "node",
+      "args": [
+        "/Users/davidandrews/PycharmProjects/the-library/tools/codemap/server.mjs"
+      ]
+    }
+  },
+  "hooks": {
+    "lib:rtk-gemini-beforetool": {
+      "pattern": "rtk-gemini-beforetool",
+      "hooks": [
+        {
+          "type": "BeforeTool",
+          "command": "/Users/davidandrews/PycharmProjects/the-library/hooks/gemini/rtk-hook-gemini.sh"
+        }
+      ]
+    },
+    "lib:rtk-antigravity-beforetool": {
+      "pattern": "rtk-antigravity-beforetool",
+      "hooks": [
+        {
+          "type": "BeforeTool",
+          "command": "/Users/davidandrews/PycharmProjects/the-library/hooks/gemini/rtk-hook-antigravity.sh"
+        }
+      ]
+    },
+    "lib:context-mode-gemini-hooks": {
+      "pattern": "context-mode-gemini-hooks",
+      "hooks": [
+        {
+          "type": "BeforeTool",
+          "command": "/Users/davidandrews/PycharmProjects/the-library/hooks/gemini/context-mode-wrapper.sh"
+        },
+        {
+          "type": "AfterTool",
+          "command": "/Users/davidandrews/PycharmProjects/the-library/hooks/gemini/context-mode-wrapper.sh"
+        },
+        {
+          "type": "PreCompress",
+          "command": "/Users/davidandrews/PycharmProjects/the-library/hooks/gemini/context-mode-wrapper.sh"
+        },
+        {
+          "type": "SessionStart",
+          "command": "/Users/davidandrews/PycharmProjects/the-library/hooks/gemini/context-mode-wrapper.sh"
+        }
+      ]
+    }
+  }
+}
