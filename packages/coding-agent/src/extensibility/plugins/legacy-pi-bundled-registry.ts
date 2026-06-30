@@ -764,6 +764,7 @@ import * as bundledPiCodingAgentSttEndpointer from "@oh-my-pi/pi-coding-agent/st
 import * as bundledPiCodingAgentSttModels from "@oh-my-pi/pi-coding-agent/stt/models";
 import * as bundledPiCodingAgentSttRecorder from "@oh-my-pi/pi-coding-agent/stt/recorder";
 import * as bundledPiCodingAgentSttSttController from "@oh-my-pi/pi-coding-agent/stt/stt-controller";
+import * as bundledPiCodingAgentSttSubmitTrigger from "@oh-my-pi/pi-coding-agent/stt/submit-trigger";
 import * as bundledPiCodingAgentSttTranscriber from "@oh-my-pi/pi-coding-agent/stt/transcriber";
 import * as bundledPiCodingAgentSttWav from "@oh-my-pi/pi-coding-agent/stt/wav";
 import * as bundledPiCodingAgentTask from "@oh-my-pi/pi-coding-agent/task";
@@ -2807,6 +2808,9 @@ export const BUNDLED_PI_REGISTRY: Readonly<Record<string, Readonly<Record<string
 		Record<string, unknown>
 	>,
 	"@oh-my-pi/pi-coding-agent/stt/stt-controller": bundledPiCodingAgentSttSttController as unknown as Readonly<
+		Record<string, unknown>
+	>,
+	"@oh-my-pi/pi-coding-agent/stt/submit-trigger": bundledPiCodingAgentSttSubmitTrigger as unknown as Readonly<
 		Record<string, unknown>
 	>,
 	"@oh-my-pi/pi-coding-agent/stt/transcriber": bundledPiCodingAgentSttTranscriber as unknown as Readonly<

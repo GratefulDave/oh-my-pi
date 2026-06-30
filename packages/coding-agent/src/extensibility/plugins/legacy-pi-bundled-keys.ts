@@ -764,6 +764,7 @@ export const BUNDLED_PI_REGISTRY_KEYS: ReadonlySet<string> = new Set([
 	"@oh-my-pi/pi-coding-agent/stt/models",
 	"@oh-my-pi/pi-coding-agent/stt/recorder",
 	"@oh-my-pi/pi-coding-agent/stt/stt-controller",
+	"@oh-my-pi/pi-coding-agent/stt/submit-trigger",
 	"@oh-my-pi/pi-coding-agent/stt/transcriber",
 	"@oh-my-pi/pi-coding-agent/stt/wav",
 	"@oh-my-pi/pi-coding-agent/task/agents",
