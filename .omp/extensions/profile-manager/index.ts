@@ -23,7 +23,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
-import type { Effort, Model } from "@oh-my-pi/pi-ai";
+import type { Model } from "@oh-my-pi/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -54,16 +54,8 @@ interface OmpSettings {
 	[key: string]: unknown;
 }
 
-interface SettingsPatch {
-	modelRoles?: Record<string, string>;
-	defaultThinkingLevel?: Effort | "auto";
-	enabledModels?: string[];
-	cycleOrder?: string[];
-	modelProviderOrder?: string[];
-}
-
-interface ExtensionAPIWithApplySettings extends ExtensionAPI {
-	applySettings?: (patch: SettingsPatch) => void;
+interface ExtensionAPIWithSessionOverrides extends ExtensionAPI {
+	overrideModelRoles?: (roles: Record<string, string>) => void;
 }
 
 const DEFAULT_PROFILE_NAME = "default";
@@ -607,10 +599,9 @@ function notifyStartup(
 }
 
 /**
- * Apply a profile to the live session. Newer Lex/OMP exposes pi.applySettings,
- * which updates role routing immediately. Older/stock binaries do not; in that
- * case /pm still switches the visible active model and persists the profile for
- * the next launch instead of failing before setModel().
+ * Apply a profile to the live session. `overrideModelRoles` updates role routing
+ * without persisting to disk; `setModel` only switches the visible default model
+ * for the current session.
  */
 async function applyProfile(
 	pi: ExtensionAPI,
@@ -618,22 +609,8 @@ async function applyProfile(
 	profile: ModelProfile,
 	{ switchModel = true }: { switchModel?: boolean } = {},
 ): Promise<string> {
-	const patch: SettingsPatch = {
-		modelRoles: profile.modelRoles ?? {},
-		enabledModels: profile.enabledModels ?? [],
-	};
-	if (profile.modelProviderOrder !== undefined)
-		patch.modelProviderOrder = profile.modelProviderOrder;
-	if (profile.cycleOrder !== undefined) patch.cycleOrder = profile.cycleOrder;
-	if (profile.defaultThinkingLevel !== undefined)
-		patch.defaultThinkingLevel = profile.defaultThinkingLevel as
-			| Effort
-			| "auto";
-
-	const extendedPi = pi as ExtensionAPIWithApplySettings;
-	if (typeof extendedPi.applySettings === "function") {
-		extendedPi.applySettings(patch);
-	}
+	const sessionApi = pi as ExtensionAPIWithSessionOverrides;
+	sessionApi.overrideModelRoles?.(profile.modelRoles ?? {});
 
 	if (!switchModel) return "Settings applied.";
 
