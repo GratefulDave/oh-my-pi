@@ -1009,6 +1009,7 @@ describe("ExtensionRunner", () => {
 					setThinkingLevel: () => {},
 					overrideModelRoles,
 					getSessionName: () => undefined,
+					replaceModelRoles: () => {},
 					setSessionName: async () => {},
 				},
 				{
@@ -1078,6 +1079,7 @@ describe("ExtensionRunner", () => {
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
 					overrideModelRoles: () => {},
+					replaceModelRoles: () => {},
 					getSessionName: () => undefined,
 					setSessionName: async () => {},
 				},
@@ -1141,6 +1143,7 @@ describe("ExtensionRunner", () => {
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
 					overrideModelRoles: () => {},
+					replaceModelRoles: () => {},
 					getSessionName: () => sessionManager.getSessionName(),
 					setSessionName: async name => {
 						await sessionManager.setSessionName(name);
@@ -1201,6 +1204,8 @@ describe("ExtensionRunner", () => {
 					setThinkingLevel: () => {},
 					getSessionName: () => undefined,
 					setSessionName: async () => {},
+					overrideModelRoles: () => {},
+					replaceModelRoles: () => {},
 				},
 				{
 					getModel: () => undefined,
@@ -1866,6 +1871,7 @@ describe("ExtensionRunner", () => {
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
 					overrideModelRoles: () => {},
+					replaceModelRoles: () => {},
 					getSessionName: () => sessionManager.getSessionName(),
 					setSessionName: async () => {},
 				},
