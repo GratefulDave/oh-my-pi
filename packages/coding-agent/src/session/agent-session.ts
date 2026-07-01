@@ -289,6 +289,7 @@ import {
 import { assertEditableFile } from "../tools/auto-generated-guard";
 import {
 	appendBashMinimizerGainRecord,
+	hasBashMinimizerFilter,
 	inferBashMinimizerMissedFilter,
 	isBashCommandMinimizerEligible,
 } from "../tools/bash-minimizer-gain";
@@ -12896,17 +12897,21 @@ export class AgentSession {
 						this.settings.get("shellMinimizer.except"),
 					)
 				) {
-					void appendBashMinimizerGainRecord({
-						command,
-						cwd,
-						sessionId: this.sessionId,
-						filter: inferBashMinimizerMissedFilter(command),
-						inputBytes: result.totalBytes,
-						outputBytes: result.totalBytes,
-						exitCode: result.exitCode ?? null,
-						kind: "missed",
-						agentDir: this.settings.getAgentDir(),
-					}).catch(() => {});
+					const filter = inferBashMinimizerMissedFilter(command);
+					// Only record "missed" when the minimizer has a registered filter for this program.
+					if (hasBashMinimizerFilter(filter)) {
+						void appendBashMinimizerGainRecord({
+							command,
+							cwd,
+							sessionId: this.sessionId,
+							filter,
+							inputBytes: result.totalBytes,
+							outputBytes: result.totalBytes,
+							exitCode: result.exitCode ?? null,
+							kind: "missed",
+							agentDir: this.settings.getAgentDir(),
+						}).catch(() => {});
+					}
 				}
 			}
 			return result;

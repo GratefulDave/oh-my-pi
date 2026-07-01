@@ -28,6 +28,7 @@ import { type BashInteractiveResult, runInteractiveBashPty } from "./bash-intera
 import { checkBashInterception } from "./bash-interceptor";
 import {
 	appendBashMinimizerGainRecord,
+	hasBashMinimizerFilter,
 	inferBashMinimizerMissedFilter,
 	isBashCommandMinimizerEligible,
 } from "./bash-minimizer-gain";
@@ -158,16 +159,19 @@ async function recordBashMinimizerGain(input: {
 	if (!input.session.settings.get("shellMinimizer.enabled")) return;
 	const only = input.session.settings.get("shellMinimizer.only");
 	const except = input.session.settings.get("shellMinimizer.except");
-	if (!isBashCommandMinimizerEligible(input.command, only, except)) return;
 	try {
 		if (input.result.cancelled || input.result.exitCode === undefined) return;
 		if (input.result.totalBytes <= 0) return;
+		const filter = inferBashMinimizerMissedFilter(input.command);
+		// Only record "missed" when the minimizer has a filter for this program.
+		// Commands for programs the minimizer doesn't handle are not missed.
+		if (!hasBashMinimizerFilter(filter)) return;
 		await appendBashMinimizerGainRecord({
 			command: input.command,
 			cwd: input.commandCwd,
 			sessionCwd: input.session.cwd,
 			sessionId: input.session.getSessionId?.() ?? undefined,
-			filter: inferBashMinimizerMissedFilter(input.command),
+			filter,
 			inputBytes: input.result.totalBytes,
 			outputBytes: input.result.totalBytes,
 			exitCode: input.result.exitCode,

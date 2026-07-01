@@ -356,16 +356,28 @@ function skipEnvOptionsAndAssignments(tokens: string[], start: number): number |
 		const t = tokens[idx]!;
 		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
 			idx++;
+		} else if (t === "--") {
+			// bare `--` terminates env option parsing; next token is the program.
+			idx++;
+			break;
 		} else if (t.startsWith("--")) {
 			// Long options that take a following separate argument.
 			// --split-string → native returns None (no identity); mirror that.
 			if (/^--(split-string)(=.*)?$/.test(t)) return null;
-			// --unset, --chdir consume the next token; --ignore-environment, --null, --debug do not.
+			// Known passthrough long opts: --ignore-environment, --null, --debug do not take an arg.
+			// --unset, --chdir consume the next token.
+			// Unknown long opts: the Rust `skip_env_options` breaks on them (the unknown token
+			// becomes the "program name", failing identity_has_filter). Mirror as null.
+			const isKnown = /^--(ignore-environment|null|debug|unset|chdir)(=.*)?$/.test(t);
+			if (!isKnown) return null;
 			const longTakesArg = /^--(unset|chdir)$/.test(t);
 			idx++;
 			if (longTakesArg && idx < tokens.length) {
 				idx++; // skip the option's argument
 			}
+		} else if (t === "-") {
+			// bare `-` is -i / --ignore-environment (no argument); just advance.
+			idx++;
 		} else if (t.startsWith("-") && t.length >= 2 && !t.startsWith("--")) {
 			// Short options (possibly clustered, e.g. -iS or -S'cmd')
 			// Walk character by character through the option cluster.
@@ -431,4 +443,66 @@ export function isBashCommandMinimizerEligible(command: string, only: string[], 
 	if (only.length > 0 && !only.some(p => p.toLowerCase() === lower)) return false;
 	if (except.length > 0 && except.some(p => p.toLowerCase() === lower)) return false;
 	return true;
+}
+
+/**
+ * Returns whether the native minimizer has a filter registered for `filter`
+ * (the program name returned by `inferBashMinimizerMissedFilter`).
+ *
+ * Mirrors `filters::supports(program, None)` in the Rust minimizer.
+ * Only programs that return `true` here are eligible to be recorded as "missed"
+ * (i.e. a command that ran but was not minimized, even though it could be).
+ * Commands for programs the minimizer does not handle are not missed — they are
+ * simply not minimizable.
+ */
+export function hasBashMinimizerFilter(filter: string): boolean {
+	if (!filter || filter === "missed" || filter === "compound") return false;
+	// gtest binary pattern: ends with _test, _tests, -test, -tests, .test
+	if (/(_|-|\.)tests?$/.test(filter)) return true;
+	const KNOWN: Record<string, true> = {
+		// git family
+		git: true, yadm: true,
+		// gt
+		gt: true,
+		// bun
+		bun: true, bunx: true,
+		// cargo / rust
+		cargo: true, rustfmt: true,
+		// go
+		go: true, "golangci-lint": true,
+		// cpp / cmake
+		cmake: true, ctest: true, ninja: true, gtest: true, "gtest-parallel": true,
+		// dotnet
+		dotnet: true,
+		// jvm
+		mvn: true, mvnw: true, "mvnw.cmd": true, gradle: true, gradlew: true, "gradlew.bat": true,
+		// listing / binary tools
+		ls: true, tree: true, find: true, grep: true, rg: true, wc: true, cat: true,
+		read: true, stat: true, du: true, df: true, jq: true, json: true,
+		xxd: true, strings: true, od: true,
+		// cloud
+		aws: true, curl: true, wget: true, psql: true,
+		// docker
+		docker: true, kubectl: true, helm: true,
+		// gh / glab
+		gh: true, glab: true,
+		// python
+		pytest: true, ruff: true, mypy: true, python: true, python3: true, py: true,
+		// ruby
+		rspec: true, rake: true, rails: true, rubocop: true,
+		// lint / static analysis
+		tsc: true, eslint: true, biome: true, shellcheck: true, markdownlint: true,
+		hadolint: true, yamllint: true, oxlint: true, pyright: true, basedpyright: true,
+		// js test frameworks
+		jest: true, vitest: true, playwright: true,
+		// js tools
+		next: true, prettier: true, prisma: true,
+		// package managers / runners
+		npx: true, pnpm: true, uv: true, npm: true, yarn: true, pip: true, pip3: true,
+		bundle: true, brew: true, composer: true, poetry: true,
+		// system filter programs
+		env: true, log: true, deps: true, summary: true, err: true, test: true,
+		diff: true, format: true, pipe: true, ps: true, ping: true, ssh: true, sops: true,
+	};
+	return filter in KNOWN;
 }

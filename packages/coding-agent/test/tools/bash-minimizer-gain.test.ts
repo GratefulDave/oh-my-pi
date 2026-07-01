@@ -6,6 +6,7 @@ import { makeMinimizedSaveHandler } from "@oh-my-pi/pi-coding-agent/tools/bash";
 import {
 	appendBashMinimizerGainRecord,
 	getBashMinimizerGainPath,
+	hasBashMinimizerFilter,
 	inferBashMinimizerMissedFilter,
 	isBashCommandMinimizerEligible,
 } from "@oh-my-pi/pi-coding-agent/tools/bash-minimizer-gain";
@@ -370,5 +371,84 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 
 		// No JSONL written — telemetry is off by default
 		expect(fs.existsSync(getBashMinimizerGainPath(agentDir))).toBe(false);
+	});
+});
+
+describe("hasBashMinimizerFilter", () => {
+	test("returns true for known programs", () => {
+		expect(hasBashMinimizerFilter("git")).toBe(true);
+		expect(hasBashMinimizerFilter("bun")).toBe(true);
+		expect(hasBashMinimizerFilter("cargo")).toBe(true);
+		expect(hasBashMinimizerFilter("uv")).toBe(true);
+		expect(hasBashMinimizerFilter("pytest")).toBe(true);
+		expect(hasBashMinimizerFilter("gh")).toBe(true);
+		expect(hasBashMinimizerFilter("docker")).toBe(true);
+		expect(hasBashMinimizerFilter("npm")).toBe(true);
+		expect(hasBashMinimizerFilter("rg")).toBe(true);
+		expect(hasBashMinimizerFilter("env")).toBe(true);
+	});
+
+	test("returns false for unknown programs", () => {
+		expect(hasBashMinimizerFilter("my-custom-tool")).toBe(false);
+		expect(hasBashMinimizerFilter("fzf")).toBe(false);
+		expect(hasBashMinimizerFilter("tmux")).toBe(false);
+	});
+
+	test("returns false for sentinel values", () => {
+		expect(hasBashMinimizerFilter("missed")).toBe(false);
+		expect(hasBashMinimizerFilter("compound")).toBe(false);
+		expect(hasBashMinimizerFilter("")).toBe(false);
+	});
+
+	test("returns true for gtest binary name patterns", () => {
+		expect(hasBashMinimizerFilter("my_module_test")).toBe(true);
+		expect(hasBashMinimizerFilter("foo_tests")).toBe(true);
+		expect(hasBashMinimizerFilter("integration-test")).toBe(true);
+		expect(hasBashMinimizerFilter("suite-tests")).toBe(true);
+		expect(hasBashMinimizerFilter("foo.test")).toBe(true);
+	});
+
+	test("only records missed for known-filter programs", () => {
+		// Programs without a filter: inferBashMinimizerMissedFilter returns the
+		// basename, but hasBashMinimizerFilter gates the "missed" record.
+		expect(hasBashMinimizerFilter(inferBashMinimizerMissedFilter("my-custom-tool run"))).toBe(false);
+		expect(hasBashMinimizerFilter(inferBashMinimizerMissedFilter("bun test"))).toBe(true);
+	});
+});
+
+describe("skipEnvOptionsAndAssignments edge cases", () => {
+	test("bare - treated as -i (no-arg, no split-string)", () => {
+		// env - git status → bare - is ignore-environment (no arg), program is git
+		expect(inferBashMinimizerMissedFilter("env - git status")).toBe("git");
+	});
+
+	test("unknown long option returns missed (mirrors Rust _ => break)", () => {
+		// env --unknown-opt git status → unknown opt, no identity
+		expect(inferBashMinimizerMissedFilter("env --unknown-opt git status")).toBe("missed");
+	});
+
+	test("bare -- terminates option parsing, next token is program", () => {
+		// env -- git status → -- ends env opts, git is the program
+		expect(inferBashMinimizerMissedFilter("env -- git status")).toBe("git");
+	});
+
+	test("known --ignore-environment does not return missed", () => {
+		expect(inferBashMinimizerMissedFilter("env --ignore-environment git status")).toBe("git");
+	});
+
+	test("known --null does not return missed", () => {
+		expect(inferBashMinimizerMissedFilter("env --null git status")).toBe("git");
+	});
+
+	test("known --debug does not return missed", () => {
+		expect(inferBashMinimizerMissedFilter("env --debug git status")).toBe("git");
+	});
+
+	test("known --unset consumes next token", () => {
+		expect(inferBashMinimizerMissedFilter("env --unset FOO git status")).toBe("git");
+	});
+
+	test("known --chdir consumes next token", () => {
+		expect(inferBashMinimizerMissedFilter("env --chdir /tmp git status")).toBe("git");
 	});
 });
