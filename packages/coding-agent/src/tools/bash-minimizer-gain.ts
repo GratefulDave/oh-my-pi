@@ -166,7 +166,7 @@ function skipOptionValue(tokens: string[], index: number): number {
 }
 
 /** Skip sudo options and their operands. Mirrors `skip_sudo_options` in the Rust minimizer. */
-function skipSudoOptions(tokens: string[], start: number): number {
+function skipSudoOptions(tokens: string[], start: number): number | null {
 	let idx = start;
 	while (idx < tokens.length) {
 		const t = tokens[idx]!;
@@ -208,10 +208,8 @@ function skipSudoOptions(tokens: string[], start: number): number {
 			continue;
 		}
 		if (t.startsWith("-")) {
-			// Unknown flag — the Rust minimizer returns None here (no identity).
-			// For telemetry, still advance past it to a reasonable fallback.
-			idx = skipOptionValue(tokens, idx);
-			continue;
+			// Unknown flag — mirrors Rust minimizer returning None (no identity).
+			return null;
 		}
 		break;
 	}
@@ -294,7 +292,9 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 		} else if (token === "sudo") {
 			lastLaunchPrefix = "sudo";
 			idx++;
-			idx = skipSudoOptions(tokens, idx);
+			const sudoIdx = skipSudoOptions(tokens, idx);
+			if (sudoIdx === null) return "missed"; // unknown sudo flag → no identity (mirrors Rust None)
+			idx = sudoIdx;
 		} else if (token === "command") {
 			const commandIdx = skipCommandOptions(tokens, idx + 1);
 			if (commandIdx === null) return "missed"; // -v/-V probe → no minimizer identity
@@ -428,8 +428,8 @@ export function isBashCommandMinimizerEligible(command: string, only: string[], 
 	const filter = inferBashMinimizerMissedFilter(command);
 	// Compound commands, empty results, and bare-prefix results are never minimized.
 	if (filter === "compound" || filter === "missed" || filter === "env") return false;
-	// The native minimizer engine does not attempt piped commands (MinimizerMode::None).
-	if (shellTokens(command).some(t => t === "|")) return false;
+	// The native minimizer engine does not attempt piped or background commands (MinimizerMode::None).
+	if (shellTokens(command).some(t => t === "|" || t === "&")) return false;
 	if (only.length === 0 && except.length === 0) return true;
 	const lower = filter.toLowerCase();
 	if (only.length > 0 && !only.some(p => p.toLowerCase() === lower)) return false;

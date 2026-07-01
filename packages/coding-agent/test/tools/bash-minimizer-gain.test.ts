@@ -135,6 +135,12 @@ describe("bash minimizer gain writer", () => {
 		expect(inferBashMinimizerMissedFilter("FOO=1 BAR=2 node script.js")).toBe("node");
 	});
 
+	test("returns missed for unknown sudo flags (mirrors Rust minimizer returning None)", () => {
+		// -D, -A, -N, -P, -B, -R are not recognized by skip_sudo_options in Rust → None
+		expect(inferBashMinimizerMissedFilter("sudo -D /tmp git status")).toBe("missed");
+		expect(inferBashMinimizerMissedFilter("sudo -A git status")).toBe("missed");
+	});
+
 	test("handles quoted env values containing whitespace", () => {
 		expect(
 			inferBashMinimizerMissedFilter("NODE_OPTIONS='--max-old-space-size=4096 --trace-warnings' pnpm test"),
@@ -230,6 +236,10 @@ describe("isBashCommandMinimizerEligible", () => {
 	});
 	test("compound commands are always ineligible", () => {
 		expect(isBashCommandMinimizerEligible("ls | grep foo", [], [])).toBe(false);
+	});
+	test("background commands are always ineligible (mirrors native MinimizerMode::None)", () => {
+		expect(isBashCommandMinimizerEligible("git status &", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("npm test &", ["npm"], [])).toBe(false);
 	});
 	test("empty command is always ineligible", () => {
 		expect(isBashCommandMinimizerEligible("", [], [])).toBe(false);
