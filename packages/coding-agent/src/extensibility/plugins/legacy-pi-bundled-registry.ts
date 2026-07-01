@@ -169,6 +169,7 @@ import * as bundledPiAiUtilsSdkStreamTimeout from "@oh-my-pi/pi-ai/utils/sdk-str
 import * as bundledPiAiUtilsSseDebug from "@oh-my-pi/pi-ai/utils/sse-debug";
 import * as bundledPiAiUtilsStreamMarkupHealing from "@oh-my-pi/pi-ai/utils/stream-markup-healing";
 import * as bundledPiAiUtilsThinkingLoop from "@oh-my-pi/pi-ai/utils/thinking-loop";
+import * as bundledPiAiUtilsToolCallLoopGuard from "@oh-my-pi/pi-ai/utils/tool-call-loop-guard";
 import * as bundledPiAiUtilsToolChoice from "@oh-my-pi/pi-ai/utils/tool-choice";
 import * as bundledPiAiUtilsValidation from "@oh-my-pi/pi-ai/utils/validation";
 import * as bundledPiCodingAgentAsync from "@oh-my-pi/pi-coding-agent/async";
@@ -783,6 +784,7 @@ import * as bundledPiCodingAgentTaskProviderConcurrency from "@oh-my-pi/pi-codin
 import * as bundledPiCodingAgentTaskRender from "@oh-my-pi/pi-coding-agent/task/render";
 import * as bundledPiCodingAgentTaskRenderer from "@oh-my-pi/pi-coding-agent/task/renderer";
 import * as bundledPiCodingAgentTaskRepairArgs from "@oh-my-pi/pi-coding-agent/task/repair-args";
+import * as bundledPiCodingAgentTaskSpawnPolicy from "@oh-my-pi/pi-coding-agent/task/spawn-policy";
 import * as bundledPiCodingAgentTaskSubprocessToolRegistry from "@oh-my-pi/pi-coding-agent/task/subprocess-tool-registry";
 import * as bundledPiCodingAgentTaskTypes from "@oh-my-pi/pi-coding-agent/task/types";
 import * as bundledPiCodingAgentTaskWorktree from "@oh-my-pi/pi-coding-agent/task/worktree";
@@ -1282,6 +1284,9 @@ export const BUNDLED_PI_REGISTRY: Readonly<Record<string, Readonly<Record<string
 		Record<string, unknown>
 	>,
 	"@oh-my-pi/pi-ai/utils/thinking-loop": bundledPiAiUtilsThinkingLoop as unknown as Readonly<Record<string, unknown>>,
+	"@oh-my-pi/pi-ai/utils/tool-call-loop-guard": bundledPiAiUtilsToolCallLoopGuard as unknown as Readonly<
+		Record<string, unknown>
+	>,
 	"@oh-my-pi/pi-ai/utils/tool-choice": bundledPiAiUtilsToolChoice as unknown as Readonly<Record<string, unknown>>,
 	"@oh-my-pi/pi-ai/utils/validation": bundledPiAiUtilsValidation as unknown as Readonly<Record<string, unknown>>,
 	"@oh-my-pi/pi-ai/oauth/anthropic": bundledPiAiOauthAnthropic as unknown as Readonly<Record<string, unknown>>,
@@ -2859,6 +2864,9 @@ export const BUNDLED_PI_REGISTRY: Readonly<Record<string, Readonly<Record<string
 		Record<string, unknown>
 	>,
 	"@oh-my-pi/pi-coding-agent/task/repair-args": bundledPiCodingAgentTaskRepairArgs as unknown as Readonly<
+		Record<string, unknown>
+	>,
+	"@oh-my-pi/pi-coding-agent/task/spawn-policy": bundledPiCodingAgentTaskSpawnPolicy as unknown as Readonly<
 		Record<string, unknown>
 	>,
 	"@oh-my-pi/pi-coding-agent/task/subprocess-tool-registry":
