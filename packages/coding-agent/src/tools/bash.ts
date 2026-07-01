@@ -156,6 +156,12 @@ async function recordBashMinimizerGain(input: {
 }): Promise<void> {
 	if (!input.session.settings.get("shellMinimizer.gainTelemetry")) return;
 	if (!input.session.settings.get("shellMinimizer.enabled")) return;
+	// Skip miss telemetry when a shell prefix is active. executeBash sends the
+	// prefixed command (e.g. "strace -o /tmp/trace git status") to the native
+	// minimizer, which sees the wrapper and cannot minimize it. Recording the
+	// miss on the unprefixed command (e.g. "git") would pollute Gain data with
+	// commands the minimizer never had an opportunity to process.
+	if (Bun.env.PI_SHELL_PREFIX || Bun.env.CLAUDE_CODE_SHELL_PREFIX) return;
 	try {
 		if (input.result.cancelled || input.result.exitCode === undefined) return;
 		if (input.result.totalBytes <= 0) return;
