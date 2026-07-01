@@ -287,13 +287,12 @@ import {
 	selectDiscoverableToolNamesByServer,
 } from "../tool-discovery/tool-index";
 import { assertEditableFile } from "../tools/auto-generated-guard";
-import { releaseTabsForOwner } from "../tools/browser/tab-supervisor";
-import { normalizeToolNames } from "../tools/builtin-names";
 import {
 	appendBashMinimizerGainRecord,
 	inferBashMinimizerMissedFilter,
 	isBashCommandMinimizerEligible,
 } from "../tools/bash-minimizer-gain";
+import { releaseTabsForOwner } from "../tools/browser/tab-supervisor";
 import { normalizeToolNames } from "../tools/builtin-names";
 import type { CheckpointState } from "../tools/checkpoint";
 import { outputMeta, wrapToolWithMetaNotice } from "../tools/output-meta";
