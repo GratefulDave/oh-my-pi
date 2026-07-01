@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the bash tool renderer crashing when streamed tool-call arguments contain non-string `env` values.
+
 ## [16.2.13] - 2026-07-01
 
 ### Fixed
