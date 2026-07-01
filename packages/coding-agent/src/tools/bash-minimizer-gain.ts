@@ -288,7 +288,10 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 			lastLaunchPrefix = "env";
 			idx++;
 			// skip env options and remaining NAME=value pairs
-			idx = skipEnvOptionsAndAssignments(tokens, idx);
+			// null → native returns no identity (e.g. -S/--split-string) → ineligible
+			const envIdx = skipEnvOptionsAndAssignments(tokens, idx);
+			if (envIdx === null) return "missed";
+			idx = envIdx;
 		} else if (token === "sudo") {
 			lastLaunchPrefix = "sudo";
 			idx++;
@@ -339,11 +342,15 @@ export function inferBashMinimizerMissedFilter(command: string): string {
 
 /**
  * Skip env options and NAME=value pairs starting at `start` in `tokens`.
- * Returns the index of the first non-option, non-assignment token.
+ * Returns the index of the first non-option, non-assignment token, or `null`
+ * when the native minimizer returns no identity (e.g. `-S`/`--split-string`).
  *
  * Mirrors crates/pi-shell/src/minimizer/detect.rs fn skip_env_options.
+ * The Rust implementation returns `None` for `-S`/`--split-string=S` because
+ * env -S passes its argument to a sub-shell, which the minimizer does not
+ * attempt to parse; we mirror that by returning `null`.
  */
-function skipEnvOptionsAndAssignments(tokens: string[], start: number): number {
+function skipEnvOptionsAndAssignments(tokens: string[], start: number): number | null {
 	let idx = start;
 	while (idx < tokens.length) {
 		const t = tokens[idx]!;
@@ -351,9 +358,10 @@ function skipEnvOptionsAndAssignments(tokens: string[], start: number): number {
 			idx++;
 		} else if (t.startsWith("--")) {
 			// Long options that take a following separate argument.
-			// --unset, --chdir, --split-string consume the next token.
-			// --ignore-environment, --null, --debug do not.
-			const longTakesArg = /^--(unset|chdir|split-string)$/.test(t);
+			// --split-string → native returns None (no identity); mirror that.
+			if (/^--(split-string)(=.*)?$/.test(t)) return null;
+			// --unset, --chdir consume the next token; --ignore-environment, --null, --debug do not.
+			const longTakesArg = /^--(unset|chdir)$/.test(t);
 			idx++;
 			if (longTakesArg && idx < tokens.length) {
 				idx++; // skip the option's argument
@@ -364,26 +372,13 @@ function skipEnvOptionsAndAssignments(tokens: string[], start: number): number {
 			const optChars = t.slice(1); // chars after the leading '-'
 			let clusterIdx = 0;
 			let consumedRest = false;
+			let foundS = false;
 			while (clusterIdx < optChars.length) {
 				const ch = optChars[clusterIdx]!;
 				clusterIdx++;
 				if (ch === "S") {
-					// -S takes the rest of this token (attached) or the next token
-					// as a string to re-tokenize and feed as the command.
-					const attached = optChars.slice(clusterIdx);
-					const splitArg = attached.length > 0 ? attached : (tokens[idx + 1] ?? "");
-					if (!attached.length) idx++; // consumed next token
-					// The -S argument defines the real command — splice it back into
-					// tokens and return past the original env token.
-					const splitTokens = shellTokens(splitArg);
-					// Skip any leading NAME=value assignments from the re-tokenized args.
-					let splitIdx = 0;
-					while (splitIdx < splitTokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(splitTokens[splitIdx]!)) {
-						splitIdx++;
-					}
-					// Splice the split tokens in place of the env token
-					const realCommand = splitTokens.slice(splitIdx);
-					tokens.splice(idx, 1, ...realCommand);
+					// -S (split-string) → native returns None; mirror as null.
+					foundS = true;
 					consumedRest = true;
 					break;
 				} else if ("Cu".includes(ch)) {
@@ -405,6 +400,7 @@ function skipEnvOptionsAndAssignments(tokens: string[], start: number): number {
 				}
 				// -i, -v, -0 and any other single-char flag: no argument, continue cluster
 			}
+			if (foundS) return null;
 			if (!consumedRest) idx++;
 			if (consumedRest) continue;
 		} else {

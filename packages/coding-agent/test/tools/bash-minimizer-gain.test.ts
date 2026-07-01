@@ -191,6 +191,15 @@ describe("bash minimizer gain writer", () => {
 		// clustered flags before attached -C operand
 		expect(inferBashMinimizerMissedFilter("env -iC/tmp node server.js")).toBe("node");
 	});
+
+	test("returns missed for env -S/--split-string (mirrors Rust skip_env_options returning None)", () => {
+		// Native minimizer detect() returns None for env -S, so telemetry must also be ineligible.
+		expect(inferBashMinimizerMissedFilter("env -S 'git status'")).toBe("missed");
+		expect(inferBashMinimizerMissedFilter("env --split-string 'bun test'")).toBe("missed");
+		expect(inferBashMinimizerMissedFilter("env --split-string='CI=1 npm test'")).toBe("missed");
+		// Clustered: -iS should also hit the -S path
+		expect(inferBashMinimizerMissedFilter("env -iS 'git log'")).toBe("missed");
+	});
 });
 
 describe("fd-dup redirect handling", () => {
