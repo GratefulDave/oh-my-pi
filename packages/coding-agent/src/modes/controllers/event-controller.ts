@@ -609,15 +609,6 @@ export class EventController {
 			}
 			for (const content of this.ctx.streamingMessage.content) {
 				if (content.type !== "toolCall") continue;
-				// Anthropic/OpenAI open a streamed tool block with an empty id (and
-				// `{}` args) before the id/arguments arrive; Gemini assembles the
-				// whole call first, so it never hits this. Keying `pendingTools` by
-				// "" would create a placeholder card, and the later real-id frame —
-				// `pendingTools.has(realId)` false — would create a SECOND card,
-				// orphaning the blank one (no `tool_execution_*` event ever carries
-				// "", so it is never matched, updated, or removed). Defer until the
-				// provider assigns the real id.
-				if (!content.id) continue;
 				if (content.name === "read") {
 					if (!readArgsHaveTarget(content.arguments)) {
 						// Args still streaming — defer until path is parseable so we can route to the
@@ -978,13 +969,9 @@ export class EventController {
 		}
 		// Update todo display when todo tool completes
 		if (event.toolName === "todo" && !event.isError) {
-			const hadTodoReminder = (this.ctx.todoReminderContainer?.children.length ?? 0) > 0;
-			this.ctx.todoReminderContainer?.clear();
 			const details = event.result.details as { phases?: TodoPhase[] } | undefined;
 			if (details?.phases) {
 				this.ctx.setTodos(details.phases);
-			} else if (hadTodoReminder) {
-				this.ctx.ui.requestRender();
 			}
 		} else if (event.toolName === "todo" && event.isError) {
 			const textContent = event.result.content.find(
@@ -1281,9 +1268,7 @@ export class EventController {
 
 	async #handleTodoReminder(event: Extract<AgentSessionEvent, { type: "todo_reminder" }>): Promise<void> {
 		const component = new TodoReminderComponent(event.todos, event.attempt, event.maxAttempts);
-		this.ctx.todoReminderContainer.clear();
-		this.ctx.todoReminderContainer.addChild(component);
-		this.ctx.ui.requestRender();
+		this.ctx.present(component);
 	}
 
 	async #handleTodoAutoClear(_event: Extract<AgentSessionEvent, { type: "todo_auto_clear" }>): Promise<void> {
