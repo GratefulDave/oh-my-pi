@@ -278,6 +278,7 @@ export class ExtensionRunner {
 		this.runtime.getThinkingLevel = actions.getThinkingLevel;
 		this.runtime.setThinkingLevel = actions.setThinkingLevel;
 		this.runtime.overrideModelRoles = actions.overrideModelRoles;
+		this.runtime.replaceModelRoles = actions.replaceModelRoles;
 		this.runtime.getSessionName = actions.getSessionName;
 		this.runtime.setSessionName = actions.setSessionName;
 

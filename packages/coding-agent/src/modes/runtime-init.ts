@@ -91,6 +91,7 @@ export async function initializeExtensions(session: AgentSession, options: Initi
 			getThinkingLevel: () => session.thinkingLevel,
 			setThinkingLevel: level => session.setThinkingLevel(level),
 			overrideModelRoles: roles => session.settings.overrideModelRoles(roles),
+			replaceModelRoles: roles => session.settings.replaceModelRoles(roles),
 			getSessionName: () => session.sessionManager.getSessionName(),
 			setSessionName: async name => {
 				await session.sessionManager.setSessionName(name, "user");

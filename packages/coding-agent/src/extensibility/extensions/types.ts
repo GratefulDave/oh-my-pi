@@ -47,6 +47,7 @@ import type { Theme } from "../../modes/theme/theme";
 import type { CompactMode } from "../../session/compact-modes";
 import type { CustomMessage } from "../../session/messages";
 import type { ReadonlySessionManager, SessionManager } from "../../session/session-manager";
+import type { TaskToolDetails } from "../../task/types";
 import type {
 	BashToolDetails,
 	BashToolInput,
@@ -1131,6 +1132,9 @@ export interface ExtensionAPI {
 	/** Override model role selectors for the current session without persisting to disk. */
 	overrideModelRoles(roles: Record<string, string>): void;
 
+	/** Replace all model role overrides for the current session (clears previous profile's roles). */
+	replaceModelRoles(roles: Record<string, string>): void;
+
 	/** Get the current session name. */
 	getSessionName(): string | undefined;
 
@@ -1310,6 +1314,11 @@ export type GetThinkingLevelHandler = () => ThinkingLevel | undefined;
 
 export type SetThinkingLevelHandler = (level: ThinkingLevel, persist?: boolean) => void;
 
+export type RunTaskHandler = (
+	params: unknown,
+	options?: { toolCallId?: string; signal?: AbortSignal; onUpdate?: AgentToolUpdateCallback<TaskToolDetails> },
+) => Promise<AgentToolResult<TaskToolDetails>>;
+
 /** Shared state created by loader, used during registration and runtime. */
 export interface ExtensionRuntimeState {
 	flagValues: Map<string, boolean | string>;
@@ -1331,6 +1340,7 @@ export interface ExtensionActions {
 	getThinkingLevel: GetThinkingLevelHandler;
 	setThinkingLevel: SetThinkingLevelHandler;
 	overrideModelRoles: (roles: Record<string, string>) => void;
+	replaceModelRoles: (roles: Record<string, string>) => void;
 	getSessionName: () => string | undefined;
 	setSessionName: (name: string) => Promise<void>;
 }

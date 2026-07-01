@@ -1297,7 +1297,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				},
 				authStorage: this.session.authStorage,
 				modelRegistry: this.session.modelRegistry,
-						preloadedExtensions: this.session.getPreloadedExtensions?.(),
+				preloadedExtensions: this.session.getPreloadedExtensions?.(),
 				settings: this.session.settings,
 				mcpManager,
 				contextFiles,
