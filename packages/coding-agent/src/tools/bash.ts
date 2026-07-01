@@ -30,7 +30,6 @@ import {
 	appendBashMinimizerGainRecord,
 	hasBashMinimizerFilter,
 	inferBashMinimizerMissedFilter,
-	isBashCommandMinimizerEligible,
 } from "./bash-minimizer-gain";
 import { canUseInteractiveBashPty } from "./bash-pty-selection";
 import { expandInternalUrls, type InternalUrlExpansionOptions } from "./bash-skill-urls";
@@ -157,8 +156,6 @@ async function recordBashMinimizerGain(input: {
 }): Promise<void> {
 	if (!input.session.settings.get("shellMinimizer.gainTelemetry")) return;
 	if (!input.session.settings.get("shellMinimizer.enabled")) return;
-	const only = input.session.settings.get("shellMinimizer.only");
-	const except = input.session.settings.get("shellMinimizer.except");
 	try {
 		if (input.result.cancelled || input.result.exitCode === undefined) return;
 		if (input.result.totalBytes <= 0) return;
