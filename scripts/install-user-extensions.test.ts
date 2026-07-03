@@ -4,7 +4,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { removeStaleManagedDiscoveryFiles } from "./install-user-extensions";
 
-
 describe("removeStaleManagedDiscoveryFiles", () => {
 	let tempDir = "";
 
@@ -40,6 +39,10 @@ it("keeps repo settings free of managed .omp extension bundle duplicates", async
 	const settings = (await Bun.file(path.join(repoRoot, ".omp", "settings.json")).json()) as {
 		extensions?: unknown;
 	};
-	const extensions = Array.isArray(settings.extensions) ? settings.extensions.filter((value): value is string => typeof value === "string") : [];
-	expect(extensions.filter(entry => /^\.omp\/extensions\/(?!profile-manager\/)[^/]+\/dist\/index\.js$/.test(entry))).toEqual([]);
+	const extensions = Array.isArray(settings.extensions)
+		? settings.extensions.filter((value): value is string => typeof value === "string")
+		: [];
+	expect(
+		extensions.filter(entry => /^\.omp\/extensions\/(?!profile-manager\/)[^/]+\/dist\/index\.js$/.test(entry)),
+	).toEqual([]);
 });

@@ -1,5 +1,6 @@
-import type { Api, Model, OAuthCredentials } from "@oh-my-pi/pi-ai";
-import type { OAuthLoginCallbacks } from "@oh-my-pi/pi-ai/utils/oauth/types";
+import type { OAuthCredentials } from "@oh-my-pi/pi-ai";
+import type { OAuthLoginCallbacks } from "@oh-my-pi/pi-ai/oauth/types";
+import type { ProviderModelConfig } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { getAntigravityHeaders } from "opencode-antigravity-auth/dist/src/constants";
 import { checkAccountsQuota, type QuotaGroup } from "opencode-antigravity-auth/dist/src/plugin/quota";
 import { type AccountMetadataV3, loadAccounts } from "opencode-antigravity-auth/dist/src/plugin/storage";
@@ -13,6 +14,10 @@ const BRIDGE_MODEL_DISCOVERY_ENDPOINT = "https://cloudcode-pa.googleapis.com";
 const FETCH_AVAILABLE_MODELS_PATH = "/v1internal:fetchAvailableModels";
 
 type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+type BridgeModelConfig = ProviderModelConfig & {
+	provider: typeof PROVIDER_ID;
+	baseUrl: typeof GOOGLE_GENERATIVE_LANGUAGE_BASE;
+};
 
 interface PackedRefreshParts {
 	refreshToken: string;
@@ -176,7 +181,7 @@ export async function refreshBridgeCredentials(
 export async function fetchBridgeModels(
 	apiKey: string | undefined,
 	fetcher: Fetcher = fetch,
-): Promise<readonly Model<Api>[] | null | undefined> {
+): Promise<readonly BridgeModelConfig[]> {
 	const credentials = deserializeBridgeCredentials(apiKey);
 	const headers = getAntigravityHeaders();
 	const userAgent = headers["User-Agent"];
@@ -216,7 +221,7 @@ export async function fetchBridgeModels(
 	const parsed = parseAvailableModelsResponse(payload);
 	if (!parsed) return [];
 
-	const models: Model<Api>[] = [];
+	const models: BridgeModelConfig[] = [];
 	for (const [modelId, entry] of Object.entries(parsed.models ?? {})) {
 		if (!modelId || entry.isInternal === true) continue;
 		const supportsImages = entry.supportsImages === true;
@@ -242,7 +247,7 @@ export function serializeBridgeCredentials(credentials: OAuthCredentials): strin
 
 export function deserializeBridgeCredentials(apiKey: string | undefined): OAuthCredentials {
 	if (!apiKey) {
-		throw new Error("OpenCode Antigravity bridge requires OAuth credentials. Run `/login opencode-antigravity`.");
+		throw new Error("AG Bridge requires OAuth credentials. Run `/login ag-bridge`.");
 	}
 
 	if (!apiKey.startsWith(SERIALIZED_CREDENTIAL_PREFIX)) {
@@ -253,9 +258,7 @@ export function deserializeBridgeCredentials(apiKey: string | undefined): OAuthC
 	try {
 		parsed = JSON.parse(decodeURIComponent(apiKey.slice(SERIALIZED_CREDENTIAL_PREFIX.length)));
 	} catch (error) {
-		throw new Error(
-			`OpenCode Antigravity bridge credentials are corrupt: ${error instanceof Error ? error.message : String(error)}`,
-		);
+		throw new Error(`AG Bridge credentials are corrupt: ${error instanceof Error ? error.message : String(error)}`);
 	}
 
 	if (!isOAuthCredentials(parsed)) {
@@ -293,7 +296,7 @@ export function toPluginAccountMetadata(credentials: OAuthCredentials, now = Dat
 }
 
 /**
- * Classifies an opencode-antigravity model id into a plugin quota group.
+ * Classifies an ag-bridge model id into a plugin quota group.
  * Mirrors the upstream plugin's `classifyQuotaGroup` logic.
  *
  * Returns `null` for models that do not belong to a known quota group

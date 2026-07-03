@@ -2,22 +2,19 @@
 // pi-actor-swarm — mailbox-driven multi-agent swarm coordination.
 // ---------------------------------------------------------------------------
 
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { SwarmDashboard } from "./dashboard";
 import { clearSwarm, getConfig, initSwarm, postMessage, type RoutingPolicy, type SwarmAgent } from "./mailbox";
 
-type CustomTheme = {
-	fg?: (color: string, text: string) => string;
-	bold?: (text: string) => string;
-	dim?: (text: string) => string;
-};
-
-function normalizeTheme(theme: CustomTheme): {
+type NormalizedTheme = {
 	fg(color: string, text: string): string;
 	bold(text: string): string;
 	dim(text: string): string;
-} {
-	const rawFg = typeof theme.fg === "function" ? theme.fg.bind(theme) : undefined;
+};
+
+function normalizeTheme(theme: unknown): NormalizedTheme {
+	const candidate = theme as { fg?: unknown; bold?: unknown; dim?: unknown };
+	const rawFg = typeof candidate.fg === "function" ? candidate.fg.bind(theme) : undefined;
 	const fg = (color: string, text: string): string => {
 		if (!rawFg) return text;
 		try {
@@ -26,7 +23,7 @@ function normalizeTheme(theme: CustomTheme): {
 			return text;
 		}
 	};
-	const rawBold = typeof theme.bold === "function" ? theme.bold.bind(theme) : undefined;
+	const rawBold = typeof candidate.bold === "function" ? candidate.bold.bind(theme) : undefined;
 	const bold = (text: string): string => {
 		if (!rawBold) return text;
 		try {
@@ -35,7 +32,7 @@ function normalizeTheme(theme: CustomTheme): {
 			return text;
 		}
 	};
-	const rawDim = typeof theme.dim === "function" ? theme.dim.bind(theme) : undefined;
+	const rawDim = typeof candidate.dim === "function" ? candidate.dim.bind(theme) : undefined;
 	const dim = (text: string): string => {
 		if (!rawDim) return fg("dim", text);
 		try {

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import type { Api, Context, Model, Tool } from "@oh-my-pi/pi-ai";
-import type { OAuthLoginCallbacks } from "@oh-my-pi/pi-ai/utils/oauth/types";
-import type { ExtensionAPI, ProviderConfig } from "@oh-my-pi/pi-coding-agent";
+import type { OAuthLoginCallbacks } from "@oh-my-pi/pi-ai/oauth/types";
+import { buildModel } from "@oh-my-pi/pi-catalog/build";
+import type { ExtensionAPI, ProviderConfig } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import * as pluginStorage from "opencode-antigravity-auth/dist/src/plugin/storage";
 import * as pluginToken from "opencode-antigravity-auth/dist/src/plugin/token";
 import type { AuthMethod, PluginResult } from "opencode-antigravity-auth/dist/src/plugin/types";
@@ -31,7 +32,7 @@ function callbacks(manualCode = "manual-code"): OAuthLoginCallbacks {
 }
 
 function model(id = "antigravity-gemini-3.1-pro"): Model<Api> {
-	return {
+	return buildModel({
 		id,
 		provider: PROVIDER_ID,
 		api: BRIDGE_API,
@@ -42,7 +43,7 @@ function model(id = "antigravity-gemini-3.1-pro"): Model<Api> {
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 1024,
 		maxTokens: 128,
-	};
+	}) as Model<Api>;
 }
 
 function context(): Context {
@@ -126,7 +127,7 @@ describe("OpenCode Antigravity auth adapter", () => {
 			api: BRIDGE_API,
 			baseUrl: GOOGLE_GENERATIVE_LANGUAGE_BASE,
 		});
-		expect((models ?? []).every(m => m.provider !== "google-antigravity")).toBe(true);
+		expect((models ?? []).map(m => m.provider as string)).not.toContain("google-antigravity");
 	});
 
 	it("treats all-endpoint 4xx in model discovery as non-fatal; returns empty array", async () => {
@@ -527,6 +528,7 @@ describe("OpenCode Antigravity fetch bridge", () => {
 	it("routes OMP Google streaming through the upstream loader fetch", async () => {
 		const credentials = { refresh: "refresh", access: "access", expires: Date.now() + 60_000 };
 		let requestedUrl = "";
+		let requestedBody = "";
 		let strippedHeader: string | null = "not-called";
 		let upstreamAuthRefresh = "";
 		const auth: PluginResult["auth"] = {
@@ -543,9 +545,10 @@ describe("OpenCode Antigravity fetch bridge", () => {
 					apiKey: "",
 					fetch: async (input, init) => {
 						requestedUrl = input instanceof Request ? input.url : input.toString();
+						requestedBody = typeof init?.body === "string" ? init.body : "";
 						strippedHeader = new Headers(init?.headers).get("x-goog-api-key");
 						return new Response(
-							'data: {"candidates":[{"content":{"parts":[{"text":"hello"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}\n\n',
+							'data: {"event_type":"step.start","index":0,"step":{"type":"model_output","content":[]}}\n\ndata: {"event_type":"step.delta","index":0,"delta":{"type":"text","text":"hello"}}\n\ndata: {"event_type":"step.stop","index":0}\n\ndata: {"event_type":"interaction.completed","interaction":{"status":"completed","usage":{"total_input_tokens":1,"total_output_tokens":1,"total_tokens":2}}}\n\n',
 							{ headers: { "content-type": "text/event-stream" } },
 						);
 					},
@@ -558,7 +561,8 @@ describe("OpenCode Antigravity fetch bridge", () => {
 			apiKey: serializeBridgeCredentials(credentials),
 		}).result();
 
-		expect(requestedUrl).toContain(`${GOOGLE_GENERATIVE_LANGUAGE_BASE}/models/antigravity-gemini-3.1-pro`);
+		expect(requestedUrl).toStartWith(GOOGLE_GENERATIVE_LANGUAGE_BASE);
+		expect(requestedBody).toContain("antigravity-gemini-3.1-pro");
 		expect(strippedHeader).toBeNull();
 		expect(upstreamAuthRefresh).toBe("refresh");
 		expect(result.content).toEqual([{ type: "text", text: "hello", textSignature: undefined }]);
@@ -588,7 +592,7 @@ describe("OpenCode Antigravity extension registration", () => {
 		expect(registered[0].config.models?.map(entry => entry.id)).toContain("antigravity-claude-sonnet-4-6");
 		expect(registered[0].config.api).toBe(BRIDGE_API);
 		expect(typeof registered[0].config.streamSimple).toBe("function");
-		expect(typeof registered[0].config.fetchModels).toBe("function");
+		expect(typeof registered[0].config.fetchDynamicModels).toBe("function");
 		expect(typeof registered[0].config.oauth?.login).toBe("function");
 		expect(typeof registered[0].config.oauth?.refreshToken).toBe("function");
 	});

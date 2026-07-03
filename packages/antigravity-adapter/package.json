@@ -30,8 +30,9 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-ai": "^15.10.3-lex",
-		"@oh-my-pi/pi-utils": "^15.10.3-lex",
+		"@oh-my-pi/pi-ai": "catalog:",
+		"@oh-my-pi/pi-catalog": "catalog:",
+		"@oh-my-pi/pi-utils": "catalog:",
 		"opencode-antigravity-auth": "1.6.5-beta.0"
 	},
 	"devDependencies": {

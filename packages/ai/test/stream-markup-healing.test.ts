@@ -484,6 +484,7 @@ describe("StreamMarkupHealing thinking pattern", () => {
 		hermes: "hermes",
 		kimi: "kimi",
 		minimax: "minimax",
+		pi: "pi",
 		qwen3: "qwen3",
 		xml: "xml",
 	};

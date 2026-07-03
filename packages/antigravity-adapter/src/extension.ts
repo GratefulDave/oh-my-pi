@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { AntigravityCLIOAuthPlugin } from "opencode-antigravity-auth";
 import {
 	fetchBridgeModels,
@@ -12,8 +12,8 @@ import { BRIDGE_API, GOOGLE_GENERATIVE_LANGUAGE_BASE, OPENCODE_ANTIGRAVITY_MODEL
 import { createOpenCodeClientAdapter } from "./opencode-client-adapter";
 import { createOpencodeAntigravityStream } from "./stream-adapter";
 
-export default async function opencodeAntigravityBridge(pi: ExtensionAPI): Promise<void> {
-	pi.setLabel("OpenCode Antigravity Bridge");
+export default async function agBridgeExtension(pi: ExtensionAPI): Promise<void> {
+	pi.setLabel("AG Bridge");
 
 	const client = createOpenCodeClientAdapter(pi);
 
@@ -29,7 +29,7 @@ export default async function opencodeAntigravityBridge(pi: ExtensionAPI): Promi
 		streamSimple: createOpencodeAntigravityStream(upstream.auth, client),
 		models: OPENCODE_ANTIGRAVITY_MODELS,
 		oauth: {
-			name: "OpenCode Antigravity",
+			name: "AG Bridge",
 			login: async callbacks => {
 				const probed = await probeExistingToken(client);
 				if (probed) return probed;
@@ -39,6 +39,6 @@ export default async function opencodeAntigravityBridge(pi: ExtensionAPI): Promi
 			refreshToken: credentials => refreshBridgeCredentials(credentials, client),
 			getApiKey: serializeBridgeCredentials,
 		},
-		fetchModels: fetchBridgeModels,
+		fetchDynamicModels: fetchBridgeModels,
 	});
 }

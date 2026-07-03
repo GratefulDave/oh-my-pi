@@ -7,7 +7,7 @@
  * (tool block / eval cell).
  */
 import { beforeAll, describe, expect, it } from "bun:test";
-import { renderSubagentHudLines } from "@oh-my-pi/pi-coding-agent/modes/interactive-mode";
+import { renderSubagentHudLines, renderToolCounterLine } from "@oh-my-pi/pi-coding-agent/modes/interactive-mode";
 import {
 	type ObservableSession,
 	SessionObserverRegistry,
@@ -88,6 +88,25 @@ function render(sessions: ObservableSession[], columns = 120): string {
 describe("subagent HUD lines", () => {
 	beforeAll(async () => {
 		await initTheme();
+	});
+
+	it("renders aggregate tool counts in descending count order", () => {
+		const out = Bun.stripANSI(
+			renderToolCounterLine(
+				new Map([
+					["bash", 2],
+					["read", 4],
+					["mcp__context_mode_ctx_execute", 3],
+				]),
+				200,
+			),
+		);
+		expect(out).toContain("tools:9");
+		expect(out).toContain("read:4");
+		expect(out).toContain("mcp__context_mode_ctx_execute:3");
+		expect(out).toContain("bash:2");
+		expect(out.indexOf("read:4")).toBeLessThan(out.indexOf("mcp__context_mode_ctx_execute:3"));
+		expect(out.indexOf("mcp__context_mode_ctx_execute:3")).toBeLessThan(out.indexOf("bash:2"));
 	});
 
 	it("renders running subagents as agent rows under an Agents header", () => {

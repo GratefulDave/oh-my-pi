@@ -6,6 +6,7 @@ import type {
 	Model,
 	OAuthCredentials,
 	SimpleStreamOptions,
+	StreamFunction,
 } from "@oh-my-pi/pi-ai";
 import { streamGoogle } from "@oh-my-pi/pi-ai/providers/google";
 import { isJsonObject, type JsonObject, normalizeSchemaForCCA } from "@oh-my-pi/pi-ai/utils/schema";
@@ -25,12 +26,8 @@ import { GOOGLE_GENERATIVE_LANGUAGE_BASE, OPENCODE_ANTIGRAVITY_MODELS, PROVIDER_
 
 type UpstreamAuthHook = PluginResult["auth"];
 
+type GoogleStream = StreamFunction<"google-generative-ai">;
 type GoogleStreamModel = Model<"google-generative-ai">;
-type GoogleStream = (
-	model: GoogleStreamModel,
-	context: Context,
-	options: SimpleStreamOptions,
-) => AssistantMessageEventStream;
 
 // ---------------------------------------------------------------------------
 // Upstream tier encoding
@@ -192,10 +189,12 @@ export function createOpencodeAntigravityStream(
 	const client = typeof clientOrGoogleStream === "function" ? undefined : clientOrGoogleStream;
 	const resolvedGoogleStream = typeof clientOrGoogleStream === "function" ? clientOrGoogleStream : googleStream;
 	return (model, context, options) => {
-		const credentials = deserializeBridgeCredentials(options?.apiKey);
+		const apiKey = typeof options?.apiKey === "string" ? options.apiKey : undefined;
+		const credentials = deserializeBridgeCredentials(apiKey);
 		const upstreamId = buildUpstreamModelId(model, options?.reasoning);
+		const { apiKey: _apiKey, ...googleOptions } = options ?? {};
 		const stream = resolvedGoogleStream(toGoogleStreamModel(model, upstreamId), context, {
-			...options,
+			...googleOptions,
 			apiKey: "antigravity-adapter",
 			fetch: async (input, init) => {
 				if (client) {
@@ -215,7 +214,7 @@ export function createOpencodeAntigravityStream(
 function formatQuotaExhaustionError(modelId: string, quota: BridgeQuotaExhaustion): string {
 	const retryAfterMs = quota.resetMs ? Math.max(0, quota.resetMs - Date.now()) : undefined;
 	return [
-		`opencode-antigravity quota exhausted for model ${modelId}`,
+		`ag-bridge quota exhausted for model ${modelId}`,
 		`quotaGroup=${quota.quotaGroup}`,
 		`remainingFraction=${quota.remainingFraction}`,
 		quota.resetTime ? `resetTime=${quota.resetTime}` : undefined,

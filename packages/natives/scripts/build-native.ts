@@ -32,9 +32,9 @@ if (!crossTarget && process.platform === "darwin") {
 			const hostTriple = process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
 			const toolchainBin = path.join(rustupHome, "toolchains", `${channel}-${hostTriple}`, "bin");
 			const toolchainBinAlt = path.join(rustupHome, "toolchains", `nightly-${hostTriple}`, "bin");
-			const targetBin = await Bun.file(path.join(toolchainBin, "rustc")).exists()
+			const targetBin = (await Bun.file(path.join(toolchainBin, "rustc")).exists())
 				? toolchainBin
-				: await Bun.file(path.join(toolchainBinAlt, "rustc")).exists()
+				: (await Bun.file(path.join(toolchainBinAlt, "rustc")).exists())
 					? toolchainBinAlt
 					: null;
 			if (targetBin) {

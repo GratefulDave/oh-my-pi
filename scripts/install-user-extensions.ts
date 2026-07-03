@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // Symlink the repo's compiled extension bundles into ~/.omp/agent/extensions/
 // and register them in ~/.omp/agent/settings.json (USER scope) so omp loads
 // them from ANY working directory — independent of this repo.
@@ -10,9 +11,9 @@
 // Paths registered use ~ so they stay portable; the loader expands ~ and keeps
 // absolute paths as-is (resolveAgainst in omp-extension-roots.ts).
 
+import * as fs from "node:fs/promises";
 import { homedir } from "node:os";
 import * as path from "node:path";
-import * as fs from "node:fs/promises";
 
 interface RepoSettings {
 	extensions?: string[];
@@ -60,7 +61,9 @@ function isManagedExtensionPath(value: string, managedNames: Set<string>): boole
 }
 
 function mergeExtensionList(previous: unknown, managedNames: Set<string>, registeredExtensions: string[]): string[] {
-	const existing = Array.isArray(previous) ? previous.filter((value): value is string => typeof value === "string") : [];
+	const existing = Array.isArray(previous)
+		? previous.filter((value): value is string => typeof value === "string")
+		: [];
 	const unmanaged = existing.filter(value => !isManagedExtensionPath(value, managedNames));
 	return Array.from(new Set([...unmanaged, ...registeredExtensions]));
 }
@@ -105,8 +108,6 @@ function applyActiveProfile(settings: Record<string, unknown>): void {
 		}
 	}
 }
-
-
 
 async function pathExists(p: string): Promise<boolean> {
 	return fs.stat(p).then(
@@ -196,10 +197,9 @@ async function main(): Promise<void> {
 	// every repo-managed extension authoritative. Never rewrite config.yml here:
 	// profiles, model defaults, disabled capabilities, and symlink targets must persist.
 	const managedNames = new Set(registered.map(extName));
-	const settingsJson = normalizeAntigravityConfig((await readJson<Record<string, unknown>>(USER_SETTINGS)) ?? {}) as Record<
-		string,
-		unknown
-	>;
+	const settingsJson = normalizeAntigravityConfig(
+		(await readJson<Record<string, unknown>>(USER_SETTINGS)) ?? {},
+	) as Record<string, unknown>;
 	const settingsJsonExtensions = mergeExtensionList(settingsJson.extensions, managedNames, registered);
 	applyActiveProfile(settingsJson);
 	settingsJson.extensions = settingsJsonExtensions;

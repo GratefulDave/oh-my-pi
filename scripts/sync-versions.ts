@@ -34,8 +34,8 @@ const newVersion: string | undefined = process.argv[2];
 // ── 1. Read all workspace package.json files ──────────────────────────────────
 
 const packageDirs = readdirSync(packagesDir, { withFileTypes: true })
-	.filter((d) => d.isDirectory())
-	.map((d) => d.name);
+	.filter(d => d.isDirectory())
+	.map(d => d.name);
 
 const packages: Record<string, PackageInfo> = {};
 const versionMap: Record<string, string> = {};
@@ -65,7 +65,7 @@ if (newVersion) {
 
 	// Write updated package.json files
 	for (const [, pkg] of Object.entries(packages)) {
-		await Bun.write(pkg.path, JSON.stringify(pkg.data, null, "\t") + "\n");
+		await Bun.write(pkg.path, `${JSON.stringify(pkg.data, null, "\t")}\n`);
 	}
 
 	// ── 2a. Update root catalog ───────────────────────────────────────────────
@@ -82,7 +82,7 @@ if (newVersion) {
 			}
 		}
 		if (catalogUpdates > 0) {
-			await Bun.write(rootPkgPath, JSON.stringify(rootPkg, null, "\t") + "\n");
+			await Bun.write(rootPkgPath, `${JSON.stringify(rootPkg, null, "\t")}\n`);
 			console.log(`  root catalog: ${catalogUpdates} entr${catalogUpdates === 1 ? "y" : "ies"} updated`);
 		}
 	}

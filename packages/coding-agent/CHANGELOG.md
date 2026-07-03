@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- Restored the live TUI tool counter HUD and included subagent tool-call totals.
+
 - Fixed the bash tool renderer crashing when streamed tool-call arguments contain non-string `env` values.
 
 ### Fixed

@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import type { PluginClient } from "opencode-antigravity-auth/dist/src/plugin/types";
 
 type ToastVariant = "info" | "success" | "warning" | "error";
