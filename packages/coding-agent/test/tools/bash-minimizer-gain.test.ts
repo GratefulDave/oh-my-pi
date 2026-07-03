@@ -304,6 +304,8 @@ describe("isBashCommandMinimizerEligible", () => {
 		// TOML subcommand-gated: unsupported subcommands
 		expect(isBashCommandMinimizerEligible("terraform version", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("ollama version", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("rails db:migrate", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("rake routes", [], [])).toBe(true);
 	});
 	test("package manager subcommands mirror native package supports", () => {
 		expect(isBashCommandMinimizerEligible("npm install", [], [])).toBe(true);
@@ -326,6 +328,7 @@ describe("isBashCommandMinimizerEligible", () => {
 				'except = ["docker"]',
 				"max_capture_bytes = 2048",
 				"legacy_filters = true",
+				"enabled = false",
 				"[filters.custom]",
 				'match_command = "^custom-tool$"',
 				'match_subcommand = "^summarize$"',
@@ -338,14 +341,16 @@ describe("isBashCommandMinimizerEligible", () => {
 				except: [],
 				maxCaptureBytes: 4096,
 				legacyFilters: undefined,
+				enabled: true,
 			});
 			expect(config.only).toEqual(["git"]);
 			expect(config.except).toEqual(["docker"]);
 			expect(config.maxCaptureBytes).toBe(2048);
 			expect(config.legacyFilters).toBe(true);
+			expect(config.enabled).toBe(false);
 			expect(isBashCommandMinimizerEligible("bun test", config.only, config.except, config)).toBe(false);
-			expect(isBashCommandMinimizerEligible("git status", config.only, config.except, config)).toBe(true);
-			expect(isBashCommandMinimizerEligible("custom-tool summarize", [], [], config)).toBe(true);
+			expect(isBashCommandMinimizerEligible("git status", config.only, config.except, config)).toBe(false);
+			expect(isBashCommandMinimizerEligible("custom-tool summarize", [], [], config)).toBe(false);
 			expect(isBashCommandMinimizerEligible("custom-tool other", [], [], config)).toBe(false);
 		} finally {
 			fs.rmSync(settingsPath, { force: true });

@@ -203,6 +203,7 @@ async function recordBashMinimizerGain(input: {
 			except: input.session.settings.get("shellMinimizer.except"),
 			maxCaptureBytes: input.session.settings.get("shellMinimizer.maxCaptureBytes"),
 			legacyFilters: input.session.settings.get("shellMinimizer.legacyFilters"),
+			enabled: input.session.settings.get("shellMinimizer.enabled"),
 		});
 		// Skip outputs beyond the minimizer capture cap — the native minimizer returns
 		// a `too-large` passthrough before dispatch when input_bytes > max_capture_bytes,

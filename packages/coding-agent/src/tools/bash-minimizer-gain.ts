@@ -8,6 +8,7 @@ const BYTES_PER_TOKEN_ESTIMATE = 4;
 
 export type BashMinimizerGainKind = "saved" | "missed";
 export interface BashMinimizerEligibilityConfig {
+	enabled: boolean;
 	only: string[];
 	except: string[];
 	maxCaptureBytes: number;
@@ -479,6 +480,7 @@ export function isBashCommandMinimizerEligible(
 ): boolean {
 	const tokens = shellTokens(command.trim());
 	if (tokens.length === 0) return false;
+	if (config?.enabled === false) return false;
 	if (hasIneligibleShellOperatorFromTokens(tokens)) return false;
 	const segments = splitChainSegments(tokens);
 	if (segments.length > 1 && config?.legacyFilters === true) return false;
@@ -499,8 +501,10 @@ export async function resolveBashMinimizerEligibilityConfig(input: {
 	except: string[];
 	maxCaptureBytes: number;
 	legacyFilters: boolean | undefined;
+	enabled: boolean;
 }): Promise<BashMinimizerEligibilityConfig> {
 	const resolved: BashMinimizerEligibilityConfig = {
+		enabled: input.enabled,
 		only: input.only,
 		except: input.except,
 		maxCaptureBytes: Math.max(input.maxCaptureBytes, 1024),
@@ -515,6 +519,7 @@ export async function resolveBashMinimizerEligibilityConfig(input: {
 	const parsed = parseMinimizerSettingsFile(text);
 	if (!parsed) return resolved;
 	return {
+		enabled: parsed.enabled ?? resolved.enabled,
 		only: parsed.only ?? resolved.only,
 		except: parsed.except ?? resolved.except,
 		maxCaptureBytes: parsed.maxCaptureBytes ?? resolved.maxCaptureBytes,
@@ -524,6 +529,7 @@ export async function resolveBashMinimizerEligibilityConfig(input: {
 }
 
 interface ParsedMinimizerSettingsFile {
+	enabled?: boolean;
 	only?: string[];
 	except?: string[];
 	maxCaptureBytes?: number;
@@ -543,6 +549,7 @@ function parseMinimizerSettingsFile(text: string): ParsedMinimizerSettingsFile |
 		return undefined;
 	}
 	return {
+		enabled: typeof raw.enabled === "boolean" ? raw.enabled : undefined,
 		only: collectStringArray(raw.only),
 		except: collectStringArray(raw.except),
 		maxCaptureBytes: typeof raw.max_capture_bytes === "number" ? Math.max(raw.max_capture_bytes, 1024) : undefined,
@@ -1019,7 +1026,7 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 			return true;
 		case "rake":
 		case "rails":
-			return !(subcommand === "db:migrate" || subcommand === "db:rollback" || subcommand === "routes");
+			return true;
 		case "rustfmt":
 			return true;
 		case "xxd":

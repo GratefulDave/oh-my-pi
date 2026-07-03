@@ -13615,6 +13615,7 @@ export class AgentSession {
 					except: this.settings.get("shellMinimizer.except"),
 					maxCaptureBytes: this.settings.get("shellMinimizer.maxCaptureBytes"),
 					legacyFilters: this.settings.get("shellMinimizer.legacyFilters"),
+					enabled: this.settings.get("shellMinimizer.enabled"),
 				});
 				if (savedGain.info) {
 					// Flush saved record with real exitCode now that the result is known.
