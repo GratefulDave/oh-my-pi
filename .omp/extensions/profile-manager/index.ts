@@ -56,6 +56,8 @@ interface OmpSettings {
 
 interface ExtensionAPIWithSessionOverrides extends ExtensionAPI {
 	overrideModelRoles?: (roles: Record<string, string>) => void;
+	replaceModelRoles?: (roles: Record<string, string>) => void;
+	overrideEnabledModels?: (patterns: string[] | null) => void;
 }
 
 const DEFAULT_PROFILE_NAME = "default";
@@ -597,11 +599,11 @@ function notifyStartup(
 	}
 	notify(pi, message);
 }
-
 /**
- * Apply a profile to the live session. `overrideModelRoles` updates role routing
- * without persisting to disk; `setModel` only switches the visible default model
- * for the current session.
+ * Apply a profile to the live session. `replaceModelRoles` replaces all role
+ * overrides (clearing previous profile's roles); `overrideEnabledModels`
+ * applies the profile's model filter to the live session; `setModel` switches
+ * the visible default model for the current session.
  */
 async function applyProfile(
 	pi: ExtensionAPI,
@@ -610,8 +612,13 @@ async function applyProfile(
 	{ switchModel = true }: { switchModel?: boolean } = {},
 ): Promise<string> {
 	const sessionApi = pi as ExtensionAPIWithSessionOverrides;
-	sessionApi.overrideModelRoles?.(profile.modelRoles ?? {});
-
+	// Replace (not merge) role overrides so switching profiles clears stale roles.
+	sessionApi.replaceModelRoles?.(profile.modelRoles ?? {});
+	// Apply enabledModels to the live session so /models shows the right scope.
+	const enabledPatterns = profile.enabledModels;
+	sessionApi.overrideEnabledModels?.(
+		enabledPatterns && enabledPatterns.length > 0 ? enabledPatterns : null,
+	);
 	if (!switchModel) return "Settings applied.";
 
 	const selector = profile.modelRoles?.default;
@@ -853,9 +860,14 @@ async function handleUse(
 			notify(pi, `Active profile: ${DEFAULT_PROFILE_NAME}. ${status}`);
 			return;
 		}
-		writeSettings(ctx, settings);
-		notify(pi, `Active profile: ${DEFAULT_PROFILE_NAME}`);
-		return;
+	// No explicit "default" profile entry — clear all runtime overrides so
+	// top-level config modelRoles/enabledModels take effect.
+	const sessionApi = pi as ExtensionAPIWithSessionOverrides;
+	sessionApi.replaceModelRoles?.({});
+	sessionApi.overrideEnabledModels?.(null);
+	writeSettings(ctx, settings);
+	notify(pi, `Active profile: ${DEFAULT_PROFILE_NAME}`);
+	return;
 	}
 
 	const name = normalizeProfileName(rawName);
