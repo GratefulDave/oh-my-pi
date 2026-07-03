@@ -485,6 +485,7 @@ export function isBashCommandMinimizerEligible(
 	const segments = splitChainSegments(tokens);
 	if (segments.length > 1 && config?.legacyFilters === true) return false;
 	if (segments.length > 1 && segments.some(segmentMutatesShellState)) return false;
+	if (segments.length > 1 && segments.some(segmentUnsafeForChain)) return false;
 	const resolved = {
 		only,
 		except,
@@ -681,6 +682,17 @@ function commandWrapperInvokesMutator(tokens: string[]): boolean {
 		return false;
 	}
 	return false;
+}
+
+function segmentUnsafeForChain(tokens: string[]): boolean {
+	return tokens.some(
+		token =>
+			token.includes("$(") ||
+			token.includes("`") ||
+			token.includes("<(") ||
+			token.includes(">(") ||
+			token.includes("<<"),
+	);
 }
 
 function isAmbiguousAssignmentFragment(token: string): boolean {

@@ -263,6 +263,10 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("alias git=hub ; git status", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("command exec >out ; git status", [], [])).toBe(false);
 	});
+	test("unsafe chain segments are ineligible", () => {
+		expect(isBashCommandMinimizerEligible("echo $(pwd) ; git status", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("cat <<EOF ; git status", [], [])).toBe(false);
+	});
 	test("background commands are always ineligible (mirrors native MinimizerMode::None)", () => {
 		expect(isBashCommandMinimizerEligible("git status &", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("npm test &", ["npm"], [])).toBe(false);
