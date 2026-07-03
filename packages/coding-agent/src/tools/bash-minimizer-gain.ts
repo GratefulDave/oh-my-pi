@@ -871,6 +871,39 @@ function isGtestBinaryName(program: string): boolean {
 	return dot > 0 && program.slice(dot + 1).toLowerCase() === "test";
 }
 
+const CONTAINER_SUBCOMMANDS = [
+	"ps",
+	"images",
+	"logs",
+	"compose",
+	"build",
+	"pull",
+	"push",
+	"get",
+	"describe",
+	"status",
+	"list",
+	"ls",
+	"install",
+	"upgrade",
+	"template",
+	"lint",
+	"apply",
+	"delete",
+	"rollout",
+	"scale",
+	"create",
+	"wait",
+	"label",
+	"annotate",
+	"up",
+	"down",
+	"start",
+	"stop",
+	"restart",
+	"rm",
+];
+
 /**
  * Mirrors `filters::supports(program, subcommand)` in
  * `crates/pi-shell/src/minimizer/filters/mod.rs`. The dispatch order and
@@ -1024,41 +1057,11 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 		case "wget":
 		case "psql":
 			return true; // cloud::supports is program-only
+		case "helm":
+			return subIs(subcommand, ["repo", "search", "list", "history"]) || subIs(subcommand, CONTAINER_SUBCOMMANDS);
 		case "docker":
 		case "kubectl":
-		case "helm":
-			return subIs(subcommand, [
-				"ps",
-				"images",
-				"logs",
-				"compose",
-				"build",
-				"pull",
-				"push",
-				"get",
-				"describe",
-				"status",
-				"list",
-				"ls",
-				"install",
-				"upgrade",
-				"template",
-				"lint",
-				"apply",
-				"delete",
-				"rollout",
-				"scale",
-				"create",
-				"wait",
-				"label",
-				"annotate",
-				"up",
-				"down",
-				"start",
-				"stop",
-				"restart",
-				"rm",
-			]);
+			return subIs(subcommand, CONTAINER_SUBCOMMANDS);
 		case "gh":
 			return subIs(subcommand, [
 				"pr",

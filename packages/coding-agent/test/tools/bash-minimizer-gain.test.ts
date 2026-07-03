@@ -324,6 +324,9 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("ollama version", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("rails db:migrate", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("rake routes", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("helm repo update", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("helm search repo bitnami", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("helm history release-name", [], [])).toBe(true);
 	});
 	test("package manager subcommands mirror native package supports", () => {
 		expect(isBashCommandMinimizerEligible("npm install", [], [])).toBe(true);
