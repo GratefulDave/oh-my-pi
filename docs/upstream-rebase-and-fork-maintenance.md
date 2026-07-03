@@ -1,184 +1,275 @@
-# Upstream Rebase & Fork Maintenance (Lex Fork)
+# Fork Maintenance Guide — GratefulDave/oh-my-pi (lex fork)
 
-What to do when upstream `can1357/oh-my-pi` moves — and specifically **how to carry the native
-changes if our 6 PRs are NOT accepted**.
-
-Extensions are handled separately and survive pulls untouched — see
-[`extensions-build-and-test.md`](./extensions-build-and-test.md). This doc is about the
-**Rust/native** layer that cannot be an extension.
+> **Canonical workflow**: `git merge upstream/main` → resolve conflicts → `./rebuild-lex.zsh`
+> This doc replaces the stale rebase-based procedure. All PRs were merged upstream; the fork now
+> carries only the patches listed in §3.
 
 ---
 
 ## 1. Remotes & branches
 
 ```
-origin    git@github.com:GratefulDave/oh-my-pi.git   # the Lex fork (push here)
-upstream  https://github.com/can1357/oh-my-pi.git    # upstream (fetch only)
+origin    git@github.com:GratefulDave/oh-my-pi.git   # fork (push here)
+upstream  https://github.com/can1357/oh-my-pi.git    # fetch only
 ```
 
 | Branch | Role |
 |--------|------|
-| `main` | fork baseline, tracks upstream |
-| `wip/lex-binary-extraction` | current working branch (extensions, `15.7.3-lex` stamp, fork tooling) |
-| `fix/subagent-propagation` | fork-only AG subagent fix |
-| `pr/minimizer-chain` | **PR #1637** (pi-shell chain segmentation) |
-| `pr/minimizer-filters` | **PR #1638** (pi-shell git/cloud/docker/listing/pkg/bun/cargo filters) |
-| `pr/minimizer-new-filters` | **PR #1639** (pi-shell AI/binary/rust tool filters) |
-| `pr/keys-legacy-fix` | **PR #1640** (pi-natives key matching) |
-| `pr/brush-pipeline-fix` | **PR #1641** (brush-core pipeline EPERM) |
-| `pr/shell-minimizer-binding` | **PR #1642** (pi-natives NAPI minimizer binding) |
+| `upstream-16.3.2` | current main lane (HEAD) |
+| `upstream-16.3.0` | prior release lane (`lex-prev` worktree) |
 
-Every `pr/*` branch is built on `upstream/main` with a focused diff (fork artifacts stripped) so
-each compiles standalone for upstream.
+3-lane layout:
+- `~/PycharmProjects/lex` — current release lane
+- `~/PycharmProjects/lex-prev` — prior release lane (read-only reference)
+- `~/PycharmProjects/lex-<pr>` — per-PR worktrees (transient)
 
 ---
 
-## 2. Routine upstream sync (PRs accepted or not)
+## 2. Routine upstream sync
 
 ```bash
-./scripts/update-from-upstream.sh
-```
-What it does (`scripts/update-from-upstream.sh`):
-1. `git fetch upstream`
-2. stashes a dirty tree if present (`auto-stash before upstream rebase <ts>`)
-3. `git rebase upstream/main` on the **current** branch
-4. on conflict: **pauses**, prints recovery steps, exits 1 (non-destructive)
-5. on success: `git stash pop` (warns if the pop conflicts)
-
-After a clean rebase:
-```bash
-git rebase --continue        # only if it paused
-git stash pop                # only if it stashed and didn't auto-pop
-./rebuild-lex.zsh
-```
-
-Run it **on the branch you want updated** (`git checkout wip/lex-binary-extraction` first).
-
----
-
-## 3. Rebuild the lex binary
-
-```bash
-./rebuild-lex.zsh
-```
-What it does (`rebuild-lex.zsh`):
-1. `bun install`
-2. `bun run build` — workspace TS build **+** NAPI native build (cargo → `pi_natives` addon)
-3. asserts `packages/coding-agent/dist/omp` exists & is executable
-4. symlinks it to `~/.local/bin/lex`, ensures `~/.local/bin` is on `$PATH` in `~/.zshrc`
-5. prints `lex --version`
-
-For the current shell after a rebuild: `source ~/.zshrc && hash -r`.
-
-Native-only rebuild (faster when you only touched Rust):
-```bash
-bun run build:native        # = bun --cwd=packages/natives run build
-```
-
----
-
-## 4. IF THE 6 PRs ARE REJECTED — carry the native changes on the fork
-
-The PR branches are scoped for upstream. If upstream declines them, the work must persist on the
-fork's own line and ride every future upstream rebase. Procedure:
-
-### 4.1 Create a durable fork-native branch
-```bash
+cd ~/PycharmProjects/lex
 git fetch upstream
-git checkout main
-git rebase upstream/main          # bring fork baseline current
-git checkout -b feature/fork-native-minimizer main
+git stash                           # if dirty
+git merge upstream/main             # merge, not rebase — preserves fork commit history
 ```
 
-### 4.2 Stack the rejected PR commits onto it
-Cherry-pick in dependency order (filters/bindings build on the chain + native surface):
-```bash
-git cherry-pick origin/pr/minimizer-chain~1..origin/pr/minimizer-chain        # #1637
-git cherry-pick origin/pr/minimizer-filters~1..origin/pr/minimizer-filters    # #1638
-git cherry-pick origin/pr/minimizer-new-filters~1..origin/pr/minimizer-new-filters  # #1639
-git cherry-pick origin/pr/keys-legacy-fix~1..origin/pr/keys-legacy-fix        # #1640
-git cherry-pick origin/pr/brush-pipeline-fix~1..origin/pr/brush-pipeline-fix  # #1641
-git cherry-pick origin/pr/shell-minimizer-binding~1..origin/pr/shell-minimizer-binding  # #1642
-```
-> Use the `~1..branch` range so you pick **all** commits on each branch (each carries the original
-> change + its Codex-review fixups), not just the tip. Adjust `~N` to the commit count per branch
-> (chain/filters/keys/brush = 2 each, shell-minimizer = 3).
+**Conflict hot zones** (always expected):
+- `bun.lock` — always take upstream: `git checkout --theirs bun.lock && bun install`
+- `packages/*/CHANGELOG.md` — keep both sections; upstream goes in released section
 
-Resolve conflicts as they arise (most likely in `crates/pi-shell/src/minimizer/filters/*`).
-
-### 4.3 Re-stamp the fork version
-```bash
-bun scripts/sync-versions.ts 15.7.3-lex
-git add -A && git commit -m "chore: re-stamp 15.7.3-lex after carrying native PRs onto fork"
-```
-`sync-versions.ts` updates every `package.json`, the root catalog, and the `pi-natives` NAPI
-version sentinels (`__piNativesV15_7_3_lex` in `crates/pi-natives/src/lib.rs`,
-`packages/natives/native/index.{js,d.ts}`). The sentinel guards against a JS↔native version
-mismatch at load time — keep it in lockstep after every rebase.
-
-### 4.4 Rebuild + verify, then merge into the working line
+After a clean merge:
 ```bash
 ./rebuild-lex.zsh
-lex --version
-git checkout wip/lex-binary-extraction
-git merge feature/fork-native-minimizer          # or rebase
-git push origin wip/lex-binary-extraction feature/fork-native-minimizer
 ```
 
-### 4.5 Re-apply the fork artifacts stripped for upstream
-The PR branches deliberately **omit** Lex-private pieces. When carrying onto the fork, restore them:
-- the `rebuild-lex.zsh` minimizer filter in `crates/pi-shell/src/minimizer/filters/bun.rs`
-  (`LEX_REBUILD_SCRIPT`, `filter_rebuild_lex`, `is_rebuild_lex_noise`) + its dispatch arms in
-  `filters/mod.rs` — this is fork-only and was the reason #1638/#1639 are flagged for upstream.
-- any `_lex` suffixes / sibling-PR cross-refs that were scrubbed.
-
-> Keep these on the fork branch only. They must **never** re-enter a `pr/*` branch.
-
----
-
-## 5. IF A SUBSET IS ACCEPTED
-
-For each merged PR, drop its cherry-pick from §4.2 — once it lands in `upstream/main`, the routine
-rebase (§2) brings it in. Cherry-pick only the **still-rejected** branches. After the next
-`update-from-upstream.sh`, delete the merged `pr/*` branches:
+After a successful rebuild, run the patch checker to confirm all fork patches survived:
 ```bash
-git push origin --delete pr/<merged-branch>
-git branch -D pr/<merged-branch>
+bun scripts/check-fork-patches.ts
 ```
 
 ---
 
-## 6. Conflict hot zones (historical)
+## 3. Active fork-only patches
 
-- `packages/ai/src/models.json` — upstream renames/deletes vs fork-retained tools.
-- `packages/coding-agent/src/**` — actor system, factory, observer overhaul.
-- `crates/pi-shell/src/minimizer/**` — large fork expansion; the biggest cherry-pick conflict risk.
-- `Cargo.lock`, `bun.lock` — regenerate rather than hand-merge: `bun install`, `cargo build`.
+These are changes that exist in this fork but NOT in upstream `can1357/oh-my-pi`. They must be
+re-verified after every merge. The `check-fork-patches.ts` script does this automatically.
 
-### NAPI surface freeze (PR #1642)
-The minimizer binding's surface is frozen and must not drift across rebases:
-```
-applyShellMinimizer(options: ShellMinimizerApplyOptions): MinimizerResult | null
-ShellMinimizerApplyOptions { command, captured, exitCode?, minimizer? }
-errors thrown as napi::Error
-```
-If a rebase touches `crates/pi-natives/src/shell.rs` or the generated bindings, re-verify this
-signature and regenerate `packages/natives/native/index.d.ts`.
+### Patch 1: `replaceModelRoles` (profile-manager profile switch)
+
+**Why**: `overrideModelRoles` is additive (merges into existing roles). Profile switches need to
+*replace* the entire role map, not accumulate. Upstream only has the additive version.
+
+**Files**:
+- `packages/coding-agent/src/config/settings.ts` — `replaceModelRoles()` method
+- `packages/coding-agent/src/extensibility/extensions/types.ts` — `replaceModelRoles` in `ExtensionAPI` + `ExtensionActions`
+- `packages/coding-agent/src/extensibility/extensions/loader.ts` — stub + real impl
+- `packages/coding-agent/src/extensibility/extensions/runner.ts` — wired to actions
+- `packages/coding-agent/src/modes/runtime-init.ts` — wired to session.settings
+- `packages/coding-agent/src/modes/acp/acp-agent.ts` — wired
+- `packages/coding-agent/src/modes/controllers/extension-ui-controller.ts` — wired (×2)
+- `packages/coding-agent/src/task/executor.ts` — wired
+
+**Verify**: `grep -r 'replaceModelRoles' packages/coding-agent/src/ | wc -l` should be ≥ 8.
+
+**Conflict risk**: any upstream refactor of `overrideModelRoles` wiring touches the same sites.
+Pattern: wherever `overrideModelRoles` is wired, `replaceModelRoles` must be wired in parallel.
 
 ---
 
-## 7. Build/test/lint reference
+### Patch 2: `bash.ts` env type widening (`Record<string, unknown>`)
+
+**Why**: `formatBashEnvAssignments` / `getBashEnvForDisplay` / `resolveEnv` typed as
+`Record<string, string>` upstream, but env values may arrive as non-string (number, boolean)
+from some extension providers. Widening to `unknown` + `String(value)` prevents a runtime crash.
+
+**Files**:
+- `packages/coding-agent/src/tools/bash.ts`
+
+**Verify**: `grep 'unknown' packages/coding-agent/src/tools/bash.ts | grep -c 'Record'` → 3.
+
+**Conflict risk**: low — upstream is unlikely to change this signature; if it does, re-apply widening.
+
+---
+
+### Patch 3: Subagent HUD — spinner, settle summary, activity rows
+
+**Why**: Upstream's subagent HUD is a static tree (no spinner, no post-completion summary message).
+This fork adds: (a) themed spinner frames synced to `sharedSpinnerFrame`, (b) per-row activity
+line showing current tool / recent output / last tool, (c) on-settle emitting a
+`subagent-hud-summary` custom message into the chat transcript so completed agent stats scroll away.
+
+**Files**:
+- `packages/coding-agent/src/modes/interactive-mode.ts` — `renderSubagentHudLines()` rewrite, `#startSubagentSpinner()`, `#stopSubagentSpinner()`, settle detection, `#hadActiveSubagents`, `#emittedSubagentSummaryIds`, `#subagentSpinnerFrame`
+- `packages/coding-agent/src/modes/utils/transcript-render-helpers.ts` — `SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE`, `SubagentHudSummaryRow`, `SubagentHudSummaryDetails`, `buildSubagentHudSummaryBlock()`
+- `packages/coding-agent/src/modes/components/chat-transcript-builder.ts` — renders `subagent-hud-summary` custom messages
+- `packages/coding-agent/src/modes/utils/ui-helpers.ts` — renders `subagent-hud-summary` in transcript rebuild
+
+**Verify**: `grep -c 'SUBAGENT_HUD_SUMMARY' packages/coding-agent/src/modes/utils/transcript-render-helpers.ts` → ≥ 1.
+
+**Conflict risk**: HIGH — upstream frequently refactors the HUD / interactive-mode. On every merge,
+diff `interactive-mode.ts` carefully. The spinner and settle-detection logic lives inside
+`#renderSubagentList()` and the session update handler; upstream may refactor those methods.
+
+---
+
+### Patch 4: `status-line.ts` — `metaColor` option
+
+**Why**: Allows callers to override the meta text color (default `"dim"`) for subagent status rows
+that need accent or error coloring.
+
+**Files**:
+- `packages/coding-agent/src/tui/status-line.ts`
+
+**Verify**: `grep -c 'metaColor' packages/coding-agent/src/tui/status-line.ts` → ≥ 2.
+
+**Conflict risk**: low — additive option, unlikely to conflict unless upstream rewrites status-line.
+
+---
+
+### Patch 5: `sdk.ts` — extension preload inheritance in eval-spawned subagents
+
+**Why**: Without this, eval-spawned subagents re-run extension discovery on the shared registry
+and double-register providers. The fix exposes `getPreloadedExtensions()` and passes the result
+to subagent SDK construction so already-loaded extensions are inherited rather than re-discovered.
+
+**Files**:
+- `packages/coding-agent/src/sdk.ts`
+- `packages/coding-agent/src/task/executor.ts` — `preloadedExtensions` option threaded through
+
+**Verify**: `grep -c 'getPreloadedExtensions\|preloadedExtensions' packages/coding-agent/src/sdk.ts` → ≥ 2.
+
+**Conflict risk**: medium — sdk.ts is frequently modified upstream.
+
+---
+
+### Patch 6: `task/disabled-agents.ts` — `isAlwaysEnabledAgent()`
+
+**Why**: Certain agents (e.g. `task`) must never be disabled by `enabledAgents` filters. This
+utility guards the filter to always pass `task` through.
+
+**Files**:
+- `packages/coding-agent/src/task/disabled-agents.ts` (new file, fork-only)
+
+**Verify**: file exists: `ls packages/coding-agent/src/task/disabled-agents.ts`.
+
+**Conflict risk**: low — new file, no upstream collision unless upstream adds same name.
+
+---
+
+### Patch 7: `natives/scripts/build-native.ts` — macOS Homebrew rustc PATH fix
+
+**Why**: Homebrew installs its own `rustc`/`cargo` (stable channel) at `/opt/homebrew/bin/` which
+appears before `~/.cargo/bin` in the default macOS PATH. Rustup shims are bypassed — the nightly
+toolchain in `rust-toolchain.toml` is never activated — causing `E0554` (feature on stable).
+Fix: at script startup, read `rust-toolchain.toml`, find the matching nightly toolchain bin dir,
+and prepend it to `process.env.PATH` so all child spawns (cargo metadata, napi build) use nightly.
+
+**Files**:
+- `packages/natives/scripts/build-native.ts`
+
+**Verify**: `grep -c 'toolchainBin\|rustup' packages/natives/scripts/build-native.ts` → ≥ 4.
+
+**Conflict risk**: low — upstream is unlikely to touch this script's preamble. If upstream replaces
+this script, re-apply the nightly PATH prepend block at the top of the new version.
+
+---
+
+### Patch 8: `antigravity-adapter` package (fork-only extension)
+
+**Why**: The `antigravity-adapter` package does not exist upstream. It bridges the AG OAuth
+provider (Antigravity AI endpoint) into the lex model registry using a custom provider ID
+(`ag-bridge`) and credential type. The serialized credential prefix is kept as `opencode-antigravity:v1:`
+for backward compatibility with stored tokens.
+
+**Files**: entire `packages/antigravity-adapter/` directory
+
+**Verify**: `ls packages/antigravity-adapter/src/` → `auth-adapter.ts extension.ts models.ts …`
+
+**Conflict risk**: none — upstream does not have this directory.
+
+---
+
+### Patch 9: Fork tooling & docs
+
+Fork-private scripts and docs that upstream does not have:
+- `rebuild-lex.zsh` — canonical rebuild entrypoint
+- `scripts/check-fork-patches.ts` — post-merge patch integrity checker (this repo)
+- `scripts/install-user-extensions.ts` — installs fork-managed extensions globally
+- `scripts/rebuild-extensions.ts` — rebuilds extension bundles
+- `scripts/sync-pi-to-lex-auth.py` — syncs pi auth to lex auth DB
+- `docs/upstream-rebase-and-fork-maintenance.md` — this file
+- `docs/extensions-build-and-test.md`
+- `docs/fork-diff-summary.md`
+- `docs/rebase-pr-acceptance-playbook.md`
+- `AGENTS.md`, `GITHUB_ANSI.md`
+- `.omp/settings.json`, `.omp/extensions/`, `.omp/agent/`
+- `.claude/`, `.codex/`, `.gemini/`, `.lex/` — AI agent config dirs
+
+---
+
+## 4. Post-merge checklist
+
+After every `git merge upstream/main`:
+
+1. **Check patch integrity**: `bun scripts/check-fork-patches.ts`
+   — reports any patch that no longer applies (method removed, file replaced, grep miss)
+2. **Conflict hot zone review**: `git diff upstream/main HEAD -- packages/coding-agent/src/modes/interactive-mode.ts | head -50`
+   — if the subagent HUD region changed upstream, re-verify Patch 3
+3. **`bun check`** — catches type errors from upstream API changes
+4. **`./rebuild-lex.zsh`** — full build + smoke tests
+5. **Live test**: start lex, run `/pm use ag`, open `/models` — should show only `ag/*` models
+
+---
+
+## 5. Build reference
 
 | Task | Command |
 |------|---------|
-| Full build (TS + native) | `bun run build` |
-| Native only | `bun run build:native` |
-| Rebuild + install `lex` | `./rebuild-lex.zsh` |
-| Scoped Rust check (fast) | `cargo check -p pi-shell` / `-p pi-natives` |
-| Rust tests (scoped) | `cargo test -p pi-shell -- <test>` |
-| All tests | `bun run test` (`test:ts` ‖ `test:rs`) |
-| Lint | `bun run lint` |
-| Sync/stamp version | `bun scripts/sync-versions.ts 15.7.3-lex` |
+| Full build + install | `./rebuild-lex.zsh` |
+| TS type check | `bun check` |
+| Native only | `bun --cwd=packages/natives run build` |
+| Verify fork patches | `bun scripts/check-fork-patches.ts` |
+| All TS tests | `bun test` |
+| Single package tests | `bun test packages/coding-agent/test/<file>.test.ts` |
+| Sync fork version stamp | `bun scripts/sync-versions.ts <version>` |
+| Upgrade profile-manager | `bun build .omp/extensions/profile-manager/index.ts --outfile .omp/extensions/profile-manager/dist/index.js --target bun --format esm` |
 
-> Cold `cargo`/`clippy` builds are slow — prefer `cargo check -p <crate>` while iterating, and
-> commit+push immediately after a successful build.
+---
+
+## 6. Extension layout
+
+```
+~/.omp/agent/extensions/
+  antigravity-adapter/antigravity.bundle.js    # from packages/antigravity-adapter
+  profile-manager/profile-manager.bundle.js    # from .omp/extensions/profile-manager
+  profile-manager/index.js -> profile-manager.bundle.js   # symlink (rebuild-lex.zsh creates)
+  [personal extensions...]                     # from ~/PycharmProjects/omp-personal-extensions
+```
+
+The `profile-manager` extension is **not** a workspace package — it lives in
+`.omp/extensions/profile-manager/`. `rebuild-lex.zsh` builds it with a direct `bun build` call
+and restores the `index.js` symlink that `install-user-extensions.ts` removes.
+
+Personal extensions (`omp-personal-extensions`) are rebuilt and installed by `rebuild-lex.zsh`
+after the workspace build. They run `bun run build && bun run install:user`.
+
+---
+
+## 7. NAPI native sentinel
+
+The native addon export name must match the version in `packages/natives/package.json`. The sentinel
+`__piNativesV{version}` guards against loading a stale cached addon. `rebuild-lex.zsh` runs
+`perl -pi -e` to update it in `crates/pi-natives/src/lib.rs`, `native/index.js`, and
+`native/index.d.ts` before building. If upstream changes the sentinel mechanism, update the `perl`
+invocation in `rebuild-lex.zsh`.
+
+---
+
+## 8. Protected files
+
+`rebuild-lex.zsh` hash-guards these files and refuses to finish if they change:
+- `~/.omp/agent/config.yml`
+- `~/.lex/agent/config.yml`
+
+Never edit these from code. Change them manually, then re-run `rebuild-lex.zsh`.

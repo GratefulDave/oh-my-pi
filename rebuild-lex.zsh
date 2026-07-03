@@ -72,6 +72,12 @@ capture_settings_guard
 print_step "Building fork from $repo_dir"
 cd "$repo_dir"
 
+print_step "Verifying fork patches"
+if ! bun scripts/check-fork-patches.ts; then
+	printf '\nFork patches missing. Re-apply before rebuilding (see docs/upstream-rebase-and-fork-maintenance.md §3).\n' >&2
+	exit 1
+fi
+
 # Keep the pi-natives version sentinel in sync with package.json#version.
 # Upstream's scripts/release.ts rewrites this on every release; a manual
 # version stamp (e.g. syncing to a new upstream) skips it, leaving the Rust
@@ -138,19 +144,20 @@ mkdir -p "$link_dir"
 ln -sf "$binary" "$link_dir/lex"
 ln -sf "$binary" "$link_dir/omp"
 
-# Rebuild personal extensions against the freshly compiled lex binary, then
-# install. Extensions import from @oh-my-pi/pi-coding-agent; a stale bundle
-# breaks /pm, /models, antigravity, and every other extension silently.
+# Rebuild personal extensions against the freshly compiled lex binary, then install
+# the fork-managed extension set last. Some package names exist in both repos; the
+# user-level config must resolve those to this lex checkout, while personal-only
+# extensions stay registered from the external repo.
 personal_ext_repo="$HOME/PycharmProjects/omp-personal-extensions"
 if [[ -d "$personal_ext_repo" ]]; then
 	print_step "Rebuilding personal extensions ($personal_ext_repo)"
 	bun --cwd="$personal_ext_repo" run build
-	print_step "Installing and verifying global extensions (~/.omp/agent/extensions)"
+	print_step "Installing personal-only global extensions (~/.omp/agent/extensions)"
 	bun --cwd="$personal_ext_repo" run install:user
-else
-	print_step "Installing and verifying global extensions (~/.omp/agent/extensions)"
-	bun scripts/install-user-extensions.ts
 fi
+
+print_step "Installing and verifying lex-managed global extensions (~/.omp/agent/extensions)"
+bun scripts/install-user-extensions.ts
 
 # settings.json registers profile-manager at extensions/profile-manager/index.js
 # but install-user-extensions.ts removes index.js (it's in STALE_MANAGED_DISCOVERY_FILES)
