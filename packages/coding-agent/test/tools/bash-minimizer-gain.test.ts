@@ -360,6 +360,30 @@ describe("isBashCommandMinimizerEligible", () => {
 			fs.rmSync(settingsPath, { force: true });
 		}
 	});
+	test("legacy filter env fallback disables chain eligibility", async () => {
+		const previous = Bun.env.OMP_MINIMIZER_LEGACY_FILTERS;
+		Bun.env.OMP_MINIMIZER_LEGACY_FILTERS = "yes";
+		try {
+			const config = await resolveBashMinimizerEligibilityConfig({
+				settingsPath: undefined,
+				only: [],
+				except: [],
+				maxCaptureBytes: 4096,
+				legacyFilters: undefined,
+				enabled: true,
+			});
+			expect(config.legacyFilters).toBe(true);
+			expect(isBashCommandMinimizerEligible("git status && git diff", config.only, config.except, config)).toBe(
+				false,
+			);
+		} finally {
+			if (previous === undefined) {
+				delete Bun.env.OMP_MINIMIZER_LEGACY_FILTERS;
+			} else {
+				Bun.env.OMP_MINIMIZER_LEGACY_FILTERS = previous;
+			}
+		}
+	});
 	test("empty command is always ineligible", () => {
 		expect(isBashCommandMinimizerEligible("", [], [])).toBe(false);
 	});

@@ -504,12 +504,13 @@ export async function resolveBashMinimizerEligibilityConfig(input: {
 	legacyFilters: boolean | undefined;
 	enabled: boolean;
 }): Promise<BashMinimizerEligibilityConfig> {
+	const legacyRequested = resolveLegacyFilters(input.legacyFilters);
 	const resolved: BashMinimizerEligibilityConfig = {
 		enabled: input.enabled,
 		only: input.only,
 		except: input.except,
 		maxCaptureBytes: Math.max(input.maxCaptureBytes, 1024),
-		legacyFilters: input.legacyFilters,
+		legacyFilters: legacyRequested,
 		userPipelineFilters: [],
 	};
 	if (!input.settingsPath) return resolved;
@@ -519,12 +520,13 @@ export async function resolveBashMinimizerEligibilityConfig(input: {
 	if (!text) return resolved;
 	const parsed = parseMinimizerSettingsFile(text);
 	if (!parsed) return resolved;
+	const parsedLegacy = parsed.legacyFilters ?? resolved.legacyFilters;
 	return {
 		enabled: parsed.enabled ?? resolved.enabled,
 		only: parsed.only ?? resolved.only,
 		except: parsed.except ?? resolved.except,
 		maxCaptureBytes: parsed.maxCaptureBytes ?? resolved.maxCaptureBytes,
-		legacyFilters: parsed.legacyFilters ?? resolved.legacyFilters,
+		legacyFilters: input.legacyFilters === false ? false : legacyRequested || parsedLegacy,
 		userPipelineFilters: parsed.userPipelineFilters,
 	};
 }
@@ -592,6 +594,14 @@ function expandTilde(rawPath: string): string {
 	if (rawPath === "~") return os.homedir();
 	if (rawPath.startsWith("~/")) return path.join(os.homedir(), rawPath.slice(2));
 	return rawPath;
+}
+
+function resolveLegacyFilters(option: boolean | undefined): boolean {
+	if (option !== undefined) return option;
+	const raw = Bun.env.OMP_MINIMIZER_LEGACY_FILTERS;
+	if (raw === undefined) return false;
+	const normalized = raw.trim().toLowerCase();
+	return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
 function isSegmentEligible(
