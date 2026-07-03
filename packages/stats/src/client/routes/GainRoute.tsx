@@ -1,3 +1,4 @@
+import type { ChartOptions } from "chart.js";
 import { useMemo, useState } from "react";
 import { Line } from "react-chartjs-2";
 import { getGainDashboardStats } from "../api";
@@ -241,7 +242,7 @@ function GainTimeSeriesPanel({ timeSeries }: { timeSeries: GainTimeSeriesPoint[]
 				{timeSeries.length === 0 ? (
 					<div className="stats-table-empty">No time series data yet</div>
 				) : (
-					<Line data={data} options={options as Parameters<typeof Line>[0]["options"]} />
+					<Line data={data} options={options as ChartOptions<"line">} />
 				)}
 			</div>
 		</Panel>
@@ -319,14 +320,14 @@ const UNPARSED_COLUMNS: DataTableColumn<GainUnparsedCommand>[] = [
 function GainUnparsedCommandsPanel({ unparsedCommands }: { unparsedCommands: GainUnparsedCommand[] }) {
 	return (
 		<Panel
-			title="Unparsed Commands"
-			subtitle="Commands with no matching filter — write a new minimizer filter for the top entries"
+			title="Missed Commands"
+			subtitle="Eligible commands the minimizer did not save — write a filter for the top entries"
 		>
 			<DataTable
 				columns={UNPARSED_COLUMNS}
 				data={unparsedCommands}
 				keyExtractor={item => item.command}
-				emptyText="No unparsed commands in this range/project"
+				emptyText="No missed commands in this range/project"
 			/>
 		</Panel>
 	);

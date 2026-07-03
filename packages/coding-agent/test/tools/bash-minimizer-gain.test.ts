@@ -177,20 +177,25 @@ describe("bash minimizer gain writer", () => {
 		expect(inferBashMinimizerMissedFilter("cd /tmp\nls -la")).toBe("cd");
 	});
 
-	test("handles env -i (no-arg) and -v (no-arg) options correctly", () => {
-		// -i takes no argument (ignore-environment), so the next token is the command
+	test("handles env -i (exact match) correctly", () => {
+		// -i is an exact match in Rust skip_env_options, so the next token is the command
 		expect(inferBashMinimizerMissedFilter("env -i pnpm test")).toBe("pnpm");
-		// -v takes no argument (verbose), so the next token is the command
-		expect(inferBashMinimizerMissedFilter("env -v bun test")).toBe("bun");
 	});
 
-	test("handles attached env -C (chdir) and -u (unset) operands", () => {
-		// -C with attached directory (e.g. env -C/tmp bun test)
-		expect(inferBashMinimizerMissedFilter("env -C/tmp bun test")).toBe("bun");
-		// -u with attached name (e.g. env -uFOO git status)
-		expect(inferBashMinimizerMissedFilter("env -uFOO git status")).toBe("git");
-		// clustered flags before attached -C operand
-		expect(inferBashMinimizerMissedFilter("env -iC/tmp node server.js")).toBe("node");
+	test("unknown env short options break (mirrors Rust _ => break)", () => {
+		// -v is NOT a recognized env option in Rust's skip_env_options (only -S, -i, -, -u, -C).
+		// The token breaks and becomes the "program" — it fails supports() so no miss is recorded.
+		expect(inferBashMinimizerMissedFilter("env -v bun test")).toBe("-v");
+	});
+
+	test("attached env -C/-u operands break (mirrors Rust exact-token matching)", () => {
+		// Rust skip_env_options matches -C/-u only as exact tokens, not attached values.
+		// -C/tmp, -uFOO, -iC/tmp all break → the raw token becomes the "program".
+		// normalizeProgramName takes the last path segment: -C/tmp → "tmp", -iC/tmp → "tmp".
+		// -uFOO has no path separator, so it stays as "-ufoo" (lowercased).
+		expect(inferBashMinimizerMissedFilter("env -C/tmp bun test")).toBe("tmp");
+		expect(inferBashMinimizerMissedFilter("env -uFOO git status")).toBe("-ufoo");
+		expect(inferBashMinimizerMissedFilter("env -iC/tmp node server.js")).toBe("tmp");
 	});
 
 	test("returns missed for env -S/--split-string (mirrors Rust skip_env_options returning None)", () => {
@@ -198,8 +203,8 @@ describe("bash minimizer gain writer", () => {
 		expect(inferBashMinimizerMissedFilter("env -S 'git status'")).toBe("missed");
 		expect(inferBashMinimizerMissedFilter("env --split-string 'bun test'")).toBe("missed");
 		expect(inferBashMinimizerMissedFilter("env --split-string='CI=1 npm test'")).toBe("missed");
-		// Clustered: -iS should also hit the -S path
-		expect(inferBashMinimizerMissedFilter("env -iS 'git log'")).toBe("missed");
+		// Clustered -iS is NOT exact -S → breaks → program is "-is" (ineligible, no miss recorded)
+		expect(inferBashMinimizerMissedFilter("env -iS 'git log'")).toBe("-is");
 	});
 });
 
@@ -250,6 +255,15 @@ describe("isBashCommandMinimizerEligible", () => {
 	test("background commands are always ineligible (mirrors native MinimizerMode::None)", () => {
 		expect(isBashCommandMinimizerEligible("git status &", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("npm test &", ["npm"], [])).toBe(false);
+	});
+	test("safe && chains are eligible (mirrors native SegmentedChain)", () => {
+		// The native minimizer routes && chains through SegmentedChain, capturing each
+		// segment independently. Both segments have supported (program, subcommand) pairs.
+		expect(isBashCommandMinimizerEligible("git status && git diff", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("bun test && bun run build", [], [])).toBe(true);
+	});
+	test("safe ; chains are eligible (mirrors native SegmentedChain)", () => {
+		expect(isBashCommandMinimizerEligible("git status; echo done", [], [])).toBe(true);
 	});
 	test("empty command is always ineligible", () => {
 		expect(isBashCommandMinimizerEligible("", [], [])).toBe(false);
@@ -436,9 +450,9 @@ describe("skipEnvOptionsAndAssignments edge cases", () => {
 		expect(inferBashMinimizerMissedFilter("env - git status")).toBe("git");
 	});
 
-	test("unknown long option returns missed (mirrors Rust _ => break)", () => {
-		// env --unknown-opt git status → unknown opt, no identity
-		expect(inferBashMinimizerMissedFilter("env --unknown-opt git status")).toBe("missed");
+	test("unknown long option breaks (mirrors Rust _ => break)", () => {
+		// env --unknown-opt git status → unknown opt breaks, becomes the "program"
+		expect(inferBashMinimizerMissedFilter("env --unknown-opt git status")).toBe("--unknown-opt");
 	});
 
 	test("bare -- terminates option parsing, next token is program", () => {
@@ -450,12 +464,14 @@ describe("skipEnvOptionsAndAssignments edge cases", () => {
 		expect(inferBashMinimizerMissedFilter("env --ignore-environment git status")).toBe("git");
 	});
 
-	test("known --null does not return missed", () => {
-		expect(inferBashMinimizerMissedFilter("env --null git status")).toBe("git");
+	test("--null breaks (not a recognized env option in Rust)", () => {
+		// Rust skip_env_options does not recognize --null → breaks → program is "--null"
+		expect(inferBashMinimizerMissedFilter("env --null git status")).toBe("--null");
 	});
 
-	test("known --debug does not return missed", () => {
-		expect(inferBashMinimizerMissedFilter("env --debug git status")).toBe("git");
+	test("--debug breaks (not a recognized env option in Rust)", () => {
+		// Rust skip_env_options does not recognize --debug → breaks → program is "--debug"
+		expect(inferBashMinimizerMissedFilter("env --debug git status")).toBe("--debug");
 	});
 
 	test("known --unset consumes next token", () => {

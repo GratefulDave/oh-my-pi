@@ -396,79 +396,39 @@ export function inferBashMinimizerMissedFilter(command: string): string {
  * Returns the index of the first non-option, non-assignment token, or `null`
  * when the native minimizer returns no identity (e.g. `-S`/`--split-string`).
  *
- * Mirrors crates/pi-shell/src/minimizer/detect.rs fn skip_env_options.
- * The Rust implementation returns `None` for `-S`/`--split-string=S` because
- * env -S passes its argument to a sub-shell, which the minimizer does not
- * attempt to parse; we mirror that by returning `null`.
+ * Mirrors `skip_env_options` in `crates/pi-shell/src/minimizer/detect.rs`:
+ * exact-token matching only — no clustered short options, no attached short
+ * values (e.g. `-C/tmp`, `-iS`). The Rust detector breaks on those, making
+ * the unknown token the "program" (which fails identity_has_filter); we
+ * mirror by breaking out of the loop so `detectProgramAndSubcommand` returns
+ * the raw token as the program (ineligible).
  */
 function skipEnvOptionsAndAssignments(tokens: string[], start: number): number | null {
 	let idx = start;
 	while (idx < tokens.length) {
 		const t = tokens[idx]!;
-		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
+		if (t === "--") {
 			idx++;
-		} else if (t === "--") {
-			// bare `--` terminates env option parsing; next token is the program.
-			idx++;
-			break;
-		} else if (t.startsWith("--")) {
-			// Long options that take a following separate argument.
-			// --split-string → native returns None (no identity); mirror that.
-			if (/^--(split-string)(=.*)?$/.test(t)) return null;
-			// Known passthrough long opts: --ignore-environment, --null, --debug do not take an arg.
-			// --unset, --chdir consume the next token.
-			// Unknown long opts: the Rust `skip_env_options` breaks on them (the unknown token
-			// becomes the "program name", failing identity_has_filter). Mirror as null.
-			const isKnown = /^--(ignore-environment|null|debug|unset|chdir)(=.*)?$/.test(t);
-			if (!isKnown) return null;
-			const longTakesArg = /^--(unset|chdir)$/.test(t);
-			idx++;
-			if (longTakesArg && idx < tokens.length) {
-				idx++; // skip the option's argument
-			}
-		} else if (t === "-") {
-			// bare `-` is -i / --ignore-environment (no argument); just advance.
-			idx++;
-		} else if (t.startsWith("-") && t.length >= 2 && !t.startsWith("--")) {
-			// Short options (possibly clustered, e.g. -iS or -S'cmd')
-			// Walk character by character through the option cluster.
-			const optChars = t.slice(1); // chars after the leading '-'
-			let clusterIdx = 0;
-			let consumedRest = false;
-			let foundS = false;
-			while (clusterIdx < optChars.length) {
-				const ch = optChars[clusterIdx]!;
-				clusterIdx++;
-				if (ch === "S") {
-					// -S (split-string) → native returns None; mirror as null.
-					foundS = true;
-					consumedRest = true;
-					break;
-				} else if ("Cu".includes(ch)) {
-					// -C (chdir) and -u (unset) each take the next argument when
-					// they appear at the end of the cluster; if attached, the rest
-					// of the cluster IS the argument.
-					const attached = optChars.slice(clusterIdx);
-					if (attached.length > 0) {
-						// argument is attached — whole token consumed; advance past it
-						idx++;
-						consumedRest = true;
-						break;
-					}
-					// argument is the next (separate) token
-					idx++;
-					if (idx < tokens.length) idx++;
-					consumedRest = true;
-					break;
-				}
-				// -i, -v, -0 and any other single-char flag: no argument, continue cluster
-			}
-			if (foundS) return null;
-			if (!consumedRest) idx++;
-			if (consumedRest) continue;
-		} else {
 			break;
 		}
+		if (t === "-S" || t === "--split-string" || t.startsWith("--split-string=")) return null;
+		if (t === "-i" || t === "-" || t === "--ignore-environment") {
+			idx++;
+			continue;
+		}
+		if (t === "-u" || t === "--unset" || t === "-C" || t === "--chdir") {
+			idx = skipOptionValue(tokens, idx);
+			continue;
+		}
+		if (t.startsWith("--unset=") || t.startsWith("--chdir=")) {
+			idx++;
+			continue;
+		}
+		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
+			idx++;
+			continue;
+		}
+		break;
 	}
 	return idx;
 }
@@ -494,18 +454,44 @@ function skipEnvOptionsAndAssignments(tokens: string[], start: number): number |
 export function isBashCommandMinimizerEligible(command: string, only: string[], except: string[]): boolean {
 	const identity = detectProgramAndSubcommand(command);
 	if (!identity) return false;
-	// The native minimizer engine does not attempt piped, background, or
-	// compound commands (MinimizerMode::None). shellTokens emits `|`, `&`,
-	// and `;` as single-character operator tokens for these; fd-dup
-	// redirects like `2>&1` and `&>file` are kept as word characters so they
-	// do not trip this guard.
-	if (shellTokens(command).some(t => t === "|" || t === "&" || t === ";")) return false;
+	// The native minimizer engine returns MinimizerMode::None for piped and
+	// background commands, but routes safe `&&`/`;` chains through
+	// SegmentedChain (each segment is captured independently). Only reject
+	// the ineligible operators: pipes (`|`), `||`, and standalone background
+	// `&`. Paired `&&` and `;` separators are kept eligible so that miss
+	// telemetry records genuine chain misses.
+	if (hasIneligibleShellOperator(command)) return false;
 	if (!supportsProgram(identity.program, identity.subcommand)) return false;
 	if (only.length === 0 && except.length === 0) return true;
 	const lower = identity.program.toLowerCase();
 	if (only.length > 0 && !only.some(p => p.toLowerCase() === lower)) return false;
 	if (except.length > 0 && except.some(p => p.toLowerCase() === lower)) return false;
 	return true;
+}
+
+/**
+ * Returns true when the command contains a shell operator that makes the
+ * native minimizer return `MinimizerMode::None`: pipes (`|`), logical-or
+ * (`||`), or standalone background `&`. Safe chain operators — `&&` and `;`
+ * — are NOT rejected because the native engine routes them through
+ * `SegmentedChain` and captures each segment independently.
+ *
+ * shellTokens emits `|` and `&` as single-character operator tokens;
+ * fd-dup redirects like `2>&1` and `&>file` are kept as word characters so
+ * they do not trip this guard. A `&` token is only treated as background
+ * when it is not immediately followed by another `&` (i.e. not `&&`).
+ */
+function hasIneligibleShellOperator(command: string): boolean {
+	const tokens = shellTokens(command);
+	for (let i = 0; i < tokens.length; i++) {
+		const t = tokens[i]!;
+		if (t === "|") return true;
+		if (t === "&") {
+			if (tokens[i + 1] !== "&") return true; // standalone background &
+			i++; // skip the paired & (&& is a safe chain operator)
+		}
+	}
+	return false;
 }
 
 /**

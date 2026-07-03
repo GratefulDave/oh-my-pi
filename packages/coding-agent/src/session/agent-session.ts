@@ -13611,7 +13611,7 @@ export class AgentSession {
 				if (savedGain.info) {
 					// Flush saved record with real exitCode now that the result is known.
 					const info = savedGain.info;
-					void appendBashMinimizerGainRecord({
+					await appendBashMinimizerGainRecord({
 						command,
 						cwd,
 						sessionId: this.sessionId,
@@ -13643,7 +13643,7 @@ export class AgentSession {
 					// subcommand) pair has a registered filter, so this is a genuine
 					// missed candidate — record it directly.
 					const filter = inferBashMinimizerMissedFilter(command);
-					void appendBashMinimizerGainRecord({
+					await appendBashMinimizerGainRecord({
 						command,
 						cwd,
 						sessionId: this.sessionId,
