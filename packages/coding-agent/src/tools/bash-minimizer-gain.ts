@@ -703,16 +703,47 @@ function commandWrapperInvokesMutator(tokens: string[]): boolean {
 }
 
 function segmentUnsafeForChain(tokens: string[]): boolean {
-	return tokens.some(
-		token =>
-			token.includes("$(") ||
-			token.includes("`") ||
-			token.includes("<(") ||
-			token.includes(">(") ||
-			token.includes("<<"),
-	);
+	if (
+		tokens.some(
+			token =>
+				token.includes("$(") ||
+				token.includes("`") ||
+				token.includes("<(") ||
+				token.includes(">(") ||
+				token.includes("<<"),
+		)
+	) {
+		return true;
+	}
+	if (tokens.some(token => token.includes("(") || token.includes(")") || token.includes("{") || token.includes("}"))) {
+		return true;
+	}
+	return isNativeOpaqueChainWord(rawSegmentProgram(tokens));
 }
 
+function isNativeOpaqueChainWord(program: string | undefined): boolean {
+	switch (program) {
+		case "!":
+		case "time":
+		case "if":
+		case "then":
+		case "else":
+		case "elif":
+		case "fi":
+		case "for":
+		case "while":
+		case "until":
+		case "do":
+		case "done":
+		case "case":
+		case "esac":
+		case "select":
+		case "function":
+			return true;
+		default:
+			return false;
+	}
+}
 function isAmbiguousAssignmentFragment(token: string): boolean {
 	return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token) && (token.includes('"') || token.includes("'"));
 }
