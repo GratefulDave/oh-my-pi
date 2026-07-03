@@ -1138,13 +1138,14 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 		case "uv":
 			if (subcommand === "run") return true;
 			return subIs(subcommand, ["pytest", "ruff", "mypy", "-m"]) || subIs(subcommand, PKG_SUBCOMMANDS);
+		case "composer":
+			return subcommand === "require" || subIs(subcommand, PKG_SUBCOMMANDS);
 		case "npm":
 		case "yarn":
 		case "pip":
 		case "pip3":
 		case "bundle":
 		case "brew":
-		case "composer":
 		case "poetry":
 			return subIs(subcommand, PKG_SUBCOMMANDS);
 		case "env":

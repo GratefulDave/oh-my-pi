@@ -331,6 +331,7 @@ describe("isBashCommandMinimizerEligible", () => {
 	test("package manager subcommands mirror native package supports", () => {
 		expect(isBashCommandMinimizerEligible("npm install", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("brew install jq", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("composer require symfony/console", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("npm --version", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("pnpm nx build", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("brew", [], [])).toBe(false);
