@@ -30,6 +30,7 @@ import {
 	appendBashMinimizerGainRecord,
 	inferBashMinimizerMissedFilter,
 	isBashCommandMinimizerEligible,
+	resolveBashMinimizerEligibilityConfig,
 } from "./bash-minimizer-gain";
 import { canUseInteractiveBashPty } from "./bash-pty-selection";
 import { expandInternalUrls, type InternalUrlExpansionOptions } from "./bash-skill-urls";
@@ -196,19 +197,27 @@ async function recordBashMinimizerGain(input: {
 	if (Bun.env.PI_SHELL_PREFIX || Bun.env.CLAUDE_CODE_SHELL_PREFIX) return;
 	try {
 		if (input.result.cancelled || input.result.exitCode === undefined) return;
+		const eligibilityConfig = await resolveBashMinimizerEligibilityConfig({
+			settingsPath: input.session.settings.get("shellMinimizer.settingsPath"),
+			only: input.session.settings.get("shellMinimizer.only"),
+			except: input.session.settings.get("shellMinimizer.except"),
+			maxCaptureBytes: input.session.settings.get("shellMinimizer.maxCaptureBytes"),
+			legacyFilters: input.session.settings.get("shellMinimizer.legacyFilters"),
+		});
 		// Skip outputs beyond the minimizer capture cap — the native minimizer returns
 		// a `too-large` passthrough before dispatch when input_bytes > max_capture_bytes,
 		// so these were never filterable and must not pollute the Gain tuning table.
-		if (input.result.totalBytes > input.session.settings.get("shellMinimizer.maxCaptureBytes")) return;
+		if (input.result.totalBytes > eligibilityConfig.maxCaptureBytes) return;
 		// Gate on full native eligibility (program+subcommand has a filter,
-		// not piped/background/compound, and passes only/except) so the
-		// recorded "missed" rows are genuine tuning candidates — commands the
-		// minimizer would have captured but did not save.
+		// not background/compound, and passes only/except) so the recorded
+		// "missed" rows are genuine tuning candidates — commands the minimizer
+		// would have captured but did not save.
 		if (
 			!isBashCommandMinimizerEligible(
 				input.command,
-				input.session.settings.get("shellMinimizer.only"),
-				input.session.settings.get("shellMinimizer.except"),
+				eligibilityConfig.only,
+				eligibilityConfig.except,
+				eligibilityConfig,
 			)
 		) {
 			return;

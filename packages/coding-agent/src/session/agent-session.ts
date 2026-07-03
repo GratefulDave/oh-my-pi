@@ -299,6 +299,7 @@ import {
 	appendBashMinimizerGainRecord,
 	inferBashMinimizerMissedFilter,
 	isBashCommandMinimizerEligible,
+	resolveBashMinimizerEligibilityConfig,
 } from "../tools/bash-minimizer-gain";
 import { releaseTabsForOwner } from "../tools/browser/tab-supervisor";
 import { normalizeToolNames } from "../tools/builtin-names";
@@ -13608,6 +13609,13 @@ export class AgentSession {
 				// Skip missed recording for user-shell wrapped commands — the minimizer only
 				// sees the shell wrapper (e.g. zsh -c <command>), not the original command.
 				const isUserShellWrapped = options?.useUserShell === true;
+				const eligibilityConfig = await resolveBashMinimizerEligibilityConfig({
+					settingsPath: this.settings.get("shellMinimizer.settingsPath"),
+					only: this.settings.get("shellMinimizer.only"),
+					except: this.settings.get("shellMinimizer.except"),
+					maxCaptureBytes: this.settings.get("shellMinimizer.maxCaptureBytes"),
+					legacyFilters: this.settings.get("shellMinimizer.legacyFilters"),
+				});
 				if (savedGain.info) {
 					// Flush saved record with real exitCode now that the result is known.
 					const info = savedGain.info;
@@ -13633,11 +13641,12 @@ export class AgentSession {
 					!result.cancelled &&
 					result.exitCode !== undefined &&
 					result.totalBytes > 0 &&
-					result.totalBytes <= this.settings.get("shellMinimizer.maxCaptureBytes") &&
+					result.totalBytes <= eligibilityConfig.maxCaptureBytes &&
 					isBashCommandMinimizerEligible(
 						command,
-						this.settings.get("shellMinimizer.only"),
-						this.settings.get("shellMinimizer.except"),
+						eligibilityConfig.only,
+						eligibilityConfig.except,
+						eligibilityConfig,
 					)
 				) {
 					// isBashCommandMinimizerEligible already verified the (program,

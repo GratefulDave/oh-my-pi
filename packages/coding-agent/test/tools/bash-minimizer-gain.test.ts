@@ -9,6 +9,7 @@ import {
 	hasBashMinimizerFilter,
 	inferBashMinimizerMissedFilter,
 	isBashCommandMinimizerEligible,
+	resolveBashMinimizerEligibilityConfig,
 } from "@oh-my-pi/pi-coding-agent/tools/bash-minimizer-gain";
 
 describe("bash minimizer gain writer", () => {
@@ -249,8 +250,18 @@ describe("isBashCommandMinimizerEligible", () => {
 	test("eligible when only matches and except does not", () => {
 		expect(isBashCommandMinimizerEligible("git status", ["git"], ["bun"])).toBe(true);
 	});
-	test("compound commands are always ineligible", () => {
+	test("single piped commands are ineligible", () => {
 		expect(isBashCommandMinimizerEligible("ls | grep foo", [], [])).toBe(false);
+	});
+	test("piped segments do not suppress later eligible chain segments", () => {
+		expect(isBashCommandMinimizerEligible("ls | head -5 && git status", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("git status && ls | head -5", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("ls | head -5 && echo done", [], [])).toBe(true);
+	});
+	test("shell state mutators make chains ineligible", () => {
+		expect(isBashCommandMinimizerEligible("exec >out ; git status", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("alias git=hub ; git status", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("command exec >out ; git status", [], [])).toBe(false);
 	});
 	test("background commands are always ineligible (mirrors native MinimizerMode::None)", () => {
 		expect(isBashCommandMinimizerEligible("git status &", [], [])).toBe(false);
@@ -272,8 +283,12 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("git status && echo done", [], [])).toBe(true);
 		// only=["bun"]: git is excluded, bun test is eligible → chain is eligible
 		expect(isBashCommandMinimizerEligible("git status && bun test", ["bun"], [])).toBe(true);
-		// both segments ineligible → false
-		expect(isBashCommandMinimizerEligible("echo a && echo b", [], [])).toBe(false);
+		// common chain utilities also route through native SegmentedChain
+		expect(isBashCommandMinimizerEligible("echo a && echo b", [], [])).toBe(true);
+	});
+	test("legacy filters disable segmented chain eligibility", () => {
+		expect(isBashCommandMinimizerEligible("git status && git diff", [], [], { legacyFilters: true })).toBe(false);
+		expect(isBashCommandMinimizerEligible("git status", [], [], { legacyFilters: true })).toBe(true);
 	});
 	test("TOML-defined programs are eligible (make, ansible, apt, etc.)", () => {
 		expect(isBashCommandMinimizerEligible("make", [], [])).toBe(true);
@@ -289,6 +304,41 @@ describe("isBashCommandMinimizerEligible", () => {
 		// TOML subcommand-gated: unsupported subcommands
 		expect(isBashCommandMinimizerEligible("terraform version", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("ollama version", [], [])).toBe(false);
+	});
+	test("settings file overrides only/except/max capture and user pipelines", async () => {
+		const settingsPath = path.join(os.tmpdir(), `omp-minimizer-settings-${Date.now()}-${Math.random()}.toml`);
+		fs.writeFileSync(
+			settingsPath,
+			[
+				"schema_version = 1",
+				'only = ["git"]',
+				'except = ["docker"]',
+				"max_capture_bytes = 2048",
+				"legacy_filters = true",
+				"[filters.custom]",
+				'match_command = "^custom-tool$"',
+				'match_subcommand = "^summarize$"',
+			].join("\n"),
+		);
+		try {
+			const config = await resolveBashMinimizerEligibilityConfig({
+				settingsPath,
+				only: ["bun"],
+				except: [],
+				maxCaptureBytes: 4096,
+				legacyFilters: undefined,
+			});
+			expect(config.only).toEqual(["git"]);
+			expect(config.except).toEqual(["docker"]);
+			expect(config.maxCaptureBytes).toBe(2048);
+			expect(config.legacyFilters).toBe(true);
+			expect(isBashCommandMinimizerEligible("bun test", config.only, config.except, config)).toBe(false);
+			expect(isBashCommandMinimizerEligible("git status", config.only, config.except, config)).toBe(true);
+			expect(isBashCommandMinimizerEligible("custom-tool summarize", [], [], config)).toBe(true);
+			expect(isBashCommandMinimizerEligible("custom-tool other", [], [], config)).toBe(false);
+		} finally {
+			fs.rmSync(settingsPath, { force: true });
+		}
 	});
 	test("empty command is always ineligible", () => {
 		expect(isBashCommandMinimizerEligible("", [], [])).toBe(false);

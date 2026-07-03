@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { getAgentDir } from "@oh-my-pi/pi-utils";
 
@@ -6,6 +7,18 @@ const MINIMIZER_GAIN_FILE = "minimizer-gain.jsonl";
 const BYTES_PER_TOKEN_ESTIMATE = 4;
 
 export type BashMinimizerGainKind = "saved" | "missed";
+export interface BashMinimizerEligibilityConfig {
+	only: string[];
+	except: string[];
+	maxCaptureBytes: number;
+	legacyFilters: boolean | undefined;
+	userPipelineFilters: BashMinimizerPipelineFilter[];
+}
+
+interface BashMinimizerPipelineFilter {
+	matchCommand: RegExp;
+	matchSubcommand?: RegExp;
+}
 
 export interface BashMinimizerGainInput {
 	command: string;
@@ -441,7 +454,7 @@ function skipEnvOptionsAndAssignments(tokens: string[], start: number): number |
 
 /**
  * Returns whether a command is eligible for native minimization under the
- * given `only` / `except` pattern lists (from `ShellMinimizerSettings`).
+ * resolved minimizer config.
  *
  * For safe `&&`/`;` chains, the native minimizer routes through
  * `SegmentedChain` and captures each segment independently. This function
@@ -449,38 +462,229 @@ function skipEnvOptionsAndAssignments(tokens: string[], start: number): number |
  * whether ANY segment is eligible — so `echo prep && git status` returns
  * true (the `git status` segment is eligible) even though `echo` is not.
  *
- * Pipes (`|`), `||`, and standalone background `&` are rejected outright
- * (native `MinimizerMode::None`).
+ * Piped segments are opaque, but they do not make the whole chain ineligible:
+ * native `SegmentedChain` can still capture a later eligible segment in
+ * `ls | head -5 && git status`. Standalone background `&` and `||` remain
+ * ineligible.
  *
  * The `only`/`except` check mirrors the native `is_program_enabled` exact-
  * lowercase membership test in
  * `crates/pi-shell/src/minimizer/config.rs`.
  */
-export function isBashCommandMinimizerEligible(command: string, only: string[], except: string[]): boolean {
+export function isBashCommandMinimizerEligible(
+	command: string,
+	only: string[],
+	except: string[],
+	config?: Partial<BashMinimizerEligibilityConfig>,
+): boolean {
 	const tokens = shellTokens(command.trim());
 	if (tokens.length === 0) return false;
 	if (hasIneligibleShellOperatorFromTokens(tokens)) return false;
 	const segments = splitChainSegments(tokens);
-	return segments.some(seg => isSegmentEligible(seg, only, except));
+	if (segments.length > 1 && config?.legacyFilters === true) return false;
+	if (segments.length > 1 && segments.some(segmentMutatesShellState)) return false;
+	const resolved = {
+		only,
+		except,
+		userPipelineFilters: config?.userPipelineFilters ?? [],
+	};
+	return segments.some(seg =>
+		isSegmentEligible(seg, resolved.only, resolved.except, resolved.userPipelineFilters, segments.length > 1),
+	);
 }
 
-function isSegmentEligible(tokens: string[], only: string[], except: string[]): boolean {
+export async function resolveBashMinimizerEligibilityConfig(input: {
+	settingsPath: string | undefined;
+	only: string[];
+	except: string[];
+	maxCaptureBytes: number;
+	legacyFilters: boolean | undefined;
+}): Promise<BashMinimizerEligibilityConfig> {
+	const resolved: BashMinimizerEligibilityConfig = {
+		only: input.only,
+		except: input.except,
+		maxCaptureBytes: Math.max(input.maxCaptureBytes, 1024),
+		legacyFilters: input.legacyFilters,
+		userPipelineFilters: [],
+	};
+	if (!input.settingsPath) return resolved;
+	const text = await Bun.file(expandTilde(input.settingsPath))
+		.text()
+		.catch(() => undefined);
+	if (!text) return resolved;
+	const parsed = parseMinimizerSettingsFile(text);
+	if (!parsed) return resolved;
+	return {
+		only: parsed.only ?? resolved.only,
+		except: parsed.except ?? resolved.except,
+		maxCaptureBytes: parsed.maxCaptureBytes ?? resolved.maxCaptureBytes,
+		legacyFilters: parsed.legacyFilters ?? resolved.legacyFilters,
+		userPipelineFilters: parsed.userPipelineFilters,
+	};
+}
+
+interface ParsedMinimizerSettingsFile {
+	only?: string[];
+	except?: string[];
+	maxCaptureBytes?: number;
+	legacyFilters?: boolean;
+	userPipelineFilters: BashMinimizerPipelineFilter[];
+}
+
+function parseMinimizerSettingsFile(text: string): ParsedMinimizerSettingsFile | undefined {
+	let raw: Record<string, unknown>;
+	try {
+		raw = Bun.TOML.parse(text) as Record<string, unknown>;
+	} catch {
+		return undefined;
+	}
+	const schemaVersion = raw.schema_version;
+	if (typeof schemaVersion === "number" && schemaVersion !== 1) {
+		return undefined;
+	}
+	return {
+		only: collectStringArray(raw.only),
+		except: collectStringArray(raw.except),
+		maxCaptureBytes: typeof raw.max_capture_bytes === "number" ? Math.max(raw.max_capture_bytes, 1024) : undefined,
+		legacyFilters: typeof raw.legacy_filters === "boolean" ? raw.legacy_filters : undefined,
+		userPipelineFilters: collectPipelineFilters(raw.filters),
+	};
+}
+
+function collectStringArray(value: unknown): string[] | undefined {
+	return Array.isArray(value) && value.every(item => typeof item === "string") ? value : undefined;
+}
+
+function collectPipelineFilters(value: unknown): BashMinimizerPipelineFilter[] {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+	const filters: BashMinimizerPipelineFilter[] = [];
+	for (const raw of Object.values(value)) {
+		if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+		const matchCommand = (raw as Record<string, unknown>).match_command;
+		if (typeof matchCommand !== "string") continue;
+		const commandRegex = compileRegex(matchCommand);
+		if (!commandRegex) continue;
+		const matchSubcommand = (raw as Record<string, unknown>).match_subcommand;
+		const subcommandRegex = typeof matchSubcommand === "string" ? compileRegex(matchSubcommand) : undefined;
+		if (typeof matchSubcommand === "string" && !subcommandRegex) continue;
+		filters.push({ matchCommand: commandRegex, ...(subcommandRegex ? { matchSubcommand: subcommandRegex } : {}) });
+	}
+	return filters;
+}
+
+function compileRegex(pattern: string): RegExp | undefined {
+	try {
+		return new RegExp(pattern);
+	} catch {
+		return undefined;
+	}
+}
+
+function expandTilde(rawPath: string): string {
+	if (rawPath === "~") return os.homedir();
+	if (rawPath.startsWith("~/")) return path.join(os.homedir(), rawPath.slice(2));
+	return rawPath;
+}
+
+function isSegmentEligible(
+	tokens: string[],
+	only: string[],
+	except: string[],
+	userPipelineFilters: BashMinimizerPipelineFilter[],
+	inChain: boolean,
+): boolean {
+	if (segmentHasPipe(tokens)) return false;
 	const identity = detectProgramAndSubcommandFromTokens(tokens);
 	if (!identity) return false;
-	if (!supportsProgram(identity.program, identity.subcommand)) return false;
-	if (only.length === 0 && except.length === 0) return true;
-	const lower = identity.program.toLowerCase();
-	if (only.length > 0 && !only.some(p => p.toLowerCase() === lower)) return false;
+	if (inChain && isCommonChainUtility(identity.program)) return true;
+	if (!programEnabled(identity.program, only, except)) return false;
+	if (supportsProgram(identity.program, identity.subcommand)) return true;
+	if (userPipelineFilters.some(filter => pipelineFilterMatches(filter, identity.program, identity.subcommand)))
+		return true;
+	return false;
+}
+
+function isCommonChainUtility(program: string): boolean {
+	return COMMON_CHAIN_UTILITIES[program] === true;
+}
+
+function programEnabled(program: string, only: string[], except: string[]): boolean {
+	const lower = program.toLowerCase();
 	if (except.length > 0 && except.some(p => p.toLowerCase() === lower)) return false;
+	if (only.length > 0 && !only.some(p => p.toLowerCase() === lower)) return false;
 	return true;
+}
+
+function pipelineFilterMatches(
+	filter: BashMinimizerPipelineFilter,
+	program: string,
+	subcommand: string | undefined,
+): boolean {
+	if (!filter.matchCommand.test(program)) return false;
+	filter.matchCommand.lastIndex = 0;
+	if (!filter.matchSubcommand) return true;
+	const matches = filter.matchSubcommand.test(subcommand ?? "");
+	filter.matchSubcommand.lastIndex = 0;
+	return matches;
+}
+
+function segmentHasPipe(tokens: string[]): boolean {
+	return tokens.includes("|");
+}
+
+function segmentMutatesShellState(tokens: string[]): boolean {
+	const program = firstExecutableToken(tokens);
+	if (!program) return false;
+	if (isShellStateMutatingProgram(program)) return true;
+	if ((program === "command" || program === "builtin") && commandWrapperInvokesMutator(tokens)) return true;
+	return false;
+}
+
+function firstExecutableToken(tokens: string[]): string | undefined {
+	for (const token of tokens) {
+		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
+		return normalizeProgramName(token);
+	}
+	return undefined;
+}
+
+function isShellStateMutatingProgram(program: string): boolean {
+	return (
+		program === "exec" ||
+		program === "eval" ||
+		program === "source" ||
+		program === "." ||
+		program === "alias" ||
+		program === "unalias"
+	);
+}
+
+function commandWrapperInvokesMutator(tokens: string[]): boolean {
+	for (const token of tokens) {
+		if (isShellStateMutatingProgram(normalizeProgramName(token))) return true;
+		if (isAmbiguousAssignmentFragment(token)) return true;
+		if (
+			token === "command" ||
+			token === "builtin" ||
+			token.startsWith("-") ||
+			/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)
+		) {
+			continue;
+		}
+		return false;
+	}
+	return false;
+}
+
+function isAmbiguousAssignmentFragment(token: string): boolean {
+	return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token) && (token.includes('"') || token.includes("'"));
 }
 
 /**
  * Split a token array on safe chain separators (`&&` and `;`), returning
  * each segment as a sub-array. Mirrors the native `SegmentedChain` segment
- * extraction. Pipe (`|`) and standalone `&` tokens are NOT split points —
- * they are rejected by `hasIneligibleShellOperatorFromTokens` before this
- * function is called.
+ * extraction. Pipe (`|`) tokens stay inside their segment; an opaque piped
+ * segment does not prevent a later eligible segment from being captured.
  */
 function splitChainSegments(tokens: string[]): string[][] {
 	const segments: string[][] = [];
@@ -504,15 +708,15 @@ function splitChainSegments(tokens: string[]): string[][] {
 
 /**
  * Returns true when the command contains a shell operator that makes the
- * native minimizer return `MinimizerMode::None`: pipes (`|`), logical-or
- * (`||`), or standalone background `&`. Safe chain operators — `&&` and `;`
- * — are NOT rejected because the native engine routes them through
- * `SegmentedChain` and captures each segment independently.
+ * native minimizer return `MinimizerMode::None` for the entire command:
+ * logical-or (`||`) or standalone background `&`. Safe chain operators —
+ * `&&` and `;` — are NOT rejected because the native engine routes them
+ * through `SegmentedChain`; pipes are handled per segment.
  */
 function hasIneligibleShellOperatorFromTokens(tokens: string[]): boolean {
 	for (let i = 0; i < tokens.length; i++) {
 		const t = tokens[i]!;
-		if (t === "|") return true;
+		if (t === "|" && tokens[i + 1] === "|") return true;
 		if (t === "&") {
 			if (tokens[i + 1] !== "&") return true; // standalone background &
 			i++; // skip the paired & (&& is a safe chain operator)
@@ -539,6 +743,54 @@ export function hasBashMinimizerFilter(program: string, subcommand?: string): bo
 // ---------------------------------------------------------------------------
 // supports(program, subcommand) — port of filters/mod.rs::supports
 // ---------------------------------------------------------------------------
+
+const COMMON_CHAIN_UTILITIES: Record<string, true> = {
+	echo: true,
+	printf: true,
+	head: true,
+	tail: true,
+	file: true,
+	which: true,
+	type: true,
+	sed: true,
+	awk: true,
+	sleep: true,
+	seq: true,
+	cp: true,
+	mv: true,
+	rm: true,
+	mkdir: true,
+	rmdir: true,
+	touch: true,
+	basename: true,
+	dirname: true,
+	realpath: true,
+	readlink: true,
+	true: true,
+	false: true,
+	yes: true,
+	tr: true,
+	tee: true,
+	sort: true,
+	uniq: true,
+	cut: true,
+	paste: true,
+	rev: true,
+	split: true,
+	comm: true,
+	patch: true,
+	xargs: true,
+	unzip: true,
+	zip: true,
+	tar: true,
+	gzip: true,
+	gunzip: true,
+	cd: true,
+	pwd: true,
+	export: true,
+	env: true,
+	test: true,
+};
 
 const GTEST_BINARY_RE = /(?:_test|_tests|-test|-tests)$/;
 
