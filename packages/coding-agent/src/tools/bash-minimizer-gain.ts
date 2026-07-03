@@ -614,7 +614,7 @@ function isSegmentEligible(
 	if (segmentHasPipe(tokens)) return false;
 	const identity = detectProgramAndSubcommandFromTokens(tokens);
 	if (!identity) return false;
-	if (inChain && isCommonChainUtility(identity.program)) return true;
+	if (inChain && isCommonChainUtility(rawSegmentProgram(tokens))) return true;
 	if (!programEnabled(identity.program, only, except)) return false;
 	if (supportsProgram(identity.program, identity.subcommand)) return true;
 	if (userPipelineFilters.some(filter => pipelineFilterMatches(filter, identity.program, identity.subcommand)))
@@ -622,8 +622,16 @@ function isSegmentEligible(
 	return false;
 }
 
-function isCommonChainUtility(program: string): boolean {
-	return COMMON_CHAIN_UTILITIES[program] === true;
+function isCommonChainUtility(program: string | undefined): boolean {
+	return program !== undefined && COMMON_CHAIN_UTILITIES[program] === true;
+}
+
+function rawSegmentProgram(tokens: string[]): string | undefined {
+	for (const token of tokens) {
+		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
+		return token;
+	}
+	return undefined;
 }
 
 function programEnabled(program: string, only: string[], except: string[]): boolean {

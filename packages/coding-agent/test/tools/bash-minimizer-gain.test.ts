@@ -262,6 +262,11 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("git status && ls | head -5", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("ls | head -5 && echo done", [], [])).toBe(true);
 	});
+	test("chain utilities use raw segment program names", () => {
+		expect(isBashCommandMinimizerEligible("/bin/echo ok && /bin/printf done", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("command echo ok && command printf done", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("echo ok && printf done", [], [])).toBe(true);
+	});
 	test("shell state mutators make chains ineligible", () => {
 		expect(isBashCommandMinimizerEligible("exec >out ; git status", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("alias git=hub ; git status", [], [])).toBe(false);
