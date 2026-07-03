@@ -270,12 +270,10 @@ function normalizeProgramName(name: string): string {
  * `rev-parse`, which `git::supports` rejects, instead of being mis-bucketed
  * under a supported subcommand.
  */
-function detectProgramAndSubcommand(command: string): { program: string; subcommand: string | undefined } | null {
-	const trimmed = command.trim();
-	if (trimmed.length === 0) return null;
-	// Tokenize first so quoted operators (e.g. `rg 'foo|bar'`) are not
-	// misidentified as compound commands.
-	const tokens = shellTokens(trimmed);
+function detectProgramAndSubcommandFromTokens(
+	tokens: string[],
+): { program: string; subcommand: string | undefined } | null {
+	if (tokens.length === 0) return null;
 	// NOTE: do NOT bail on shell operators here — the native minimizer
 	// stops tokenization at `|`, `;`, `&` and still detects the first
 	// command (e.g. `git` from `git status | cat`). Eligibility for piped /
@@ -381,6 +379,14 @@ function detectProgramAndSubcommand(command: string): { program: string; subcomm
 	return { program, subcommand };
 }
 
+function detectProgramAndSubcommand(command: string): { program: string; subcommand: string | undefined } | null {
+	const trimmed = command.trim();
+	if (trimmed.length === 0) return null;
+	// Tokenize first so quoted operators (e.g. `rg 'foo|bar'`) are not
+	// misidentified as compound commands.
+	return detectProgramAndSubcommandFromTokens(shellTokens(trimmed));
+}
+
 /**
  * Return the minimizer program name for a command, or `"missed"` when the
  * native minimizer would return no identity. This is the value recorded in
@@ -437,30 +443,30 @@ function skipEnvOptionsAndAssignments(tokens: string[], start: number): number |
  * Returns whether a command is eligible for native minimization under the
  * given `only` / `except` pattern lists (from `ShellMinimizerSettings`).
  *
- * A command is eligible only when:
- *  - the native minimizer would detect a program identity for it (not
- *    `env -S`, unknown sudo flag, `command -v`, …),
- *  - it is a single simple command — not piped, backgrounded, or compound
- *    (the native engine returns `MinimizerMode::None` for those), and
- *  - the `(program, subcommand)` pair has a registered filter
- *    (`filters::supports`), so commands like `git rev-parse` or `bun
- *    --version` — supported program, unsupported subcommand — are not
- *    recorded as false misses.
+ * For safe `&&`/`;` chains, the native minimizer routes through
+ * `SegmentedChain` and captures each segment independently. This function
+ * mirrors that by splitting the command on `&&`/`;` separators and checking
+ * whether ANY segment is eligible — so `echo prep && git status` returns
+ * true (the `git status` segment is eligible) even though `echo` is not.
+ *
+ * Pipes (`|`), `||`, and standalone background `&` are rejected outright
+ * (native `MinimizerMode::None`).
  *
  * The `only`/`except` check mirrors the native `is_program_enabled` exact-
  * lowercase membership test in
  * `crates/pi-shell/src/minimizer/config.rs`.
  */
 export function isBashCommandMinimizerEligible(command: string, only: string[], except: string[]): boolean {
-	const identity = detectProgramAndSubcommand(command);
+	const tokens = shellTokens(command.trim());
+	if (tokens.length === 0) return false;
+	if (hasIneligibleShellOperatorFromTokens(tokens)) return false;
+	const segments = splitChainSegments(tokens);
+	return segments.some(seg => isSegmentEligible(seg, only, except));
+}
+
+function isSegmentEligible(tokens: string[], only: string[], except: string[]): boolean {
+	const identity = detectProgramAndSubcommandFromTokens(tokens);
 	if (!identity) return false;
-	// The native minimizer engine returns MinimizerMode::None for piped and
-	// background commands, but routes safe `&&`/`;` chains through
-	// SegmentedChain (each segment is captured independently). Only reject
-	// the ineligible operators: pipes (`|`), `||`, and standalone background
-	// `&`. Paired `&&` and `;` separators are kept eligible so that miss
-	// telemetry records genuine chain misses.
-	if (hasIneligibleShellOperator(command)) return false;
 	if (!supportsProgram(identity.program, identity.subcommand)) return false;
 	if (only.length === 0 && except.length === 0) return true;
 	const lower = identity.program.toLowerCase();
@@ -470,19 +476,40 @@ export function isBashCommandMinimizerEligible(command: string, only: string[], 
 }
 
 /**
+ * Split a token array on safe chain separators (`&&` and `;`), returning
+ * each segment as a sub-array. Mirrors the native `SegmentedChain` segment
+ * extraction. Pipe (`|`) and standalone `&` tokens are NOT split points —
+ * they are rejected by `hasIneligibleShellOperatorFromTokens` before this
+ * function is called.
+ */
+function splitChainSegments(tokens: string[]): string[][] {
+	const segments: string[][] = [];
+	let current: string[] = [];
+	for (let i = 0; i < tokens.length; i++) {
+		const t = tokens[i]!;
+		if (t === ";") {
+			if (current.length > 0) segments.push(current);
+			current = [];
+		} else if (t === "&" && tokens[i + 1] === "&") {
+			if (current.length > 0) segments.push(current);
+			current = [];
+			i++; // skip the second &
+		} else {
+			current.push(t);
+		}
+	}
+	if (current.length > 0) segments.push(current);
+	return segments.length > 0 ? segments : [tokens];
+}
+
+/**
  * Returns true when the command contains a shell operator that makes the
  * native minimizer return `MinimizerMode::None`: pipes (`|`), logical-or
  * (`||`), or standalone background `&`. Safe chain operators — `&&` and `;`
  * — are NOT rejected because the native engine routes them through
  * `SegmentedChain` and captures each segment independently.
- *
- * shellTokens emits `|` and `&` as single-character operator tokens;
- * fd-dup redirects like `2>&1` and `&>file` are kept as word characters so
- * they do not trip this guard. A `&` token is only treated as background
- * when it is not immediately followed by another `&` (i.e. not `&&`).
  */
-function hasIneligibleShellOperator(command: string): boolean {
-	const tokens = shellTokens(command);
+function hasIneligibleShellOperatorFromTokens(tokens: string[]): boolean {
 	for (let i = 0; i < tokens.length; i++) {
 		const t = tokens[i]!;
 		if (t === "|") return true;
@@ -799,7 +826,6 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 		case "brew":
 		case "composer":
 		case "poetry":
-			return subIs(subcommand, PKG_SUBCOMMANDS);
 		case "env":
 		case "log":
 		case "deps":
@@ -814,6 +840,76 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 		case "ssh":
 		case "sops":
 			return true; // system::supports is program-only
+		// --- TOML-defined pipeline filters (crates/pi-shell/src/minimizer/defs/) ---
+		// Programs with a TOML def that has no match_subcommand gate — all subcommands
+		// are supported by the pipeline registry.
+		case "make":
+		case "ansible":
+		case "ansible-playbook":
+		case "ansible-galaxy":
+		case "apt":
+		case "apt-get":
+		case "yum":
+		case "dnf":
+		case "apk":
+		case "conda":
+		case "fail2ban-client":
+		case "gcc":
+		case "g++":
+		case "clang":
+		case "clang++":
+		case "gcloud":
+		case "iptables":
+		case "ip6tables":
+		case "iptables-save":
+		case "ip6tables-save":
+		case "jira":
+		case "jj":
+		case "just":
+		case "liquibase":
+		case "mise":
+		case "rtx":
+		case "mix":
+		case "nx":
+		case "pre-commit":
+		case "rsync":
+		case "rustc":
+		case "skopeo":
+		case "spring-boot":
+		case "task":
+		case "trunk":
+		case "turbo":
+		case "ty":
+		case "xcodebuild":
+		case "systemctl":
+		case "quarto":
+			return true; // TOML defs with no match_subcommand gate
+		// --- TOML defs with match_subcommand gates ---
+		case "terraform":
+		case "tofu":
+			return subIs(subcommand, ["plan", "apply", "destroy", "init", "validate", "fmt"]);
+		case "ollama":
+			return subIs(subcommand, [
+				"pull",
+				"push",
+				"list",
+				"ls",
+				"rm",
+				"cp",
+				"show",
+				"create",
+				"serve",
+				"stop",
+				"ps",
+				"run",
+			]);
+		case "shopify":
+			return subIs(subcommand, ["theme"]);
+		case "swift":
+			return subIs(subcommand, ["build", "test"]);
+		case "pio":
+		case "platformio":
+			return subIs(subcommand, ["run"]);
 		default:
 			// cpp::is_gtest_binary_name guard (covers foo_test, foo-tests, foo.test, …)
 			return isGtestBinaryName(program);

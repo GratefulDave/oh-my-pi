@@ -265,6 +265,31 @@ describe("isBashCommandMinimizerEligible", () => {
 	test("safe ; chains are eligible (mirrors native SegmentedChain)", () => {
 		expect(isBashCommandMinimizerEligible("git status; echo done", [], [])).toBe(true);
 	});
+	test("any-segment eligibility: ineligible first + eligible later segment", () => {
+		// echo is unsupported, but git status is eligible → chain is eligible
+		expect(isBashCommandMinimizerEligible("echo prep && git status", [], [])).toBe(true);
+		// git status is eligible, echo is not → still eligible (first segment)
+		expect(isBashCommandMinimizerEligible("git status && echo done", [], [])).toBe(true);
+		// only=["bun"]: git is excluded, bun test is eligible → chain is eligible
+		expect(isBashCommandMinimizerEligible("git status && bun test", ["bun"], [])).toBe(true);
+		// both segments ineligible → false
+		expect(isBashCommandMinimizerEligible("echo a && echo b", [], [])).toBe(false);
+	});
+	test("TOML-defined programs are eligible (make, ansible, apt, etc.)", () => {
+		expect(isBashCommandMinimizerEligible("make", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("make -j4", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("ansible-playbook deploy.yml", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("apt install -y nginx", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("gcc -o main main.c", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("just test", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("terraform plan", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("tofu apply", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("ollama pull llama3", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("swift build", [], [])).toBe(true);
+		// TOML subcommand-gated: unsupported subcommands
+		expect(isBashCommandMinimizerEligible("terraform version", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("ollama version", [], [])).toBe(false);
+	});
 	test("empty command is always ineligible", () => {
 		expect(isBashCommandMinimizerEligible("", [], [])).toBe(false);
 	});

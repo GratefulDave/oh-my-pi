@@ -13633,6 +13633,7 @@ export class AgentSession {
 					!result.cancelled &&
 					result.exitCode !== undefined &&
 					result.totalBytes > 0 &&
+					result.totalBytes <= this.settings.get("shellMinimizer.maxCaptureBytes") &&
 					isBashCommandMinimizerEligible(
 						command,
 						this.settings.get("shellMinimizer.only"),

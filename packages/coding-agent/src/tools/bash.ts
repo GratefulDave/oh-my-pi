@@ -196,7 +196,10 @@ async function recordBashMinimizerGain(input: {
 	if (Bun.env.PI_SHELL_PREFIX || Bun.env.CLAUDE_CODE_SHELL_PREFIX) return;
 	try {
 		if (input.result.cancelled || input.result.exitCode === undefined) return;
-		if (input.result.totalBytes <= 0) return;
+		// Skip outputs beyond the minimizer capture cap — the native minimizer returns
+		// a `too-large` passthrough before dispatch when input_bytes > max_capture_bytes,
+		// so these were never filterable and must not pollute the Gain tuning table.
+		if (input.result.totalBytes > input.session.settings.get("shellMinimizer.maxCaptureBytes")) return;
 		// Gate on full native eligibility (program+subcommand has a filter,
 		// not piped/background/compound, and passes only/except) so the
 		// recorded "missed" rows are genuine tuning candidates — commands the
