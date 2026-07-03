@@ -339,6 +339,67 @@ class AnchoredLiveContainer extends Container implements NativeScrollbackLiveReg
  *  before it auto-clears, mirroring the todo HUD's auto-clear timer. */
 const MODEL_CYCLE_TRACK_CLEAR_MS = 4000;
 
+interface ToolCounterEntry {
+	name: string;
+	count: number;
+}
+
+function toolCounterIcon(name: string): string {
+	if (name === "read") return theme.icon.file;
+	if (name === "bash") return theme.symbol("tab.shell");
+	if (name === "eval") return theme.symbol("tool.eval");
+	if (name === "edit") return theme.icon.extensionTool;
+	if (name === "grep") return "";
+	if (name === "glob") return theme.icon.folder;
+	if (name === "todo") return theme.symbol("tool.todo");
+	if (name === "task") return theme.symbol("tool.task");
+	if (name.startsWith("mcp__")) return theme.symbol("tool.mcp");
+	return theme.icon.extensionTool;
+}
+
+function sortedToolCounterEntries(counts: ReadonlyMap<string, number>, limit: number): ToolCounterEntry[] {
+	return Array.from(counts.entries())
+		.filter(([, count]) => count > 0)
+		.sort(
+			([leftName, leftCount], [rightName, rightCount]) =>
+				rightCount - leftCount || leftName.localeCompare(rightName),
+		)
+		.slice(0, limit)
+		.map(([name, count]) => ({ name, count }));
+}
+
+export function renderToolCounterLine(counts: ReadonlyMap<string, number>, width: number, limit = 12): string {
+	const total = Array.from(counts.values()).reduce((sum, count) => sum + count, 0);
+	if (total <= 0) return "";
+	const parts = [`${theme.symbol("tab.tools")} tools:${total}`];
+	for (const entry of sortedToolCounterEntries(counts, limit)) {
+		parts.push(`${toolCounterIcon(entry.name)} ${entry.name}:${entry.count}`);
+	}
+	return truncateToWidth(parts.join("  "), width);
+}
+
+function seedToolCounterFromMessages(
+	counts: Map<string, number>,
+	countedToolCallIds: Set<string>,
+	messages: readonly AgentMessage[],
+): void {
+	counts.clear();
+	countedToolCallIds.clear();
+	for (const message of messages) {
+		if (message.role !== "toolResult") continue;
+		counts.set(message.toolName, (counts.get(message.toolName) ?? 0) + 1);
+		countedToolCallIds.add(message.toolCallId);
+	}
+}
+
+function mergeToolCounts(target: Map<string, number>, counts: Record<string, number> | undefined): void {
+	if (!counts) return;
+	for (const [name, count] of Object.entries(counts)) {
+		if (count <= 0) continue;
+		target.set(name, (target.get(name) ?? 0) + count);
+	}
+}
+
 /**
  * Build the anchored subagent HUD block. It mirrors the external pi-subagents
  * widget shape: an "Agents" header, one tree row per live detached subagent,
@@ -454,6 +515,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	statusContainer: Container;
 	todoContainer: Container;
 	subagentContainer: Container;
+	toolCounterContainer: Container;
 	btwContainer: Container;
 	omfgContainer: Container;
 	errorBannerContainer: Container;
@@ -509,6 +571,8 @@ export class InteractiveMode implements InteractiveModeContext {
 	proseOnlyThinking = true;
 	compactionQueuedMessages: CompactionQueuedMessage[] = [];
 	pendingTools = new Map<string, ToolExecutionHandle>();
+	#toolCounterCounts = new Map<string, number>();
+	#countedToolCallIds = new Set<string>();
 	pendingBashComponents: BashExecutionComponent[] = [];
 	bashComponent: BashExecutionComponent | undefined = undefined;
 	pendingPythonComponents: EvalExecutionComponent[] = [];
@@ -703,6 +767,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new AnchoredLiveContainer();
 		this.todoContainer = new AnchoredLiveContainer();
+		this.toolCounterContainer = new AnchoredLiveContainer();
 		this.subagentContainer = new AnchoredLiveContainer();
 		this.btwContainer = new AnchoredLiveContainer();
 		this.omfgContainer = new AnchoredLiveContainer();
@@ -949,6 +1014,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.ui.addChild(this.chatContainer);
 		this.ui.addChild(this.pendingMessagesContainer);
 		this.ui.addChild(this.todoContainer);
+		this.ui.addChild(this.toolCounterContainer);
 		this.ui.addChild(this.subagentContainer);
 		this.ui.addChild(this.btwContainer);
 		this.ui.addChild(this.omfgContainer);
@@ -972,6 +1038,8 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.#observerRegistry.subscribeToEventBus(this.#eventBus);
 		}
 		this.#observerRegistry.setMainSession(this.sessionManager.getSessionFile() ?? undefined);
+		this.#seedToolCounterFromSession();
+		this.#renderToolCounter();
 		this.syncRunningSubagentBadge();
 		this.#observerRegistry.onChange(() => {
 			this.syncRunningSubagentBadge();
@@ -982,6 +1050,7 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.#reconcileTodosWithSubagents();
 			this.#syncTodoAutoClearTimer();
 			this.#renderTodoList();
+			this.#renderToolCounter();
 			this.#renderSubagentList();
 
 			// Detect settle: had active detached subagents → now none active
@@ -1679,6 +1748,8 @@ export class InteractiveMode implements InteractiveModeContext {
 		// signature is cleared by `EventController`, so this replay is a no-op
 		// post-streaming and cannot duplicate.
 		this.#replayOptimisticUserMessage();
+		this.#seedToolCounterFromSession();
+		this.#renderToolCounter();
 	}
 
 	#replayOptimisticUserMessage(): void {
@@ -1913,12 +1984,31 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.todoContainer.addChild(new Text(lines.join("\n"), 1, 0));
 	}
 
-	/**
-	 * Anchored HUD of in-flight subagents, mirroring the Todos block above the
-	 * editor. Driven entirely by observer-registry change events, so rows appear
-	 * on spawn and the whole block clears itself once the last subagent leaves
-	 * the "active" state.
-	 */
+	recordToolExecutionStart(toolCallId: string, toolName: string): void {
+		if (this.#countedToolCallIds.has(toolCallId)) return;
+		this.#countedToolCallIds.add(toolCallId);
+		this.#toolCounterCounts.set(toolName, (this.#toolCounterCounts.get(toolName) ?? 0) + 1);
+		this.#renderToolCounter();
+		this.ui.requestRender();
+	}
+
+	#seedToolCounterFromSession(): void {
+		seedToolCounterFromMessages(this.#toolCounterCounts, this.#countedToolCallIds, this.session.state.messages);
+	}
+
+	#renderToolCounter(): void {
+		this.toolCounterContainer.clear();
+		const counts = new Map(this.#toolCounterCounts);
+		for (const session of this.#observerRegistry.getSessions()) {
+			if (session.kind !== "subagent") continue;
+			mergeToolCounts(counts, session.progress?.toolCounts);
+		}
+		const width = Math.max(TRUNCATE_LENGTHS.SHORT, this.ui.terminal.columns);
+		const line = renderToolCounterLine(counts, width);
+		if (!line) return;
+		this.toolCounterContainer.addChild(new Text(theme.fg("dim", line), 1, 0));
+	}
+
 	#renderSubagentList(): void {
 		this.subagentContainer.clear();
 		const sessions = this.#observerRegistry.getSessions();
@@ -4013,6 +4103,8 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#hadActiveSubagents = false;
 		this.#emittedSubagentSummaryIds.clear();
 		this.#stopSubagentSpinner();
+		this.#seedToolCounterFromSession();
+		this.#renderToolCounter();
 	}
 
 	handleBashCommand(command: string, excludeFromContext?: boolean): Promise<void> {

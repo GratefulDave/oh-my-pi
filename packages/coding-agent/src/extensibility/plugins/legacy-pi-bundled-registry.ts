@@ -679,6 +679,7 @@ import * as bundledPiCodingAgentModesRpcRpcTypes from "@oh-my-pi/pi-coding-agent
 import * as bundledPiCodingAgentModesRunningSubagentBadge from "@oh-my-pi/pi-coding-agent/modes/running-subagent-badge";
 import * as bundledPiCodingAgentModesRuntimeInit from "@oh-my-pi/pi-coding-agent/modes/runtime-init";
 import * as bundledPiCodingAgentModesSessionObserverRegistry from "@oh-my-pi/pi-coding-agent/modes/session-observer-registry";
+import * as bundledPiCodingAgentModesSessionTeardown from "@oh-my-pi/pi-coding-agent/modes/session-teardown";
 import * as bundledPiCodingAgentModesSetupVersion from "@oh-my-pi/pi-coding-agent/modes/setup-version";
 import * as bundledPiCodingAgentModesSetupWizard from "@oh-my-pi/pi-coding-agent/modes/setup-wizard";
 import * as bundledPiCodingAgentModesSetupWizardLazy from "@oh-my-pi/pi-coding-agent/modes/setup-wizard/lazy";
@@ -718,6 +719,7 @@ import * as bundledPiCodingAgentSessionBlobStore from "@oh-my-pi/pi-coding-agent
 import * as bundledPiCodingAgentSessionClientBridge from "@oh-my-pi/pi-coding-agent/session/client-bridge";
 import * as bundledPiCodingAgentSessionCodexAutoReset from "@oh-my-pi/pi-coding-agent/session/codex-auto-reset";
 import * as bundledPiCodingAgentSessionCompactModes from "@oh-my-pi/pi-coding-agent/session/compact-modes";
+import * as bundledPiCodingAgentSessionExitDiagnostics from "@oh-my-pi/pi-coding-agent/session/exit-diagnostics";
 import * as bundledPiCodingAgentSessionHistoryStorage from "@oh-my-pi/pi-coding-agent/session/history-storage";
 import * as bundledPiCodingAgentSessionIndexedSessionStorage from "@oh-my-pi/pi-coding-agent/session/indexed-session-storage";
 import * as bundledPiCodingAgentSessionMessages from "@oh-my-pi/pi-coding-agent/session/messages";
@@ -883,6 +885,7 @@ import * as bundledPiCodingAgentUtilsEditMode from "@oh-my-pi/pi-coding-agent/ut
 import * as bundledPiCodingAgentUtilsEnhancedPaste from "@oh-my-pi/pi-coding-agent/utils/enhanced-paste";
 import * as bundledPiCodingAgentUtilsEventBus from "@oh-my-pi/pi-coding-agent/utils/event-bus";
 import * as bundledPiCodingAgentUtilsExternalEditor from "@oh-my-pi/pi-coding-agent/utils/external-editor";
+import * as bundledPiCodingAgentUtilsFetchTimeout from "@oh-my-pi/pi-coding-agent/utils/fetch-timeout";
 import * as bundledPiCodingAgentUtilsFileDisplayMode from "@oh-my-pi/pi-coding-agent/utils/file-display-mode";
 import * as bundledPiCodingAgentUtilsFileMentions from "@oh-my-pi/pi-coding-agent/utils/file-mentions";
 import * as bundledPiCodingAgentUtilsGit from "@oh-my-pi/pi-coding-agent/utils/git";
@@ -2380,6 +2383,9 @@ export const BUNDLED_PI_REGISTRY: Readonly<Record<string, Readonly<Record<string
 	>,
 	"@oh-my-pi/pi-coding-agent/modes/session-observer-registry":
 		bundledPiCodingAgentModesSessionObserverRegistry as unknown as Readonly<Record<string, unknown>>,
+	"@oh-my-pi/pi-coding-agent/modes/session-teardown": bundledPiCodingAgentModesSessionTeardown as unknown as Readonly<
+		Record<string, unknown>
+	>,
 	"@oh-my-pi/pi-coding-agent/modes/setup-version": bundledPiCodingAgentModesSetupVersion as unknown as Readonly<
 		Record<string, unknown>
 	>,
@@ -2705,6 +2711,8 @@ export const BUNDLED_PI_REGISTRY: Readonly<Record<string, Readonly<Record<string
 	"@oh-my-pi/pi-coding-agent/session/compact-modes": bundledPiCodingAgentSessionCompactModes as unknown as Readonly<
 		Record<string, unknown>
 	>,
+	"@oh-my-pi/pi-coding-agent/session/exit-diagnostics":
+		bundledPiCodingAgentSessionExitDiagnostics as unknown as Readonly<Record<string, unknown>>,
 	"@oh-my-pi/pi-coding-agent/session/history-storage":
 		bundledPiCodingAgentSessionHistoryStorage as unknown as Readonly<Record<string, unknown>>,
 	"@oh-my-pi/pi-coding-agent/session/indexed-session-storage":
@@ -3125,6 +3133,9 @@ export const BUNDLED_PI_REGISTRY: Readonly<Record<string, Readonly<Record<string
 		Record<string, unknown>
 	>,
 	"@oh-my-pi/pi-coding-agent/utils/external-editor": bundledPiCodingAgentUtilsExternalEditor as unknown as Readonly<
+		Record<string, unknown>
+	>,
+	"@oh-my-pi/pi-coding-agent/utils/fetch-timeout": bundledPiCodingAgentUtilsFetchTimeout as unknown as Readonly<
 		Record<string, unknown>
 	>,
 	"@oh-my-pi/pi-coding-agent/utils/file-display-mode": bundledPiCodingAgentUtilsFileDisplayMode as unknown as Readonly<

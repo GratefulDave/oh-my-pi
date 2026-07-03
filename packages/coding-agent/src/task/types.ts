@@ -362,6 +362,7 @@ export interface AgentProgress {
 	recentTools: Array<{ tool: string; args: string; endMs: number }>;
 	recentOutput: string[];
 	toolCount: number;
+	toolCounts?: Record<string, number>;
 	/** Count of assistant requests (assistant message_end events) across the run. Drives the soft request budget guard. */
 	requests: number;
 	/** Cumulative input + output + cacheWrite tokens across all turns. Excludes cacheRead (re-reads cached context every turn, making cumulative sum misleading). */
