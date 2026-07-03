@@ -605,7 +605,7 @@ function notifyStartup(
  * applies the profile's model filter to the live session; `setModel` switches
  * the visible default model for the current session.
  */
-async function applyProfile(
+export async function applyProfile(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	profile: ModelProfile,

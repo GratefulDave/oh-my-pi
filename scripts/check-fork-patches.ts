@@ -252,6 +252,47 @@ const checks: PatchCheck[] = [
 			return fileExists("rebuild-lex.zsh") ? null : "rebuild-lex.zsh missing";
 		},
 	},
+
+	// ── Patch 10: profile-manager uses replaceModelRoles + overrideEnabledModels ──
+	{
+		id: "P10a",
+		description: "profile-manager: applyProfile calls replaceModelRoles (not overrideModelRoles)",
+		check() {
+			const file = ".omp/extensions/profile-manager/index.ts";
+			if (!fileContains(file, "replaceModelRoles")) {
+				return "replaceModelRoles missing from profile-manager/index.ts";
+			}
+			// The applyProfile function must not call overrideModelRoles (additive).
+			// overrideModelRoles may still appear in the ExtensionAPIWithSessionOverrides interface declaration.
+			const text = fs.readFileSync(path.join(repoRoot, file), "utf8");
+			const applyProfileStart = text.indexOf("async function applyProfile(");
+			if (applyProfileStart === -1) return "applyProfile function not found in profile-manager/index.ts";
+			// Find the end of the function (next function declaration or closing brace at column 0)
+			const afterFn = text.slice(applyProfileStart);
+			const nextFnIdx = afterFn.search(/\n(?:function|async function|export )/);
+			const fnBody = nextFnIdx > 0 ? afterFn.slice(0, nextFnIdx) : afterFn;
+			if (fnBody.includes("overrideModelRoles")) {
+				return "applyProfile calls overrideModelRoles (additive) instead of replaceModelRoles";
+			}
+			return null;
+		},
+	},
+	{
+		id: "P10b",
+		description: "profile-manager: applyProfile calls overrideEnabledModels",
+		check() {
+			const file = ".omp/extensions/profile-manager/index.ts";
+			const text = fs.readFileSync(path.join(repoRoot, file), "utf8");
+			const applyProfileStart = text.indexOf("async function applyProfile(");
+			if (applyProfileStart === -1) return "applyProfile function not found in profile-manager/index.ts";
+			const afterFn = text.slice(applyProfileStart);
+			const nextFnIdx = afterFn.search(/\n(?:function|async function|export )/);
+			const fnBody = nextFnIdx > 0 ? afterFn.slice(0, nextFnIdx) : afterFn;
+			return fnBody.includes("overrideEnabledModels")
+				? null
+				: "overrideEnabledModels call missing from applyProfile in profile-manager/index.ts";
+		},
+	},
 ];
 
 // ── Run checks ────────────────────────────────────────────────────────────────
