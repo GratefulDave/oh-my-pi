@@ -111,6 +111,10 @@ export class ExtensionRuntime implements IExtensionRuntime {
 		throw new ExtensionRuntimeNotInitializedError();
 	}
 
+	overrideEnabledModels(): void {
+		throw new ExtensionRuntimeNotInitializedError();
+	}
+
 	replaceModelRoles(): void {
 		throw new ExtensionRuntimeNotInitializedError();
 	}
@@ -266,6 +270,10 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 
 	replaceModelRoles(roles: Record<string, string>): void {
 		this.runtime.replaceModelRoles(roles);
+	}
+
+	overrideEnabledModels(patterns: string[] | null): void {
+		this.runtime.overrideEnabledModels(patterns);
 	}
 
 	getSessionName(): string | undefined {

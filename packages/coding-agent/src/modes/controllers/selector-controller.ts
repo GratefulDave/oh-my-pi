@@ -586,13 +586,21 @@ export class SelectorController {
 
 	showModelSelector(options?: { temporaryOnly?: boolean }): void {
 		const currentContextTokens = this.ctx.session.getContextUsage()?.tokens ?? 0;
+		const { scopedModels } = this.ctx.session;
+		// When no CLI --models scope is active, apply the in-session enabledModels filter
+		// so /models respects the active profile set by /pm use.
+		const effectiveScopedModels =
+			scopedModels.length > 0 ? scopedModels : this.ctx.session.getAvailableModels().map(model => ({ model }));
+		const enabledModelsPatterns = this.ctx.settings.get("enabledModels");
+		const isProfileFiltered =
+			scopedModels.length === 0 && enabledModelsPatterns != null && enabledModelsPatterns.length > 0;
 		this.showSelector(done => {
 			const selector = new ModelSelectorComponent(
 				this.ctx.ui,
 				this.ctx.session.model,
 				this.ctx.settings,
 				this.ctx.session.modelRegistry,
-				this.ctx.session.scopedModels,
+				effectiveScopedModels,
 				async (model, role, thinkingLevel, selector) => {
 					// `auto` is session-global: never baked into a per-role model value
 					// (it can't round-trip through `model:<level>`). Apply it to the session
@@ -658,7 +666,11 @@ export class SelectorController {
 					done();
 					this.ctx.ui.requestRender();
 				},
-				{ ...options, currentContextTokens },
+				{
+					...options,
+					currentContextTokens,
+					...(isProfileFiltered && { scopedModelsHint: "Showing models for active profile" }),
+				},
 			);
 			return { component: selector, focus: selector };
 		});

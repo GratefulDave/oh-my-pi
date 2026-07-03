@@ -653,6 +653,18 @@ export class Settings {
 	}
 
 	/**
+	 * Override the enabledModels filter for the current session without persisting to disk.
+	 * Pass `null` to clear a previous override (restores the persisted setting).
+	 */
+	overrideEnabledModels(patterns: string[] | null): void {
+		if (patterns === null) {
+			this.clearOverride("enabledModels");
+		} else {
+			this.override("enabledModels", patterns);
+		}
+	}
+
+	/**
 	 * Set disabled providers (for compatibility with discovery system).
 	 */
 	setDisabledProviders(ids: string[]): void {

@@ -128,10 +128,7 @@ const checks: PatchCheck[] = [
 		id: "P2",
 		description: "bash.ts: env typed as Record<string, unknown>",
 		check() {
-			const count = countMatches(
-				"packages/coding-agent/src/tools/bash.ts",
-				/Record<string,\s*unknown>/g,
-			);
+			const count = countMatches("packages/coding-agent/src/tools/bash.ts", /Record<string,\s*unknown>/g);
 			return count >= 3 ? null : `bash.ts Record<string, unknown> env widening: expected ≥3, got ${count}`;
 		},
 	},
@@ -156,9 +153,19 @@ const checks: PatchCheck[] = [
 		description: "transcript-render-helpers.ts: SubagentHudSummaryDetails + buildSubagentHudSummaryBlock",
 		check() {
 			const missing: string[] = [];
-			if (!fileContains("packages/coding-agent/src/modes/utils/transcript-render-helpers.ts", "SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE"))
+			if (
+				!fileContains(
+					"packages/coding-agent/src/modes/utils/transcript-render-helpers.ts",
+					"SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE",
+				)
+			)
 				missing.push("SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE");
-			if (!fileContains("packages/coding-agent/src/modes/utils/transcript-render-helpers.ts", "buildSubagentHudSummaryBlock"))
+			if (
+				!fileContains(
+					"packages/coding-agent/src/modes/utils/transcript-render-helpers.ts",
+					"buildSubagentHudSummaryBlock",
+				)
+			)
 				missing.push("buildSubagentHudSummaryBlock");
 			return missing.length === 0 ? null : `transcript-render-helpers.ts missing: ${missing.join(", ")}`;
 		},
@@ -168,7 +175,12 @@ const checks: PatchCheck[] = [
 		description: "chat-transcript-builder.ts + ui-helpers.ts: render subagent-hud-summary",
 		check() {
 			const missing: string[] = [];
-			if (!fileContains("packages/coding-agent/src/modes/components/chat-transcript-builder.ts", "SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE"))
+			if (
+				!fileContains(
+					"packages/coding-agent/src/modes/components/chat-transcript-builder.ts",
+					"SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE",
+				)
+			)
 				missing.push("chat-transcript-builder.ts");
 			if (!fileContains("packages/coding-agent/src/modes/utils/ui-helpers.ts", "SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE"))
 				missing.push("ui-helpers.ts");
@@ -192,10 +204,7 @@ const checks: PatchCheck[] = [
 		id: "P5",
 		description: "sdk.ts: getPreloadedExtensions / preloadedExtensions",
 		check() {
-			const count = countMatches(
-				"packages/coding-agent/src/sdk.ts",
-				/getPreloadedExtensions|preloadedExtensions/g,
-			);
+			const count = countMatches("packages/coding-agent/src/sdk.ts", /getPreloadedExtensions|preloadedExtensions/g);
 			return count >= 2 ? null : `sdk.ts preload inheritance: expected ≥2 occurrences, got ${count}`;
 		},
 	},

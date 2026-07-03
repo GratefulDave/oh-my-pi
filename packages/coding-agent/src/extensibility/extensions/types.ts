@@ -1135,6 +1135,9 @@ export interface ExtensionAPI {
 	/** Replace all model role overrides for the current session (clears previous profile's roles). */
 	replaceModelRoles(roles: Record<string, string>): void;
 
+	/** Override the enabledModels filter for the current session without persisting to disk. Pass `null` to restore the persisted setting. */
+	overrideEnabledModels(patterns: string[] | null): void;
+
 	/** Get the current session name. */
 	getSessionName(): string | undefined;
 
@@ -1341,6 +1344,7 @@ export interface ExtensionActions {
 	setThinkingLevel: SetThinkingLevelHandler;
 	overrideModelRoles: (roles: Record<string, string>) => void;
 	replaceModelRoles: (roles: Record<string, string>) => void;
+	overrideEnabledModels: (patterns: string[] | null) => void;
 	getSessionName: () => string | undefined;
 	setSessionName: (name: string) => Promise<void>;
 }

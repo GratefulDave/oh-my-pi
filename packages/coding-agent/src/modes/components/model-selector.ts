@@ -183,6 +183,7 @@ export class ModelSelectorComponent extends Container {
 			temporaryOnly?: boolean;
 			directSelect?: boolean;
 			pickerHint?: string;
+			scopedModelsHint?: string;
 			initialSearchInput?: string;
 			currentContextTokens?: number;
 		},
@@ -216,7 +217,7 @@ export class ModelSelectorComponent extends Container {
 		// Add hint about model filtering
 		const hintText =
 			scopedModels.length > 0
-				? "Showing models from --models scope"
+				? (options?.scopedModelsHint ?? "Showing models from --models scope")
 				: "Only showing models with configured API keys (see README for details)";
 		this.addChild(new Text(theme.fg("warning", hintText), 0, 0));
 		this.addChild(new Spacer(1));

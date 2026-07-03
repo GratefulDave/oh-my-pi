@@ -873,6 +873,7 @@ function createSubagentRunMonitor(args: RunMonitorArgs): SubagentRunMonitor {
 		recentTools: [],
 		recentOutput: [],
 		toolCount: 0,
+		toolCounts: {},
 		requests: 0,
 		tokens: 0,
 		cost: 0,
@@ -1137,6 +1138,9 @@ function createSubagentRunMonitor(args: RunMonitorArgs): SubagentRunMonitor {
 
 			case "tool_execution_start": {
 				progress.toolCount++;
+				progress.toolCounts ??= {};
+				const toolCounts = progress.toolCounts;
+				toolCounts[event.toolName] = (toolCounts[event.toolName] ?? 0) + 1;
 				progress.currentTool = event.toolName;
 				progress.currentToolArgs = extractToolArgsPreview(
 					(event as { toolArgs?: Record<string, unknown> }).toolArgs || event.args || {},
@@ -2330,6 +2334,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 						setThinkingLevel: level => session.setThinkingLevel(level),
 						overrideModelRoles: roles => session.settings.overrideModelRoles(roles),
 						replaceModelRoles: roles => session.settings.replaceModelRoles(roles),
+						overrideEnabledModels: patterns => session.settings.overrideEnabledModels(patterns),
 						getSessionName: () => session.sessionManager.getSessionName(),
 						setSessionName: async name => {
 							await session.sessionManager.setSessionName(name, "user");
