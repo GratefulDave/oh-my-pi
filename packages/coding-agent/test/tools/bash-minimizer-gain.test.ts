@@ -253,6 +253,10 @@ describe("isBashCommandMinimizerEligible", () => {
 	test("single piped commands are ineligible", () => {
 		expect(isBashCommandMinimizerEligible("ls | grep foo", [], [])).toBe(false);
 	});
+	test("newline chains inspect every segment", () => {
+		expect(isBashCommandMinimizerEligible("echo prep\ngit status", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("git status\nexec >out", [], [])).toBe(false);
+	});
 	test("piped segments do not suppress later eligible chain segments", () => {
 		expect(isBashCommandMinimizerEligible("ls | head -5 && git status", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("git status && ls | head -5", [], [])).toBe(true);
@@ -315,6 +319,7 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("npm install", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("brew install jq", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("npm --version", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("pnpm nx build", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("brew", [], [])).toBe(false);
 	});
 	test("npx fallback captures unknown-tool invocations", () => {

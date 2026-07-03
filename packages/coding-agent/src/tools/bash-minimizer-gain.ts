@@ -710,8 +710,8 @@ function isAmbiguousAssignmentFragment(token: string): boolean {
 }
 
 /**
- * Split a token array on safe chain separators (`&&` and `;`), returning
- * each segment as a sub-array. Mirrors the native `SegmentedChain` segment
+ * Split a token array on safe chain separators (`&&`, `;`, and newlines),
+ * returning each segment as a sub-array. Mirrors the native `SegmentedChain`
  * extraction. Pipe (`|`) tokens stay inside their segment; an opaque piped
  * segment does not prevent a later eligible segment from being captured.
  */
@@ -720,7 +720,7 @@ function splitChainSegments(tokens: string[]): string[][] {
 	let current: string[] = [];
 	for (let i = 0; i < tokens.length; i++) {
 		const t = tokens[i]!;
-		if (t === ";") {
+		if (t === ";" || t === "\n" || t === "\r") {
 			if (current.length > 0) segments.push(current);
 			current = [];
 		} else if (t === "&" && tokens[i + 1] === "&") {
@@ -1091,7 +1091,7 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 		case "npx":
 			return subcommand !== undefined;
 		case "pnpm":
-			if (subcommand === "dlx") return true;
+			if (subcommand === "dlx" || subcommand === "nx") return true;
 			return subIs(subcommand, PKG_SUBCOMMANDS);
 		case "uv":
 			if (subcommand === "run") return true;
