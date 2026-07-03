@@ -295,6 +295,11 @@ import {
 	selectDiscoverableToolNamesByServer,
 } from "../tool-discovery/tool-index";
 import { assertEditableFile } from "../tools/auto-generated-guard";
+import {
+	appendBashMinimizerGainRecord,
+	inferBashMinimizerMissedFilter,
+	isBashCommandMinimizerEligible,
+} from "../tools/bash-minimizer-gain";
 import { releaseTabsForOwner } from "../tools/browser/tab-supervisor";
 import { normalizeToolNames } from "../tools/builtin-names";
 import type { CheckpointState, CompletedRewindState } from "../tools/checkpoint";
@@ -13573,6 +13578,7 @@ export class AgentSession {
 				cwd,
 			});
 			if (hookResult?.result) {
+				// user_bash extension handled the command — skip minimizer miss recording.
 				this.recordBashResult(command, hookResult.result, options);
 				return hookResult.result;
 			}
@@ -13582,17 +13588,74 @@ export class AgentSession {
 		this.#bashAbortControllers.add(abortController);
 
 		try {
+			const gainTelemetry = this.settings.get("shellMinimizer.gainTelemetry");
+			const savedGain = { info: null as { filter: string; inputBytes: number; outputBytes: number } | null };
 			const result = await executeBashCommand(command, {
 				onChunk,
 				signal: abortController.signal,
 				sessionKey: this.sessionId,
 				cwd,
 				timeout: clampTimeout("bash") * 1000,
-				onMinimizedSave: originalText => this.#saveBashOriginalArtifact(originalText),
+				onMinimizedSave: async (originalText, info) => {
+					if (gainTelemetry) savedGain.info = info;
+					return this.#saveBashOriginalArtifact(originalText);
+				},
 				useUserShell: options?.useUserShell,
 			});
 
 			this.recordBashResult(command, result, options);
+			if (gainTelemetry && this.settings.get("shellMinimizer.enabled")) {
+				// Skip missed recording for user-shell wrapped commands — the minimizer only
+				// sees the shell wrapper (e.g. zsh -c <command>), not the original command.
+				const isUserShellWrapped = options?.useUserShell === true;
+				if (savedGain.info) {
+					// Flush saved record with real exitCode now that the result is known.
+					const info = savedGain.info;
+					void appendBashMinimizerGainRecord({
+						command,
+						cwd,
+						sessionId: this.sessionId,
+						filter: info.filter,
+						inputBytes: info.inputBytes,
+						outputBytes: info.outputBytes,
+						exitCode: result.exitCode ?? null,
+						kind: "saved",
+						agentDir: this.settings.getAgentDir(),
+					}).catch(() => {});
+				} else if (
+					!isUserShellWrapped &&
+					// Skip miss telemetry when a shell prefix is active: executeBash sends
+					// the prefixed command to the minimizer, which cannot see the original
+					// program, so inferring a miss from the unprefixed command would pollute
+					// Gain data. (Mirrors the guard in the BashTool telemetry path.)
+					!Bun.env.PI_SHELL_PREFIX &&
+					!Bun.env.CLAUDE_CODE_SHELL_PREFIX &&
+					!result.cancelled &&
+					result.exitCode !== undefined &&
+					result.totalBytes > 0 &&
+					isBashCommandMinimizerEligible(
+						command,
+						this.settings.get("shellMinimizer.only"),
+						this.settings.get("shellMinimizer.except"),
+					)
+				) {
+					// isBashCommandMinimizerEligible already verified the (program,
+					// subcommand) pair has a registered filter, so this is a genuine
+					// missed candidate — record it directly.
+					const filter = inferBashMinimizerMissedFilter(command);
+					void appendBashMinimizerGainRecord({
+						command,
+						cwd,
+						sessionId: this.sessionId,
+						filter,
+						inputBytes: result.totalBytes,
+						outputBytes: result.totalBytes,
+						exitCode: result.exitCode ?? null,
+						kind: "missed",
+						agentDir: this.settings.getAgentDir(),
+					}).catch(() => {});
+				}
+			}
 			return result;
 		} finally {
 			this.#bashAbortControllers.delete(abortController);

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added bash minimizer gain telemetry (`shellMinimizer.gainTelemetry`): when enabled (default **off**), appends JSONL records to `~/.omp/agent/minimizer-gain.jsonl` for every bash execution — `kind:"saved"` when the shell minimizer compressed output, `kind:"missed"` when it did not. Records include `sessionId`, `cwd`, `command`, `filter`, `inputBytes`, `outputBytes`, `exitCode`, and `timestamp`. Off by default; the setting description documents that the raw command string is recorded verbatim and may contain credentials ([#3691](https://github.com/can1357/oh-my-pi/pull/3691)).
+
 ## [16.3.4] - 2026-07-03
 
 ### Fixed
@@ -259,6 +263,7 @@
 - Fixed slow local LLM streams by forwarding persisted stream timeout settings (`providers.streamFirstEventTimeoutSeconds`, `providers.streamIdleTimeoutSeconds`) into model requests, so users can widen or disable watchdogs without environment variables. ([#3878](https://github.com/can1357/oh-my-pi/issues/3878))
 - Fixed the bash interceptor blocking `echo` / `printf` redirects to `/dev/null`, `/dev/tty`, `/dev/stdout`, and `/dev/stderr` device sinks while still directing real file writes to the write tool. ([#3763](https://github.com/can1357/oh-my-pi/issues/3763))
 - Fixed long snapcompact sessions re-sending multi-megabyte standing image archives on every provider request by enforcing a per-request frame byte budget, letting auto-compaction fall back to context-full summaries when snapcompact output is too large, and omitting legacy over-budget frames from rebuilt LLM contexts. ([#3792](https://github.com/can1357/oh-my-pi/issues/3792))
+
 
 ## [16.2.7] - 2026-06-30
 
