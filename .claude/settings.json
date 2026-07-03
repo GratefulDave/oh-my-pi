@@ -1,13 +1,13 @@
 {
   "hooks": {
-    "SessionStart": [
+    "UserPromptSubmit": [
       {
         "_managed_by": "library",
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "node /Users/davidandrews/PycharmProjects/the-library/hooks/claude/cbm-autoindex-sessionstart.mjs"
+            "command": "node /Users/davidandrews/PycharmProjects/the-library/hooks/claude/code-intel-userpromptsubmit.mjs"
           }
         ]
       }

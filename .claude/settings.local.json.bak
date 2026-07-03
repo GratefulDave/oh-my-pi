@@ -1,0 +1,12 @@
+{
+  "enabledMcpjsonServers": [
+    "chrome-devtools",
+    "context7",
+    "context-mode",
+    "auggie",
+    "linear",
+    "grep-app",
+    "ast-grep",
+    "codemap"
+  ]
+}

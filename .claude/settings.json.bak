@@ -3,11 +3,11 @@
     "PreToolUse": [
       {
         "_managed_by": "library",
-        "matcher": "Grep|Glob",
+        "matcher": "Task|Agent",
         "hooks": [
           {
             "type": "command",
-            "command": "node /Users/davidandrews/PycharmProjects/the-library/hooks/claude/code-intel-router-pretooluse.mjs"
+            "command": "node /Users/davidandrews/PycharmProjects/the-library/hooks/claude/code-intel-task-inject-pretooluse.mjs"
           }
         ]
       }

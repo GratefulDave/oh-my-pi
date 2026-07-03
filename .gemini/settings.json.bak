@@ -43,6 +43,9 @@
       "args": [
         "/Users/davidandrews/PycharmProjects/the-library/tools/codemap/server.mjs"
       ]
+    },
+    "codebase-memory": {
+      "command": "codebase-memory-mcp"
     }
   },
   "hooks": {

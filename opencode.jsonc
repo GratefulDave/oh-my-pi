@@ -73,6 +73,14 @@
       ],
       "enabled": true,
       "_managed_by": "library"
+    },
+    "codebase-memory": {
+      "type": "local",
+      "command": [
+        "codebase-memory-mcp"
+      ],
+      "enabled": true,
+      "_managed_by": "library"
     }
   }
 }

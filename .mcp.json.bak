@@ -1,26 +1,15 @@
 {
   "mcpServers": {
-    "codemap": {
-      "_managed_by": "library",
-      "command": "node",
-      "args": [
-        "/Users/davidandrews/PycharmProjects/the-library/tools/codemap/server.mjs"
-      ]
-    },
-    "ast-grep": {
-      "_managed_by": "library",
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/ast-grep/ast-grep-mcp",
-        "ast-grep-server"
-      ]
-    },
-    "grep-app": {
-      "_managed_by": "library"
-    },
     "context7": {
       "_managed_by": "library"
+    },
+    "chrome-devtools": {
+      "_managed_by": "library",
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ]
     },
     "context-mode": {
       "_managed_by": "library",
@@ -46,17 +35,24 @@
         "https://mcp.linear.app/mcp"
       ]
     },
-    "chrome-devtools": {
+    "grep-app": {
+      "_managed_by": "library"
+    },
+    "ast-grep": {
       "_managed_by": "library",
-      "command": "npx",
+      "command": "uvx",
       "args": [
-        "-y",
-        "chrome-devtools-mcp@latest"
+        "--from",
+        "git+https://github.com/ast-grep/ast-grep-mcp",
+        "ast-grep-server"
       ]
     },
-    "codebase-memory": {
+    "codemap": {
       "_managed_by": "library",
-      "command": "codebase-memory-mcp"
+      "command": "node",
+      "args": [
+        "/Users/davidandrews/PycharmProjects/the-library/tools/codemap/server.mjs"
+      ]
     }
   }
 }
