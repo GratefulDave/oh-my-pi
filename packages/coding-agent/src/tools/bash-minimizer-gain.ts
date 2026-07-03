@@ -1060,10 +1060,7 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 		case "prisma":
 			return true; // js_tools::supports: program in SUPPORTED_TOOLS
 		case "npx":
-			return (
-				subIs(subcommand, ["tsc", "eslint", "biome", "jest", "vitest", "playwright"]) ||
-				subIs(subcommand, ["tsc", "eslint", "prisma", "prettier", "next"])
-			);
+			return subcommand !== undefined;
 		case "pnpm":
 			if (subcommand === "dlx") return true;
 			return subIs(subcommand, PKG_SUBCOMMANDS);
@@ -1078,6 +1075,7 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 		case "brew":
 		case "composer":
 		case "poetry":
+			return subIs(subcommand, PKG_SUBCOMMANDS);
 		case "env":
 		case "log":
 		case "deps":
