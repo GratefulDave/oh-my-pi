@@ -703,6 +703,8 @@ function commandWrapperInvokesMutator(tokens: string[]): boolean {
 }
 
 function segmentUnsafeForChain(tokens: string[]): boolean {
+	const program = rawSegmentProgram(tokens);
+	if (program?.startsWith("(") && program.endsWith(")")) return true;
 	if (
 		tokens.some(
 			token =>
@@ -724,7 +726,7 @@ function segmentUnsafeForChain(tokens: string[]): boolean {
 	) {
 		return true;
 	}
-	return isNativeOpaqueChainWord(rawSegmentProgram(tokens));
+	return isNativeOpaqueChainWord(program);
 }
 
 function isNativeOpaqueChainWord(program: string | undefined): boolean {
