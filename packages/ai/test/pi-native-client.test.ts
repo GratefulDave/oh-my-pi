@@ -47,13 +47,28 @@ function stalledBody(bytes: Uint8Array[] = []): ReadableStream<Uint8Array> {
 	});
 }
 
+// These pi-native stream tests intentionally exercise the real idle-timeout watchdog
+// through a Response body; fake timers do not drive Bun's ReadableStream scheduling
+// the same way as the platform clock.
 function delayedBody(chunks: Array<{ atMs: number; bytes: Uint8Array }>): ReadableStream<Uint8Array> {
 	return new ReadableStream<Uint8Array>({
-		start(controller) {
-			for (const chunk of chunks) {
-				setTimeout(() => controller.enqueue(chunk.bytes), chunk.atMs);
+		async start(controller) {
+			let previousAtMs = 0;
+			try {
+				for (const chunk of chunks) {
+					const delayMs = chunk.atMs - previousAtMs;
+					if (delayMs > 0) await Bun.sleep(delayMs);
+					controller.enqueue(chunk.bytes);
+					previousAtMs = chunk.atMs;
+				}
+				controller.close();
+			} catch (error) {
+				try {
+					controller.error(error);
+				} catch {
+					// The stream may already be cancelled by the timeout path under test.
+				}
 			}
-			setTimeout(() => controller.close(), Math.max(...chunks.map(chunk => chunk.atMs)) + 1);
 		},
 	});
 }
@@ -335,9 +350,9 @@ describe("streamPiNative event flow", () => {
 		const final = baseAssistant({ content: [{ type: "text", text: "hello world" }] });
 		const chunks = [
 			{ atMs: 0, bytes: sseEventBytes({ type: "start", partial: baseAssistant() }) },
-			{ atMs: 15, bytes: sseEventBytes({ type: "text_delta", contentIndex: 0, delta: "hello", partial: final }) },
-			{ atMs: 35, bytes: sseEventBytes({ type: "text_delta", contentIndex: 0, delta: " world", partial: final }) },
-			{ atMs: 55, bytes: sseEventBytes({ type: "done", reason: "stop", message: final }) },
+			{ atMs: 20, bytes: sseEventBytes({ type: "text_delta", contentIndex: 0, delta: "hello", partial: final }) },
+			{ atMs: 90, bytes: sseEventBytes({ type: "text_delta", contentIndex: 0, delta: " world", partial: final }) },
+			{ atMs: 160, bytes: sseEventBytes({ type: "done", reason: "stop", message: final }) },
 		];
 		const fetchImpl: FetchImpl = (async () =>
 			new Response(delayedBody(chunks), {
@@ -348,8 +363,8 @@ describe("streamPiNative event flow", () => {
 		const stream = streamPiNative(fakeModel(), baseContext, {
 			apiKey: "k",
 			fetch: fetchImpl,
-			streamFirstEventTimeoutMs: 40,
-			streamIdleTimeoutMs: 30,
+			streamFirstEventTimeoutMs: 500,
+			streamIdleTimeoutMs: 120,
 		});
 
 		const result = await stream.result();
@@ -399,8 +414,10 @@ describe("streamPiNative event flow", () => {
 
 	it("forwards caller aborts to the underlying fetch signal", async () => {
 		const captured: { signal?: AbortSignal } = {};
+		const fetchStarted = Promise.withResolvers<void>();
 		const fetchImpl: FetchImpl = (async (_input, init) => {
 			captured.signal = init?.signal ?? undefined;
+			fetchStarted.resolve();
 			return new Response(stalledBody(), { status: 200, headers: { "Content-Type": "text/event-stream" } });
 		}) as FetchImpl;
 		const controller = new AbortController();
@@ -410,7 +427,7 @@ describe("streamPiNative event flow", () => {
 			signal: controller.signal,
 		});
 
-		await Bun.sleep(0);
+		await fetchStarted.promise;
 		expect(captured.signal?.aborted).toBe(false);
 		controller.abort(new Error("caller aborted"));
 
