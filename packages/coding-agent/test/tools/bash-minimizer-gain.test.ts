@@ -280,6 +280,7 @@ describe("isBashCommandMinimizerEligible", () => {
 	test("native-opaque chain segments are ineligible", () => {
 		expect(isBashCommandMinimizerEligible("time git status && echo done", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("(cd sub && make) ; git status", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("(echo) ; git status", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("if true; then echo ok; fi ; git status", [], [])).toBe(false);
 	});
 	test("unsafe chain segments are ineligible", () => {
