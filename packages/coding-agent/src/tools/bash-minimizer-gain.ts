@@ -715,7 +715,13 @@ function segmentUnsafeForChain(tokens: string[]): boolean {
 	) {
 		return true;
 	}
-	if (tokens.some(token => token.includes("(") || token.includes(")") || token.includes("{") || token.includes("}"))) {
+	if (
+		tokens.some(token => {
+			if (token === "{" || token === "}") return true;
+			if (token.startsWith("(") && !token.includes(")")) return true;
+			return token.endsWith(")") && !token.includes("(");
+		})
+	) {
 		return true;
 	}
 	return isNativeOpaqueChainWord(rawSegmentProgram(tokens));

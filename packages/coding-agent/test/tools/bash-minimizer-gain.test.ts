@@ -272,6 +272,11 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("alias git=hub ; git status", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("command exec >out ; git status", [], [])).toBe(false);
 	});
+	test("literal grouping syntax inside chain arguments stays eligible", () => {
+		expect(isBashCommandMinimizerEligible("echo '(prep)' && git status", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("rg 'foo(bar)' ; git status", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("echo '{prep}' && git status", [], [])).toBe(true);
+	});
 	test("native-opaque chain segments are ineligible", () => {
 		expect(isBashCommandMinimizerEligible("time git status && echo done", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("(cd sub && make) ; git status", [], [])).toBe(false);
