@@ -54,11 +54,7 @@ interface OmpSettings {
 	[key: string]: unknown;
 }
 
-interface ExtensionAPIWithSessionOverrides extends ExtensionAPI {
-	overrideModelRoles?: (roles: Record<string, string>) => void;
-	replaceModelRoles?: (roles: Record<string, string>) => void;
-	overrideEnabledModels?: (patterns: string[] | null) => void;
-}
+type ExtensionAPIWithSessionOverrides = ExtensionAPI;
 
 const DEFAULT_PROFILE_NAME = "default";
 const PM_PROFILE_FLAG = "pm-profile";
@@ -571,12 +567,6 @@ function resolveModel(ctx: ExtensionContext, id: string): Model | undefined {
 			const hit = ctx.modelRegistry.find(p, modelId);
 			if (hit) return hit;
 		}
-	}
-	const canonical = ctx.modelRegistry.resolveCanonicalModel(id);
-	if (canonical) return canonical;
-	if (typeof ctx.modelRegistry.getCanonicalVariants === "function") {
-		const variants = ctx.modelRegistry.getCanonicalVariants(id);
-		if (variants.length > 0 && variants[0].model) return variants[0].model;
 	}
 	return ctx.modelRegistry
 		.getAll()

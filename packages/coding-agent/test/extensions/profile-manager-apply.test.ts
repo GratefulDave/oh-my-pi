@@ -1,6 +1,7 @@
+import type { Mock } from "bun:test";
 import { describe, expect, it, mock } from "bun:test";
 import type { Model } from "@oh-my-pi/pi-ai";
-import { applyProfile } from "../../../../.omp/extensions/profile-manager/index.ts";
+import { applyProfile } from "../../../../.omp/extensions/profile-manager/index";
 
 // ── Stubs ────────────────────────────────────────────────────────────────────
 
@@ -9,11 +10,11 @@ function makeModel(provider: string, id: string): Model {
 }
 
 interface ApiCallLog {
-	replaceModelRoles: ReturnType<typeof mock>;
-	overrideEnabledModels: ReturnType<typeof mock>;
-	overrideModelRoles: ReturnType<typeof mock>;
-	setModel: ReturnType<typeof mock>;
-	setThinkingLevel: ReturnType<typeof mock>;
+	replaceModelRoles: Mock<() => void>;
+	overrideEnabledModels: Mock<() => void>;
+	overrideModelRoles: Mock<() => void>;
+	setModel: Mock<() => void>;
+	setThinkingLevel: Mock<() => void>;
 }
 
 function makeStubApi(log: ApiCallLog) {
