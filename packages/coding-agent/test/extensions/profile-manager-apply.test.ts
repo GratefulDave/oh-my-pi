@@ -136,10 +136,15 @@ describe("profile-manager applyProfile", () => {
 			const api = makeStubApi(log);
 			const ctx = makeStubCtx([]);
 
-			await applyProfile(api as never, ctx as never, {
-				modelRoles: { default: "ag/claude-sonnet-4-6:auto" },
-				enabledModels: ["ag/*"],
-			}, { switchModel: false });
+			await applyProfile(
+				api as never,
+				ctx as never,
+				{
+					modelRoles: { default: "ag/claude-sonnet-4-6:auto" },
+					enabledModels: ["ag/*"],
+				},
+				{ switchModel: false },
+			);
 
 			expect(log.replaceModelRoles).toHaveBeenCalledTimes(1);
 			expect(log.overrideEnabledModels).toHaveBeenCalledTimes(1);
