@@ -271,6 +271,10 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("echo prep\ngit status", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("git status\nexec >out", [], [])).toBe(false);
 	});
+	test("unquoted shell comments terminate chain scanning", () => {
+		expect(isBashCommandMinimizerEligible("echo ok # ; git status", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("git status # && exec >out", [], [])).toBe(true);
+	});
 	test("piped segments do not suppress later eligible chain segments", () => {
 		expect(isBashCommandMinimizerEligible("ls | head -5 && git status", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("git status && ls | head -5", [], [])).toBe(true);
