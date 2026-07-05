@@ -3,7 +3,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { resetSettingsForTest, Settings, type ShellMinimizerSettings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { buildMinimizerOptions, executeBash } from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
+import {
+	buildMinimizerOptions,
+	executeBash,
+	isUserShellCommandWrapped,
+} from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
 import { DEFAULT_MAX_BYTES } from "@oh-my-pi/pi-coding-agent/session/streaming-output";
 import * as shellSnapshot from "@oh-my-pi/pi-coding-agent/utils/shell-snapshot";
 import type { Shell } from "@oh-my-pi/pi-natives";
@@ -127,6 +131,28 @@ describe("executeBash", () => {
 			sourceOutlineLevel: "aggressive",
 			legacyFilters: true,
 		});
+	});
+
+	it("does not treat bash user-shell commands as wrapped", () => {
+		vi.spyOn(Settings.prototype, "getShellConfig").mockReturnValue({
+			shell: "/bin/bash",
+			args: ["-c"],
+			env: { PATH: Bun.env.PATH ?? "", HOME: tempDir, SHELL: "/bin/bash" },
+			prefix: undefined,
+		});
+
+		expect(isUserShellCommandWrapped(Settings.instance)).toBe(false);
+	});
+
+	it("treats non-bash user-shell commands as wrapped", () => {
+		vi.spyOn(Settings.prototype, "getShellConfig").mockReturnValue({
+			shell: "/bin/zsh",
+			args: ["-c"],
+			env: { PATH: Bun.env.PATH ?? "", HOME: tempDir, SHELL: "/bin/zsh" },
+			prefix: undefined,
+		});
+
+		expect(isUserShellCommandWrapped(Settings.instance)).toBe(true);
 	});
 	it("returns non-zero exit codes without cancellation", async () => {
 		const result = await executeBash("exit 7", { cwd: tempDir, timeout: 5000 });

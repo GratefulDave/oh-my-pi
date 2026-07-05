@@ -143,6 +143,13 @@ describe("bash minimizer gain writer", () => {
 		expect(inferBashMinimizerMissedFilter("sudo -A git status")).toBe("missed");
 	});
 
+	test("returns missed for unsupported exec flags", () => {
+		expect(inferBashMinimizerMissedFilter("exec -z git status")).toBe("missed");
+		expect(inferBashMinimizerMissedFilter("exec -cl git status")).toBe("missed");
+		expect(inferBashMinimizerMissedFilter("exec -a git-alias git status")).toBe("git");
+		expect(inferBashMinimizerMissedFilter("exec -- git status")).toBe("git");
+	});
+
 	test("handles quoted env values containing whitespace", () => {
 		expect(
 			inferBashMinimizerMissedFilter("NODE_OPTIONS='--max-old-space-size=4096 --trace-warnings' pnpm test"),

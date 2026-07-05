@@ -330,11 +330,23 @@ function detectProgramAndSubcommandFromTokens(
 			idx++;
 		} else if (token === "exec") {
 			idx++;
-			// -a NAME, -c, -l take no separate operand besides -a's argument
-			while (idx < tokens.length && tokens[idx]!.startsWith("-")) {
+			while (idx < tokens.length) {
 				const opt = tokens[idx]!;
-				if (opt === "-a" && idx + 1 < tokens.length) idx++; // -a consumes next token
-				idx++;
+				if (opt === "--") {
+					idx++;
+					break;
+				}
+				if (opt === "-c" || opt === "-l") {
+					idx++;
+					continue;
+				}
+				if (opt === "-a") {
+					if (idx + 1 >= tokens.length) return null;
+					idx += 2;
+					continue;
+				}
+				if (opt.startsWith("-")) return null;
+				break;
 			}
 		} else if (token === "time") {
 			idx++;
