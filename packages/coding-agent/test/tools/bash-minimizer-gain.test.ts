@@ -271,6 +271,10 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("echo prep\ngit status", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("git status\nexec >out", [], [])).toBe(false);
 	});
+	test("unquoted shell comments terminate chain scanning", () => {
+		expect(isBashCommandMinimizerEligible("echo ok # ; git status", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("git status # && exec >out", [], [])).toBe(true);
+	});
 	test("piped segments do not suppress later eligible chain segments", () => {
 		expect(isBashCommandMinimizerEligible("ls | head -5 && git status", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("git status && ls | head -5", [], [])).toBe(true);
@@ -356,6 +360,11 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("hadolint Dockerfile", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("yamllint .", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("ping6 example.com", [], [])).toBe(true);
+	});
+	test("yadm falls back to TOML pipeline eligibility when built-in allowlist has no match", () => {
+		expect(isBashCommandMinimizerEligible("yadm config --list", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("yadm", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("git", [], [])).toBe(false);
 	});
 	test("package manager subcommands mirror native package supports", () => {
 		expect(isBashCommandMinimizerEligible("npm install", [], [])).toBe(true);

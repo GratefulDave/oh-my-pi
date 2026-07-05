@@ -75,10 +75,11 @@ export async function appendBashMinimizerGainRecord(input: BashMinimizerGainInpu
 }
 
 /**
- * Shell-aware tokenizer: splits `command` on unquoted whitespace and
- * detects shell operators (`|`, `&`, `;`). Returns token strings; operator
- * tokens are the single characters `|`, `&`, or `;`. Backslash-escaped
- * spaces are treated as word characters, not delimiters.
+ * Shell-aware tokenizer: splits `command` on unquoted whitespace,
+ * ignores unquoted shell comments, and detects shell operators (`|`, `&`,
+ * `;`, newlines). Returns token strings; operator tokens are the single
+ * characters `|`, `&`, `;`, `\n`, or `\r`. Backslash-escaped spaces are
+ * treated as word characters, not delimiters.
  *
  * fd-dup redirections (`2>&1`, `>&2`, `&>file`, `&>>file`) are treated as
  * word characters, not shell operators, so `cmd 2>&1` is classified as a
@@ -93,6 +94,10 @@ function shellTokens(command: string): string[] {
 		while (i < len && (command[i] === " " || command[i] === "\t")) i++;
 		if (i >= len) break;
 		const ch0 = command[i];
+		if (ch0 === "#") {
+			while (i < len && command[i] !== "\n" && command[i] !== "\r") i++;
+			continue;
+		}
 		// unquoted shell operators become single-character tokens.
 		// Exception: `&` followed immediately by `>` is a redirect prefix (`&>`, `&>>`),
 		// not the shell AND/background operator — treat it as the start of a word token.
@@ -960,7 +965,6 @@ const CONTAINER_SUBCOMMANDS = [
 function supportsProgram(program: string, subcommand?: string): boolean {
 	switch (program) {
 		case "git":
-		case "yadm":
 			return subIs(subcommand, [
 				"status",
 				"diff",
@@ -1219,6 +1223,7 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 		// --- TOML-defined pipeline filters (crates/pi-shell/src/minimizer/defs/) ---
 		// Programs with a TOML def that has no match_subcommand gate — all subcommands
 		// are supported by the pipeline registry.
+		case "yadm":
 		case "make":
 		case "ansible":
 		case "ansible-playbook":
