@@ -6,6 +6,12 @@
 
 - Added bash minimizer gain telemetry (`shellMinimizer.gainTelemetry`): when enabled (default **off**), appends JSONL records to `~/.omp/agent/minimizer-gain.jsonl` for every bash execution — `kind:"saved"` when the shell minimizer compressed output, `kind:"missed"` when it did not. Records include `sessionId`, `cwd`, `command`, `filter`, `inputBytes`, `outputBytes`, `exitCode`, and `timestamp`. Off by default; the setting description documents that the raw command string is recorded verbatim and may contain credentials ([#3691](https://github.com/can1357/oh-my-pi/pull/3691)).
 
+## [16.3.8] - 2026-07-05
+
+### Fixed
+
+- Fixed the browser tool silently launching without its Puppeteer stealth patch: the patch was keyed to `puppeteer-core@25.1.0` while the resolved dependency had drifted to `25.3.0`, so Bun skipped it and Chrome ran with the `Runtime.enable` automation tell re-enabled. Regenerated the stealth patch against 25.3.0 and pinned `puppeteer-core` so the exact-version patch cannot silently deactivate on future drift.
+
 ## [16.3.7] - 2026-07-05
 
 ### Added
