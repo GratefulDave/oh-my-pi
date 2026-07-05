@@ -473,6 +473,66 @@ describe("OpenCode Antigravity fetch bridge", () => {
 		expect(sawSignal).toBe(true);
 	});
 
+	it("normalizes Request-extracted Google config tool schemas before upstream fetch", async () => {
+		let requestedInput: string | URL | Request | undefined;
+		let requestedBody: unknown;
+		const fetch = createBridgeFetch(async (input, init) => {
+			requestedInput = input;
+			requestedBody = JSON.parse(String(init?.body));
+			return new Response("{}", { status: 200 });
+		});
+		const request = new Request(
+			"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
+			{
+				method: "POST",
+				body: JSON.stringify({
+					config: {
+						tools: [
+							{
+								functionDeclarations: [
+									{
+										name: "bash",
+										parametersJsonSchema: {
+											type: "object",
+											properties: {
+												env: {
+													type: "object",
+													propertyNames: { type: "string", pattern: "^[A-Z_]+$" },
+													additionalProperties: { type: "string" },
+												},
+											},
+											required: ["env"],
+											additionalProperties: false,
+										},
+									},
+								],
+							},
+						],
+					},
+				}),
+			},
+		);
+
+		await fetch(request);
+
+		const body = requestedBody as {
+			config?: { tools?: Array<{ functionDeclarations?: Array<Record<string, unknown>> }> };
+		};
+		const declaration = body.config?.tools?.[0]?.functionDeclarations?.[0];
+		expect(requestedInput).toBe(request.url);
+		expect(declaration?.parametersJsonSchema).toBeUndefined();
+		expect(declaration?.parameters).toEqual({
+			type: "object",
+			properties: {
+				env: {
+					type: "object",
+					properties: {},
+				},
+			},
+			required: ["env"],
+		});
+	});
+
 	it("rewrites Google parametersJsonSchema tools to legacy parameters before upstream fetch", async () => {
 		const credentials = { refresh: "refresh", access: "access", expires: Date.now() + 60_000 };
 		let requestedBody: unknown;

@@ -3,8 +3,7 @@ import * as path from "node:path";
 import { loadExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 
 const extensionPath =
-	process.argv[2] ??
-	path.join(os.homedir(), ".omp", "agent", "extensions", "profile-manager", "index.js");
+	process.argv[2] ?? path.join(os.homedir(), ".omp", "agent", "extensions", "profile-manager", "index.js");
 
 const result = await loadExtensions([extensionPath], process.cwd());
 if (result.errors.length > 0) {

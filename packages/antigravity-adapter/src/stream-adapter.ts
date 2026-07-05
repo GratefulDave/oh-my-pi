@@ -111,6 +111,10 @@ function normalizeToolSchemas(body: JsonObject): boolean {
 	if (isJsonObject(request)) {
 		changed = normalizeToolList(request.tools) || changed;
 	}
+	const config = body.config;
+	if (isJsonObject(config)) {
+		changed = normalizeToolList(config.tools) || changed;
+	}
 	return changed;
 }
 
@@ -171,13 +175,16 @@ async function requestToInit(
 	return [input.url, nextInit];
 }
 
-export function createBridgeFetch(upstreamFetch: FetchImpl): FetchImpl {
+export function createBridgeFetch(upstreamFetch: LoaderResult["fetch"]): FetchImpl {
 	return async (input, init) => {
 		if (input instanceof Request) {
 			const [url, nextInit] = await requestToInit(input, init);
-			return upstreamFetch(url, nextInit);
+			return upstreamFetch(url, normalizeBodyForUpstream(nextInit));
 		}
-		return upstreamFetch(input, stripApiKeyFromInit(init));
+		return upstreamFetch(
+			input instanceof URL ? input.toString() : input,
+			normalizeBodyForUpstream(stripApiKeyFromInit(init)),
+		);
 	};
 }
 
