@@ -134,6 +134,7 @@ describe("executeBash", () => {
 	});
 
 	it("does not treat bash user-shell commands as wrapped", () => {
+		Settings.instance.set("shellPath", "/bin/bash");
 		vi.spyOn(Settings.prototype, "getShellConfig").mockReturnValue({
 			shell: "/bin/bash",
 			args: ["-c"],
@@ -145,10 +146,14 @@ describe("executeBash", () => {
 	});
 
 	it("treats non-bash user-shell commands as wrapped", () => {
+		const fakeShell = path.join(tempDir, "fake-zsh");
+		fs.writeFileSync(fakeShell, "#!/bin/sh\nexit 0\n");
+		fs.chmodSync(fakeShell, 0o755);
+		Settings.instance.set("shellPath", fakeShell);
 		vi.spyOn(Settings.prototype, "getShellConfig").mockReturnValue({
-			shell: "/bin/zsh",
+			shell: fakeShell,
 			args: ["-c"],
-			env: { PATH: Bun.env.PATH ?? "", HOME: tempDir, SHELL: "/bin/zsh" },
+			env: { PATH: Bun.env.PATH ?? "", HOME: tempDir, SHELL: fakeShell },
 			prefix: undefined,
 		});
 
