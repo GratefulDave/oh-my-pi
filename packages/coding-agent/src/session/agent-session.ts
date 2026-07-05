@@ -193,7 +193,7 @@ import {
 } from "../eval/py/executor";
 import { disposeRubyKernelSessionsByOwner } from "../eval/rb/executor";
 import { defaultEvalSessionId } from "../eval/session-id";
-import { type BashResult, executeBash as executeBashCommand } from "../exec/bash-executor";
+import { type BashResult, executeBash as executeBashCommand, isUserShellCommandWrapped } from "../exec/bash-executor";
 import type { TtsrManager, TtsrMatchContext } from "../export/ttsr";
 import type { LoadedCustomCommand } from "../extensibility/custom-commands";
 import type { CustomTool, CustomToolContext } from "../extensibility/custom-tools/types";
@@ -13880,9 +13880,10 @@ export class AgentSession {
 
 			this.recordBashResult(command, result, options);
 			if (gainTelemetry && this.settings.get("shellMinimizer.enabled")) {
-				// Skip missed recording for user-shell wrapped commands — the minimizer only
-				// sees the shell wrapper (e.g. zsh -c <command>), not the original command.
-				const isUserShellWrapped = options?.useUserShell === true;
+				// Skip missed recording only when executeBash wraps the original command
+				// in a non-bash user shell; bash user-shell commands still go straight to
+				// the native minimizer as the original command.
+				const isUserShellWrapped = options?.useUserShell === true && isUserShellCommandWrapped(this.settings);
 				const eligibilityConfig = await resolveBashMinimizerEligibilityConfig({
 					settingsPath: this.settings.get("shellMinimizer.settingsPath"),
 					only: this.settings.get("shellMinimizer.only"),

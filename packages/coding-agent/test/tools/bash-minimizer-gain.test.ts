@@ -143,6 +143,13 @@ describe("bash minimizer gain writer", () => {
 		expect(inferBashMinimizerMissedFilter("sudo -A git status")).toBe("missed");
 	});
 
+	test("returns missed for unsupported exec flags", () => {
+		expect(inferBashMinimizerMissedFilter("exec -z git status")).toBe("missed");
+		expect(inferBashMinimizerMissedFilter("exec -cl git status")).toBe("missed");
+		expect(inferBashMinimizerMissedFilter("exec -a git-alias git status")).toBe("git");
+		expect(inferBashMinimizerMissedFilter("exec -- git status")).toBe("git");
+	});
+
 	test("handles quoted env values containing whitespace", () => {
 		expect(
 			inferBashMinimizerMissedFilter("NODE_OPTIONS='--max-old-space-size=4096 --trace-warnings' pnpm test"),
@@ -160,6 +167,13 @@ describe("bash minimizer gain writer", () => {
 		expect(inferBashMinimizerMissedFilter("env CI=1 pnpm test")).toBe("pnpm");
 		expect(inferBashMinimizerMissedFilter("env -u FOO bun test")).toBe("bun");
 		expect(inferBashMinimizerMissedFilter("env FOO=bar BAR=baz node index.js")).toBe("node");
+	});
+
+	test("handles time long-option operands", () => {
+		expect(inferBashMinimizerMissedFilter("time --format '%E' git status")).toBe("git");
+		expect(inferBashMinimizerMissedFilter("time --output t git status")).toBe("git");
+		expect(inferBashMinimizerMissedFilter("time --format='%E' git status")).toBe("git");
+		expect(inferBashMinimizerMissedFilter("time --unknown git status")).toBe("missed");
 	});
 
 	test("treats quoted shell operators as word characters, not compound", () => {
@@ -261,6 +275,7 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("ls | head -5 && git status", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("git status && ls | head -5", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("ls | head -5 && echo done", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("git status | cat && unknown-tool", [], [])).toBe(true);
 	});
 	test("chain utilities use raw segment program names", () => {
 		expect(isBashCommandMinimizerEligible("/bin/echo ok && /bin/printf done", [], [])).toBe(false);
@@ -286,6 +301,9 @@ describe("isBashCommandMinimizerEligible", () => {
 	test("unsafe chain segments are ineligible", () => {
 		expect(isBashCommandMinimizerEligible("echo $(pwd) ; git status", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("cat <<EOF ; git status", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("cat <<<ok ; git status", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("echo 'literal << text' ; git status", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("cat <<<$(pwd) ; git status", [], [])).toBe(false);
 	});
 	test("background commands are always ineligible (mirrors native MinimizerMode::None)", () => {
 		expect(isBashCommandMinimizerEligible("git status &", [], [])).toBe(false);
@@ -333,6 +351,11 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("helm repo update", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("helm search repo bitnami", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("helm history release-name", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("shellcheck script.sh", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("markdownlint README.md", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("hadolint Dockerfile", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("yamllint .", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("ping6 example.com", [], [])).toBe(true);
 	});
 	test("package manager subcommands mirror native package supports", () => {
 		expect(isBashCommandMinimizerEligible("npm install", [], [])).toBe(true);
@@ -340,6 +363,7 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("composer require symfony/console", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("npm --version", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("pnpm nx build", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("yarn nx build", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("brew", [], [])).toBe(false);
 	});
 	test("npx fallback captures unknown-tool invocations", () => {
@@ -381,6 +405,32 @@ describe("isBashCommandMinimizerEligible", () => {
 			expect(isBashCommandMinimizerEligible("git status", config.only, config.except, config)).toBe(false);
 			expect(isBashCommandMinimizerEligible("custom-tool summarize", [], [], config)).toBe(false);
 			expect(isBashCommandMinimizerEligible("custom-tool other", [], [], config)).toBe(false);
+		} finally {
+			fs.rmSync(settingsPath, { force: true });
+		}
+	});
+	test("invalid user pipeline regex disables all user pipeline eligibility", async () => {
+		const settingsPath = path.join(os.tmpdir(), `omp-minimizer-invalid-settings-${Date.now()}-${Math.random()}.toml`);
+		fs.writeFileSync(
+			settingsPath,
+			[
+				"schema_version = 1",
+				"[filters.custom]",
+				'match_command = "^custom-tool$"',
+				"[filters.bad]",
+				'match_command = "["',
+			].join("\n"),
+		);
+		try {
+			const config = await resolveBashMinimizerEligibilityConfig({
+				settingsPath,
+				only: [],
+				except: [],
+				maxCaptureBytes: 4096,
+				legacyFilters: false,
+				enabled: true,
+			});
+			expect(isBashCommandMinimizerEligible("custom-tool summarize", [], [], config)).toBe(false);
 		} finally {
 			fs.rmSync(settingsPath, { force: true });
 		}

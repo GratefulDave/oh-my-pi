@@ -121,7 +121,7 @@ describe("getGainDashboardStats", () => {
 		expect(stats.overall.savedTokens).toBe(0);
 		expect(stats.overall.hits).toBe(0);
 		expect(stats.projects).toEqual([]);
-		expect(stats.unparsedCommands).toEqual([]);
+		expect(stats.missedCommands).toEqual([]);
 	});
 
 	it("aggregates saved minimizer records into totals", async () => {
@@ -160,7 +160,7 @@ describe("getGainDashboardStats", () => {
 		expect(stats.topFilters[0]!.hits).toBe(2);
 	});
 
-	it("collects unparsed commands aggregated by full command string", async () => {
+	it("collects missed commands aggregated by full command string", async () => {
 		const now = new Date().toISOString();
 		await writeMinimizerJSONL([
 			{
@@ -197,11 +197,11 @@ describe("getGainDashboardStats", () => {
 
 		const stats = await getGainDashboardStats();
 		// Sorted by hits descending
-		expect(stats.unparsedCommands).toHaveLength(2);
-		expect(stats.unparsedCommands[0]!.command).toBe("git status --short");
-		expect(stats.unparsedCommands[0]!.hits).toBe(2);
-		expect(stats.unparsedCommands[1]!.command).toBe("bun run check:types");
-		expect(stats.unparsedCommands[1]!.hits).toBe(1);
+		expect(stats.missedCommands).toHaveLength(2);
+		expect(stats.missedCommands[0]!.command).toBe("git status --short");
+		expect(stats.missedCommands[0]!.hits).toBe(2);
+		expect(stats.missedCommands[1]!.command).toBe("bun run check:types");
+		expect(stats.missedCommands[1]!.hits).toBe(1);
 	});
 
 	it("project filter scopes minimizer records", async () => {

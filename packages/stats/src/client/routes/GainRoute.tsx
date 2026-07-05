@@ -7,10 +7,10 @@ import { formatBytes, formatCompact, formatInteger, formatPercent } from "../dat
 import { useResource } from "../data/useResource";
 import type {
 	GainDashboardStats,
+	GainMissedCommand,
 	GainSourceTotals,
 	GainTimeSeriesPoint,
 	GainTopFilter,
-	GainUnparsedCommand,
 	TimeRange,
 } from "../types";
 import { AsyncBoundary, DataTable, Panel } from "../ui";
@@ -45,7 +45,7 @@ export function GainRoute({ active, range, refreshTrigger }: GainRouteProps) {
 						<GainBySourcePanel bySource={stats.bySource} />
 						<GainTimeSeriesPanel timeSeries={stats.timeSeries} />
 						<GainTopFiltersPanel topFilters={stats.topFilters} />
-						<GainUnparsedCommandsPanel unparsedCommands={stats.unparsedCommands} />
+						<GainMissedCommandsPanel missedCommands={stats.missedCommands} />
 					</>
 				)}
 			</AsyncBoundary>
@@ -292,13 +292,13 @@ function GainTopFiltersPanel({ topFilters }: { topFilters: GainTopFilter[] }) {
 	);
 }
 // ---------------------------------------------------------------------------
-// Unparsed commands table — the tuning surface
+// Missed commands table — the tuning surface
 // ---------------------------------------------------------------------------
 
-const UNPARSED_COLUMNS: DataTableColumn<GainUnparsedCommand>[] = [
+const MISSED_COLUMNS: DataTableColumn<GainMissedCommand>[] = [
 	{
 		key: "command",
-		header: "Command (unparsed)",
+		header: "Command (missed)",
 		render: item => (
 			<code style={{ fontSize: "0.8em", wordBreak: "break-all", whiteSpace: "pre-wrap" }}>{item.command}</code>
 		),
@@ -317,15 +317,15 @@ const UNPARSED_COLUMNS: DataTableColumn<GainUnparsedCommand>[] = [
 	},
 ];
 
-function GainUnparsedCommandsPanel({ unparsedCommands }: { unparsedCommands: GainUnparsedCommand[] }) {
+function GainMissedCommandsPanel({ missedCommands }: { missedCommands: GainMissedCommand[] }) {
 	return (
 		<Panel
 			title="Missed Commands"
 			subtitle="Eligible commands the minimizer did not save — write a filter for the top entries"
 		>
 			<DataTable
-				columns={UNPARSED_COLUMNS}
-				data={unparsedCommands}
+				columns={MISSED_COLUMNS}
+				data={missedCommands}
 				keyExtractor={item => item.command}
 				emptyText="No missed commands in this range/project"
 			/>

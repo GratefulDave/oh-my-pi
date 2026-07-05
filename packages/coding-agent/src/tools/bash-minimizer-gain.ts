@@ -330,19 +330,47 @@ function detectProgramAndSubcommandFromTokens(
 			idx++;
 		} else if (token === "exec") {
 			idx++;
-			// -a NAME, -c, -l take no separate operand besides -a's argument
-			while (idx < tokens.length && tokens[idx]!.startsWith("-")) {
+			while (idx < tokens.length) {
 				const opt = tokens[idx]!;
-				if (opt === "-a" && idx + 1 < tokens.length) idx++; // -a consumes next token
-				idx++;
+				if (opt === "--") {
+					idx++;
+					break;
+				}
+				if (opt === "-c" || opt === "-l") {
+					idx++;
+					continue;
+				}
+				if (opt === "-a") {
+					if (idx + 1 >= tokens.length) return null;
+					idx += 2;
+					continue;
+				}
+				if (opt.startsWith("-")) return null;
+				break;
 			}
 		} else if (token === "time") {
 			idx++;
-			// -p, -o FILE, -a FILE, -f FORMAT consume operands
-			while (idx < tokens.length && tokens[idx]!.startsWith("-")) {
+			while (idx < tokens.length) {
 				const opt = tokens[idx]!;
-				if ((opt === "-o" || opt === "-a" || opt === "-f") && idx + 1 < tokens.length) idx++;
-				idx++;
+				if (opt === "--") {
+					idx++;
+					break;
+				}
+				if (opt === "-p" || opt === "--portability" || opt === "-v" || opt === "--verbose") {
+					idx++;
+					continue;
+				}
+				if (opt === "-f" || opt === "--format" || opt === "-o" || opt === "--output") {
+					if (idx + 1 >= tokens.length) return null;
+					idx += 2;
+					continue;
+				}
+				if (opt.startsWith("--format=") || opt.startsWith("--output=")) {
+					idx++;
+					continue;
+				}
+				if (opt.startsWith("-")) return null;
+				break;
 			}
 		}
 
@@ -568,18 +596,25 @@ function collectStringArray(value: unknown): string[] | undefined {
 function collectPipelineFilters(value: unknown): BashMinimizerPipelineFilter[] {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return [];
 	const filters: BashMinimizerPipelineFilter[] = [];
+	let hasInvalidRegex = false;
 	for (const raw of Object.values(value)) {
 		if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
 		const matchCommand = (raw as Record<string, unknown>).match_command;
 		if (typeof matchCommand !== "string") continue;
 		const commandRegex = compileRegex(matchCommand);
-		if (!commandRegex) continue;
+		if (!commandRegex) {
+			hasInvalidRegex = true;
+			continue;
+		}
 		const matchSubcommand = (raw as Record<string, unknown>).match_subcommand;
 		const subcommandRegex = typeof matchSubcommand === "string" ? compileRegex(matchSubcommand) : undefined;
-		if (typeof matchSubcommand === "string" && !subcommandRegex) continue;
+		if (typeof matchSubcommand === "string" && !subcommandRegex) {
+			hasInvalidRegex = true;
+			continue;
+		}
 		filters.push({ matchCommand: commandRegex, ...(subcommandRegex ? { matchSubcommand: subcommandRegex } : {}) });
 	}
-	return filters;
+	return hasInvalidRegex ? [] : filters;
 }
 
 function compileRegex(pattern: string): RegExp | undefined {
@@ -611,7 +646,7 @@ function isSegmentEligible(
 	userPipelineFilters: BashMinimizerPipelineFilter[],
 	inChain: boolean,
 ): boolean {
-	if (segmentHasPipe(tokens)) return false;
+	if (segmentHasPipe(tokens) && !inChain) return false;
 	const identity = detectProgramAndSubcommandFromTokens(tokens);
 	if (!identity) return false;
 	if (inChain && isCommonChainUtility(rawSegmentProgram(tokens))) return true;
@@ -706,14 +741,18 @@ function segmentUnsafeForChain(tokens: string[]): boolean {
 	const program = rawSegmentProgram(tokens);
 	if (program?.startsWith("(") && program.endsWith(")")) return true;
 	if (
-		tokens.some(
-			token =>
+		tokens.some(token => {
+			if (token.startsWith("<<<")) {
+				return token.includes("$(") || token.includes("`") || token.includes("<(") || token.includes(">(");
+			}
+			return (
 				token.includes("$(") ||
 				token.includes("`") ||
 				token.includes("<(") ||
 				token.includes(">(") ||
-				token.includes("<<"),
-		)
+				token.startsWith("<<")
+			);
+		})
 	) {
 		return true;
 	}
@@ -1126,6 +1165,10 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 				"eslint",
 				"biome",
 				"oxlint",
+				"shellcheck",
+				"markdownlint",
+				"hadolint",
+				"yamllint",
 			];
 			if (lintPrograms.includes(program)) return true;
 			return subcommand === undefined || ["check", "lint", "run", "format", "fmt", "typecheck"].includes(subcommand);
@@ -1149,12 +1192,14 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 		case "composer":
 			return subcommand === "require" || subIs(subcommand, PKG_SUBCOMMANDS);
 		case "npm":
-		case "yarn":
 		case "pip":
 		case "pip3":
 		case "bundle":
 		case "brew":
 		case "poetry":
+			return subIs(subcommand, PKG_SUBCOMMANDS);
+		case "yarn":
+			if (subcommand === "nx") return true;
 			return subIs(subcommand, PKG_SUBCOMMANDS);
 		case "env":
 		case "log":
@@ -1167,6 +1212,7 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 		case "pipe":
 		case "ps":
 		case "ping":
+		case "ping6":
 		case "ssh":
 		case "sops":
 			return true; // system::supports is program-only

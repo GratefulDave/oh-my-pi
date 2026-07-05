@@ -16,10 +16,10 @@ import { getTimeRangeConfig } from "./aggregator";
 import { initDb } from "./db";
 import type {
 	GainDashboardStats,
+	GainMissedCommand,
 	GainSourceTotals,
 	GainTimeSeriesPoint,
 	GainTopFilter,
-	GainUnparsedCommand,
 } from "./shared-types";
 
 const BYTES_PER_TOKEN_ESTIMATE = 4;
@@ -84,7 +84,7 @@ function matchesProject(cwd: string | undefined, project: string): boolean {
 
 interface MinimizerSets {
 	records: MinimizerRecord[];
-	unparsed: MinimizerRecord[];
+	missed: MinimizerRecord[];
 	projects: Set<string>;
 }
 
@@ -105,7 +105,7 @@ async function readMinimizerFile(): Promise<string | null> {
  */
 async function readMinimizerSets(cutoff: number | null, project: string | null): Promise<MinimizerSets> {
 	const text = await readMinimizerFile();
-	const sets: MinimizerSets = { records: [], unparsed: [], projects: new Set() };
+	const sets: MinimizerSets = { records: [], missed: [], projects: new Set() };
 	if (!text) return sets;
 
 	for (const line of text.split("\n")) {
@@ -123,9 +123,9 @@ async function readMinimizerSets(cutoff: number | null, project: string | null):
 			if (project !== null && !matchesProject(rec.cwd, project)) continue;
 
 			if (rec.kind === "missed") {
-				// Unparsed: all missed records from meaningful cwds are filter-tuning candidates.
+				// Missed records from meaningful cwds are filter-tuning candidates.
 				if (!TEMP_PATH_RE.test(rec.cwd ?? "")) {
-					sets.unparsed.push(rec);
+					sets.missed.push(rec);
 				}
 			} else {
 				sets.records.push(rec);
@@ -367,7 +367,7 @@ export async function getGainDashboardStats(
 		readSnapcompactSets(effectiveCutoff, effectiveProject),
 	]);
 
-	const { records: minimizerRecords, unparsed: unparsedRecords, projects: minimizerProjects } = minimizerSets;
+	const { records: minimizerRecords, missed: missedRecords, projects: minimizerProjects } = minimizerSets;
 	const { records: snapcompactRecords, projects: snapcompactProjects } = snapcompactSets;
 
 	const minimizerTotals = emptyTotals();
@@ -402,8 +402,8 @@ export async function getGainDashboardStats(
 	}
 	finalizeReductionPercent(minimizerTotals);
 
-	const cmdMap = new Map<string, GainUnparsedCommand>();
-	for (const rec of unparsedRecords) {
+	const cmdMap = new Map<string, GainMissedCommand>();
+	for (const rec of missedRecords) {
 		const fullKey = rec.command ?? "";
 		const existing = cmdMap.get(fullKey);
 		if (existing) {
@@ -413,7 +413,7 @@ export async function getGainDashboardStats(
 			cmdMap.set(fullKey, { command: fullKey, hits: 1, inputBytes: rec.inputBytes ?? 0 });
 		}
 	}
-	const unparsedCommands: GainUnparsedCommand[] = Array.from(cmdMap.values())
+	const missedCommands: GainMissedCommand[] = Array.from(cmdMap.values())
 		.sort((a, b) => b.hits - a.hits)
 		.slice(0, 25);
 
@@ -464,7 +464,7 @@ export async function getGainDashboardStats(
 		},
 		timeSeries,
 		topFilters,
-		unparsedCommands,
+		missedCommands,
 		project: effectiveProject,
 		projects,
 	};
