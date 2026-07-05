@@ -20,11 +20,11 @@ export { getGainDashboardStats } from "./gain-aggregator";
 export { startServer } from "./server";
 export type {
 	GainDashboardStats,
+	GainMissedCommand,
 	GainSource,
 	GainSourceTotals,
 	GainTimeSeriesPoint,
 	GainTopFilter,
-	GainUnparsedCommand,
 } from "./shared-types";
 export type {
 	AggregatedStats,

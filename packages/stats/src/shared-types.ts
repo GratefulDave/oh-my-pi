@@ -266,13 +266,13 @@ export interface GainTopFilter {
 }
 
 /**
- * A bash command that the minimizer saw but had no filter for — no parser matched.
+ * A bash command that passed minimizer eligibility but produced no savings.
  * These are the prime candidates for writing new minimizer filters.
  */
-export interface GainUnparsedCommand {
+export interface GainMissedCommand {
 	/** The actual command string (truncated to 120 chars for grouping). */
 	command: string;
-	/** Number of times this exact command was seen unparsed. */
+	/** Number of times this exact command was seen as a missed minimizer candidate. */
 	hits: number;
 	/** Total input bytes across all occurrences. */
 	inputBytes: number;
@@ -288,8 +288,8 @@ export interface GainDashboardStats {
 	timeSeries: GainTimeSeriesPoint[];
 	/** Top 10 bash minimizer filters by savedTokens. */
 	topFilters: GainTopFilter[];
-	/** Top 25 unparsed commands (no filter matched) sorted by hit count — use to write new filters. */
-	unparsedCommands: GainUnparsedCommand[];
+	/** Top 25 missed minimizer candidates sorted by hit count — use to write new filters. */
+	missedCommands: GainMissedCommand[];
 	/** Active project filter (cwd prefix), or null for all projects. */
 	project: string | null;
 	/** All distinct projects seen in the data, for the selector. */
