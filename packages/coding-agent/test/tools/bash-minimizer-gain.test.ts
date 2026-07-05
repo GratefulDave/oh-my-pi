@@ -162,6 +162,13 @@ describe("bash minimizer gain writer", () => {
 		expect(inferBashMinimizerMissedFilter("env FOO=bar BAR=baz node index.js")).toBe("node");
 	});
 
+	test("handles time long-option operands", () => {
+		expect(inferBashMinimizerMissedFilter("time --format '%E' git status")).toBe("git");
+		expect(inferBashMinimizerMissedFilter("time --output t git status")).toBe("git");
+		expect(inferBashMinimizerMissedFilter("time --format='%E' git status")).toBe("git");
+		expect(inferBashMinimizerMissedFilter("time --unknown git status")).toBe("missed");
+	});
+
 	test("treats quoted shell operators as word characters, not compound", () => {
 		expect(inferBashMinimizerMissedFilter("rg 'foo|bar'")).toBe("rg");
 		expect(inferBashMinimizerMissedFilter('grep "a;b" file.txt')).toBe("grep");
@@ -340,6 +347,7 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("composer require symfony/console", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("npm --version", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("pnpm nx build", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("yarn nx build", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("brew", [], [])).toBe(false);
 	});
 	test("npx fallback captures unknown-tool invocations", () => {

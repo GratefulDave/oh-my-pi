@@ -338,11 +338,27 @@ function detectProgramAndSubcommandFromTokens(
 			}
 		} else if (token === "time") {
 			idx++;
-			// -p, -o FILE, -a FILE, -f FORMAT consume operands
-			while (idx < tokens.length && tokens[idx]!.startsWith("-")) {
+			while (idx < tokens.length) {
 				const opt = tokens[idx]!;
-				if ((opt === "-o" || opt === "-a" || opt === "-f") && idx + 1 < tokens.length) idx++;
-				idx++;
+				if (opt === "--") {
+					idx++;
+					break;
+				}
+				if (opt === "-p" || opt === "--portability" || opt === "-v" || opt === "--verbose") {
+					idx++;
+					continue;
+				}
+				if (opt === "-f" || opt === "--format" || opt === "-o" || opt === "--output") {
+					if (idx + 1 >= tokens.length) return null;
+					idx += 2;
+					continue;
+				}
+				if (opt.startsWith("--format=") || opt.startsWith("--output=")) {
+					idx++;
+					continue;
+				}
+				if (opt.startsWith("-")) return null;
+				break;
 			}
 		}
 
@@ -1149,12 +1165,14 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 		case "composer":
 			return subcommand === "require" || subIs(subcommand, PKG_SUBCOMMANDS);
 		case "npm":
-		case "yarn":
 		case "pip":
 		case "pip3":
 		case "bundle":
 		case "brew":
 		case "poetry":
+			return subIs(subcommand, PKG_SUBCOMMANDS);
+		case "yarn":
+			if (subcommand === "nx") return true;
 			return subIs(subcommand, PKG_SUBCOMMANDS);
 		case "env":
 		case "log":
