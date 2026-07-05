@@ -965,7 +965,6 @@ const CONTAINER_SUBCOMMANDS = [
 function supportsProgram(program: string, subcommand?: string): boolean {
 	switch (program) {
 		case "git":
-		case "yadm":
 			return subIs(subcommand, [
 				"status",
 				"diff",
@@ -1224,6 +1223,7 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 		// --- TOML-defined pipeline filters (crates/pi-shell/src/minimizer/defs/) ---
 		// Programs with a TOML def that has no match_subcommand gate — all subcommands
 		// are supported by the pipeline registry.
+		case "yadm":
 		case "make":
 		case "ansible":
 		case "ansible-playbook":

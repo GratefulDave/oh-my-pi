@@ -361,6 +361,11 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("yamllint .", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("ping6 example.com", [], [])).toBe(true);
 	});
+	test("yadm falls back to TOML pipeline eligibility when built-in allowlist has no match", () => {
+		expect(isBashCommandMinimizerEligible("yadm config --list", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("yadm", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("git", [], [])).toBe(false);
+	});
 	test("package manager subcommands mirror native package supports", () => {
 		expect(isBashCommandMinimizerEligible("npm install", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("brew install jq", [], [])).toBe(true);
