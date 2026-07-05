@@ -29,7 +29,7 @@ import type {
 	ExtensionCommandContext,
 	ExtensionContext,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import { getAgentDir, resolveProfileEnv } from "@oh-my-pi/pi-utils";
+
 import { YAML } from "bun";
 
 // ── local types (inlined, no fork imports) ───────────────────────────────────
@@ -57,6 +57,10 @@ interface OmpSettings {
 type ExtensionAPIWithSessionOverrides = ExtensionAPI;
 
 const DEFAULT_PROFILE_NAME = "default";
+const PROFILE_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const WINDOWS_RESERVED_BASENAME_RE =
+	/^(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\..*)?$/i;
+
 const PM_PROFILE_FLAG = "pm-profile";
 const PM_MODEL_FLAG = "pm-model";
 const PM_THINKING_FLAG = "pm-thinking";
@@ -198,8 +202,7 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 function activeAgentDir(): string {
 	return (
 		process.env.PI_CODING_AGENT_DIR ||
-		getAgentDir() ||
-		path.join(os.homedir(), ".omp", "agent")
+		path.join(os.homedir(), process.env.PI_CONFIG_DIR || ".omp", "agent")
 	);
 }
 
@@ -349,6 +352,26 @@ function normalizeProfileName(name: string): string {
 	return normalized;
 }
 
+function normalizeProfileEnvName(profile: string | undefined): string | undefined {
+	const normalized = profile?.trim();
+	if (!normalized || normalized === DEFAULT_PROFILE_NAME) return undefined;
+	if (
+		normalized === "." ||
+		normalized === ".." ||
+		normalized.endsWith(".") ||
+		!PROFILE_NAME_RE.test(normalized) ||
+		WINDOWS_RESERVED_BASENAME_RE.test(normalized)
+	) {
+		throw new Error(
+			`Invalid OMP profile "${profile}". Profile names must match ${PROFILE_NAME_RE.source}, ` +
+				`cannot be "." or "..", cannot end with ".", and cannot be a Windows reserved device name ` +
+				`(CON, PRN, AUX, NUL, COM0-9, LPT0-9, or any of those with an extension).`,
+		);
+	}
+	return normalized;
+}
+
+
 function splitModelSelector(selector: string): {
 	id: string;
 	thinkingLevel?: string;
@@ -398,9 +421,10 @@ function resolveCliProfileName(
 function resolvePinnedOmpProfileName(
 	settings: OmpSettings,
 ): string | undefined {
-	const profileName = resolveProfileEnv(
-		process.env.OMP_PROFILE,
-		process.env.PI_PROFILE,
+	const profileName = normalizeProfileEnvName(
+		process.env.OMP_PROFILE !== undefined
+			? process.env.OMP_PROFILE
+			: process.env.PI_PROFILE,
 	);
 	if (!profileName) return undefined;
 	return getProfiles(settings)[profileName] ? profileName : undefined;

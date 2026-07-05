@@ -1,7 +1,10 @@
 import type { Mock } from "bun:test";
 import { describe, expect, it, mock } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { Model } from "@oh-my-pi/pi-ai";
-import { applyProfile } from "../../../../.omp/extensions/profile-manager/index";
+import profileManagerExtension, { applyProfile } from "../../../../.omp/extensions/profile-manager/index";
 
 // ── Stubs ────────────────────────────────────────────────────────────────────
 
@@ -53,6 +56,112 @@ function freshLog(): ApiCallLog {
 		setThinkingLevel: mock(),
 	};
 }
+
+interface CapturedCommand {
+	description?: string;
+	handler: (args: string, ctx: unknown) => unknown | Promise<unknown>;
+}
+
+async function withIsolatedAgentDir<T>(run: (agentDir: string) => T | Promise<T>): Promise<T> {
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	const previousOmpProfile = process.env.OMP_PROFILE;
+	const previousPiProfile = process.env.PI_PROFILE;
+	const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pm-extension-test-"));
+
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	delete process.env.OMP_PROFILE;
+	delete process.env.PI_PROFILE;
+	try {
+		return await run(agentDir);
+	} finally {
+		if (previousAgentDir === undefined) {
+			delete process.env.PI_CODING_AGENT_DIR;
+		} else {
+			process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+		if (previousOmpProfile === undefined) {
+			delete process.env.OMP_PROFILE;
+		} else {
+			process.env.OMP_PROFILE = previousOmpProfile;
+		}
+		if (previousPiProfile === undefined) {
+			delete process.env.PI_PROFILE;
+		} else {
+			process.env.PI_PROFILE = previousPiProfile;
+		}
+		fs.rmSync(agentDir, { recursive: true, force: true });
+	}
+}
+
+function loadProfileManagerCommand(): {
+	command: CapturedCommand;
+	cleanup: () => void;
+	messages: string[];
+} {
+	const commands = new Map<string, CapturedCommand>();
+	const messages: string[] = [];
+	const exitListenersBefore = new Set(process.listeners("exit"));
+
+	profileManagerExtension({
+		setLabel: mock(),
+		registerFlag: mock(),
+		on: mock(),
+		registerCommand: mock((name: string, command: CapturedCommand) => {
+			commands.set(name, command);
+		}),
+		sendMessage: mock((message: { content?: string }) => {
+			if (message.content !== undefined) messages.push(message.content);
+		}),
+		getFlag: mock(() => undefined),
+	} as never);
+
+	const command = commands.get("pm");
+	expect(command).toBeDefined();
+
+	return {
+		command: command!,
+		cleanup: () => {
+			for (const listener of process.listeners("exit")) {
+				if (!exitListenersBefore.has(listener)) {
+					process.removeListener("exit", listener);
+				}
+			}
+		},
+		messages,
+	};
+}
+
+describe("profile-manager extension registration", () => {
+	it("registers /pm and the list command reports the active profile list", async () => {
+		const { command, cleanup, messages } = loadProfileManagerCommand();
+
+		try {
+			await withIsolatedAgentDir(async agentDir => {
+				fs.writeFileSync(
+					path.join(agentDir, "config.yml"),
+					[
+						"activeModelProfile: plan",
+						"modelProfiles:",
+						"  plan:",
+						"    defaultThinkingLevel: high",
+						"  smol:",
+						"    defaultThinkingLevel: low",
+						"",
+					].join("\n"),
+					"utf8",
+				);
+
+				await command.handler("list", { hasUI: false });
+			});
+		} finally {
+			cleanup();
+		}
+
+		expect(messages).toEqual([
+			["Active model profile: plan", "Model profiles:", "  default", "  plan (active)", "  smol", ""].join("\n"),
+		]);
+	});
+});
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 

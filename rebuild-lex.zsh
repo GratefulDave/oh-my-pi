@@ -171,6 +171,9 @@ if [[ ( -e "$pm_bundle" || -L "$pm_bundle" ) && ! -e "$pm_index" && ! -L "$pm_in
 	printf '  profile-manager: created index.js -> profile-manager.bundle.js\n'
 fi
 
+print_step "Profile-manager installed /pm smoke test"
+bun scripts/smoke-profile-manager.ts "$pm_index"
+
 print_step "Minimizer gain installed bundle session-scope smoke test"
 bun run --filter pi-minimizer-gain smoke:installed
 
