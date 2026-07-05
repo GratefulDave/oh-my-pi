@@ -516,12 +516,11 @@ describe("OpenCode Antigravity fetch bridge", () => {
 		await fetch(request);
 
 		const body = requestedBody as {
-			config?: { tools?: Array<{ functionDeclarations?: Array<Record<string, unknown>> }> };
+			config?: { tools?: Array<{ function?: { input_schema?: Record<string, unknown> } }> };
 		};
-		const declaration = body.config?.tools?.[0]?.functionDeclarations?.[0];
+		const functionTool = body.config?.tools?.[0]?.function;
 		expect(requestedInput).toBe(request.url);
-		expect(declaration?.parametersJsonSchema).toBeUndefined();
-		expect(declaration?.parameters).toEqual({
+		expect(functionTool?.input_schema).toEqual({
 			type: "object",
 			properties: {
 				env: {
@@ -533,7 +532,7 @@ describe("OpenCode Antigravity fetch bridge", () => {
 		});
 	});
 
-	it("rewrites Google parametersJsonSchema tools to legacy parameters before upstream fetch", async () => {
+	it("rewrites Google parametersJsonSchema tools to function input schemas before upstream fetch", async () => {
 		const credentials = { refresh: "refresh", access: "access", expires: Date.now() + 60_000 };
 		let requestedBody: unknown;
 		const auth: PluginResult["auth"] = {
@@ -578,11 +577,10 @@ describe("OpenCode Antigravity fetch bridge", () => {
 			},
 		).result();
 
-		const body = requestedBody as { tools?: Array<{ functionDeclarations?: Array<Record<string, unknown>> }> };
-		const declaration = body.tools?.[0]?.functionDeclarations?.[0];
-		expect(declaration?.parametersJsonSchema).toBeUndefined();
-		expect(declaration?.parameters).toBeDefined();
-		expect(JSON.stringify(declaration?.parameters)).not.toContain("propertyNames");
+		const body = requestedBody as { tools?: Array<{ function?: { input_schema?: Record<string, unknown> } }> };
+		const functionTool = body.tools?.[0]?.function;
+		expect(functionTool?.input_schema).toBeDefined();
+		expect(JSON.stringify(functionTool?.input_schema)).not.toContain("propertyNames");
 	});
 
 	it("routes OMP Google streaming through the upstream loader fetch", async () => {

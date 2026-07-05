@@ -74,11 +74,12 @@ function buildUpstreamModelId(model: Model<Api>, reasoning?: string): string {
 }
 
 /**
- * Normalizes the serialised Google request before it enters the upstream
- * Antigravity plugin. The plugin bridges via Cloud Code Assist, whose tool
- * debug path treats `parametersJsonSchema` as a custom schema and rejects it
- * with `hasCustom=true, hasFunction=false`. Send the legacy function schema
- * field instead.
+ * Antigravity's upstream OpenCode plugin normalizes Gemini tools from function-style
+ * wrappers before it re-wraps them as Google `functionDeclarations`.
+ * OMP/Google requests arrive as `functionDeclarations[].parametersJsonSchema`;
+ * passing that shape through makes the plugin's Gemini path see
+ * `hasFunction=false, functionSchema=false` and fall back to empty schemas.
+ * Feed it function wrappers with `input_schema` instead.
  */
 function normalizeBodyForUpstream(init?: RequestInit): RequestInit | undefined {
 	if (!init?.body || typeof init.body !== "string") return init;
@@ -106,33 +107,52 @@ function stripThinkingConfig(body: JsonObject): boolean {
 }
 
 function normalizeToolSchemas(body: JsonObject): boolean {
-	let changed = normalizeToolList(body.tools);
+	let changed = normalizeToolList(body, "tools");
 	const request = body.request;
 	if (isJsonObject(request)) {
-		changed = normalizeToolList(request.tools) || changed;
+		changed = normalizeToolList(request, "tools") || changed;
 	}
 	const config = body.config;
 	if (isJsonObject(config)) {
-		changed = normalizeToolList(config.tools) || changed;
+		changed = normalizeToolList(config, "tools") || changed;
 	}
 	return changed;
 }
 
-function normalizeToolList(tools: unknown): boolean {
+function normalizeToolList(owner: JsonObject, key: string): boolean {
+	const tools = owner[key];
 	if (!Array.isArray(tools)) return false;
 
 	let changed = false;
+	const normalizedTools: unknown[] = [];
+	let functionIndex = 0;
 	for (const tool of tools) {
-		if (!isJsonObject(tool) || !Array.isArray(tool.functionDeclarations)) continue;
-		for (const declaration of tool.functionDeclarations) {
-			if (!isJsonObject(declaration) || !("parametersJsonSchema" in declaration)) continue;
-
-			if (!("parameters" in declaration)) {
-				declaration.parameters = normalizeSchemaForCCA(declaration.parametersJsonSchema);
-			}
-			delete declaration.parametersJsonSchema;
-			changed = true;
+		if (!isJsonObject(tool) || !Array.isArray(tool.functionDeclarations)) {
+			normalizedTools.push(tool);
+			continue;
 		}
+
+		for (const declaration of tool.functionDeclarations) {
+			if (!isJsonObject(declaration)) continue;
+			const schema =
+				declaration.parametersJsonSchema ??
+				declaration.parameters ??
+				declaration.input_schema ??
+				declaration.inputSchema;
+			normalizedTools.push({
+				function: {
+					name: String(declaration.name || `tool-${functionIndex}`),
+					description: String(declaration.description || ""),
+					input_schema: normalizeSchemaForCCA(schema ?? { type: "object", properties: {} }),
+				},
+			});
+			functionIndex += 1;
+		}
+		changed = true;
+	}
+
+	if (changed) {
+		owner[key] = normalizedTools;
 	}
 	return changed;
 }
