@@ -639,7 +639,7 @@ function isSegmentEligible(
 	userPipelineFilters: BashMinimizerPipelineFilter[],
 	inChain: boolean,
 ): boolean {
-	if (segmentHasPipe(tokens)) return false;
+	if (segmentHasPipe(tokens) && !inChain) return false;
 	const identity = detectProgramAndSubcommandFromTokens(tokens);
 	if (!identity) return false;
 	if (inChain && isCommonChainUtility(rawSegmentProgram(tokens))) return true;
@@ -734,14 +734,16 @@ function segmentUnsafeForChain(tokens: string[]): boolean {
 	const program = rawSegmentProgram(tokens);
 	if (program?.startsWith("(") && program.endsWith(")")) return true;
 	if (
-		tokens.some(
-			token =>
+		tokens.some(token => {
+			if (token.startsWith("<<<")) return false;
+			return (
 				token.includes("$(") ||
 				token.includes("`") ||
 				token.includes("<(") ||
 				token.includes(">(") ||
-				token.includes("<<"),
-		)
+				token.startsWith("<<")
+			);
+		})
 	) {
 		return true;
 	}
@@ -1154,6 +1156,10 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 				"eslint",
 				"biome",
 				"oxlint",
+				"shellcheck",
+				"markdownlint",
+				"hadolint",
+				"yamllint",
 			];
 			if (lintPrograms.includes(program)) return true;
 			return subcommand === undefined || ["check", "lint", "run", "format", "fmt", "typecheck"].includes(subcommand);
@@ -1197,6 +1203,7 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 		case "pipe":
 		case "ps":
 		case "ping":
+		case "ping6":
 		case "ssh":
 		case "sops":
 			return true; // system::supports is program-only

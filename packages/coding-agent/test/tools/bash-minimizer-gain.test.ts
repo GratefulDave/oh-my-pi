@@ -275,6 +275,7 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("ls | head -5 && git status", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("git status && ls | head -5", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("ls | head -5 && echo done", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("git status | cat && unknown-tool", [], [])).toBe(true);
 	});
 	test("chain utilities use raw segment program names", () => {
 		expect(isBashCommandMinimizerEligible("/bin/echo ok && /bin/printf done", [], [])).toBe(false);
@@ -300,6 +301,8 @@ describe("isBashCommandMinimizerEligible", () => {
 	test("unsafe chain segments are ineligible", () => {
 		expect(isBashCommandMinimizerEligible("echo $(pwd) ; git status", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("cat <<EOF ; git status", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("cat <<<ok ; git status", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("echo 'literal << text' ; git status", [], [])).toBe(true);
 	});
 	test("background commands are always ineligible (mirrors native MinimizerMode::None)", () => {
 		expect(isBashCommandMinimizerEligible("git status &", [], [])).toBe(false);
@@ -347,6 +350,11 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("helm repo update", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("helm search repo bitnami", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("helm history release-name", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("shellcheck script.sh", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("markdownlint README.md", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("hadolint Dockerfile", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("yamllint .", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("ping6 example.com", [], [])).toBe(true);
 	});
 	test("package manager subcommands mirror native package supports", () => {
 		expect(isBashCommandMinimizerEligible("npm install", [], [])).toBe(true);
