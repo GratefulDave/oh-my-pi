@@ -303,6 +303,7 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("cat <<EOF ; git status", [], [])).toBe(false);
 		expect(isBashCommandMinimizerEligible("cat <<<ok ; git status", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("echo 'literal << text' ; git status", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("cat <<<$(pwd) ; git status", [], [])).toBe(false);
 	});
 	test("background commands are always ineligible (mirrors native MinimizerMode::None)", () => {
 		expect(isBashCommandMinimizerEligible("git status &", [], [])).toBe(false);
@@ -404,6 +405,32 @@ describe("isBashCommandMinimizerEligible", () => {
 			expect(isBashCommandMinimizerEligible("git status", config.only, config.except, config)).toBe(false);
 			expect(isBashCommandMinimizerEligible("custom-tool summarize", [], [], config)).toBe(false);
 			expect(isBashCommandMinimizerEligible("custom-tool other", [], [], config)).toBe(false);
+		} finally {
+			fs.rmSync(settingsPath, { force: true });
+		}
+	});
+	test("invalid user pipeline regex disables all user pipeline eligibility", async () => {
+		const settingsPath = path.join(os.tmpdir(), `omp-minimizer-invalid-settings-${Date.now()}-${Math.random()}.toml`);
+		fs.writeFileSync(
+			settingsPath,
+			[
+				"schema_version = 1",
+				"[filters.custom]",
+				'match_command = "^custom-tool$"',
+				"[filters.bad]",
+				'match_command = "["',
+			].join("\n"),
+		);
+		try {
+			const config = await resolveBashMinimizerEligibilityConfig({
+				settingsPath,
+				only: [],
+				except: [],
+				maxCaptureBytes: 4096,
+				legacyFilters: false,
+				enabled: true,
+			});
+			expect(isBashCommandMinimizerEligible("custom-tool summarize", [], [], config)).toBe(false);
 		} finally {
 			fs.rmSync(settingsPath, { force: true });
 		}

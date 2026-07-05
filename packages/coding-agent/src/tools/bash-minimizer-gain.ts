@@ -596,18 +596,25 @@ function collectStringArray(value: unknown): string[] | undefined {
 function collectPipelineFilters(value: unknown): BashMinimizerPipelineFilter[] {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return [];
 	const filters: BashMinimizerPipelineFilter[] = [];
+	let hasInvalidRegex = false;
 	for (const raw of Object.values(value)) {
 		if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
 		const matchCommand = (raw as Record<string, unknown>).match_command;
 		if (typeof matchCommand !== "string") continue;
 		const commandRegex = compileRegex(matchCommand);
-		if (!commandRegex) continue;
+		if (!commandRegex) {
+			hasInvalidRegex = true;
+			continue;
+		}
 		const matchSubcommand = (raw as Record<string, unknown>).match_subcommand;
 		const subcommandRegex = typeof matchSubcommand === "string" ? compileRegex(matchSubcommand) : undefined;
-		if (typeof matchSubcommand === "string" && !subcommandRegex) continue;
+		if (typeof matchSubcommand === "string" && !subcommandRegex) {
+			hasInvalidRegex = true;
+			continue;
+		}
 		filters.push({ matchCommand: commandRegex, ...(subcommandRegex ? { matchSubcommand: subcommandRegex } : {}) });
 	}
-	return filters;
+	return hasInvalidRegex ? [] : filters;
 }
 
 function compileRegex(pattern: string): RegExp | undefined {
@@ -735,7 +742,9 @@ function segmentUnsafeForChain(tokens: string[]): boolean {
 	if (program?.startsWith("(") && program.endsWith(")")) return true;
 	if (
 		tokens.some(token => {
-			if (token.startsWith("<<<")) return false;
+			if (token.startsWith("<<<")) {
+				return token.includes("$(") || token.includes("`") || token.includes("<(") || token.includes(">(");
+			}
 			return (
 				token.includes("$(") ||
 				token.includes("`") ||
