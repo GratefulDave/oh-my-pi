@@ -161,8 +161,11 @@ import {
 } from "./loop-limit";
 import { OAuthManualInputManager } from "./oauth-manual-input";
 import { countRunningSubagentBadgeAgents, getRunningSubagentBadgeRegistry } from "./running-subagent-badge";
-import type { ObservableSession } from "./session-observer-registry";
-import { SessionObserverRegistry } from "./session-observer-registry";
+import {
+	type ObservableSession,
+	type SessionObserverChangeKind,
+	SessionObserverRegistry,
+} from "./session-observer-registry";
 import { createSessionTeardown, type SessionTeardown } from "./session-teardown";
 import { runProviderSetupWizard } from "./setup-wizard/lazy";
 import { interruptHint } from "./shared";
@@ -409,12 +412,18 @@ function mergeToolCounts(target: Map<string, number>, counts: Record<string, num
 	}
 }
 
+const SUBAGENT_HUD_VISIBLE_LIMIT = 8;
+const SUBAGENT_OBSERVER_UI_COALESCE_MS = 100;
 /**
  * Build the anchored subagent HUD block. It mirrors the external pi-subagents
- * widget shape: an "Agents" header, one tree row per live detached subagent,
- * and a muted activity row. Finished agents are intentionally excluded here;
- * their final snapshot is emitted into the transcript so it scrolls away like a
- * completed task block instead of sticking above the editor.
+ * widget shape: an accent "Agents" header, a bounded set of live detached
+ * subagent rows, and muted activity rows. Finished agents are intentionally
+ * excluded here; their final snapshot is emitted into transcript scrollback
+ * instead of sticking above the editor.
+ * Only detached background spawns are listed: a sync task call blocks the
+ * parent turn and its inline tool block already renders progress live, and
+ * eval `agent()` spawns are rendered by their own eval cell tree.
+ * Returns an empty array when nothing is running so the container can clear.
  */
 export function renderSubagentHudLines(sessions: ObservableSession[], columns: number, spinnerFrame = 0): string[] {
 	const running = sessions.filter(
@@ -425,9 +434,11 @@ export function renderSubagentHudLines(sessions: ObservableSession[], columns: n
 	const width = Math.max(TRUNCATE_LENGTHS.SHORT, columns);
 	const frames = theme.spinnerFrames;
 	const frame = frames.length > 0 ? frames[spinnerFrame % frames.length] : theme.styledSymbol("status.done", "accent");
+	const visible = running.slice(0, SUBAGENT_HUD_VISIBLE_LIMIT);
+	const hiddenCount = running.length - visible.length;
 	const lines = ["", `${theme.fg("accent", "●")} ${theme.fg("accent", "Agents")}`];
-	running.forEach((session, index) => {
-		const isLast = index === running.length - 1;
+	visible.forEach((session, index) => {
+		const isLast = index === visible.length - 1 && hiddenCount === 0;
 		const connector = isLast ? theme.tree.last : theme.tree.branch;
 		const activityConnector = isLast ? "   " : `${theme.tree.vertical}  `;
 		const displayId = formatTaskId(session.id);
@@ -462,6 +473,9 @@ export function renderSubagentHudLines(sessions: ObservableSession[], columns: n
 			),
 		);
 	});
+	if (hiddenCount > 0) {
+		lines.push(truncateToWidth(theme.fg("dim", `… ${hiddenCount} more running — open Agent Hub for full list`), width));
+	}
 	return lines;
 }
 
@@ -717,6 +731,8 @@ export class InteractiveMode implements InteractiveModeContext {
 	#subagentSpinnerFrame = 0;
 	#eventBus?: EventBus;
 	#eventBusUnsubscribers: Array<() => void> = [];
+	#observerUiSyncTimer?: NodeJS.Timeout;
+	#observerUiSyncNeedsTodoReconcile = false;
 	#agentRegistryUnsubscribe?: () => void;
 	#agentRegistrySubscriptionTarget?: AgentRegistry;
 	#mcpStatusOrder: string[] = [];
@@ -1050,62 +1066,8 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#seedToolCounterFromSession();
 		this.#renderToolCounter();
 		this.syncRunningSubagentBadge();
-		this.#observerRegistry.onChange(() => {
-			this.syncRunningSubagentBadge();
-			// Auto-checkmark todos whose matching subagent just succeeded, then
-			// re-render so the running override (the static "live" glyph when a
-			// subagent is doing the work for a still-pending todo) updates as
-			// subagents start, finish, or fail.
-			this.#reconcileTodosWithSubagents();
-			this.#syncTodoAutoClearTimer();
-			this.#renderTodoList();
-			this.#renderToolCounter();
-			this.#renderSubagentList();
-
-			// Detect settle: had active detached subagents → now none active
-			const sessions = this.#observerRegistry.getSessions();
-			const activeDetached = sessions.filter(
-				s => s.kind === "subagent" && s.status === "active" && s.detached === true,
-			);
-			const hasActive = activeDetached.length > 0;
-
-			if (this.#hadActiveSubagents && !hasActive) {
-				// Collect settled subagents not yet emitted
-				const settled = sessions.filter(
-					s =>
-						s.kind === "subagent" &&
-						s.detached === true &&
-						s.status !== "active" &&
-						!this.#emittedSubagentSummaryIds.has(s.id),
-				);
-				if (settled.length > 0) {
-					const rows = settled.map(toSubagentHudSummaryRow);
-					for (const s of settled) this.#emittedSubagentSummaryIds.add(s.id);
-					const content = `${rows.length} agent${rows.length === 1 ? "" : "s"} settled`;
-					const details: SubagentHudSummaryDetails = { emittedAt: Date.now(), rows };
-					void this.session
-						.sendCustomMessage<SubagentHudSummaryDetails>({
-							customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
-							content,
-							display: true,
-							details,
-							attribution: "agent",
-						})
-						.catch(err => logger.debug("subagent HUD summary delivery failed", { err: String(err) }));
-					this.addMessageToChat({
-						role: "custom",
-						customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
-						content,
-						display: true,
-						details,
-						attribution: "agent",
-						timestamp: Date.now(),
-					});
-				}
-			}
-			this.#hadActiveSubagents = hasActive;
-
-			this.ui.requestRender();
+		this.#observerRegistry.onChange(kind => {
+			this.#scheduleObserverUiSync(kind);
 		});
 
 		// Load initial todos
@@ -1699,19 +1661,18 @@ export class InteractiveMode implements InteractiveModeContext {
 	}
 
 	/** Refresh the running-subagents status badge from the active local or collab registry. */
-	syncRunningSubagentBadge(): void {
+	syncRunningSubagentBadge(options: { requestRender?: boolean } = {}): void {
 		const registry = getRunningSubagentBadgeRegistry(this.collabGuest);
 		if (this.#agentRegistrySubscriptionTarget !== registry) {
 			this.#agentRegistryUnsubscribe?.();
 			this.#agentRegistrySubscriptionTarget = registry;
 			this.#agentRegistryUnsubscribe = registry.onChange(() => {
 				this.syncRunningSubagentBadge();
-				this.ui.requestRender();
 			});
 		}
 		const count = countRunningSubagentBadgeAgents(registry);
 		this.statusLine.setSubagentCount(count);
-		this.ui.requestRender();
+		if (options.requestRender !== false) this.ui.requestRender();
 	}
 
 	rebuildChatFromMessages(): void {
@@ -1932,6 +1893,81 @@ export class InteractiveMode implements InteractiveModeContext {
 			phase.tasks.some(task => task.status === "pending" || task.status === "in_progress"),
 		);
 		return active ?? nonEmpty[nonEmpty.length - 1];
+	}
+
+	#scheduleObserverUiSync(kind: SessionObserverChangeKind): void {
+		if (kind !== "progress") {
+			this.#observerUiSyncNeedsTodoReconcile = true;
+		}
+		if (this.#observerUiSyncTimer) return;
+		this.#observerUiSyncTimer = setTimeout(() => {
+			this.#observerUiSyncTimer = undefined;
+			this.#flushObserverUiSync();
+		}, SUBAGENT_OBSERVER_UI_COALESCE_MS);
+		this.#observerUiSyncTimer.unref?.();
+	}
+
+	#flushObserverUiSync(): void {
+		this.syncRunningSubagentBadge({ requestRender: false });
+		if (this.#observerUiSyncNeedsTodoReconcile) {
+			this.#observerUiSyncNeedsTodoReconcile = false;
+			this.#reconcileTodosWithSubagents();
+		}
+		this.#syncTodoAutoClearTimer();
+		this.#renderTodoList();
+		this.#renderToolCounter();
+		this.#renderSubagentList();
+
+		const sessions = this.#observerRegistry.getSessions();
+		const activeDetached = sessions.filter(
+			session => session.kind === "subagent" && session.status === "active" && session.detached === true,
+		);
+		const hasActive = activeDetached.length > 0;
+
+		if (this.#hadActiveSubagents && !hasActive) {
+			const settled = sessions.filter(
+				session =>
+					session.kind === "subagent" &&
+					session.detached === true &&
+					session.status !== "active" &&
+					!this.#emittedSubagentSummaryIds.has(session.id),
+			);
+			if (settled.length > 0) {
+				const rows = settled.map(toSubagentHudSummaryRow);
+				for (const session of settled) this.#emittedSubagentSummaryIds.add(session.id);
+				const content = `${rows.length} agent${rows.length === 1 ? "" : "s"} settled`;
+				const details: SubagentHudSummaryDetails = { emittedAt: Date.now(), rows };
+				void this.session
+					.sendCustomMessage<SubagentHudSummaryDetails>({
+						customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+						content,
+						display: true,
+						details,
+						attribution: "agent",
+					})
+					.catch(err => logger.debug("subagent HUD summary delivery failed", { err: String(err) }));
+				this.addMessageToChat({
+					role: "custom",
+					customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+					content,
+					display: true,
+					details,
+					attribution: "agent",
+					timestamp: Date.now(),
+				});
+			}
+		}
+		this.#hadActiveSubagents = hasActive;
+
+		this.ui.requestRender();
+	}
+
+	#cancelObserverUiSyncTimer(): void {
+		if (this.#observerUiSyncTimer) {
+			clearTimeout(this.#observerUiSyncTimer);
+			this.#observerUiSyncTimer = undefined;
+		}
+		this.#observerUiSyncNeedsTodoReconcile = false;
 	}
 
 	#renderTodoList(): void {
@@ -3531,6 +3567,8 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#cleanupMicAnimation();
 		this.#stopSubagentSpinner();
 		this.#cancelTodoAutoClearTimer();
+		this.#cancelObserverUiSyncTimer();
+		this.#cancelGoalContinuation();
 		if (this.#sttController) {
 			this.#sttController.dispose();
 			this.#sttController = undefined;
