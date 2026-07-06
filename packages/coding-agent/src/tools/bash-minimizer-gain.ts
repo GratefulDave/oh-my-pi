@@ -1186,7 +1186,7 @@ function supportsProgram(program: string, subcommand?: string): boolean {
 		case "prisma":
 			return true; // js_tools::supports: program in SUPPORTED_TOOLS
 		case "npx":
-			return subcommand !== undefined;
+			return true;
 		case "pnpm":
 			if (subcommand === "dlx" || subcommand === "nx") return true;
 			return subIs(subcommand, PKG_SUBCOMMANDS);

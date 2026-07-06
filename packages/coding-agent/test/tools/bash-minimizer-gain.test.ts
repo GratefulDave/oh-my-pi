@@ -375,10 +375,11 @@ describe("isBashCommandMinimizerEligible", () => {
 		expect(isBashCommandMinimizerEligible("yarn nx build", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("brew", [], [])).toBe(false);
 	});
-	test("npx fallback captures unknown-tool invocations", () => {
+	test("npx fallback captures unknown-tool and no-subcommand invocations", () => {
 		expect(isBashCommandMinimizerEligible("npx cowsay hello", [], [])).toBe(true);
 		expect(isBashCommandMinimizerEligible("npx eslint .", [], [])).toBe(true);
-		expect(isBashCommandMinimizerEligible("npx", [], [])).toBe(false);
+		expect(isBashCommandMinimizerEligible("npx", [], [])).toBe(true);
+		expect(isBashCommandMinimizerEligible("npx --version", [], [])).toBe(true);
 	});
 	test("settings file overrides only/except/max capture and user pipelines", async () => {
 		const settingsPath = path.join(os.tmpdir(), `omp-minimizer-settings-${Date.now()}-${Math.random()}.toml`);
