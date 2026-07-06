@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import {
 	Agent,
 	type AgentEvent,
@@ -16,7 +17,7 @@ import {
 } from "@oh-my-pi/pi-ai/providers/openai-codex-responses";
 import { FALLBACK_DIALECT, preferredDialect } from "@oh-my-pi/pi-catalog/identity";
 import type { Component } from "@oh-my-pi/pi-tui";
-import { $env, $flag, getAgentDir, getProjectDir, logger, postmortem, prompt, Snowflake } from "@oh-my-pi/pi-utils";
+import { $env, $flag, getAgentDir, getProfileRootDir, getProjectDir, logger, postmortem, prompt, Snowflake } from "@oh-my-pi/pi-utils";
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
 import {
 	discoverAdvisorConfigs,
@@ -670,6 +671,19 @@ export async function discoverExtensions(cwd?: string): Promise<LoadExtensionsRe
 	return discoverAndLoadExtensions([], resolvedCwd);
 }
 
+async function loadDefaultAgentExtensionsForProfile(settings: Settings): Promise<string[]> {
+	const defaultAgentDir = path.join(getProfileRootDir(undefined), "agent");
+	if (path.normalize(settings.getAgentDir()) === path.normalize(defaultAgentDir)) {
+		return [];
+	}
+
+	const defaultSettings = await Settings.loadReadOnly({
+		agentDir: defaultAgentDir,
+		cwd: settings.getCwd(),
+	});
+	return defaultSettings.get("extensions") ?? [];
+}
+
 /**
  * Path-only counterpart of {@link loadSessionExtensions}: the FS-heavy scan
  * without the per-session module load. Subagents reuse the parent's path list
@@ -685,7 +699,11 @@ export async function discoverSessionExtensionPaths(
 	if (options.disableExtensionDiscovery) {
 		return options.additionalExtensionPaths ?? [];
 	}
-	const configuredPaths = [...(options.additionalExtensionPaths ?? []), ...(settings.get("extensions") ?? [])];
+	const configuredPaths = [
+		...(options.additionalExtensionPaths ?? []),
+		...(await loadDefaultAgentExtensionsForProfile(settings)),
+		...(settings.get("extensions") ?? []),
+	];
 	const disabledExtensionIds = settings.get("disabledExtensions") ?? [];
 	return discoverExtensionPaths(configuredPaths, cwd, disabledExtensionIds);
 }

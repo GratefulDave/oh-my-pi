@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { type ExtensionModule, extensionModuleCapability } from "@oh-my-pi/pi-coding-agent/capability/extension-module";
 import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
@@ -9,8 +10,25 @@ import {
 	discoverExtensionPaths,
 	loadExtensions,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
-import { getProjectAgentDir, TempDir } from "@oh-my-pi/pi-utils";
+import { discoverSessionExtensionPaths } from "@oh-my-pi/pi-coding-agent/sdk";
+import {
+	__resetDirsFromEnvForTests,
+	getAgentDir,
+	getProfileRootDir,
+	getProjectAgentDir,
+	setAgentDir,
+	setProfile,
+	TempDir,
+} from "@oh-my-pi/pi-utils";
 import { filterUserScoped } from "./utils/filter-user-extensions";
+
+function restoreEnvValue(name: string, value: string | undefined): void {
+	if (value === undefined) {
+		delete process.env[name];
+	} else {
+		process.env[name] = value;
+	}
+}
 
 describe("extensions discovery", () => {
 	let tempDir: TempDir;
@@ -716,6 +734,81 @@ describe("extensions discovery", () => {
 		expect(result.errors).toHaveLength(0);
 		expect(result.extensions).toHaveLength(0);
 	});
+
+	it("discovers default-agent configured extensions when a profile config has no extensions", async () => {
+		const originalEnv = {
+			HOME: process.env.HOME,
+			PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+			OMP_PROFILE: process.env.OMP_PROFILE,
+			PI_PROFILE: process.env.PI_PROFILE,
+			XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+			XDG_STATE_HOME: process.env.XDG_STATE_HOME,
+			XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
+		};
+		const profileHome = TempDir.createSync("@pi-ext-profile-home-");
+
+		const writePackageExtension = (root: string): string => {
+			fs.mkdirSync(root, { recursive: true });
+			const entry = path.join(root, "index.ts");
+			fs.writeFileSync(entry, extensionCode);
+			return entry;
+		};
+
+		try {
+			process.env.HOME = profileHome.path();
+			delete process.env.XDG_DATA_HOME;
+			delete process.env.XDG_STATE_HOME;
+			delete process.env.XDG_CACHE_HOME;
+			vi.spyOn(os, "homedir").mockReturnValue(profileHome.path());
+
+			const defaultAgentDir = path.join(getProfileRootDir(undefined), "agent");
+			setAgentDir(defaultAgentDir);
+			setProfile("work");
+			const profileAgentDir = getAgentDir();
+
+			const defaultExtensionRoot = path.join(profileHome.path(), "default-global-extension");
+			const defaultExtensionEntry = writePackageExtension(defaultExtensionRoot);
+			const disabledDefaultRoot = path.join(profileHome.path(), "blocked-default-extension");
+			const disabledDefaultEntry = writePackageExtension(disabledDefaultRoot);
+			fs.mkdirSync(defaultAgentDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(defaultAgentDir, "config.yml"),
+				JSON.stringify({
+					extensions: [defaultExtensionRoot, defaultExtensionRoot, disabledDefaultRoot],
+				}),
+			);
+
+			const profileExtensionEntry = writePackageExtension(
+				path.join(profileAgentDir, "extensions", "profile-specific-extension"),
+			);
+			fs.writeFileSync(
+				path.join(profileAgentDir, "config.yml"),
+				JSON.stringify({
+					disabledExtensions: ["extension-module:blocked-default-extension"],
+				}),
+			);
+
+			const settings = await Settings.loadReadOnly({ agentDir: profileAgentDir, cwd: tempDir.path() });
+			initializeWithSettings(settings);
+
+			const paths = await discoverSessionExtensionPaths({}, tempDir.path(), settings);
+
+			expect(paths).toContain(defaultExtensionEntry);
+			expect(paths).toContain(profileExtensionEntry);
+			expect(paths).not.toContain(disabledDefaultEntry);
+			expect(paths.filter(p => path.resolve(p) === path.resolve(defaultExtensionEntry))).toHaveLength(
+				1,
+			);
+		} finally {
+			vi.restoreAllMocks();
+			for (const [name, value] of Object.entries(originalEnv)) {
+				restoreEnvValue(name, value);
+			}
+			__resetDirsFromEnvForTests();
+			profileHome.removeSync();
+		}
+	});
+
 	it("discoverExtensionPaths only invokes the native extension-module provider (#4198)", async () => {
 		// The extension-module capability has multiple providers
 		// (native, claude, codex, gemini, opencode), but discoverExtensionPaths
