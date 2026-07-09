@@ -1239,6 +1239,7 @@ describe("ExtensionRunner", () => {
 					setEditorText: () => {},
 					getEditorText: () => "",
 					editor: async () => undefined,
+					addAutocompleteProvider: () => {},
 					setEditorComponent: () => {},
 					get theme() {
 						return {} as never;
