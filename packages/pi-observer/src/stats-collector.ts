@@ -39,6 +39,7 @@ export interface SubagentRetryFailure {
 }
 
 export interface IrcMessageActivity {
+	id?: string;
 	timestamp: number;
 	channel: string;
 	from: string;
@@ -48,6 +49,18 @@ export interface IrcMessageActivity {
 	delivered: string[];
 	failed: string[];
 }
+
+export type SubagentTimelineKind = "chat" | "tool" | "irc" | "retry" | "status" | "outcome";
+
+/** A bounded, display-ready event in a subagent's chronological audit trail. */
+export interface SubagentTimelineEntry {
+	timestamp: number;
+	sourceId?: string;
+	kind: SubagentTimelineKind;
+	title: string;
+	detail: string;
+}
+
 export interface SubagentRecentTool {
 	tool: string;
 	args: string;
@@ -85,6 +98,56 @@ export interface SubagentProgressUpdate {
 }
 
 const MAX_IRC_MESSAGES = 100;
+const MAX_IRC_TEXT = 4_000;
+const MAX_TIMELINE_ENTRIES = 160;
+const MAX_TIMELINE_TEXT = 320;
+
+function normalizeDisplayText(value: string): string {
+	return value
+		.replace(/[\u0000-\u001f\u007f]+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function timelineText(value: string): string {
+	const flattened = normalizeDisplayText(value);
+	if (flattened.length <= MAX_TIMELINE_TEXT) return flattened;
+	return `${flattened.slice(0, MAX_TIMELINE_TEXT - 1)}…`;
+}
+
+function ircBodyText(value: string): string {
+	const flattened = normalizeDisplayText(value);
+	if (flattened.length <= MAX_IRC_TEXT) return flattened;
+	return `${flattened.slice(0, MAX_IRC_TEXT - 1)}…`;
+}
+
+function timelineIrcLine(message: IrcMessageActivity): string {
+	const time = new Date(message.timestamp).toISOString().slice(11, 16);
+	if (message.body.startsWith("/me ")) return `[${time}] * ${message.from} ${message.body.slice(4)}`;
+	return `[${time}] <${message.from}> ${message.body}`;
+}
+
+function ircSourceId(message: IrcMessageActivity): string {
+	return message.id
+		? `irc:${message.id}`
+		: `irc:legacy:${message.timestamp}\u0000${message.from}\u0000${message.to}\u0000${message.kind}\u0000${message.body}`;
+}
+
+function addTimelineEntry(agent: SubagentActivity, entry: SubagentTimelineEntry): void {
+	agent.timeline ??= [];
+	const timeline = agent.timeline;
+	const sourceId = entry.sourceId?.trim() || undefined;
+	if (sourceId && timeline.some(existing => existing.sourceId === sourceId)) return;
+	timeline.push({
+		timestamp: Number.isFinite(entry.timestamp) ? entry.timestamp : Date.now(),
+		kind: entry.kind,
+		title: timelineText(entry.title),
+		detail: timelineText(entry.detail),
+		sourceId,
+	});
+	timeline.sort((left, right) => left.timestamp - right.timestamp);
+	if (timeline.length > MAX_TIMELINE_ENTRIES) timeline.splice(0, timeline.length - MAX_TIMELINE_ENTRIES);
+}
 
 /**
  * Latest cumulative activity snapshot for a single subagent run, keyed by run id.
@@ -123,7 +186,24 @@ export interface SubagentActivity {
 	sessionFile?: string;
 	recentTools?: SubagentRecentTool[];
 	extractedToolData?: Record<string, unknown[]>;
+	timeline?: SubagentTimelineEntry[];
 	inflightTaskDetails?: unknown;
+}
+function matchesAgent(message: IrcMessageActivity, agent: SubagentActivity): boolean {
+	return message.from === agent.id || message.to === agent.id;
+}
+
+function attachHistoricalIrc(agent: SubagentActivity): void {
+	for (const message of stats.ircMessages) {
+		if (!matchesAgent(message, agent)) continue;
+		addTimelineEntry(agent, {
+			timestamp: message.timestamp,
+			kind: "irc",
+			title: "IRC",
+			detail: timelineIrcLine(message),
+			sourceId: ircSourceId(message),
+		});
+	}
 }
 
 /** Rolled-up totals across all observed subagents. */
@@ -285,7 +365,7 @@ export function onSubagentProgress(update: SubagentProgressUpdate): void {
 	const existing = stats.subagents.get(update.id);
 	const startedAt = existing?.startedAt ?? now - (update.durationMs ?? 0);
 	const completedAt = isTerminalStatus(update.status) ? (existing?.completedAt ?? now) : undefined;
-	stats.subagents.set(update.id, {
+	const next: SubagentActivity = {
 		id: update.id,
 		agent: update.agent,
 		status: update.status,
@@ -315,8 +395,11 @@ export function onSubagentProgress(update: SubagentProgressUpdate): void {
 		sessionFile: update.sessionFile ?? existing?.sessionFile,
 		recentTools: update.recentTools ?? existing?.recentTools,
 		extractedToolData: update.extractedToolData ?? existing?.extractedToolData,
+		timeline: existing?.timeline ?? [],
 		inflightTaskDetails: update.inflightTaskDetails ?? existing?.inflightTaskDetails,
-	});
+	};
+	stats.subagents.set(update.id, next);
+	attachHistoricalIrc(next);
 }
 
 function isTerminalStatus(status: SubagentStatus): boolean {
@@ -340,7 +423,6 @@ export function onSubagentLifecycle(
 		existing.task = details.task ?? existing.task;
 		existing.description = details.description ?? existing.description;
 		if (isTerminalStatus(status)) existing.completedAt = now;
-		if (status === "running" && existing.startedAt === 0) existing.startedAt = now;
 	} else {
 		stats.subagents.set(id, {
 			id,
@@ -357,14 +439,57 @@ export function onSubagentLifecycle(
 			durationMs: 0,
 			startedAt: now,
 			completedAt: isTerminalStatus(status) ? now : undefined,
+			timeline: [],
 		});
 	}
+	const activity = stats.subagents.get(id);
+	if (activity) attachHistoricalIrc(activity);
+}
+
+export function onSubagentTimeline(id: string, entry: SubagentTimelineEntry): void {
+	const existing = stats.subagents.get(id);
+	if (!existing) {
+		const now = Date.now();
+		stats.subagents.set(id, {
+			id,
+			agent: "subagent",
+			status: "running",
+			tokens: 0,
+			toolCount: 0,
+			cost: 0,
+			lastUpdate: now,
+			index: Number.MAX_SAFE_INTEGER,
+			recentOutput: [],
+			durationMs: 0,
+			startedAt: now,
+			timeline: [],
+		});
+	}
+	const agent = stats.subagents.get(id);
+	if (agent) addTimelineEntry(agent, entry);
 }
 
 export function onIrcMessage(message: IrcMessageActivity): void {
-	stats.ircMessages.push(message);
+	const normalized: IrcMessageActivity = {
+		...message,
+		id: message.id?.trim() || undefined,
+		body: ircBodyText(message.body),
+	};
+	const sourceId = ircSourceId(normalized);
+	if (stats.ircMessages.some(existing => ircSourceId(existing) === sourceId)) return;
+	stats.ircMessages.push(normalized);
 	if (stats.ircMessages.length > MAX_IRC_MESSAGES) {
 		stats.ircMessages.splice(0, stats.ircMessages.length - MAX_IRC_MESSAGES);
+	}
+	for (const agent of stats.subagents.values()) {
+		if (!matchesAgent(normalized, agent)) continue;
+		addTimelineEntry(agent, {
+			timestamp: normalized.timestamp,
+			kind: "irc",
+			title: "IRC",
+			detail: timelineIrcLine(normalized),
+			sourceId,
+		});
 	}
 }
 /** Sum the latest per-subagent snapshots into rolled-up totals. */

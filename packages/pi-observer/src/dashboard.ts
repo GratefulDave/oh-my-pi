@@ -138,6 +138,8 @@ export class ObserverDashboard {
 	#cursorByParent = new Map<string, number>();
 	#scrollByParent = new Map<string, number>();
 	#rightPaneNodeId: string | undefined;
+	#detailScrollByNode = new Map<string, number>();
+	#unpinnedDetailNodes = new Set<string>();
 	#expandedDetailId: string | undefined;
 	#activePane: ActivePane = "tree";
 	#width = 100;
@@ -208,7 +210,7 @@ export class ObserverDashboard {
 		const hierarchy = buildObserverHierarchy(stats, now);
 		this.#clampPath(hierarchy);
 		const panelWidth = Math.max(60, this.#width - 4);
-		const panelHeight = Math.max(12, this.#height - 7);
+		const panelHeight = Math.max(3, this.#height - 5);
 		const agents = [...stats.subagents.values()];
 		const completed = agents.filter(agent => agent.status === "completed").length;
 		const lines = [this.theme.fg("border", "─".repeat(panelWidth))];
@@ -366,15 +368,30 @@ export class ObserverDashboard {
 			if (node.metrics.cost != null) metricParts.push(`$${node.metrics.cost.toFixed(4)}`);
 			if (metricParts.length > 0) lines.push(this.theme.fg("muted", metricParts.join(" · ")));
 		}
+		lines.push(
+			this.theme.dim(this.#activePane === "detail" ? "↑↓ scroll detail · tab tree" : "tab detail · ↑↓ select"),
+		);
 		lines.push("");
-		const detailLines = node.detail ?? [node.summary];
-		for (const detail of detailLines) {
-			for (const wrapped of wrapPlain(detail, width - 2, expanded ? height * 3 : 3)) {
-				lines.push(this.theme.fg(detail.startsWith("  ") ? "toolOutput" : "text", wrapped));
+		const content: string[] = [];
+		for (const detail of node.detail ?? [node.summary]) {
+			for (const wrapped of wrapPlain(detail, Math.max(1, width - 2), 1000)) {
+				content.push(this.theme.fg(detail.startsWith("  ") ? "toolOutput" : "text", wrapped));
 			}
-			if (!expanded && lines.length >= height - 2) break;
 		}
-		return lines.slice(0, height);
+		const viewport = Math.max(1, height - lines.length);
+		const maxScroll = Math.max(0, content.length - viewport);
+		const pinnedToEnd = !this.#unpinnedDetailNodes.has(node.id);
+		const requested = pinnedToEnd ? maxScroll : (this.#detailScrollByNode.get(node.id) ?? maxScroll);
+		const scroll = Math.max(0, Math.min(maxScroll, requested));
+		if (!pinnedToEnd && requested >= maxScroll) this.#unpinnedDetailNodes.delete(node.id);
+		this.#detailScrollByNode.set(node.id, scroll);
+		if (scroll > 0 && viewport > 1 && content.length > 0)
+			content[scroll] = this.theme.dim(`↑ ${scroll} earlier lines`);
+		if (viewport > 1 && scroll + viewport < content.length && content.length > 0) {
+			const last = Math.min(content.length - 1, scroll + viewport - 1);
+			content[last] = this.theme.dim(`↓ ${content.length - scroll - viewport} later lines`);
+		}
+		return [...lines, ...content.slice(scroll, scroll + viewport)].slice(0, height);
 	}
 
 	#panelTitle(
@@ -413,8 +430,8 @@ export class ObserverDashboard {
 		this.requestRender();
 		return true;
 	}
-
 	#moveSelection(delta: number): boolean {
+		if (this.#activePane === "detail") return this.#moveDetailScroll(delta);
 		const stats = this.#lastStats ?? (getStats() as ObserverStats);
 		const hierarchy = buildObserverHierarchy(stats, Date.now());
 		this.#clampPath(hierarchy);
@@ -426,6 +443,20 @@ export class ObserverDashboard {
 		const next = Math.max(0, Math.min(children.length - 1, current + delta));
 		this.#cursorByParent.set(key, next);
 		this.#ensureCursorVisible(key, next, Math.max(1, this.#height - 9), children.length);
+		this.requestRender();
+		return true;
+	}
+
+	#moveDetailScroll(delta: number): boolean {
+		const stats = this.#lastStats ?? (getStats() as ObserverStats);
+		const hierarchy = buildObserverHierarchy(stats, Date.now());
+		const selected = this.#selectedNode(hierarchy);
+		const node = this.#rightPaneNode(hierarchy, selected);
+		if (!node) return false;
+		const current = this.#detailScrollByNode.get(node.id) ?? 0;
+		const next = Math.max(0, current + delta);
+		this.#detailScrollByNode.set(node.id, next);
+		if (delta < 0) this.#unpinnedDetailNodes.add(node.id);
 		this.requestRender();
 		return true;
 	}

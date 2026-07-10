@@ -6,6 +6,10 @@
 
 - Added bash minimizer gain telemetry (`shellMinimizer.gainTelemetry`): when enabled (default **off**), appends JSONL records to `~/.omp/agent/minimizer-gain.jsonl` for every bash execution — `kind:"saved"` when the shell minimizer compressed output, `kind:"missed"` when it did not. Records include `sessionId`, `cwd`, `command`, `filter`, `inputBytes`, `outputBytes`, `exitCode`, and `timestamp`. Off by default; the setting description documents that the raw command string is recorded verbatim and may contain credentials ([#3691](https://github.com/can1357/oh-my-pi/pull/3691)).
 
+### Fixed
+
+- Fixed the shared IRC activity feed so observer extensions receive one normalized event for every direct agent message, including replies and failed deliveries.
+
 ## [16.3.15] - 2026-07-09
 
 ### Changed

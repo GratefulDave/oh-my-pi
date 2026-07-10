@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { Agent } from "@oh-my-pi/pi-agent-core";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { SettingPath } from "@oh-my-pi/pi-coding-agent/config/settings-schema";
-import { IrcBus, type IrcMessage } from "@oh-my-pi/pi-coding-agent/irc/bus";
+import {
+	IRC_MESSAGE_CHANNEL,
+	IrcBus,
+	type IrcMessage,
+	type IrcMessageActivityPayload,
+} from "@oh-my-pi/pi-coding-agent/irc/bus";
 import { AgentLifecycleManager } from "@oh-my-pi/pi-coding-agent/registry/agent-lifecycle";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { AgentSession, type AgentSessionEvent } from "@oh-my-pi/pi-coding-agent/session/agent-session";
@@ -10,12 +15,14 @@ import type { CustomMessage } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { IrcTool } from "@oh-my-pi/pi-coding-agent/tools/irc";
+import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
 
 interface FakeSession {
 	session: AgentSession;
 	/** Messages delivered into this session via deliverIrcMessage. */
 	delivered: IrcMessage[];
 	/** Display-only relay observations emitted on this session. */
+	eventBus: EventBus;
 	relayed: CustomMessage[];
 	/** Outcome the fake reports (busy vs idle recipient). */
 	setOutcome: (outcome: "injected" | "woken") => void;
@@ -31,7 +38,9 @@ function makeFakeSession(): FakeSession {
 	let deliverHook: ((msg: IrcMessage) => void) | undefined;
 	const delivered: IrcMessage[] = [];
 	const relayed: CustomMessage[] = [];
+	const eventBus = new EventBus();
 	const session = {
+		eventBus,
 		deliverIrcMessage: async (msg: IrcMessage) => {
 			if (nextError) {
 				const err = nextError;
@@ -50,6 +59,7 @@ function makeFakeSession(): FakeSession {
 		session: session as unknown as AgentSession,
 		delivered,
 		relayed,
+		eventBus,
 		setOutcome: value => {
 			outcome = value;
 		},
@@ -62,7 +72,7 @@ function makeFakeSession(): FakeSession {
 	};
 }
 
-function makeToolSession(registry: AgentRegistry, agentId: string): ToolSession {
+function makeToolSession(registry: AgentRegistry, agentId: string, eventBus?: EventBus): ToolSession {
 	return {
 		cwd: "/tmp",
 		hasUI: false,
@@ -71,6 +81,7 @@ function makeToolSession(registry: AgentRegistry, agentId: string): ToolSession 
 		settings: Settings.isolated(),
 		agentRegistry: registry,
 		getAgentId: () => agentId,
+		eventBus,
 	};
 }
 
@@ -130,6 +141,92 @@ describe("IRC", () => {
 			expect(sub.delivered[0]?.from).toBe("0-Main");
 			expect(sub.delivered[0]?.id).toBeTruthy();
 			expect(bus.unreadCount("0-Sub")).toBe(0);
+		});
+		it("publishes one activity event for a successful direct send", async () => {
+			const sender = makeFakeSession();
+			registry.register({ id: "0-A", displayName: "sender", kind: "sub", session: sender.session });
+			const recipient = makeFakeSession();
+			registry.register({ id: "0-B", displayName: "recipient", kind: "sub", session: recipient.session });
+			const activities: IrcMessageActivityPayload[] = [];
+			sender.eventBus.on(IRC_MESSAGE_CHANNEL, data => {
+				activities.push(data as IrcMessageActivityPayload);
+			});
+
+			const receipt = await bus.send({ from: "0-A", to: "0-B", body: "reply body", replyTo: "msg-1" });
+
+			expect(receipt.outcome).toBe("injected");
+			expect(activities).toHaveLength(1);
+			expect(activities[0]).toMatchObject({
+				channel: IRC_MESSAGE_CHANNEL,
+				from: "0-A",
+				to: "0-B",
+				body: "reply body",
+				kind: "reply",
+				delivered: ["0-B"],
+				failed: [],
+			});
+			expect(activities[0]?.timestamp).toEqual(expect.any(Number));
+			expect(activities[0]?.id).toBe(recipient.delivered[0]?.id);
+		});
+
+		it("normalizes a blank reply id as an unthreaded message", async () => {
+			const sender = makeFakeSession();
+			registry.register({ id: "0-A", displayName: "sender", kind: "sub", session: sender.session });
+			const recipient = makeFakeSession();
+			registry.register({ id: "0-B", displayName: "recipient", kind: "sub", session: recipient.session });
+			const activities: IrcMessageActivityPayload[] = [];
+			sender.eventBus.on(IRC_MESSAGE_CHANNEL, data => {
+				activities.push(data as IrcMessageActivityPayload);
+			});
+
+			await bus.send({ from: "0-A", to: "0-B", body: "plain", replyTo: "   " });
+
+			expect(recipient.delivered[0]?.replyTo).toBeUndefined();
+			expect(activities[0]?.kind).toBe("message");
+		});
+
+		it("resolves the activity bus exposed by the registered IRC tool", async () => {
+			const eventBus = new EventBus();
+			const ircTool = new IrcTool(makeToolSession(registry, "0-A", eventBus));
+			const senderSession = {
+				getToolByName: (name: string) => (name === "irc" ? ircTool : undefined),
+			} as unknown as AgentSession;
+			registry.register({ id: "0-A", displayName: "sender", kind: "sub", session: senderSession });
+			const recipient = makeFakeSession();
+			registry.register({ id: "0-B", displayName: "recipient", kind: "sub", session: recipient.session });
+			const activities: IrcMessageActivityPayload[] = [];
+			eventBus.on(IRC_MESSAGE_CHANNEL, data => {
+				activities.push(data as IrcMessageActivityPayload);
+			});
+
+			await bus.send({ from: "0-A", to: "0-B", body: "observed" });
+
+			expect(activities).toHaveLength(1);
+			expect(activities[0]?.body).toBe("observed");
+		});
+
+		it("publishes one failed activity event when a direct send cannot resolve", async () => {
+			const sender = makeFakeSession();
+			registry.register({ id: "0-A", displayName: "sender", kind: "sub", session: sender.session });
+			const activities: IrcMessageActivityPayload[] = [];
+			sender.eventBus.on(IRC_MESSAGE_CHANNEL, data => {
+				activities.push(data as IrcMessageActivityPayload);
+			});
+
+			const receipt = await bus.send({ from: "0-A", to: "0-Ghost", body: "unreachable" });
+
+			expect(receipt.outcome).toBe("failed");
+			expect(activities).toHaveLength(1);
+			expect(activities[0]).toMatchObject({
+				channel: IRC_MESSAGE_CHANNEL,
+				from: "0-A",
+				to: "0-Ghost",
+				body: "unreachable",
+				kind: "message",
+				delivered: [],
+				failed: ["0-Ghost"],
+			});
+			expect(activities[0]?.timestamp).toEqual(expect.any(Number));
 		});
 
 		it("relays only subagent-to-subagent traffic to the main UI", async () => {
