@@ -22,6 +22,7 @@ import ircDescription from "../prompts/tools/irc.md" with { type: "text" };
 import { type AgentRegistry, MAIN_AGENT_ID } from "../registry/agent-registry";
 import { canSpawnAtDepth } from "../task/types";
 import { Ellipsis, renderStatusLine, renderTreeList, truncateToWidth } from "../tui";
+import type { EventBus } from "../utils/event-bus";
 import type { ToolSession } from ".";
 import {
 	createCachedComponent,
@@ -139,6 +140,10 @@ export class IrcTool implements AgentTool<typeof ircSchema, IrcDetails> {
 		},
 	];
 	readonly loadMode = "discoverable";
+	get activityEventBus(): EventBus | undefined {
+		return this.session.eventBus;
+	}
+
 	constructor(private readonly session: ToolSession) {
 		this.description = prompt.render(ircDescription);
 	}

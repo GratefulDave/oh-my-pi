@@ -9,6 +9,7 @@ import {
 	onIrcMessage,
 	onSubagentLifecycle,
 	onSubagentProgress,
+	onSubagentTimeline,
 	onTokensUsed,
 	onToolExecutionEnd,
 	onToolExecutionStart,
@@ -16,6 +17,7 @@ import {
 	onTurnStart,
 	resetStats,
 	type SubagentStatus,
+	type SubagentTimelineEntry,
 } from "./stats-collector";
 
 // ---------------------------------------------------------------------------
@@ -31,11 +33,12 @@ import {
 // PARENT session's shared EventBus (pi.events) via these channels. We subscribe here
 // to roll subagent activity into the observer dashboard. Channel names are inlined to
 // keep this bundle free of a runtime value dependency on the host package.
-// ---------------------------------------------------------------------------
-
+const TASK_SUBAGENT_EVENT_CHANNEL = "task:subagent:event";
 const TASK_SUBAGENT_PROGRESS_CHANNEL = "task:subagent:progress";
 const TASK_SUBAGENT_LIFECYCLE_CHANNEL = "task:subagent:lifecycle";
 const IRC_MESSAGE_CHANNEL = "irc:message";
+
+const fanInBuses = new WeakSet<object>();
 
 type ProviderUsage = {
 	input?: number;
@@ -121,6 +124,7 @@ type SubagentLifecyclePayload = {
 };
 
 type IrcMessagePayload = {
+	id?: string;
 	timestamp?: number;
 	channel?: string;
 	from?: string;
@@ -131,23 +135,6 @@ type IrcMessagePayload = {
 	failed?: string[];
 };
 
-type IrcCustomMessage = {
-	customType?: string;
-	timestamp?: number;
-	details?: {
-		from?: string;
-		to?: string;
-		message?: string;
-		reply?: string;
-		body?: string;
-		kind?: "message" | "reply";
-	};
-};
-
-type IrcSessionEvent = {
-	message?: IrcCustomMessage;
-};
-
 type CustomTheme = {
 	fg?: (color: string, text: string) => string;
 	bold?: (text: string) => string;
@@ -156,6 +143,7 @@ type CustomTheme = {
 
 type ExtensionCommandContext = {
 	cwd: string;
+	hasUI?: boolean;
 	ui: {
 		setEditorText(text: string): void;
 		custom<T>(
@@ -213,6 +201,7 @@ function isSubagentStatus(status: unknown): status is SubagentStatus {
 function recordIrcPayload(payload: IrcMessagePayload | undefined): void {
 	if (!payload || typeof payload.body !== "string") return;
 	onIrcMessage({
+		id: payload.id,
 		timestamp: typeof payload.timestamp === "number" ? payload.timestamp : Date.now(),
 		channel: payload.channel ?? payload.to ?? "irc",
 		from: payload.from ?? "unknown",
@@ -224,30 +213,149 @@ function recordIrcPayload(payload: IrcMessagePayload | undefined): void {
 	});
 }
 
-function recordIrcSessionEvent(event: unknown): void {
-	const message = (event as IrcSessionEvent | undefined)?.message;
-	const details = message?.details;
-	if (!details) return;
-	if (message?.customType === "irc:incoming") {
-		recordIrcPayload({ timestamp: message.timestamp, from: details.from, to: "@Main", body: details.message });
-	} else if (message?.customType === "irc:autoreply") {
-		recordIrcPayload({
-			timestamp: message.timestamp,
-			from: "Main",
-			to: details.to,
-			body: details.reply,
-			kind: "reply",
-		});
-	} else if (message?.customType === "irc:relay") {
-		recordIrcPayload({
-			timestamp: message.timestamp,
-			channel: details.to,
-			from: details.from,
-			to: details.to,
-			body: details.body,
-			kind: details.kind,
-		});
+type UnknownRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): UnknownRecord | undefined {
+	return value != null && typeof value === "object" ? (value as UnknownRecord) : undefined;
+}
+
+function compactPreview(value: unknown): string {
+	if (typeof value === "string") return value;
+	if (value == null) return "";
+	try {
+		const encoded = JSON.stringify(value);
+		return typeof encoded === "string" ? encoded : String(value);
+	} catch {
+		return String(value);
 	}
+}
+
+function messagePreview(message: unknown): string {
+	const record = asRecord(message);
+	if (!record) return compactPreview(message);
+	const content = record.content;
+	if (typeof content === "string") return content;
+	if (Array.isArray(content)) {
+		const parts = content
+			.map(item => {
+				const block = asRecord(item);
+				if (!block) return "";
+				if (typeof block.text === "string") return block.text;
+				if (typeof block.thinking === "string") return block.thinking;
+				return typeof block.type === "string" ? `[${block.type}]` : "";
+			})
+			.filter(Boolean);
+		if (parts.length > 0) return parts.join(" ");
+	}
+	if (typeof record.text === "string") return record.text;
+	if (typeof record.errorMessage === "string") return record.errorMessage;
+	return compactPreview(message);
+}
+
+function eventTimestamp(event: UnknownRecord): number {
+	return typeof event.timestamp === "number" && Number.isFinite(event.timestamp) ? event.timestamp : Date.now();
+}
+
+function recordSubagentEvent(payload: unknown): void {
+	const envelope = asRecord(payload);
+	const id = envelope?.id;
+	const event = asRecord(envelope?.event);
+	if (typeof id !== "string" || !event || typeof event.type !== "string") return;
+	const timestamp = eventTimestamp(event);
+	let entry: SubagentTimelineEntry | undefined;
+	switch (event.type) {
+		case "message_end": {
+			const message = asRecord(event.message);
+			const role = typeof message?.role === "string" ? message.role : "message";
+			entry = {
+				timestamp,
+				kind: role === "assistant" || role === "user" ? "chat" : role === "toolResult" ? "tool" : "status",
+				title: role === "assistant" ? "Assistant" : role === "user" ? "User" : role,
+				detail: messagePreview(event.message),
+			};
+			break;
+		}
+		case "tool_execution_start": {
+			const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
+			entry = {
+				timestamp,
+				kind: "tool",
+				title: `Tool ${toolName}`,
+				detail: compactPreview(event.toolArgs ?? event.args),
+			};
+			break;
+		}
+		case "tool_execution_end": {
+			const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
+			const result = asRecord(event.result);
+			const isError = event.isError === true || result?.isError === true;
+			const error =
+				typeof event.error === "string"
+					? event.error
+					: typeof result?.error === "string"
+						? result.error
+						: isError
+							? messagePreview(event.result) || "Tool failed"
+							: undefined;
+			entry = {
+				timestamp,
+				kind: error ? "outcome" : "tool",
+				title: error ? `Tool ${toolName} error` : `Tool ${toolName} result`,
+				detail: error ?? compactPreview(event.result),
+			};
+			break;
+		}
+		case "auto_retry_start":
+			entry = {
+				timestamp,
+				kind: "retry",
+				title: "Retry started",
+				detail: `attempt ${compactPreview(event.attempt)}/${compactPreview(event.maxAttempts)} · ${compactPreview(event.delayMs)}ms`,
+			};
+			break;
+		case "auto_retry_end":
+			entry = {
+				timestamp,
+				kind: event.success === true ? "status" : "outcome",
+				title: event.success === true ? "Retry recovered" : "Retry failed",
+				detail:
+					typeof event.finalError === "string" ? event.finalError : `attempt ${compactPreview(event.attempt)}`,
+			};
+			break;
+		case "agent_start":
+		case "turn_start":
+			entry = { timestamp, kind: "status", title: event.type.replaceAll("_", " "), detail: "started" };
+			break;
+		case "turn_end":
+			entry = { timestamp, kind: "status", title: "turn end", detail: "completed" };
+			break;
+		case "agent_end": {
+			let outcome =
+				typeof event.error === "string"
+					? event.error
+					: typeof event.abortReason === "string"
+						? event.abortReason
+						: "";
+			if (!outcome && Array.isArray(event.messages)) {
+				for (let index = event.messages.length - 1; index >= 0; index--) {
+					const message = asRecord(event.messages[index]);
+					if (message?.role !== "assistant") continue;
+					outcome = messagePreview(message);
+					if (outcome) break;
+				}
+			}
+			entry = {
+				timestamp,
+				kind: "outcome",
+				title: "Agent outcome",
+				detail: outcome || "completed",
+			};
+			break;
+		}
+		default:
+			break;
+	}
+	if (entry) onSubagentTimeline(id, entry);
 }
 
 function normalizeTheme(theme: CustomTheme): {
@@ -293,8 +401,10 @@ export default function observer(pi: ExtensionAPI): void {
 	pi.setLabel("Observer");
 
 	// Hook into agent lifecycle events.
-	pi.on("session_start", () => {
-		resetStats();
+	pi.on("session_start", (_event, ctx) => {
+		// Only the interactive parent owns the process-wide observer state.
+		// Nested AgentSessions run headless and must never clear active telemetry.
+		if (ctx?.hasUI === true) resetStats();
 	});
 
 	pi.on("agent_start", () => {
@@ -318,60 +428,63 @@ export default function observer(pi: ExtensionAPI): void {
 	});
 
 	// Fan in subagent activity from the parent session's shared EventBus.
-	// Subagents emit aggregated progress (cumulative tokens/toolCount/cost) here
-	// because their own session events do not reach this extension instance.
-	pi.events.on(TASK_SUBAGENT_PROGRESS_CHANNEL, data => {
-		const payload = data as SubagentProgressPayload | undefined;
-		const progress = payload?.progress;
-		if (!progress || typeof progress.id !== "string" || !isSubagentStatus(progress.status)) return;
-		onSubagentProgress({
-			id: progress.id,
-			agent: progress.agent ?? payload?.agent ?? "subagent",
-			status: progress.status,
-			tokens: progress.tokens ?? 0,
-			toolCount: progress.toolCount ?? 0,
-			cost: progress.cost ?? 0,
-			index: progress.index ?? payload.index,
-			task: progress.task ?? payload.task,
-			assignment: progress.assignment ?? payload.assignment,
-			description: progress.description ?? payload.description,
-			currentTool: progress.currentTool,
-			currentToolArgs: progress.currentToolArgs,
-			currentToolStartMs: progress.currentToolStartMs,
-			lastIntent: progress.lastIntent,
-			recentOutput: progress.recentOutput,
-			durationMs: progress.durationMs,
-			contextTokens: progress.contextTokens,
-			contextWindow: progress.contextWindow,
-			resolvedModel: progress.resolvedModel,
-			retryState: progress.retryState,
-			retryFailure: progress.retryFailure,
-			failureReason: progress.error ?? progress.abortReason,
-			agentSource: progress.agentSource,
-			sessionFile: progress.sessionFile,
-			recentTools: progress.recentTools,
-			extractedToolData: progress.extractedToolData,
-			inflightTaskDetails: progress.inflightTaskDetails,
+	if (!fanInBuses.has(pi.events)) {
+		fanInBuses.add(pi.events);
+		// Subagents emit aggregated progress (cumulative tokens/toolCount/cost) here
+		// because their own session events do not reach this extension instance.
+		pi.events.on(TASK_SUBAGENT_PROGRESS_CHANNEL, data => {
+			const payload = data as SubagentProgressPayload | undefined;
+			const progress = payload?.progress;
+			if (!progress || typeof progress.id !== "string" || !isSubagentStatus(progress.status)) return;
+			onSubagentProgress({
+				id: progress.id,
+				agent: progress.agent ?? payload?.agent ?? "subagent",
+				status: progress.status,
+				tokens: progress.tokens ?? 0,
+				toolCount: progress.toolCount ?? 0,
+				cost: progress.cost ?? 0,
+				index: progress.index ?? payload.index,
+				task: progress.task ?? payload.task,
+				assignment: progress.assignment ?? payload.assignment,
+				description: progress.description ?? payload.description,
+				currentTool: progress.currentTool,
+				currentToolArgs: progress.currentToolArgs,
+				currentToolStartMs: progress.currentToolStartMs,
+				lastIntent: progress.lastIntent,
+				recentOutput: progress.recentOutput,
+				durationMs: progress.durationMs,
+				contextTokens: progress.contextTokens,
+				contextWindow: progress.contextWindow,
+				resolvedModel: progress.resolvedModel,
+				retryState: progress.retryState,
+				retryFailure: progress.retryFailure,
+				failureReason: progress.error ?? progress.abortReason,
+				agentSource: progress.agentSource,
+				sessionFile: progress.sessionFile,
+				recentTools: progress.recentTools,
+				extractedToolData: progress.extractedToolData,
+				inflightTaskDetails: progress.inflightTaskDetails,
+			});
 		});
-	});
 
-	pi.events.on(TASK_SUBAGENT_LIFECYCLE_CHANNEL, data => {
-		const payload = data as SubagentLifecyclePayload | undefined;
-		if (!payload || typeof payload.id !== "string" || !isSubagentStatus(lifecycleToStatus(payload.status))) return;
-		onSubagentLifecycle(payload.id, payload.agent ?? "subagent", lifecycleToStatus(payload.status), {
-			index: payload.index,
-			task: payload.task,
-			description: payload.description,
+		pi.events.on(TASK_SUBAGENT_LIFECYCLE_CHANNEL, data => {
+			const payload = data as SubagentLifecyclePayload | undefined;
+			if (!payload || typeof payload.id !== "string" || !isSubagentStatus(lifecycleToStatus(payload.status))) return;
+			onSubagentLifecycle(payload.id, payload.agent ?? "subagent", lifecycleToStatus(payload.status), {
+				index: payload.index,
+				task: payload.task,
+				description: payload.description,
+			});
 		});
-	});
 
-	pi.events.on(IRC_MESSAGE_CHANNEL, data => {
-		recordIrcPayload(data as IrcMessagePayload | undefined);
-	});
+		pi.events.on(TASK_SUBAGENT_EVENT_CHANNEL, data => {
+			recordSubagentEvent(data);
+		});
 
-	pi.on("irc_message", event => {
-		recordIrcSessionEvent(event);
-	});
+		pi.events.on(IRC_MESSAGE_CHANNEL, data => {
+			recordIrcPayload(data as IrcMessagePayload | undefined);
+		});
+	}
 
 	// Track token usage from provider responses.
 	pi.on("after_provider_response", (event, ctx) => {

@@ -19,6 +19,29 @@ import { logger, Snowflake } from "@oh-my-pi/pi-utils";
 import { AgentLifecycleManager } from "../registry/agent-lifecycle";
 import { AgentRegistry, MAIN_AGENT_ID } from "../registry/agent-registry";
 import type { CustomMessage } from "../session/messages";
+import type { EventBus } from "../utils/event-bus";
+
+export const IRC_MESSAGE_CHANNEL = "irc:message";
+
+export interface IrcMessageActivityPayload {
+	id: string;
+	timestamp: number;
+	channel: typeof IRC_MESSAGE_CHANNEL;
+	from: string;
+	to: string;
+	body: string;
+	kind: "message" | "reply";
+	delivered: string[];
+	failed: string[];
+}
+interface EventBusSessionSource {
+	eventBus?: EventBus;
+	getToolByName?: (name: string) => unknown;
+}
+
+interface EventBusToolSource {
+	activityEventBus?: EventBus;
+}
 
 export interface IrcMessage {
 	id: string;
@@ -102,18 +125,29 @@ export class IrcBus {
 		msg: Omit<IrcMessage, "id" | "ts">,
 		opts?: { expectsReply?: boolean; suppressRelay?: boolean },
 	): Promise<IrcDeliveryReceipt> {
-		const message: IrcMessage = { ...msg, id: Snowflake.next(), ts: Date.now() };
+		const { replyTo: rawReplyTo, ...messageFields } = msg;
+		const replyTo = rawReplyTo?.trim();
+		const message: IrcMessage = {
+			...messageFields,
+			...(replyTo ? { replyTo } : {}),
+			id: Snowflake.next(),
+			ts: Date.now(),
+		};
 		const ref = this.#registry.get(message.to);
 		if (!ref || ref.status === "aborted") {
-			return { to: message.to, outcome: "failed", error: `Unknown or terminated agent "${message.to}".` };
+			return this.#finalizeSend(message, {
+				to: message.to,
+				outcome: "failed",
+				error: `Unknown or terminated agent "${message.to}".`,
+			});
 		}
 		// Advisor refs are observability-only transcripts, never messageable peers.
 		if (ref.kind === "advisor") {
-			return {
+			return this.#finalizeSend(message, {
 				to: message.to,
 				outcome: "failed",
 				error: `Agent "${message.to}" is a read-only advisor transcript and cannot be messaged.`,
-			};
+			});
 		}
 
 		let revived = false;
@@ -122,11 +156,11 @@ export class IrcBus {
 				await this.#lifecycle().ensureLive(message.to);
 				revived = true;
 			} catch (error) {
-				return {
+				return this.#finalizeSend(message, {
 					to: message.to,
 					outcome: "failed",
 					error: error instanceof Error ? error.message : String(error),
-				};
+				});
 			}
 		}
 
@@ -137,30 +171,77 @@ export class IrcBus {
 		if (waiter) {
 			waiter.resolve(message);
 			if (!opts?.suppressRelay) this.#relayToMainUi(message);
-			return { to: message.to, outcome: revived ? "revived" : "injected" };
+			return this.#finalizeSend(message, { to: message.to, outcome: revived ? "revived" : "injected" });
 		}
 
 		const session = this.#registry.get(message.to)?.session;
 		if (!session) {
-			return { to: message.to, outcome: "failed", error: `Agent "${message.to}" has no live session.` };
+			return this.#finalizeSend(message, {
+				to: message.to,
+				outcome: "failed",
+				error: `Agent "${message.to}" has no live session.`,
+			});
 		}
 
 		try {
 			const delivery = await session.deliverIrcMessage(message, opts);
 			if (!opts?.suppressRelay) this.#relayToMainUi(message);
-			return { to: message.to, outcome: revived ? "revived" : delivery };
+			return this.#finalizeSend(message, { to: message.to, outcome: revived ? "revived" : delivery });
 		} catch (error) {
 			// Live hand-off failed (e.g. recipient disposed mid-shutdown): buffer
 			// the message so a later `wait`/`inbox` from the recipient can still
 			// pick it up. The receipt stays "failed" — the recipient has not
 			// seen it.
 			this.#enqueue(message);
-			return {
+			return this.#finalizeSend(message, {
 				to: message.to,
 				outcome: "failed",
 				error: error instanceof Error ? error.message : String(error),
-			};
+			});
 		}
+	}
+	#finalizeSend(message: IrcMessage, receipt: IrcDeliveryReceipt): IrcDeliveryReceipt {
+		const payload: IrcMessageActivityPayload = {
+			id: message.id,
+			timestamp: message.ts,
+			channel: IRC_MESSAGE_CHANNEL,
+			from: message.from,
+			to: message.to,
+			body: message.body,
+			kind: message.replyTo ? "reply" : "message",
+			delivered: receipt.outcome === "failed" ? [] : [message.to],
+			failed: receipt.outcome === "failed" ? [message.to] : [],
+		};
+		const eventBus = this.#resolveEventBus(message);
+		if (eventBus) {
+			try {
+				eventBus.emit(IRC_MESSAGE_CHANNEL, payload);
+			} catch (error) {
+				logger.debug("IrcBus: activity event failed", { error: String(error) });
+			}
+		}
+		return receipt;
+	}
+
+	#resolveEventBus(message: IrcMessage): EventBus | undefined {
+		const candidateIds = [MAIN_AGENT_ID, message.from, message.to];
+		const seen = new Set<string>();
+		for (const id of candidateIds) {
+			if (seen.has(id)) continue;
+			seen.add(id);
+			const session = this.#registry.get(id)?.session;
+			if (!session) continue;
+			try {
+				const source = session as unknown as EventBusSessionSource;
+				if (source.eventBus) return source.eventBus;
+				if (typeof source.getToolByName !== "function") continue;
+				const tool = source.getToolByName("irc") as EventBusToolSource | undefined;
+				if (tool?.activityEventBus) return tool.activityEventBus;
+			} catch (error) {
+				logger.debug("IrcBus: failed to inspect session event bus", { agentId: id, error: String(error) });
+			}
+		}
+		return undefined;
 	}
 
 	/**

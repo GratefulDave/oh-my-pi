@@ -10,6 +10,7 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import observer from "../src/extension";
+import { buildObserverHierarchy } from "../src/hierarchy";
 import { stripAnsi } from "../src/renderer";
 import {
 	getStats,
@@ -20,6 +21,7 @@ import {
 } from "../src/stats-collector";
 
 const PROGRESS_CHANNEL = "task:subagent:progress";
+const RAW_EVENT_CHANNEL = "task:subagent:event";
 const LIFECYCLE_CHANNEL = "task:subagent:lifecycle";
 const IRC_CHANNEL = "irc:message";
 
@@ -312,28 +314,125 @@ describe("pi-observer subagent fan-in", () => {
 		]);
 	});
 
-	test("end-to-end: session IRC messages are normalized without host changes", () => {
-		const { pi, sessionHandlers } = makeFakePi();
+	test("raw subagent events and canonical IRC form one ordered per-agent timeline", () => {
+		const { pi, events } = makeFakePi();
 		observer(pi);
-
-		sessionHandlers.get("irc_message")?.({
-			message: {
-				customType: "irc:relay",
-				timestamp: 2,
-				details: { from: "executor", to: "@Main", body: "/me finished", kind: "reply" },
+		observer(pi);
+		events.emit(PROGRESS_CHANNEL, {
+			agent: "executor",
+			task: "Trace",
+			progress: { id: "timeline-1", agent: "executor", status: "running", tokens: 10, toolCount: 1, cost: 0 },
+		});
+		events.emit(RAW_EVENT_CHANNEL, {
+			id: "timeline-1",
+			event: {
+				type: "message_end",
+				timestamp: 1,
+				message: { role: "assistant", content: [{ type: "text", text: "chat first" }] },
+			},
+		});
+		events.emit(RAW_EVENT_CHANNEL, {
+			id: "timeline-1",
+			event: { type: "tool_execution_start", timestamp: 2, toolName: "read", args: { path: "x.ts" } },
+		});
+		events.emit(IRC_CHANNEL, {
+			id: "irc-1",
+			timestamp: 3,
+			channel: "irc:message",
+			from: "Main",
+			to: "timeline-1",
+			body: "status?",
+			kind: "message",
+			delivered: ["timeline-1"],
+			failed: [],
+		});
+		events.emit(IRC_CHANNEL, {
+			id: "irc-1",
+			timestamp: 3,
+			channel: "irc:message",
+			from: "Main",
+			to: "timeline-1",
+			body: "status?",
+			kind: "message",
+			delivered: ["timeline-1"],
+			failed: [],
+		});
+		events.emit(IRC_CHANNEL, {
+			id: "irc-2",
+			timestamp: 3,
+			channel: "irc:message",
+			from: "Main",
+			to: "timeline-1",
+			body: "status?",
+			kind: "message",
+			delivered: ["timeline-1"],
+			failed: [],
+		});
+		events.emit(IRC_CHANNEL, {
+			id: "irc-alias",
+			timestamp: 3,
+			channel: "irc:message",
+			from: "Main",
+			to: "executor",
+			body: "misrouted",
+			kind: "message",
+			delivered: ["executor"],
+			failed: [],
+		});
+		events.emit(RAW_EVENT_CHANNEL, {
+			id: "timeline-1",
+			event: { type: "tool_execution_end", timestamp: 4, toolName: "read", result: { text: "done" } },
+		});
+		events.emit(RAW_EVENT_CHANNEL, {
+			id: "timeline-1",
+			event: {
+				type: "agent_end",
+				timestamp: 5,
+				messages: [
+					{ role: "user", content: [{ type: "text", text: "initial prompt" }] },
+					{ role: "assistant", content: [{ type: "text", text: "final answer" }] },
+				],
 			},
 		});
 
-		expect(getStats().ircMessages.at(-1)).toEqual({
-			timestamp: 2,
-			channel: "@Main",
-			from: "executor",
-			to: "@Main",
-			body: "/me finished",
-			kind: "reply",
-			delivered: [],
+		const activity = getStats().subagents.get("timeline-1");
+		expect(activity?.timeline?.map(entry => entry.kind)).toEqual(["chat", "tool", "irc", "irc", "tool", "outcome"]);
+		expect(activity?.timeline?.filter(entry => entry.kind === "irc")).toHaveLength(2);
+		expect(getStats().ircMessages).toHaveLength(3);
+		const detail = buildObserverHierarchy(getStats(), 6_000).getNode("agent:timeline-1")?.detail ?? [];
+		expect(detail.join("\n").indexOf("chat first")).toBeLessThan(detail.join("\n").indexOf("status?"));
+		expect(detail.join("\n").indexOf("status?")).toBeLessThan(detail.join("\n").indexOf("done"));
+		expect(detail.filter(line => line.includes("status?"))).toHaveLength(2);
+		expect(detail.join("\n")).toContain("final answer");
+		expect(detail.join("\n")).not.toContain("initial prompt");
+		expect(detail.join("\n")).not.toContain("misrouted");
+	});
+
+	test("IRC received before progress is sanitized and attached once by agent id", () => {
+		const { pi, events } = makeFakePi();
+		observer(pi);
+		events.emit(IRC_CHANNEL, {
+			id: "irc-before",
+			timestamp: 1,
+			channel: "irc:message",
+			from: "Main",
+			to: "late-agent",
+			body: `first\nsecond\u001b[31m${"x".repeat(400)}`,
+			kind: "message",
+			delivered: ["late-agent"],
 			failed: [],
 		});
+		events.emit(PROGRESS_CHANNEL, {
+			agent: "executor",
+			task: "Late",
+			progress: { id: "late-agent", agent: "executor", status: "running", tokens: 0, toolCount: 0, cost: 0 },
+		});
+
+		const timeline = getStats().subagents.get("late-agent")?.timeline ?? [];
+		expect(timeline.filter(entry => entry.kind === "irc")).toHaveLength(1);
+		expect(timeline[0]?.detail).not.toContain("\n");
+		expect(timeline[0]?.detail).not.toContain("\u001b");
+		expect(timeline[0]?.detail.length).toBeLessThanOrEqual(320);
 	});
 
 	test("malformed payloads are ignored", () => {
