@@ -10,6 +10,48 @@
 
 - Fixed the shared IRC activity feed so observer extensions receive one normalized event for every direct agent message, including replies and failed deliveries.
 
+## [16.4.3] - 2026-07-11
+
+### Added
+
+- Added /vibe mode, allowing the model to act as a director driving persistent background worker sessions (fast and good tiers) with dedicated session tools (vibe_spawn, vibe_send, vibe_wait, vibe_kill, vibe_list) and a live TUI "TV wall" showing active worker activity, tool traces, and streamed output.
+- Added multiple credential-free web search providers (Google, Bing, Yahoo, Startpage, Ecosia, Mojeek) with stealth-browser escalation, bot challenge detection, and recency filters, alongside a parallel public ("Public Web") provider that aggregates and deduplicates results across all engines.
+- Added PCRE2 fallback support for grep lookaround and backreferences when the default Rust regex engine rejects a pattern.
+- Added a helpful stderr hint when launching omp acp from an interactive terminal to clarify that the command communicates via JSON-RPC over stdout.
+
+### Changed
+
+- Reduced browser action timeout from 15s to 8s to improve agent iteration speed.
+- Refined agent delegation logic to prioritize top-level planning by the primary agent, discourage single-agent delegation, and handle prerequisite work inline.
+- Optimized credential-free web search engine ordering and routing, prioritizing Startpage and Ecosia, and using randomized desktop Chrome profiles with stealth-browser escalation for blocked requests.
+
+### Fixed
+
+- Fixed advisor config preserving an explicit empty tool list so `/advisor config` can disable all advisor tools. ([#5155](https://github.com/can1357/oh-my-pi/issues/5155))
+- Fixed npm bundle generation failing on Linux with E2BIG by building dist/cli.js in-process via Bun.build instead of passing the embedded docs payload as a CLI --define argument.
+- Fixed compiled-binary extensions failing to load native .node FFI dependencies by resolving platform-specific packages against the extension's own node_modules.
+- Fixed a hang in omp search and omp q CLI commands by ensuring the AuthStorage connection is properly closed upon completion.
+- Fixed write blocking for the full LSP diagnostics poll by deferring slow diagnostics to a late-diagnostics channel.
+- Fixed multiple browser and puppeteer tool issues, including locator action timeouts, missing console/print output buffering, missing fill() method on element handles, and incorrect viewport screenshots on multi-tab setups.
+- Improved browser selector error diagnostics to report match counts and abort early on empty matches instead of waiting for the full timeout.
+- Fixed silent failures, duplicate error messages, and unhandled provider errors in ACP mode when errors occurred before streaming assistant text.
+- Fixed glob reporting contradictory "no files found" messages on timeout by explicitly stating the scan was incomplete.
+- Fixed read adding unwanted context padding to raw range selectors (e.g., raw:31-31).
+- Fixed first-run interactive startup rendering the entire changelog when the last-seen marker is missing or unreadable (#5135).
+- Fixed empty local-model stop responses exhausting retries without displaying a user-visible error (#5128).
+- Fixed serialization of BigInt values in tool arguments during session compaction.
+- Fixed GPT-5.6 over-delegating work by centralizing task fan-out and concurrency policy in the system prompt.
+- Fixed session title generation including leaked thinking markup from OpenAI-compatible endpoints (#5122).
+- Fixed bare skill://<name> path-only resolution for bash, grep, and glob to resolve to the skill directory instead of SKILL.md (#5087).
+- Fixed macOS stdio MCP servers missing Apple Events TCC prompts by spawning MCP children via the correct Bun.spawn overload (#5085).
+- Fixed the /move directory picker drawing a narrow 68-column frame inside wider overlays (#5067).
+- Fixed snapcompact inline imaging for GitHub Copilot Business and Enterprise models (#4779).
+- Fixed omp commit agent sessions to ensure valid proposals are committed before teardown, handle missing host outputs with non-zero exits, and prevent forcing GPG_TTY on signing-enabled repositories (#4794).
+
+### Removed
+
+- Removed the bundled plan subagent from available task agents.
+
 ## [16.4.2] - 2026-07-10
 
 ### Fixed
