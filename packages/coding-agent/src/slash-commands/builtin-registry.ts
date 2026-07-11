@@ -24,6 +24,7 @@ import {
 	MarketplaceManager,
 } from "../extensibility/plugins/marketplace";
 import { resolveMemoryBackend } from "../memory-backend";
+import { runPauseScreen } from "../modes/components/pause-screen";
 import { describeLoopLimitRuntime } from "../modes/loop-limit";
 import { theme } from "../modes/theme/theme";
 import type { InteractiveModeContext } from "../modes/types";
@@ -323,6 +324,15 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 			// Surface any inline prompt so the dispatcher returns it and the normal
 			// submit flow runs the first loop iteration (recording it as the loop prompt).
 			if (prompt) return { prompt };
+		},
+	},
+	{
+		name: "queue",
+		description: "Queue a message for after the agent yields",
+		inlineHint: "<message>",
+		allowArgs: true,
+		handleTui: async (command, runtime) => {
+			await runtime.ctx.handleQueueCommand(command.args);
 		},
 	},
 	{
@@ -2267,6 +2277,14 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 
 			// If a prompt was provided, pass it through as input
 			if (prompt) return { prompt };
+		},
+	},
+	{
+		name: "pause",
+		description: "Freeze all agents (main, subagents, advisor) until resumed",
+		handleTui: async (_command, runtime) => {
+			runtime.ctx.editor.setText("");
+			await runPauseScreen(runtime.ctx);
 		},
 	},
 	{

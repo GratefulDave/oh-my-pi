@@ -694,6 +694,9 @@ export class InteractiveMode implements InteractiveModeContext {
 	get focusedAgentId(): string | undefined {
 		return this.#focusController.focusedAgentId;
 	}
+	get sessionName(): string | undefined {
+		return this.session.sessionName;
+	}
 	focusAgentSession(id: string): Promise<void> {
 		return this.#focusController.focusAgent(id);
 	}
@@ -4513,6 +4516,11 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	handleImagePaste(): Promise<boolean> {
 		return this.#inputController.handleImagePaste();
+	}
+
+	/** Queue slash-command input behind the active turn. */
+	handleQueueCommand(message: string): Promise<void> {
+		return this.#inputController.handleQueueCommand(message);
 	}
 
 	handleBtwCommand(question: string): Promise<void> {

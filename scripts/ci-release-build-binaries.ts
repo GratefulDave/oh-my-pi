@@ -3,7 +3,7 @@
 import * as fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import * as path from "node:path";
-import { compileCodingAgent } from "../packages/coding-agent/scripts/compile-binary";
+import { COMPILED_EXTERNAL_DEPENDENCIES, compileCodingAgent } from "../packages/coding-agent/scripts/compile-binary";
 
 interface BinaryTarget {
 	id: string;
@@ -63,7 +63,7 @@ const targets: BinaryTarget[] = [
 		id: "win32-x64",
 		platform: "win32",
 		arch: "x64",
-		target: "bun-windows-x64-modern",
+		target: "bun-windows-x64-baseline",
 		outfile: "packages/coding-agent/binaries/omp-windows-x64.exe",
 	},
 ];
@@ -121,7 +121,9 @@ async function buildBinary(target: BinaryTarget): Promise<void> {
 	console.log(`Building ${target.outfile}...`);
 	await embedNative(target);
 	if (isDryRun) {
-		console.log(`DRY RUN Bun.build target=${target.target} outfile=${target.outfile}`);
+		console.log(
+			`DRY RUN Bun.build target=${target.target} outfile=${target.outfile} external=${COMPILED_EXTERNAL_DEPENDENCIES.join(",")}`,
+		);
 		return;
 	}
 

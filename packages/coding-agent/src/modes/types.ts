@@ -114,6 +114,8 @@ export interface InteractiveModeContext {
 	// Session access
 	session: AgentSession;
 	sessionManager: SessionManager;
+	/** The current session display name / title. */
+	readonly sessionName: string | undefined;
 	/** Session the transcript/editor/status are attached to: the focused agent's, else `session`. */
 	readonly viewSession: AgentSession;
 	/** Id of the focused agent, undefined when the main session is attached. */
@@ -377,6 +379,8 @@ export interface InteractiveModeContext {
 	handleCtrlZ(): void;
 	handleDequeue(): void;
 	handleImagePaste(): Promise<boolean>;
+	/** Queue a message for delivery only after the active agent turn would stop. */
+	handleQueueCommand(message: string): Promise<void>;
 	handleBtwCommand(question: string): Promise<void>;
 	handleTanCommand(work: string): Promise<void>;
 	hasActiveBtw(): boolean;
