@@ -36,11 +36,6 @@ export interface IrcMessageActivityPayload {
 }
 interface EventBusSessionSource {
 	eventBus?: EventBus;
-	getToolByName?: (name: string) => unknown;
-}
-
-interface EventBusToolSource {
-	activityEventBus?: EventBus;
 }
 
 export interface IrcMessage {
@@ -241,9 +236,6 @@ export class IrcBus {
 			try {
 				const source = session as unknown as EventBusSessionSource;
 				if (source.eventBus) return source.eventBus;
-				if (typeof source.getToolByName !== "function") continue;
-				const tool = source.getToolByName("irc") as EventBusToolSource | undefined;
-				if (tool?.activityEventBus) return tool.activityEventBus;
 			} catch (error) {
 				logger.debug("IrcBus: failed to inspect session event bus", { agentId: id, error: String(error) });
 			}

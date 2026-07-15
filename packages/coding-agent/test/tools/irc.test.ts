@@ -15,6 +15,7 @@ import type { CustomMessage } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { type CoordinationDetails, HubTool, isIrcEnabled } from "@oh-my-pi/pi-coding-agent/tools/hub";
+import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
 
 interface FakeSession {
 	session: AgentSession;
@@ -184,25 +185,6 @@ describe("IRC", () => {
 			expect(activities[0]?.kind).toBe("message");
 		});
 
-		it("resolves the activity bus exposed by the registered IRC tool", async () => {
-			const eventBus = new EventBus();
-			const ircTool = new IrcTool(makeToolSession(registry, "0-A", eventBus));
-			const senderSession = {
-				getToolByName: (name: string) => (name === "irc" ? ircTool : undefined),
-			} as unknown as AgentSession;
-			registry.register({ id: "0-A", displayName: "sender", kind: "sub", session: senderSession });
-			const recipient = makeFakeSession();
-			registry.register({ id: "0-B", displayName: "recipient", kind: "sub", session: recipient.session });
-			const activities: IrcMessageActivityPayload[] = [];
-			eventBus.on(IRC_MESSAGE_CHANNEL, data => {
-				activities.push(data as IrcMessageActivityPayload);
-			});
-
-			await bus.send({ from: "0-A", to: "0-B", body: "observed" });
-
-			expect(activities).toHaveLength(1);
-			expect(activities[0]?.body).toBe("observed");
-		});
 
 		it("publishes one failed activity event when a direct send cannot resolve", async () => {
 			const sender = makeFakeSession();
