@@ -727,7 +727,7 @@ export class SelectorController {
 						if (role === "default") {
 							const { switched } = await this.ctx.session.setModel(model, role, {
 								selector,
-								thinkingLevel: concreteThinking,
+								thinkingLevel: isAuto ? ThinkingLevel.Inherit : concreteThinking,
 								persist: true,
 								currentContextTokens,
 							});
@@ -1556,7 +1556,10 @@ export class SelectorController {
 		});
 	}
 
-	showAgentHub(observers: SessionObserverRegistry, options?: { requireContent?: boolean }): void {
+	showAgentHub(
+		observers: SessionObserverRegistry,
+		options?: { requireContent?: boolean; armCloseTap?: boolean },
+	): void {
 		const hubKeys = [
 			...this.ctx.keybindings.getKeys("app.agents.hub"),
 			...this.ctx.keybindings.getKeys("app.session.observe"),
@@ -1611,6 +1614,10 @@ export class SelectorController {
 			this.ctx.editorContainer.clear();
 			this.ctx.editorContainer.addChild(hub);
 			this.ctx.ui.setFocus(hub);
+			// When the hub was raised by the editor's double-← gesture, prime its own
+			// close detector so the *next* single ← dismisses it — the two taps that
+			// opened it were consumed by the editor's detector (issue #4780).
+			if (options?.armCloseTap) hub.armCloseTap();
 			this.ctx.ui.requestRender();
 		};
 
