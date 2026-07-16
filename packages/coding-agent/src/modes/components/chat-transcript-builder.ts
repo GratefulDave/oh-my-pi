@@ -285,6 +285,7 @@ export class ChatTranscriptBuilder {
 			this.deps.ui.imageBudget,
 			proseOnlyThinking,
 		);
+		assistantComponent.setImagesVisible(settings.get("terminal.showImages"));
 		this.container.addChild(assistantComponent);
 
 		if (settings.get("display.cacheMissMarker")) {
@@ -315,6 +316,7 @@ export class ChatTranscriptBuilder {
 				undefined,
 				proseOnlyThinking,
 			);
+			component.setImagesVisible(settings.get("terminal.showImages"));
 			this.container.addChild(component);
 		};
 

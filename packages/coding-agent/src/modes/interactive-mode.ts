@@ -647,6 +647,8 @@ export class InteractiveMode implements InteractiveModeContext {
 	collabHost?: CollabHost;
 	collabGuest?: CollabGuestLink;
 
+	#pendingCommandOutput: Component[] = [];
+	#pendingCommandOutputSessionId: string | undefined;
 	#pendingSlashCommands: SlashCommand[] = [];
 	/** Built-in editor autocomplete provider, before extension wrapping. */
 	#baseAutocompleteProvider: AutocompleteProvider | undefined;
@@ -866,15 +868,7 @@ export class InteractiveMode implements InteractiveModeContext {
 			description: `${loaded.command.description} (${loaded.source})`,
 		}));
 
-		// Build skill commands from session.skills (if enabled)
-		const skillCommandList: SlashCommand[] = [];
-		if (settings.get("skills.enableSkillCommands")) {
-			for (const skill of this.session.skills) {
-				const commandName = `skill:${skill.name}`;
-				this.skillCommands.set(commandName, skill);
-				skillCommandList.push({ name: commandName, description: skill.description });
-			}
-		}
+		const skillCommandList = this.#rebuildSkillCommandsFromSession();
 
 		const builtinCommands = buildTuiBuiltinSlashCommands({ ctx: this });
 		// Store pending commands for init() where file commands are loaded async
@@ -1165,6 +1159,13 @@ export class InteractiveMode implements InteractiveModeContext {
 				this.#handleSessionAccentInputsChanged();
 			}),
 		);
+		this.#eventBusUnsubscribers.push(
+			this.session.subscribeCommandMetadataChanged(() => {
+				const retainedCommands = this.#pendingSlashCommands.filter(command => !command.name.startsWith("skill:"));
+				const skillCommands = this.#rebuildSkillCommandsFromSession();
+				this.#pendingSlashCommands = [...retainedCommands, ...skillCommands];
+			}),
+		);
 		// Set up theme file watcher
 		this.#eventBusUnsubscribers.push(
 			onThemeChange(event => {
@@ -1211,6 +1212,27 @@ export class InteractiveMode implements InteractiveModeContext {
 		const titleSystemPromptSource = discoverTitleSystemPromptFile(basePath);
 		const resolved = await resolvePromptInput(titleSystemPromptSource, "title system prompt");
 		this.session.setTitleSystemPrompt(resolved);
+	}
+
+	#rebuildSkillCommandsFromSession(): SlashCommand[] {
+		const commands: SlashCommand[] = [];
+		this.skillCommands.clear();
+		if (this.session.skillsSettings?.enableSkillCommands !== false) {
+			for (const skill of this.session.skills) {
+				const commandName = `skill:${skill.name}`;
+				this.skillCommands.set(commandName, skill);
+				commands.push({ name: commandName, description: skill.description });
+			}
+		}
+		return commands;
+	}
+
+	/** Reload session skills and the `/skill:<name>` command list. */
+	async refreshSkillState(): Promise<void> {
+		await this.session.refreshSkills();
+		const retainedCommands = this.#pendingSlashCommands.filter(command => !command.name.startsWith("skill:"));
+		const skillCommands = this.#rebuildSkillCommandsFromSession();
+		this.#pendingSlashCommands = [...retainedCommands, ...skillCommands];
 	}
 
 	/** Reload slash commands and autocomplete for the provided working directory. */
@@ -1311,6 +1333,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		clearClaudePluginRootsCache();
 		await this.refreshTitleSystemPrompt(newCwd);
 		resetCapabilities();
+		await this.refreshSkillState();
 		await this.refreshSlashCommandState(newCwd);
 		setSessionTerminalTitle(this.sessionManager.getSessionName(), this.sessionManager.getCwd());
 		this.statusLine.invalidate();
@@ -2723,8 +2746,6 @@ export class InteractiveMode implements InteractiveModeContext {
 		const finish = (choice: string | undefined): void => {
 			if (settled) return;
 			settled = true;
-			this.#hidePlanReview();
-			this.ui.requestRender();
 			resolve(choice);
 		};
 		const overlay = new PlanReviewOverlay(
@@ -3648,6 +3669,10 @@ export class InteractiveMode implements InteractiveModeContext {
 			},
 			{ slider },
 		);
+		const closePlanReview = (): void => {
+			this.#hidePlanReview();
+			this.ui.requestRender();
+		};
 
 		if (choice === "Approve and execute" || choice === "Approve and compact context" || choice === keepContextLabel) {
 			try {
@@ -3660,6 +3685,7 @@ export class InteractiveMode implements InteractiveModeContext {
 				}
 				if (!latestPlanContent) {
 					this.showError(`Plan file not found at ${planFilePath}`);
+					closePlanReview();
 					return;
 				}
 				// Capture the operator's tier choice and hand it to #approvePlan, which
@@ -3702,6 +3728,7 @@ export class InteractiveMode implements InteractiveModeContext {
 					`Failed to finalize approved plan: ${error instanceof Error ? error.message : String(error)}`,
 				);
 			}
+			closePlanReview();
 			return;
 		}
 
@@ -3720,8 +3747,10 @@ export class InteractiveMode implements InteractiveModeContext {
 			} catch (error) {
 				this.showError(`Failed to refine plan: ${error instanceof Error ? error.message : String(error)}`);
 			}
+			closePlanReview();
 			return;
 		}
+		closePlanReview();
 	}
 
 	/**
@@ -3935,6 +3964,32 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.#mountChatChild(content as Component);
 		}
 		this.ui.requestRender();
+	}
+
+	/** Defer transcript command panels until the active turn can no longer grow above them. */
+	presentCommandOutput(content: Component | readonly Component[]): void {
+		if (!this.session.isStreaming) {
+			this.present(content);
+			return;
+		}
+		const sessionId = this.sessionManager.getSessionId();
+		if (this.#pendingCommandOutput.length > 0 && this.#pendingCommandOutputSessionId !== sessionId) {
+			this.#pendingCommandOutput = [];
+		}
+		this.#pendingCommandOutputSessionId = sessionId;
+		const items = Array.isArray(content) ? content : [content as Component];
+		this.#pendingCommandOutput.push(...items);
+	}
+
+	/** Mount every command panel queued for the current session while the agent was streaming. */
+	flushPendingCommandOutput(): void {
+		if (this.#pendingCommandOutput.length === 0) return;
+		const pending = this.#pendingCommandOutput;
+		const pendingSessionId = this.#pendingCommandOutputSessionId;
+		this.#pendingCommandOutput = [];
+		this.#pendingCommandOutputSessionId = undefined;
+		if (pendingSessionId !== this.sessionManager.getSessionId()) return;
+		this.present(pending);
 	}
 
 	#mountChatChild(item: Component): void {
