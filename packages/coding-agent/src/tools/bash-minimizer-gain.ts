@@ -38,7 +38,6 @@ export function getBashMinimizerGainPath(agentDir = getAgentDir()): string {
 	return path.join(agentDir, MINIMIZER_GAIN_FILE);
 }
 
-
 export async function appendBashMinimizerGainRecord(input: BashMinimizerGainInput): Promise<void> {
 	const kind = input.kind ?? "saved";
 	const savedBytes = kind === "saved" ? input.inputBytes - input.outputBytes : 0;

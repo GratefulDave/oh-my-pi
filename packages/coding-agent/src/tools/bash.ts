@@ -139,6 +139,10 @@ async function saveBashOriginalArtifact(session: ToolSession, originalText: stri
 	}
 }
 
+function hasBashMinimizerCommandPrefix(session: ToolSession): boolean {
+	return session.settings.getShellConfig?.().prefix !== undefined;
+}
+
 export function makeMinimizedSaveHandler(
 	session: ToolSession,
 	command: string,
@@ -154,7 +158,8 @@ export function makeMinimizedSaveHandler(
 } {
 	let saved = false;
 	let pendingSaved: { filter: string; inputBytes: number; outputBytes: number } | null = null;
-	const gainTelemetry = session.settings.get("shellMinimizer.gainTelemetry");
+	const gainTelemetry =
+		session.settings.get("shellMinimizer.gainTelemetry") && !hasBashMinimizerCommandPrefix(session);
 	return {
 		onMinimizedSave: async (originalText, info) => {
 			saved = true;
@@ -190,6 +195,7 @@ async function recordBashMinimizerGain(input: {
 }): Promise<void> {
 	if (!input.session.settings.get("shellMinimizer.gainTelemetry")) return;
 	if (!input.session.settings.get("shellMinimizer.enabled")) return;
+	if (hasBashMinimizerCommandPrefix(input.session)) return;
 	try {
 		// Native capture eligibility is exact: it includes shell syntax, settings,
 		// filters, user pipelines, prefixes, and the capture cap.

@@ -14765,7 +14765,11 @@ export class AgentSession {
 			});
 
 			this.recordBashResult(command, result, options);
-			if (gainTelemetry && this.settings.get("shellMinimizer.enabled")) {
+			if (
+				gainTelemetry &&
+				this.settings.get("shellMinimizer.enabled") &&
+				this.settings.getShellConfig().prefix === undefined
+			) {
 				// Native capture eligibility accounts for user-shell wrapping,
 				// prefixes, filters, pipelines, and the output capture cap.
 				if (savedGain.info) {
