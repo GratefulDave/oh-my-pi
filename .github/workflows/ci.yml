@@ -529,13 +529,19 @@ jobs:
               version: "0.15.0"
          - name: Setup sccache (GitHub-hosted)
            if: steps.detect.outputs.on_infra == 'false'
+           continue-on-error: true
            uses: mozilla-actions/sccache-action@v0.0.10
          - name: Enable sccache for cargo
            # Conditional backend: self-hosted omp-kata injects a shared S3
            # (RustFS) sccache via pod env; GitHub-hosted runners keep the GHA
-           # cache. CARGO_INCREMENTAL=0 keeps sccache from silently no-oping.
+           # cache when the optional setup action is available. CARGO_INCREMENTAL=0
+           # keeps sccache from silently no-oping.
            shell: bash
            run: |
+              if ! command -v sccache >/dev/null 2>&1; then
+                echo "sccache unavailable; continuing without compiler cache"
+                exit 0
+              fi
               {
                 echo "RUSTC_WRAPPER=sccache"
                 echo "CARGO_INCREMENTAL=0"
