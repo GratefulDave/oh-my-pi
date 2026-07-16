@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Bash `timeout: 0` being clamped to one second despite the executor's no-deadline contract. Results now expose `timeoutDisabled` instead of a fictitious zero-second timeout, including background and client-terminal paths.
+
 ## [17.0.1] - 2026-07-16
 
 ### Changed

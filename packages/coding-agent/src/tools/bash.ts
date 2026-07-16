@@ -24,6 +24,7 @@ import { getSixelLineMask } from "../utils/sixel";
 import type { ToolSession } from ".";
 import { truncateForPrompt } from "./approval";
 import { type BashInteractiveResult, runInteractiveBashPty } from "./bash-interactive";
+import { resolveEvalBackends } from "./eval-backends";
 import { checkBashInterception } from "./bash-interceptor";
 import {
 	appendBashMinimizerGainRecord,
@@ -279,6 +280,7 @@ export interface BashToolInput {
 export interface BashToolDetails {
 	meta?: OutputMeta;
 	timeoutSeconds?: number;
+	timeoutDisabled?: boolean;
 	requestedTimeoutSeconds?: number;
 	wallTimeMs?: number;
 	/** Exit code of a command that ran to completion but failed (non-zero). */
@@ -537,15 +539,6 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 			),
 		);
 		this.parameters = this.#asyncEnabled ? bashSchemaWithAsync : bashSchemaBase;
-		this.description = prompt.render(bashDescription, {
-			asyncEnabled: this.#asyncEnabled,
-			autoBackgroundEnabled: this.#autoBackgroundEnabled,
-			autoBackgroundThresholdSeconds: Math.max(0, Math.floor(this.#autoBackgroundThresholdMs / 1000)),
-			hasAstGrep: this.session.settings.get("astGrep.enabled"),
-			hasAstEdit: this.session.settings.get("astEdit.enabled"),
-			hasGrep: this.session.settings.get("grep.enabled"),
-			hasGlob: this.session.settings.get("glob.enabled"),
-		});
 	}
 
 	#formatResultOutput(result: BashResult | BashInteractiveResult): string {
@@ -587,6 +580,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 		timeoutSec: number,
 		options: {
 			requestedTimeoutSec?: number;
+			timeoutDisabled?: boolean;
 			notices?: readonly string[];
 			terminalId?: string;
 			wallTimeMs?: number;
@@ -612,7 +606,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 		// Aborts / timeouts / missing-status still propagate as thrown errors.
 		this.#throwIfUnfinished(result, timeoutSec, outputText);
 
-		const details: BashToolDetails = { timeoutSeconds: timeoutSec };
+		const details: BashToolDetails = options.timeoutDisabled ? { timeoutDisabled: true } : { timeoutSeconds: timeoutSec };
 		if (options.requestedTimeoutSec !== undefined && options.requestedTimeoutSec !== timeoutSec) {
 			details.requestedTimeoutSeconds = options.requestedTimeoutSec;
 		}
@@ -643,12 +637,11 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 		jobId: string,
 		previewText: string,
 		timeoutSec: number,
-		options: { requestedTimeoutSec?: number; notices?: readonly string[] } = {},
+		options: { requestedTimeoutSec?: number; timeoutDisabled?: boolean; notices?: readonly string[] } = {},
 	): AgentToolResult<BashToolDetails> {
-		const details: BashToolDetails = {
-			timeoutSeconds: timeoutSec,
-			async: { state: "running", jobId, type: "bash" },
-		};
+		const details: BashToolDetails = options.timeoutDisabled
+			? { timeoutDisabled: true, async: { state: "running", jobId, type: "bash" } }
+			: { timeoutSeconds: timeoutSec, async: { state: "running", jobId, type: "bash" } };
 		if (options.requestedTimeoutSec !== undefined && options.requestedTimeoutSec !== timeoutSec) {
 			details.requestedTimeoutSeconds = options.requestedTimeoutSec;
 		}
@@ -677,6 +670,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 		timeoutMs: number;
 		timeoutSec: number;
 		requestedTimeoutSec?: number;
+		timeoutDisabled?: boolean;
 		notices?: readonly string[];
 
 		resolvedEnv?: Record<string, string>;
@@ -729,6 +723,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 					const wallTimeMs = performance.now() - wallTimeStart;
 					const finalResult = await this.#buildCompletedResult(result, options.timeoutSec, {
 						requestedTimeoutSec: options.requestedTimeoutSec,
+						timeoutDisabled: options.timeoutDisabled,
 						notices: options.notices ?? [],
 						wallTimeMs,
 					});
@@ -911,10 +906,11 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 			throw new ToolError(`Working directory is not a directory: ${commandCwd}`);
 		}
 
-		// Clamp to reasonable range: 1s - 3600s (1 hour)
+		// Zero disables the command deadline; positive values clamp to 1s–3600s.
 		const requestedTimeoutSec = rawTimeout;
-		const timeoutSec = clampTimeout("bash", requestedTimeoutSec);
-		const timeoutMs = timeoutSec * 1000;
+		const timeoutDisabled = requestedTimeoutSec === 0;
+		const timeoutSec = timeoutDisabled ? 0 : clampTimeout("bash", requestedTimeoutSec);
+		const timeoutMs = timeoutDisabled ? 0 : timeoutSec * 1000;
 		const pendingNotices: string[] = [];
 		const timeoutClampNotice = formatTimeoutClampNotice(requestedTimeoutSec, timeoutSec);
 		if (timeoutClampNotice) pendingNotices.push(timeoutClampNotice);
@@ -929,6 +925,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 				timeoutMs,
 				timeoutSec,
 				requestedTimeoutSec,
+				timeoutDisabled,
 				notices: pendingNotices,
 
 				resolvedEnv,
@@ -937,6 +934,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 			});
 			return this.#buildBackgroundStartResult(job.jobId, "", timeoutSec, {
 				requestedTimeoutSec,
+				timeoutDisabled,
 				notices: pendingNotices,
 			});
 		}
@@ -967,6 +965,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 				timeoutMs,
 				timeoutSec,
 				requestedTimeoutSec,
+				timeoutDisabled,
 				notices: pendingNotices,
 
 				resolvedEnv,
@@ -976,6 +975,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 			if (startBackgrounded) {
 				return this.#buildBackgroundStartResult(job.jobId, "", timeoutSec, {
 					requestedTimeoutSec,
+					timeoutDisabled,
 					notices: pendingNotices,
 				});
 			}
@@ -998,6 +998,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 			autoBgManager.resumeDeliveries([job.jobId]);
 			return this.#buildBackgroundStartResult(job.jobId, job.getLatestText(), timeoutSec, {
 				requestedTimeoutSec,
+				timeoutDisabled,
 				notices: pendingNotices,
 			});
 		}
@@ -1055,14 +1056,16 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 						throw new ToolAbortError("Command aborted");
 					}
 
-					const timeoutPromise = Bun.sleep(timeoutMs).then(() => ({ kind: "timeout" as const }));
+					const timeoutPromise = timeoutDisabled
+						? undefined
+						: Bun.sleep(timeoutMs).then(() => ({ kind: "timeout" as const }));
 					// Poll until the process exits, times out, or the caller aborts.
 					for (;;) {
 						const racers: Array<Promise<BridgeRaceResult>> = [
 							exitPromise.then(s => ({ kind: "exit" as const, status: s })),
-							timeoutPromise,
 							Bun.sleep(250).then(() => ({ kind: "poll" as const })),
 						];
+						if (timeoutPromise) racers.push(timeoutPromise);
 						if (signal) {
 							racers.push(abortedP.then(() => ({ kind: "aborted" as const })));
 						}
@@ -1101,6 +1104,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 							};
 							return this.#buildCompletedResult(timedOutResult, timeoutSec, {
 								requestedTimeoutSec,
+								timeoutDisabled,
 								notices: pendingNotices,
 								terminalId: handle.terminalId,
 								wallTimeMs: performance.now() - bridgeWallTimeStart,
@@ -1166,6 +1170,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 				// minimizer never had a chance to process.
 				return this.#buildCompletedResult(bridgeResult, timeoutSec, {
 					requestedTimeoutSec,
+					timeoutDisabled,
 					notices: bridgeNotices,
 					terminalId: handle.terminalId,
 					wallTimeMs: performance.now() - bridgeWallTimeStart,
@@ -1247,6 +1252,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 		}
 		return this.#buildCompletedResult(result, timeoutSec, {
 			requestedTimeoutSec,
+			timeoutDisabled,
 			notices: pendingNotices,
 			wallTimeMs,
 		});
