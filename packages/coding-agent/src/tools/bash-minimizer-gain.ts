@@ -38,6 +38,7 @@ export function getBashMinimizerGainPath(agentDir = getAgentDir()): string {
 	return path.join(agentDir, MINIMIZER_GAIN_FILE);
 }
 
+
 export async function appendBashMinimizerGainRecord(input: BashMinimizerGainInput): Promise<void> {
 	const kind = input.kind ?? "saved";
 	const savedBytes = kind === "saved" ? input.inputBytes - input.outputBytes : 0;
@@ -555,7 +556,7 @@ export async function resolveBashMinimizerEligibilityConfig(input: {
 	if (!parsed) return resolved;
 	const parsedLegacy = parsed.legacyFilters ?? resolved.legacyFilters;
 	return {
-		enabled: parsed.enabled ?? resolved.enabled,
+		enabled: input.enabled === false ? false : (parsed.enabled ?? resolved.enabled),
 		only: parsed.only ?? resolved.only,
 		except: parsed.except ?? resolved.except,
 		maxCaptureBytes: parsed.maxCaptureBytes ?? resolved.maxCaptureBytes,

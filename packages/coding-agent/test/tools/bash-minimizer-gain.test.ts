@@ -419,6 +419,25 @@ describe("isBashCommandMinimizerEligible", () => {
 			fs.rmSync(settingsPath, { force: true });
 		}
 	});
+
+	test("an explicit disabled setting overrides an enabled settings file", async () => {
+		const settingsPath = path.join(os.tmpdir(), `omp-minimizer-disabled-${Date.now()}-${Math.random()}.toml`);
+		fs.writeFileSync(settingsPath, "enabled = true");
+		try {
+			const config = await resolveBashMinimizerEligibilityConfig({
+				settingsPath,
+				only: [],
+				except: [],
+				maxCaptureBytes: 4096,
+				legacyFilters: undefined,
+				enabled: false,
+			});
+			expect(config.enabled).toBe(false);
+			expect(isBashCommandMinimizerEligible("git status", config.only, config.except, config)).toBe(false);
+		} finally {
+			fs.rmSync(settingsPath, { force: true });
+		}
+	});
 	test("invalid user pipeline regex disables all user pipeline eligibility", async () => {
 		const settingsPath = path.join(os.tmpdir(), `omp-minimizer-invalid-settings-${Date.now()}-${Math.random()}.toml`);
 		fs.writeFileSync(

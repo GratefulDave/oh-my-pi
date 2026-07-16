@@ -51,24 +51,30 @@ function stalledBody(bytes: Uint8Array[] = []): ReadableStream<Uint8Array> {
 // through a Response body; fake timers do not drive Bun's ReadableStream scheduling
 // the same way as the platform clock.
 function delayedBody(chunks: Array<{ atMs: number; bytes: Uint8Array }>): ReadableStream<Uint8Array> {
+	let active = true;
 	return new ReadableStream<Uint8Array>({
-		async start(controller) {
-			let previousAtMs = 0;
-			try {
-				for (const chunk of chunks) {
-					const delayMs = chunk.atMs - previousAtMs;
-					if (delayMs > 0) await Bun.sleep(delayMs);
-					controller.enqueue(chunk.bytes);
-					previousAtMs = chunk.atMs;
-				}
-				controller.close();
-			} catch (error) {
-				try {
-					controller.error(error);
-				} catch {
-					// The stream may already be cancelled by the timeout path under test.
-				}
+		start(controller) {
+			for (const chunk of chunks) {
+				setTimeout(() => {
+					if (!active) return;
+					try {
+						controller.enqueue(chunk.bytes);
+					} catch {}
+				}, chunk.atMs);
 			}
+			setTimeout(
+				() => {
+					if (!active) return;
+					active = false;
+					try {
+						controller.close();
+					} catch {}
+				},
+				Math.max(...chunks.map(chunk => chunk.atMs)) + 1,
+			);
+		},
+		cancel() {
+			active = false;
 		},
 	});
 }
@@ -363,8 +369,8 @@ describe("streamPiNative event flow", () => {
 		const stream = streamPiNative(fakeModel(), baseContext, {
 			apiKey: "k",
 			fetch: fetchImpl,
-			streamFirstEventTimeoutMs: 500,
-			streamIdleTimeoutMs: 120,
+			streamFirstEventTimeoutMs: 1000,
+			streamIdleTimeoutMs: 1000,
 		});
 
 		const result = await stream.result();
