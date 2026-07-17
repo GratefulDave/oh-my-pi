@@ -8,6 +8,7 @@ import {
 	buildMinimizerOptions,
 	executeBash,
 	isPersistentShellCdCommand,
+	isUserShellCommandWrapped,
 } from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
 import * as direnvModule from "@oh-my-pi/pi-coding-agent/exec/direnv";
 import { DEFAULT_MAX_BYTES } from "@oh-my-pi/pi-coding-agent/session/streaming-output";
@@ -108,8 +109,31 @@ describe("executeBash", () => {
 			maxCaptureBytes: 4096,
 			sourceOutlineLevel: "default",
 			legacyFilters: undefined,
+			gainTelemetry: false,
 		};
 		expect(buildMinimizerOptions(group)).toBeUndefined();
+	});
+
+	it("forwards source outline and legacy filter settings to native minimizer options", () => {
+		const group: ShellMinimizerSettings = {
+			enabled: true,
+			settingsPath: "minimizer.toml",
+			only: ["git"],
+			except: ["docker"],
+			maxCaptureBytes: 1234,
+			sourceOutlineLevel: "aggressive",
+			legacyFilters: true,
+			gainTelemetry: false,
+		};
+		expect(buildMinimizerOptions(group)).toEqual({
+			enabled: true,
+			settingsPath: "minimizer.toml",
+			only: ["git"],
+			except: ["docker"],
+			maxCaptureBytes: 1234,
+			sourceOutlineLevel: "aggressive",
+			legacyFilters: true,
+		});
 	});
 
 	it.each([
@@ -138,6 +162,33 @@ describe("executeBash", () => {
 		["echo cd child", false],
 	] as const)("classifies persistent-shell cd routing for %j", (command, expected) => {
 		expect(isPersistentShellCdCommand(command)).toBe(expected);
+	});
+
+	it("does not treat bash user-shell commands as wrapped", () => {
+		Settings.instance.set("shellPath", "/bin/bash");
+		vi.spyOn(Settings.prototype, "getShellConfig").mockReturnValue({
+			shell: "/bin/bash",
+			args: ["-c"],
+			env: { PATH: Bun.env.PATH ?? "", HOME: tempDir, SHELL: "/bin/bash" },
+			prefix: undefined,
+		});
+
+		expect(isUserShellCommandWrapped(Settings.instance)).toBe(false);
+	});
+
+	it("treats non-bash user-shell commands as wrapped", () => {
+		const fakeShell = path.join(tempDir, "fake-zsh");
+		fs.writeFileSync(fakeShell, "#!/bin/sh\nexit 0\n");
+		fs.chmodSync(fakeShell, 0o755);
+		Settings.instance.set("shellPath", fakeShell);
+		vi.spyOn(Settings.prototype, "getShellConfig").mockReturnValue({
+			shell: fakeShell,
+			args: ["-c"],
+			env: { PATH: Bun.env.PATH ?? "", HOME: tempDir, SHELL: fakeShell },
+			prefix: undefined,
+		});
+
+		expect(isUserShellCommandWrapped(Settings.instance)).toBe(true);
 	});
 	it("returns non-zero exit codes without cancellation", async () => {
 		const result = await executeBash("exit 7", { cwd: tempDir, timeout: 5000 });

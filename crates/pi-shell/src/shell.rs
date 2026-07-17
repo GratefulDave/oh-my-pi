@@ -122,11 +122,14 @@ pub struct MinimizerResult {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ShellRunResult {
-	pub exit_code:   Option<i32>,
-	pub cancelled:   bool,
-	pub timed_out:   bool,
-	pub minimized:   Option<MinimizerResult>,
-	pub working_dir: Option<String>,
+	pub exit_code:          Option<i32>,
+	pub cancelled:          bool,
+	pub timed_out:          bool,
+	pub minimized:          Option<MinimizerResult>,
+	/// Whether the native minimizer executed a filter-backed command without
+	/// exceeding its capture cap.
+	pub minimizer_eligible: bool,
+	pub working_dir:        Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -350,6 +353,7 @@ async fn run_shell_session(
 				cancelled:   matches!(reason, AbortReason::Signal),
 				timed_out:   matches!(reason, AbortReason::Timeout),
 				minimized:   None,
+				minimizer_eligible: false,
 				working_dir: None,
 			});
 		}
@@ -364,13 +368,14 @@ async fn run_shell_session(
 	if !keepalive {
 		*session.lock().await = None;
 	}
-	let (exec, minimized, working_dir) = res?;
+	let (exec, minimized, working_dir, minimizer_eligible) = res?;
 	Ok(ShellRunResult {
 		exit_code: Some(exit_code(&exec)),
 		cancelled: false,
 		timed_out: false,
 		working_dir,
 		minimized,
+		minimizer_eligible,
 	})
 }
 
@@ -420,6 +425,7 @@ async fn run_shell_oneshot(
 				cancelled:   matches!(reason, AbortReason::Signal),
 				timed_out:   matches!(reason, AbortReason::Timeout),
 				minimized:   None,
+				minimizer_eligible: false,
 				working_dir: None,
 			});
 		},
@@ -429,13 +435,14 @@ async fn run_shell_oneshot(
 	let _ = process_cancel_bridge.await;
 	let res = run_result
 		.unwrap_or_else(|err| Err(Error::msg(format!("Shell execution task failed: {err}"))));
-	let (exec, minimized, working_dir) = res?;
+	let (exec, minimized, working_dir, minimizer_eligible) = res?;
 	Ok(ShellExecuteResult {
 		exit_code: Some(exit_code(&exec)),
 		cancelled: false,
 		timed_out: false,
 		working_dir,
 		minimized,
+		minimizer_eligible,
 	})
 }
 
@@ -486,6 +493,7 @@ async fn run_shell_oneshot_streams(
 				cancelled: matches!(reason, AbortReason::Signal),
 				timed_out: matches!(reason, AbortReason::Timeout),
 				minimized: None,
+				minimizer_eligible: false,
 				working_dir: None,
 			});
 		},
@@ -502,6 +510,7 @@ async fn run_shell_oneshot_streams(
 		timed_out: false,
 		working_dir,
 		minimized: None,
+		minimizer_eligible: false,
 	})
 }
 
@@ -776,7 +785,7 @@ async fn run_shell_command(
 	on_chunk: Option<Sender<String>>,
 	cancel_token: CancellationToken,
 	spawn_registry: Arc<process::SpawnRegistry>,
-) -> Result<(ExecutionResult, Option<MinimizerResult>, Option<String>)> {
+) -> Result<(ExecutionResult, Option<MinimizerResult>, Option<String>, bool)> {
 	if let Some(cwd) = options.cwd.as_deref() {
 		set_shell_working_dir_if_changed(&mut session.shell, cwd)?;
 	}
@@ -815,9 +824,9 @@ async fn run_shell_command(
 			.map_err(|err| Error::msg(format!("Failed to pop env scope: {err}")))?;
 	}
 
-	result.map(|(exec, minimized)| {
+	result.map(|(exec, minimized, minimizer_eligible)| {
 		let working_dir = Some(session.shell.working_dir().to_string_lossy().into_owned());
-		(exec, minimized, working_dir)
+		(exec, minimized, working_dir, minimizer_eligible)
 	})
 }
 
@@ -828,7 +837,7 @@ async fn run_shell_command_single(
 	cancel_token: CancellationToken,
 	spawn_registry: Arc<process::SpawnRegistry>,
 	minimizer_mode: minimizer::engine::MinimizerMode,
-) -> Result<(ExecutionResult, Option<MinimizerResult>)> {
+) -> Result<(ExecutionResult, Option<MinimizerResult>, bool)> {
 	debug_assert!(!matches!(minimizer_mode, minimizer::engine::MinimizerMode::SegmentedChain));
 
 	let params = session.shell.default_exec_params();
@@ -853,6 +862,13 @@ async fn run_shell_command_single(
 		capture_mode,
 	)
 	.await?;
+
+	let minimizer_eligible =
+		matches!(minimizer_mode, minimizer::engine::MinimizerMode::WholeCommand)
+			&& command_run
+				.buffered
+				.as_ref()
+				.is_some_and(|buffered| !buffered.exceeded);
 
 	let mut minimized_out = None;
 	if let Some(buffered) = command_run.buffered
@@ -901,7 +917,7 @@ async fn run_shell_command_single(
 		}
 	}
 
-	Ok((command_run.result, minimized_out))
+	Ok((command_run.result, minimized_out, minimizer_eligible))
 }
 
 async fn run_shell_command_segmented_chain(
@@ -910,7 +926,7 @@ async fn run_shell_command_segmented_chain(
 	on_chunk: Option<Sender<String>>,
 	cancel_token: CancellationToken,
 	spawn_registry: Arc<process::SpawnRegistry>,
-) -> Result<(ExecutionResult, Option<MinimizerResult>)> {
+) -> Result<(ExecutionResult, Option<MinimizerResult>, bool)> {
 	let Some(config) = options.minimizer.as_ref() else {
 		return run_shell_command_single(
 			session,
@@ -952,6 +968,7 @@ async fn run_shell_command_segmented_chain(
 
 	let params = session.shell.default_exec_params();
 	let mut aggregate = Some(ChainCapture::new());
+	let mut ran_filter_backed_segment = false;
 	let mut previous_succeeded = true;
 	let mut last_result = None;
 	let max_capture_bytes = config.max_capture_bytes as usize;
@@ -978,6 +995,10 @@ async fn run_shell_command_segmented_chain(
 			capture_mode,
 		)
 		.await?;
+
+		if minimizer::engine::should_minimize(&segment.command, config) {
+			ran_filter_backed_segment = true;
+		}
 
 		let exit = exit_code(&command_run.result);
 		previous_succeeded = exit == 0;
@@ -1017,6 +1038,7 @@ async fn run_shell_command_segmented_chain(
 		return Err(Error::msg("Segmented chain executed no segments"));
 	};
 
+	let minimizer_eligible = aggregate.is_some() && ran_filter_backed_segment;
 	let minimized_out = aggregate
 		// Only surface telemetry when the segmented chain actually rewrote the
 		// output; a `chain-noop` capture (`changed == false`) must yield `None`,
@@ -1042,7 +1064,7 @@ async fn run_shell_command_segmented_chain(
 	// path and `apply_shell_minimizer`. (Previously a `too-large` result with
 	// empty `text` was emitted, a footgun for consumers keying off presence.)
 
-	Ok((result, minimized_out))
+	Ok((result, minimized_out, minimizer_eligible))
 }
 
 async fn run_shell_command_once(
@@ -4647,6 +4669,41 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 		assert_eq!(minimized.text, format!("{}{}", "HI\n".repeat(200), world));
 		assert_eq!(minimized.input_bytes, (hello.len() + world.len()) as u32);
 		assert_eq!(minimized.output_bytes, ("HI\n".repeat(200).len() + world.len()) as u32);
+	}
+
+	#[cfg(unix)]
+	#[tokio::test(flavor = "multi_thread")]
+	async fn segmented_common_only_chain_is_not_minimizer_eligible() {
+		let root = unique_temp_dir("common-only-chain");
+		let minimizer = printf_minimizer(&root.join("minimizer.toml"), None);
+		let (result, output) =
+			run_command_capture("echo prep && true", None, Some(minimizer), CancelToken::default()).await;
+		let _ = std::fs::remove_dir_all(&root);
+
+		assert_eq!(result.exit_code, Some(0));
+		assert_eq!(output, "prep\n");
+		assert!(result.minimized.is_none());
+		assert!(!result.minimizer_eligible);
+	}
+
+	#[cfg(unix)]
+	#[tokio::test(flavor = "multi_thread")]
+	async fn segmented_chain_with_skipped_filter_is_not_minimizer_eligible() {
+		let root = unique_temp_dir("skipped-filter-chain");
+		let minimizer = printf_minimizer(&root.join("minimizer.toml"), None);
+		let (result, output) = run_command_capture(
+			"echo prep && false && printf 'hello\\n'",
+			None,
+			Some(minimizer),
+			CancelToken::default(),
+		)
+		.await;
+		let _ = std::fs::remove_dir_all(&root);
+
+		assert_eq!(result.exit_code, Some(1));
+		assert_eq!(output, "prep\n");
+		assert!(result.minimized.is_none());
+		assert!(!result.minimizer_eligible);
 	}
 
 	/// Regression: a quoted here-doc followed by another command must execute

@@ -36,6 +36,10 @@
 
 - Fixed provider usage window stats silently showing no data during SQLite contention by installing a five-second busy timeout on read-only agent database connections ([#7300](https://github.com/can1357/oh-my-pi/issues/7300)).
 
+### Added
+
+- Bash Minimizer gain dashboard in `omp stats` — shows bash minimizer token-savings alongside existing snapcompact savings with stacked time series, top-filter breakdown, project selector, and missed-command tuning table ([#5795](https://github.com/can1357/oh-my-pi/pull/5795)).
+
 ## [17.1.2] - 2026-07-24
 
 ### Added
