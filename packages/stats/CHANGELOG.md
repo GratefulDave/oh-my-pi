@@ -6,6 +6,12 @@
 
 - Bash Minimizer gain dashboard in `omp stats` — shows bash minimizer token-savings alongside existing snapcompact savings with stacked time series, top-filter breakdown, project selector, and missed-command tuning table ([#3691](https://github.com/can1357/oh-my-pi/pull/3691)).
 
+## [17.0.2] - 2026-07-17
+
+### Fixed
+
+- Fixed the Recent Errors list to honor the selected dashboard time range before returning the newest 50 failures.
+
 ## [16.4.7] - 2026-07-12
 
 ### Fixed
