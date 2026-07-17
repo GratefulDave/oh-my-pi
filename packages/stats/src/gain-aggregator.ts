@@ -436,7 +436,7 @@ export async function getGainDashboardStats(
 		hits: minimizerTotals.hits + snapcompactTotals.hits,
 		outputBytes: minimizerTotals.outputBytes,
 		originalBytes: minimizerTotals.originalBytes,
-		reductionPercent: minimizerTotals.reductionPercent,
+		reductionPercent: snapcompactTotals.hits > 0 ? null : minimizerTotals.reductionPercent,
 	};
 
 	const timeSeries: GainTimeSeriesPoint[] = Array.from(timeMap.entries())

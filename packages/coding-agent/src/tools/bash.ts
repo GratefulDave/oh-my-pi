@@ -26,12 +26,7 @@ import { truncateForPrompt } from "./approval";
 import { type BashInteractiveResult, runInteractiveBashPty } from "./bash-interactive";
 import { resolveEvalBackends } from "./eval-backends";
 import { checkBashInterception } from "./bash-interceptor";
-import {
-	appendBashMinimizerGainRecord,
-	inferBashMinimizerMissedFilter,
-	isBashCommandMinimizerEligible,
-	resolveBashMinimizerEligibilityConfig,
-} from "./bash-minimizer-gain";
+import { appendBashMinimizerGainRecord } from "./bash-minimizer-gain";
 import { canUseInteractiveBashPty } from "./bash-pty-selection";
 import { expandInternalUrls, type InternalUrlExpansionOptions } from "./bash-skill-urls";
 import { invalidateGithubCacheForBashCommand } from "./gh-cache-invalidation";
@@ -144,6 +139,9 @@ async function saveBashOriginalArtifact(session: ToolSession, originalText: stri
 	}
 }
 
+function hasBashMinimizerCommandPrefix(session: ToolSession): boolean {
+	return session.settings.getShellConfig?.().prefix !== undefined;
+}
 export function makeMinimizedSaveHandler(
 	session: ToolSession,
 	command: string,
@@ -159,7 +157,8 @@ export function makeMinimizedSaveHandler(
 } {
 	let saved = false;
 	let pendingSaved: { filter: string; inputBytes: number; outputBytes: number } | null = null;
-	const gainTelemetry = session.settings.get("shellMinimizer.gainTelemetry");
+	const gainTelemetry =
+		session.settings.get("shellMinimizer.gainTelemetry") && !hasBashMinimizerCommandPrefix(session);
 	return {
 		onMinimizedSave: async (originalText, info) => {
 			saved = true;
@@ -195,50 +194,20 @@ async function recordBashMinimizerGain(input: {
 }): Promise<void> {
 	if (!input.session.settings.get("shellMinimizer.gainTelemetry")) return;
 	if (!input.session.settings.get("shellMinimizer.enabled")) return;
-	// Skip miss telemetry when a shell prefix is active. executeBash sends the
-	// prefixed command (e.g. "strace -o /tmp/trace git status") to the native
-	// minimizer, which sees the wrapper and cannot minimize it. Recording the
-	// miss on the unprefixed command (e.g. "git") would pollute Gain data with
-	// commands the minimizer never had an opportunity to process.
-	if (Bun.env.PI_SHELL_PREFIX || Bun.env.CLAUDE_CODE_SHELL_PREFIX) return;
+	if (hasBashMinimizerCommandPrefix(input.session)) return;
 	try {
-		if (input.result.cancelled || input.result.exitCode === undefined) return;
-		const eligibilityConfig = await resolveBashMinimizerEligibilityConfig({
-			settingsPath: input.session.settings.get("shellMinimizer.settingsPath"),
-			only: input.session.settings.get("shellMinimizer.only"),
-			except: input.session.settings.get("shellMinimizer.except"),
-			maxCaptureBytes: input.session.settings.get("shellMinimizer.maxCaptureBytes"),
-			legacyFilters: input.session.settings.get("shellMinimizer.legacyFilters"),
-			enabled: input.session.settings.get("shellMinimizer.enabled"),
-		});
-		// Skip outputs beyond the minimizer capture cap — the native minimizer returns
-		// a `too-large` passthrough before dispatch when input_bytes > max_capture_bytes,
-		// so these were never filterable and must not pollute the Gain tuning table.
-		if (input.result.totalBytes > eligibilityConfig.maxCaptureBytes) return;
-		// Gate on full native eligibility (program+subcommand has a filter,
-		// not background/compound, and passes only/except) so the recorded
-		// "missed" rows are genuine tuning candidates — commands the minimizer
-		// would have captured but did not save.
-		if (
-			!isBashCommandMinimizerEligible(
-				input.command,
-				eligibilityConfig.only,
-				eligibilityConfig.except,
-				eligibilityConfig,
-			)
-		) {
-			return;
-		}
-		const filter = inferBashMinimizerMissedFilter(input.command);
+		// Native capture eligibility is exact: it includes shell syntax, settings,
+		// filters, user pipelines, prefixes, and the capture cap.
+		if (!("minimizerEligible" in input.result) || !input.result.minimizerEligible) return;
 		await appendBashMinimizerGainRecord({
 			command: input.command,
 			cwd: input.commandCwd,
 			sessionCwd: input.session.cwd,
 			sessionId: input.session.getSessionId?.() ?? undefined,
-			filter,
+			filter: "missed",
 			inputBytes: input.result.totalBytes,
 			outputBytes: input.result.totalBytes,
-			exitCode: input.result.exitCode,
+			exitCode: input.result.exitCode ?? null,
 			kind: "missed",
 			agentDir: input.session.settings.getAgentDir(),
 		});
@@ -247,7 +216,7 @@ async function recordBashMinimizerGain(input: {
 	}
 }
 
-const BASH_TIMEOUT_DESCRIPTION = `timeout in seconds; clamped to ${TOOL_TIMEOUTS.bash.min}-${TOOL_TIMEOUTS.bash.max}`;
+const BASH_TIMEOUT_DESCRIPTION = `timeout in seconds; 0 disables the command deadline; nonzero values are clamped to ${TOOL_TIMEOUTS.bash.min}-${TOOL_TIMEOUTS.bash.max}`;
 const bashSchemaBase = type({
 	command: type("string").describe("command to execute"),
 	"env?": type({ "[string]": "string" }).describe("extra env vars"),

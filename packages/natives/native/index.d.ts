@@ -1486,6 +1486,11 @@ export interface ShellRunResult {
    * minimized text shown to the agent. `None` when nothing was rewritten.
    */
   minimized?: MinimizerResult
+  /**
+   * Whether the native minimizer captured the command without exceeding its
+   * cap.
+   */
+  minimizerEligible?: boolean
   /** Shell working directory after command completion. */
   workingDir?: string
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { dedupeProjects, getGainDashboardStats, normalizeProjectPath } from "@oh-my-pi/omp-stats/gain-aggregator";
-import { getAgentDir } from "@oh-my-pi/pi-utils";
+import { getAgentDir, getStatsDbPath } from "@oh-my-pi/pi-utils";
 import { installStatsTestIsolation } from "./helpers/temp-agent";
 
 // ---------------------------------------------------------------------------
@@ -113,6 +113,12 @@ async function writeMinimizerJSONL(records: object[]): Promise<void> {
 	await fs.mkdir(agentDir, { recursive: true });
 	const lines = records.map(r => JSON.stringify(r)).join("\n");
 	await Bun.write(path.join(agentDir, "minimizer-gain.jsonl"), lines);
+}
+
+/** Write Snapcompact savings alongside stats.db. */
+async function writeSnapcompactJSONL(records: object[]): Promise<void> {
+	const lines = records.map(r => JSON.stringify(r)).join("\n");
+	await Bun.write(path.join(path.dirname(getStatsDbPath()), "snapcompact-savings.jsonl"), lines);
 }
 
 describe("getGainDashboardStats", () => {
@@ -322,5 +328,39 @@ describe("getGainDashboardStats", () => {
 		expect(stats.bySource.minimizer.reductionPercent).toBe(0.8);
 		// overall also 0.8 (only minimizer has originalBytes here)
 		expect(stats.overall.reductionPercent).toBe(0.8);
+	});
+
+	it("does not label a mixed-source total with a minimizer-only reduction", async () => {
+		const now = new Date();
+		await writeMinimizerJSONL([
+			{
+				timestamp: now.toISOString(),
+				filter: "git-status",
+				inputBytes: 1000,
+				outputBytes: 200,
+				savedBytes: 800,
+				savedTokens: 200,
+				kind: "saved",
+				cwd: "/Users/x/myrepo",
+			},
+		]);
+		await writeSnapcompactJSONL([
+			{
+				ts: now.getTime(),
+				session: "test-session",
+				provider: "test",
+				model: "test",
+				toolCallId: "test-call",
+				savedTokens: 100,
+			},
+		]);
+
+		const stats = await getGainDashboardStats();
+		expect(stats.overall.savedTokens).toBe(300);
+		expect(stats.overall.savedBytes).toBe(1200);
+		expect(stats.overall.hits).toBe(2);
+		expect(stats.bySource.minimizer.reductionPercent).toBe(0.8);
+		expect(stats.bySource.snapcompact.reductionPercent).toBeNull();
+		expect(stats.overall.reductionPercent).toBeNull();
 	});
 });

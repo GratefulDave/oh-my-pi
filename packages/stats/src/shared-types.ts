@@ -270,7 +270,7 @@ export interface GainTopFilter {
  * These are the prime candidates for writing new minimizer filters.
  */
 export interface GainMissedCommand {
-	/** The actual command string (truncated to 120 chars for grouping). */
+	/** The actual full command string used for exact grouping. */
 	command: string;
 	/** Number of times this exact command was seen as a missed minimizer candidate. */
 	hits: number;

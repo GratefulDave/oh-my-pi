@@ -117,11 +117,14 @@ pub struct MinimizerResult {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ShellRunResult {
-	pub exit_code:   Option<i32>,
-	pub cancelled:   bool,
-	pub timed_out:   bool,
-	pub minimized:   Option<MinimizerResult>,
-	pub working_dir: Option<String>,
+	pub exit_code:          Option<i32>,
+	pub cancelled:          bool,
+	pub timed_out:          bool,
+	pub minimized:          Option<MinimizerResult>,
+	/// Whether the native minimizer captured this command without exceeding its
+	/// cap.
+	pub minimizer_eligible: bool,
+	pub working_dir:        Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -345,6 +348,7 @@ async fn run_shell_session(
 				cancelled:   matches!(reason, AbortReason::Signal),
 				timed_out:   matches!(reason, AbortReason::Timeout),
 				minimized:   None,
+				minimizer_eligible: false,
 				working_dir: None,
 			});
 		}
@@ -359,13 +363,14 @@ async fn run_shell_session(
 	if !keepalive {
 		*session.lock().await = None;
 	}
-	let (exec, minimized, working_dir) = res?;
+	let (exec, minimized, working_dir, minimizer_eligible) = res?;
 	Ok(ShellRunResult {
 		exit_code: Some(exit_code(&exec)),
 		cancelled: false,
 		timed_out: false,
 		working_dir,
 		minimized,
+		minimizer_eligible,
 	})
 }
 
@@ -415,6 +420,7 @@ async fn run_shell_oneshot(
 				cancelled:   matches!(reason, AbortReason::Signal),
 				timed_out:   matches!(reason, AbortReason::Timeout),
 				minimized:   None,
+				minimizer_eligible: false,
 				working_dir: None,
 			});
 		},
@@ -424,13 +430,14 @@ async fn run_shell_oneshot(
 	let _ = process_cancel_bridge.await;
 	let res = run_result
 		.unwrap_or_else(|err| Err(Error::msg(format!("Shell execution task failed: {err}"))));
-	let (exec, minimized, working_dir) = res?;
+	let (exec, minimized, working_dir, minimizer_eligible) = res?;
 	Ok(ShellExecuteResult {
 		exit_code: Some(exit_code(&exec)),
 		cancelled: false,
 		timed_out: false,
 		working_dir,
 		minimized,
+		minimizer_eligible,
 	})
 }
 
@@ -481,6 +488,7 @@ async fn run_shell_oneshot_streams(
 				cancelled: matches!(reason, AbortReason::Signal),
 				timed_out: matches!(reason, AbortReason::Timeout),
 				minimized: None,
+				minimizer_eligible: false,
 				working_dir: None,
 			});
 		},
@@ -497,6 +505,7 @@ async fn run_shell_oneshot_streams(
 		timed_out: false,
 		working_dir,
 		minimized: None,
+		minimizer_eligible: false,
 	})
 }
 
@@ -822,7 +831,7 @@ async fn run_shell_command(
 	on_chunk: Option<Sender<String>>,
 	cancel_token: CancellationToken,
 	spawn_registry: Arc<process::SpawnRegistry>,
-) -> Result<(ExecutionResult, Option<MinimizerResult>, Option<String>)> {
+) -> Result<(ExecutionResult, Option<MinimizerResult>, Option<String>, bool)> {
 	if let Some(cwd) = options.cwd.as_deref() {
 		set_shell_working_dir_if_changed(&mut session.shell, cwd)?;
 	}
@@ -861,9 +870,9 @@ async fn run_shell_command(
 			.map_err(|err| Error::msg(format!("Failed to pop env scope: {err}")))?;
 	}
 
-	result.map(|(exec, minimized)| {
+	result.map(|(exec, minimized, minimizer_eligible)| {
 		let working_dir = Some(session.shell.working_dir().to_string_lossy().into_owned());
-		(exec, minimized, working_dir)
+		(exec, minimized, working_dir, minimizer_eligible)
 	})
 }
 
@@ -874,7 +883,7 @@ async fn run_shell_command_single(
 	cancel_token: CancellationToken,
 	spawn_registry: Arc<process::SpawnRegistry>,
 	minimizer_mode: minimizer::engine::MinimizerMode,
-) -> Result<(ExecutionResult, Option<MinimizerResult>)> {
+) -> Result<(ExecutionResult, Option<MinimizerResult>, bool)> {
 	debug_assert!(!matches!(minimizer_mode, minimizer::engine::MinimizerMode::SegmentedChain));
 
 	let params = session.shell.default_exec_params();
@@ -899,6 +908,13 @@ async fn run_shell_command_single(
 		capture_mode,
 	)
 	.await?;
+
+	let minimizer_eligible =
+		matches!(minimizer_mode, minimizer::engine::MinimizerMode::WholeCommand)
+			&& command_run
+				.buffered
+				.as_ref()
+				.is_some_and(|buffered| !buffered.exceeded);
 
 	let mut minimized_out = None;
 	if let Some(buffered) = command_run.buffered
@@ -947,7 +963,7 @@ async fn run_shell_command_single(
 		}
 	}
 
-	Ok((command_run.result, minimized_out))
+	Ok((command_run.result, minimized_out, minimizer_eligible))
 }
 
 async fn run_shell_command_segmented_chain(
@@ -956,7 +972,7 @@ async fn run_shell_command_segmented_chain(
 	on_chunk: Option<Sender<String>>,
 	cancel_token: CancellationToken,
 	spawn_registry: Arc<process::SpawnRegistry>,
-) -> Result<(ExecutionResult, Option<MinimizerResult>)> {
+) -> Result<(ExecutionResult, Option<MinimizerResult>, bool)> {
 	let Some(config) = options.minimizer.as_ref() else {
 		return run_shell_command_single(
 			session,
@@ -1063,6 +1079,7 @@ async fn run_shell_command_segmented_chain(
 		return Err(Error::msg("Segmented chain executed no segments"));
 	};
 
+	let minimizer_eligible = aggregate.is_some();
 	let minimized_out = aggregate
 		// Only surface telemetry when the segmented chain actually rewrote the
 		// output; a `chain-noop` capture (`changed == false`) must yield `None`,
@@ -1088,7 +1105,7 @@ async fn run_shell_command_segmented_chain(
 	// path and `apply_shell_minimizer`. (Previously a `too-large` result with
 	// empty `text` was emitted, a footgun for consumers keying off presence.)
 
-	Ok((result, minimized_out))
+	Ok((result, minimized_out, minimizer_eligible))
 }
 
 async fn run_shell_command_once(

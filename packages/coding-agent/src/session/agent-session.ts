@@ -318,6 +318,7 @@ import {
 import { formatTitleConversationContext, type TitleConversationTurn } from "../tiny/message-preproc";
 import { shutdownTinyTitleClient } from "../tiny/title-client";
 import { assertEditableFile } from "../tools/auto-generated-guard";
+import { appendBashMinimizerGainRecord } from "../tools/bash-minimizer-gain";
 import { releaseTabsForOwner } from "../tools/browser/tab-supervisor";
 import { isMCPToolName, normalizeToolNames } from "../tools/builtin-names";
 import type { CheckpointState, CompletedRewindState } from "../tools/checkpoint";
@@ -15585,6 +15586,9 @@ export class AgentSession {
 			const abortController = new AbortController();
 			this.#bashAbortControllers.add(abortController);
 			let result: BashResult;
+			const gainTelemetry =
+				this.settings.get("shellMinimizer.gainTelemetry") && this.settings.getShellConfig().prefix === undefined;
+			const savedGain = { info: null as { filter: string; inputBytes: number; outputBytes: number } | null };
 			try {
 				result = await executeBashCommand(command, {
 					onChunk,
@@ -15592,11 +15596,50 @@ export class AgentSession {
 					sessionKey: target.sessionId,
 					cwd,
 					timeout: clampTimeout("bash") * 1000,
-					onMinimizedSave: originalText => this.#saveBashOriginalArtifact(target, originalText),
+					onMinimizedSave: async (originalText, info) => {
+						if (gainTelemetry) savedGain.info = info;
+						return this.#saveBashOriginalArtifact(target, originalText);
+					},
 					useUserShell: options?.useUserShell,
 				});
 			} finally {
 				this.#bashAbortControllers.delete(abortController);
+			}
+
+			if (gainTelemetry && this.settings.get("shellMinimizer.enabled")) {
+				if (savedGain.info) {
+					const info = savedGain.info;
+					await appendBashMinimizerGainRecord({
+						command,
+						cwd,
+						sessionCwd: cwd,
+						sessionId: target.sessionId,
+						filter: info.filter,
+						inputBytes: info.inputBytes,
+						outputBytes: info.outputBytes,
+						exitCode: result.exitCode ?? null,
+						kind: "saved",
+						agentDir: this.settings.getAgentDir(),
+					}).catch(() => {});
+				} else if (
+					!result.cancelled &&
+					result.exitCode !== undefined &&
+					result.totalBytes > 0 &&
+					result.minimizerEligible
+				) {
+					await appendBashMinimizerGainRecord({
+						command,
+						cwd,
+						sessionCwd: cwd,
+						sessionId: target.sessionId,
+						filter: "missed",
+						inputBytes: result.totalBytes,
+						outputBytes: result.totalBytes,
+						exitCode: result.exitCode ?? null,
+						kind: "missed",
+						agentDir: this.settings.getAgentDir(),
+					}).catch(() => {});
+				}
 			}
 
 			targetTransferred = true;

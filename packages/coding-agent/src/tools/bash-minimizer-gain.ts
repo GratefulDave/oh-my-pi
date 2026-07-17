@@ -555,7 +555,7 @@ export async function resolveBashMinimizerEligibilityConfig(input: {
 	if (!parsed) return resolved;
 	const parsedLegacy = parsed.legacyFilters ?? resolved.legacyFilters;
 	return {
-		enabled: parsed.enabled ?? resolved.enabled,
+		enabled: input.enabled === false ? false : (parsed.enabled ?? resolved.enabled),
 		only: parsed.only ?? resolved.only,
 		except: parsed.except ?? resolved.except,
 		maxCaptureBytes: parsed.maxCaptureBytes ?? resolved.maxCaptureBytes,

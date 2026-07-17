@@ -419,6 +419,25 @@ describe("isBashCommandMinimizerEligible", () => {
 			fs.rmSync(settingsPath, { force: true });
 		}
 	});
+
+	test("an explicit disabled setting overrides an enabled settings file", async () => {
+		const settingsPath = path.join(os.tmpdir(), `omp-minimizer-disabled-${Date.now()}-${Math.random()}.toml`);
+		fs.writeFileSync(settingsPath, "enabled = true");
+		try {
+			const config = await resolveBashMinimizerEligibilityConfig({
+				settingsPath,
+				only: [],
+				except: [],
+				maxCaptureBytes: 4096,
+				legacyFilters: undefined,
+				enabled: false,
+			});
+			expect(config.enabled).toBe(false);
+			expect(isBashCommandMinimizerEligible("git status", config.only, config.except, config)).toBe(false);
+		} finally {
+			fs.rmSync(settingsPath, { force: true });
+		}
+	});
 	test("invalid user pipeline regex disables all user pipeline eligibility", async () => {
 		const settingsPath = path.join(os.tmpdir(), `omp-minimizer-invalid-settings-${Date.now()}-${Math.random()}.toml`);
 		fs.writeFileSync(
@@ -487,7 +506,7 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 		if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true });
 	});
 
-	function mockSession(gainTelemetry: boolean, dir: string) {
+	function mockSession(gainTelemetry: boolean, dir: string, prefix?: string) {
 		return {
 			cwd: tempDir,
 			hasUI: false,
@@ -499,6 +518,7 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 					return undefined;
 				},
 				getAgentDir: () => dir,
+				getShellConfig: () => ({ prefix }),
 			},
 		};
 	}
@@ -588,6 +608,17 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 		await Bun.sleep(10);
 
 		// No JSONL written — telemetry is off by default
+		expect(fs.existsSync(getBashMinimizerGainPath(agentDir))).toBe(false);
+	});
+
+	test("suppresses saved telemetry when the shell command has a prefix", async () => {
+		const session = mockSession(true, agentDir, "time") as Parameters<typeof makeMinimizedSaveHandler>[0];
+		const handler = makeMinimizedSaveHandler(session, "git status", tempDir);
+
+		await handler.onMinimizedSave("status output", { filter: "git", inputBytes: 2000, outputBytes: 500 });
+		await handler.flushSaved(0);
+
+		expect(handler.didSave()).toBe(true);
 		expect(fs.existsSync(getBashMinimizerGainPath(agentDir))).toBe(false);
 	});
 });
