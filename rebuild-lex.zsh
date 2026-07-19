@@ -221,6 +221,9 @@ printf '  antigravity extension bundle present: %s\n' "$antigravity_bundle"
 verify_settings_guard
 printf '  protected settings YAML unchanged\n'
 
+print_step "Enforcing OpenAI Codex agent defaults"
+bun scripts/set-agent-codex-defaults.ts
+
 cat <<'EOF'
 
 Done. For the current interactive shell, run:

@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed Bash `timeout: 0` being clamped to one second despite the executor's no-deadline contract. Results now expose `timeoutDisabled` instead of a fictitious zero-second timeout, including background and client-terminal paths.
+- Fixed automatic task and Vibe agents ever using OpenRouter, including through agent definitions, auth fallback, retry chains, prewalk, and OpenRouter-only profiles. Automatic Claude-family selectors now map to OpenAI Codex at `auto` effort: Opus → Sol, Sonnet → Terra, and Haiku → Luna; unknown OpenRouter agent defaults fall back to Terra. Explicit per-call model selections remain explicit overrides.
 
 ## [17.0.1] - 2026-07-16
 ## [17.0.3] - 2026-07-17

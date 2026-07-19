@@ -231,16 +231,25 @@ const checks: PatchCheck[] = [
 		},
 	},
 
-	// ── Patch 8: antigravity-adapter package ──────────────────────────────────
+	// ── Patch 8: automatic agents use OpenAI Codex, never OpenRouter ──────────
 	{
 		id: "P8",
-		description: "packages/antigravity-adapter: fork-only extension package",
+		description: "automatic agent routing: OpenRouter families map to OpenAI Codex",
 		check() {
 			const missing: string[] = [];
-			if (!fileExists("packages/antigravity-adapter/src/models.ts")) missing.push("models.ts");
-			if (!fileExists("packages/antigravity-adapter/src/auth-adapter.ts")) missing.push("auth-adapter.ts");
-			if (!fileExists("packages/antigravity-adapter/src/extension.ts")) missing.push("extension.ts");
-			return missing.length === 0 ? null : `antigravity-adapter files missing: ${missing.join(", ")}`;
+			const executor = "packages/coding-agent/src/task/executor.ts";
+			if (!fileContains(executor, '"claude-opus": "openai-codex/gpt-5.6-sol:auto"')) missing.push("Opus → Sol");
+			if (!fileContains(executor, '"claude-sonnet": "openai-codex/gpt-5.6-terra:auto"'))
+				missing.push("Sonnet → Terra");
+			if (!fileContains(executor, '"claude-haiku": "openai-codex/gpt-5.6-luna:auto"')) missing.push("Haiku → Luna");
+			if (!fileContains(executor, 'model.provider !== "openrouter"')) missing.push("OpenRouter exclusion");
+			if (!fileContains("packages/coding-agent/src/task/structured-subagent.ts", "enforceAutomaticModelPolicy"))
+				missing.push("task routing enforcement");
+			if (!fileContains("packages/coding-agent/src/vibe/runtime.ts", "enforceAutomaticModelPolicy"))
+				missing.push("Vibe routing enforcement");
+			if (!fileContains("rebuild-lex.zsh", "set-agent-codex-defaults.ts"))
+				missing.push("rebuild config normalization");
+			return missing.length === 0 ? null : `automatic agent Codex policy missing: ${missing.join(", ")}`;
 		},
 	},
 
