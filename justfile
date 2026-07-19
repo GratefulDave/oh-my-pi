@@ -9,7 +9,7 @@ set shell := ["bash", "-uc"]
 
 # Extensions that have a build step (bundle -> packages/<name>/dist/*.bundle.js).
 # swarm-extension is pre-bundled; profile-manager / semantic-search are not bundled.
-BUILDABLE_EXTS := "antigravity-adapter pi-minimizer-gain pi-distill pi-observer pi-actor-swarm pi-omnidelegate pi-software-factory"
+BUILDABLE_EXTS := "pi-minimizer-gain pi-distill pi-observer pi-omnidelegate pi-software-factory"
 
 # Show all recipes.
 default:

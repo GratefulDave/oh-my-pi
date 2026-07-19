@@ -53,22 +53,6 @@
         "@types/bun": "catalog:",
       },
     },
-    "packages/antigravity-adapter": {
-      "name": "@oh-my-pi/antigravity-adapter",
-      "version": "15.10.3-lex",
-      "dependencies": {
-        "@oh-my-pi/pi-ai": "catalog:",
-        "@oh-my-pi/pi-catalog": "catalog:",
-        "@oh-my-pi/pi-utils": "catalog:",
-        "opencode-antigravity-auth": "1.6.5-beta.0",
-      },
-      "devDependencies": {
-        "@types/bun": "^1.3.14",
-      },
-      "peerDependencies": {
-        "@oh-my-pi/pi-coding-agent": "workspace:*",
-      },
-    },
     "packages/catalog": {
       "name": "@oh-my-pi/pi-catalog",
       "version": "17.0.3",

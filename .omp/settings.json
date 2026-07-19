@@ -1,6 +1,5 @@
 {
   "extensions": [
-    "packages/antigravity-adapter/dist/antigravity.bundle.js",
     "packages/pi-minimizer-gain/dist/gaing.bundle.js",
     "packages/pi-observer/dist/observer.bundle.js",
     "packages/pi-distill/dist/distill.bundle.js",
