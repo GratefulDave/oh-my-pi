@@ -175,18 +175,36 @@ this script, re-apply the nightly PATH prepend block at the top of the new versi
 
 ---
 
-### Patch 8: `antigravity-adapter` package (fork-only extension)
+### Patch 8: Automatic agents use OpenAI Codex
 
-**Why**: The `antigravity-adapter` package does not exist upstream. It bridges the AG OAuth
-provider (Antigravity AI endpoint) into the lex model registry using a custom provider ID
-(`ag-bridge`) and credential type. The serialized credential prefix is kept as `opencode-antigravity:v1:`
-for backward compatibility with stored tokens.
+**Why**: Automatic task and Vibe agents must never spend OpenRouter credits, regardless of the
+active model profile or an agent definition's fallback chain. OpenRouter Claude-family selectors
+map to comparable OpenAI Codex models at `auto` effort:
 
-**Files**: entire `packages/antigravity-adapter/` directory
+- Opus → `openai-codex/gpt-5.6-sol:auto`
+- Sonnet → `openai-codex/gpt-5.6-terra:auto`
+- Haiku → `openai-codex/gpt-5.6-luna:auto`
+- Unknown OpenRouter automatic agent → `openai-codex/gpt-5.6-terra:auto`
 
-**Verify**: `ls packages/antigravity-adapter/src/` → `auth-adapter.ts extension.ts models.ts …`
+Explicit per-call model requests remain explicit overrides. `rebuild-lex.zsh` also runs
+`scripts/set-agent-codex-defaults.ts`, which writes fixed Codex defaults into canonical and
+isolated `.omp`/`.lex` profile configs without changing credentials or unrelated settings.
 
-**Conflict risk**: none — upstream does not have this directory.
+**Files**:
+- `packages/coding-agent/src/task/executor.ts`
+- `packages/coding-agent/src/task/structured-subagent.ts`
+- `packages/coding-agent/src/vibe/runtime.ts`
+- `scripts/set-agent-codex-defaults.ts`
+- `rebuild-lex.zsh`
+
+**Verify**:
+- `bun test packages/coding-agent/test/task/executor-subagent-reminders.test.ts`
+- `bun test scripts/set-agent-codex-defaults.test.ts`
+- `bun scripts/check-fork-patches.ts`
+
+**Conflict risk**: medium — upstream task-routing changes can touch the same executor paths. The
+fork checker rejects a rebuild if any mapping, provider exclusion, task/Vibe enforcement, or
+rebuild normalization hook disappears.
 
 ---
 

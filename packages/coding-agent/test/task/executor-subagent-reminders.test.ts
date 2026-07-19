@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import { AgentBusyError, type AgentTelemetryConfig, type Tracer } from "@oh-my-pi/pi-agent-core";
 import { type AssistantMessage, Effort } from "@oh-my-pi/pi-ai";
+import { buildModel } from "@oh-my-pi/pi-catalog/build";
+import type { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { ExtensionActions, LoadExtensionsResult } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import type { CreateAgentSessionResult } from "@oh-my-pi/pi-coding-agent/sdk";
@@ -453,7 +455,7 @@ describe("runSubprocess yield reminders", () => {
 		const modelRegistry = {
 			refresh: async () => {},
 			getAvailable: () => [{ provider: "openai", id: "gpt-4o", name: "GPT-4o" }],
-		} as unknown as import("@oh-my-pi/pi-coding-agent/config/model-registry").ModelRegistry;
+		} as unknown as ModelRegistry;
 
 		await runSubprocess({
 			...baseOptions,
@@ -465,6 +467,175 @@ describe("runSubprocess yield reminders", () => {
 
 		expect(createAgentSessionSpy).toHaveBeenCalledTimes(1);
 		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.thinkingLevel).toBe(Effort.High);
+	});
+	it("maps every automatic OpenRouter agent family to OpenAI Codex under any profile", async () => {
+		const session = createMockSession(({ emit }) => {
+			emit({
+				type: "tool_execution_end",
+				toolCallId: "tool-profile-model",
+				toolName: "yield",
+				result: {
+					content: [{ type: "text", text: "Result submitted." }],
+					details: { status: "success", data: { ok: true } },
+				},
+				isError: false,
+			});
+		});
+		const createAgentSessionSpy = mockCreateAgentSession(session);
+		const openRouterModels = [
+			buildModel({
+				provider: "openrouter",
+				id: "anthropic/claude-opus-4.8",
+				name: "Claude Opus 4.8",
+				api: "openai-completions",
+				baseUrl: "https://openrouter.ai/api/v1",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 },
+				contextWindow: 128_000,
+				maxTokens: 8_192,
+			}),
+			buildModel({
+				provider: "openrouter",
+				id: "anthropic/claude-sonnet-4.6",
+				name: "Claude Sonnet 4.6",
+				api: "openai-completions",
+				baseUrl: "https://openrouter.ai/api/v1",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 },
+				contextWindow: 128_000,
+				maxTokens: 8_192,
+			}),
+			buildModel({
+				provider: "openrouter",
+				id: "anthropic/claude-haiku-4.5",
+				name: "Claude Haiku 4.5",
+				api: "openai-completions",
+				baseUrl: "https://openrouter.ai/api/v1",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 },
+				contextWindow: 128_000,
+				maxTokens: 8_192,
+			}),
+			buildModel({
+				provider: "openrouter",
+				id: "z-ai/glm-5.2",
+				name: "GLM 5.2",
+				api: "openai-completions",
+				baseUrl: "https://openrouter.ai/api/v1",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 },
+				contextWindow: 128_000,
+				maxTokens: 8_192,
+			}),
+		];
+		const codexModels = [
+			buildModel({
+				provider: "openai-codex",
+				id: "gpt-5.6-sol",
+				name: "GPT-5.6 Sol",
+				api: "openai-completions",
+				baseUrl: "https://example.invalid",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 128_000,
+				maxTokens: 8_192,
+			}),
+			buildModel({
+				provider: "openai-codex",
+				id: "gpt-5.6-terra",
+				name: "GPT-5.6 Terra",
+				api: "openai-completions",
+				baseUrl: "https://example.invalid",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 128_000,
+				maxTokens: 8_192,
+			}),
+			buildModel({
+				provider: "openai-codex",
+				id: "gpt-5.6-luna",
+				name: "GPT-5.6 Luna",
+				api: "openai-completions",
+				baseUrl: "https://example.invalid",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 128_000,
+				maxTokens: 8_192,
+			}),
+		];
+		const modelRegistry = {
+			refresh: async () => {},
+			getAvailable: () => [...openRouterModels, ...codexModels],
+		} as unknown as ModelRegistry;
+		const expectedModels = [codexModels[0], codexModels[1], codexModels[2], codexModels[1]];
+
+		for (const [index, sourceModel] of openRouterModels.entries()) {
+			await runSubprocess({
+				...baseOptions,
+				id: `subagent-profile-model-${index}`,
+				modelOverride: `openrouter/${sourceModel.id}`,
+				enforceAutomaticModelPolicy: true,
+				modelRegistry,
+				settings: Settings.isolated({ enabledModels: ["openrouter/*"] }),
+			});
+		}
+
+		expect(createAgentSessionSpy.mock.calls.map(call => call[0]?.model)).toEqual(expectedModels);
+		expect(createAgentSessionSpy.mock.calls.map(call => call[0]?.thinkingLevel)).toEqual([
+			"auto",
+			"auto",
+			"auto",
+			"auto",
+		]);
+	});
+
+	it("preserves an explicitly requested OpenRouter agent model", async () => {
+		const session = createMockSession(({ emit }) => {
+			emit({
+				type: "tool_execution_end",
+				toolCallId: "tool-explicit-model",
+				toolName: "yield",
+				result: {
+					content: [{ type: "text", text: "Result submitted." }],
+					details: { status: "success", data: { ok: true } },
+				},
+				isError: false,
+			});
+		});
+		const createAgentSessionSpy = mockCreateAgentSession(session);
+		const explicitModel = buildModel({
+			provider: "openrouter",
+			id: "anthropic/claude-opus-4.8",
+			name: "Claude Opus 4.8",
+			api: "openai-completions",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 },
+			contextWindow: 128_000,
+			maxTokens: 8_192,
+		});
+		const modelRegistry = {
+			refresh: async () => {},
+			getAvailable: () => [explicitModel],
+		} as unknown as ModelRegistry;
+
+		await runSubprocess({
+			...baseOptions,
+			id: "subagent-explicit-openrouter",
+			modelOverride: "openrouter/anthropic/claude-opus-4.8",
+			enforceAutomaticModelPolicy: false,
+			modelRegistry,
+		});
+
+		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.model).toBe(explicitModel);
 	});
 	it("fails after 3 reminders when yield is never called for a structured task", async () => {
 		const prompts: string[] = [];
