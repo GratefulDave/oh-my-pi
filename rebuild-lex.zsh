@@ -218,6 +218,9 @@ if [[ ! -f "$antigravity_bundle" ]]; then
 	exit 1
 fi
 printf '  antigravity extension bundle present: %s\n' "$antigravity_bundle"
+
+print_step "Verifying OpenAI Codex agent defaults"
+bun scripts/set-agent-codex-defaults.ts --check
 verify_settings_guard
 printf '  protected settings YAML unchanged\n'
 
