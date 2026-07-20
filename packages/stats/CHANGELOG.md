@@ -6,6 +6,12 @@
 
 - Bash Minimizer gain dashboard in `omp stats` — shows bash minimizer token-savings alongside existing snapcompact savings with stacked time series, top-filter breakdown, project selector, and missed-command tuning table ([#3691](https://github.com/can1357/oh-my-pi/pull/3691)).
 
+## [17.0.6] - 2026-07-20
+
+### Changed
+
+- Clarified overview token accounting by separating uncached input from cache reads and showing the conversation-token total used by the agent breakdown.
+
 ## [17.0.5] - 2026-07-18
 
 ### Fixed
