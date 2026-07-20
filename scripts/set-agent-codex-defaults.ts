@@ -109,7 +109,9 @@ if (import.meta.main) {
 	const homeDir = homeFlag >= 0 ? process.argv[homeFlag + 1] : os.homedir();
 	if (!homeDir) throw new Error("--home requires a directory");
 	const check = process.argv.includes("--check");
-	const changed = await (check ? checkAgentConfigFiles(path.resolve(homeDir)) : normalizeAgentConfigFiles(path.resolve(homeDir)));
+	const changed = await (check
+		? checkAgentConfigFiles(path.resolve(homeDir))
+		: normalizeAgentConfigFiles(path.resolve(homeDir)));
 	process.stdout.write(
 		check
 			? `Agent Codex defaults require updates in ${changed.length} config file(s).\n`
