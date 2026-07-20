@@ -349,7 +349,8 @@ function formatIrcMessage(message: IrcMessageActivity): string {
 }
 
 function findAgentIrcMessages(agent: SubagentActivity, messages: readonly IrcMessageActivity[]): IrcMessageActivity[] {
-	return messages.filter(message => message.from === agent.id || message.to === agent.id);
+	const names = new Set([agent.agent, agent.id, `@${agent.agent}`, `@${agent.id}`]);
+	return messages.filter(message => names.has(message.from) || names.has(message.to) || names.has(message.channel));
 }
 
 function color(prefix: string, text: string): string {

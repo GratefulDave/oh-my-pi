@@ -133,12 +133,12 @@ describe("diagnostic renderers", () => {
 			[
 				{
 					timestamp: NOW,
-					channel: "run-1",
+					channel: "@executor",
 					from: "Main",
-					to: "run-1",
+					to: "@executor",
 					body: "need status",
 					kind: "message",
-					delivered: ["run-1"],
+					delivered: ["executor"],
 					failed: [],
 				},
 			],

@@ -6,7 +6,6 @@ import {
 	type ObserverStats,
 	type SubagentActivity,
 	type SubagentStatus,
-	type SubagentTimelineEntry,
 } from "./stats-collector";
 
 export type ObserverNodeKind =
@@ -262,13 +261,12 @@ function buildAgentNode(agent: SubagentActivity, messages: readonly IrcMessageAc
 		buildAgentIntercomNode(agent, messages),
 	].filter((node): node is ObserverNode => node != null);
 	const model = agent.resolvedModel ?? agent.agent;
-	const timeline = agent.timeline ?? [];
 	return {
 		id: `agent:${agent.id}`,
 		kind: "agent",
 		label: agentLabel(agent),
 		status: agent.status,
-		summary: `${timeline.length > 0 ? `${timeline.at(-1)?.detail ?? ""} · ` : ""}${model} · ${formatCount(agent.tokens)} tok · ${agent.toolCount} tools`,
+		summary: `${model} · ${formatCount(agent.tokens)} tok · ${agent.toolCount} tools`,
 		metrics: {
 			tokens: agent.tokens,
 			toolCount: agent.toolCount,
@@ -285,14 +283,10 @@ function buildAgentNode(agent: SubagentActivity, messages: readonly IrcMessageAc
 			"Prompt",
 			`  ${firstPromptLine(agent)}`,
 			"",
-			"Current activity",
+			"Activity",
 			...latestActivity(agent)
 				.slice(-3)
 				.map(line => `  ${line}`),
-			"",
-			"Timeline",
-			...timeline.map(timelineLine),
-			...(timeline.length === 0 ? ["  No activity recorded yet."] : []),
 		],
 	};
 }
@@ -534,11 +528,6 @@ function firstPromptLine(agent: SubagentActivity): string {
 	return (agent.assignment ?? agent.task ?? agent.description ?? "").split(/\r?\n/)[0]?.trim() ?? "";
 }
 
-function timelineLine(entry: SubagentTimelineEntry): string {
-	const time = new Date(entry.timestamp).toISOString().slice(11, 19);
-	return `  [${time}] ${entry.title}: ${entry.detail}`;
-}
-
 function latestActivity(agent: SubagentActivity): string[] {
 	if (agent.currentTool) return [agent.currentTool, agent.lastIntent ?? agent.currentToolArgs ?? ""];
 	if ((agent.recentTools ?? []).length > 0) {
@@ -568,7 +557,8 @@ function statusLabel(status: SubagentStatus): string {
 }
 
 function findIrc(agent: SubagentActivity, messages: readonly IrcMessageActivity[]): IrcMessageActivity[] {
-	return messages.filter(message => message.from === agent.id || message.to === agent.id);
+	const names = new Set([agent.id, agent.agent, `@${agent.id}`, `@${agent.agent}`]);
+	return messages.filter(message => names.has(message.from) || names.has(message.to) || names.has(message.channel));
 }
 
 function ircLine(message: IrcMessageActivity): string {

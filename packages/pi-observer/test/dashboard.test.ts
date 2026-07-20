@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ObserverDashboard } from "../src/dashboard";
 import { stripAnsi } from "../src/renderer";
-import { onSubagentProgress, onSubagentTimeline, resetStats } from "../src/stats-collector";
+import { onSubagentProgress, resetStats } from "../src/stats-collector";
 
 const theme = {
 	fg(_color: string, text: string): string {
@@ -48,14 +48,6 @@ function seedAgents(): void {
 		recentOutput: ["patched hierarchy"],
 		recentTools: [{ tool: "read", args: "dashboard.ts", endMs: 1 }],
 	});
-	for (let index = 1; index <= 12; index++) {
-		onSubagentTimeline("a", {
-			timestamp: index,
-			kind: "status",
-			title: "Activity",
-			detail: `event-${index}`,
-		});
-	}
 	onSubagentProgress({
 		id: "b",
 		agent: "reviewer",
@@ -238,31 +230,20 @@ describe("ObserverDashboard", () => {
 		expect(text).toContain("Session observability · Agents · 2 nodes");
 	});
 
-	test("detail follows live events until the user scrolls away, then repins at the end", () => {
+	test("down on detail screen moves cursor without scrolling right pane header away", () => {
 		seedAgents();
 		const dashboard = makeDashboard();
 		dashboard.handleInput("\r");
 		dashboard.handleInput("\r");
 		dashboard.handleInput("\r");
-		dashboard.handleInput("\t");
-		let text = dashboard.render(120, 14).map(stripAnsi).join("\n");
-		expect(text).toContain("Activity: event-12");
+		dashboard.handleInput("\r");
+		expect(renderText(dashboard)).toContain("PROMPT · Prompt");
 
-		onSubagentTimeline("a", { timestamp: 13, kind: "status", title: "Activity", detail: "event-13" });
-		text = dashboard.render(120, 14).map(stripAnsi).join("\n");
-		expect(text).toContain("Activity: event-13");
-
-		for (let index = 0; index < 40; index++) dashboard.handleInput("\x1b[A");
-		onSubagentTimeline("a", { timestamp: 14, kind: "status", title: "Activity", detail: "event-14" });
-		text = dashboard.render(120, 14).map(stripAnsi).join("\n");
-		expect(text).not.toContain("Activity: event-14");
-		expect(text).toContain("[detail]");
-
-		for (let index = 0; index < 100; index++) dashboard.handleInput("\x1b[B");
-		text = dashboard.render(120, 14).map(stripAnsi).join("\n");
-		expect(text).toContain("Activity: event-14");
-		onSubagentTimeline("a", { timestamp: 15, kind: "status", title: "Activity", detail: "event-15" });
-		expect(dashboard.render(120, 14).map(stripAnsi).join("\n")).toContain("Activity: event-15");
+		dashboard.handleInput("\x1b[B");
+		const text = renderText(dashboard);
+		expect(text).toContain("Session observability · Agents · Run A · 4 nodes ┬ Tasks [detail]");
+		expect(text).toContain("PROMPT · Prompt");
+		expect(text).toContain("Expanded · ↵ collapse");
 	});
 
 	test("render uses supported theme palette colors for title, panes, and statuses", () => {
