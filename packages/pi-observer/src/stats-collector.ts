@@ -25,67 +25,6 @@ export interface TurnStats {
 /** Subagent run status (mirrors AgentProgress["status"] from pi-coding-agent/task). */
 export type SubagentStatus = "pending" | "running" | "completed" | "failed" | "aborted";
 
-export interface SubagentRetryState {
-	attempt: number;
-	maxAttempts: number;
-	delayMs: number;
-	errorMessage: string;
-	startedAtMs: number;
-}
-
-export interface SubagentRetryFailure {
-	attempt: number;
-	errorMessage: string;
-}
-
-export interface IrcMessageActivity {
-	timestamp: number;
-	channel: string;
-	from: string;
-	to: string;
-	body: string;
-	kind: "message" | "reply";
-	delivered: string[];
-	failed: string[];
-}
-export interface SubagentRecentTool {
-	tool: string;
-	args: string;
-	endMs: number;
-}
-
-export interface SubagentProgressUpdate {
-	id: string;
-	agent: string;
-	status: SubagentStatus;
-	tokens: number;
-	toolCount: number;
-	cost: number;
-	index?: number;
-	task?: string;
-	assignment?: string;
-	description?: string;
-	currentTool?: string;
-	currentToolArgs?: string;
-	currentToolStartMs?: number;
-	lastIntent?: string;
-	recentOutput?: string[];
-	durationMs?: number;
-	contextTokens?: number;
-	contextWindow?: number;
-	resolvedModel?: string;
-	retryState?: SubagentRetryState;
-	retryFailure?: SubagentRetryFailure;
-	failureReason?: string;
-	agentSource?: string;
-	sessionFile?: string;
-	recentTools?: SubagentRecentTool[];
-	extractedToolData?: Record<string, unknown[]>;
-	inflightTaskDetails?: unknown;
-}
-
-const MAX_IRC_MESSAGES = 100;
-
 /**
  * Latest cumulative activity snapshot for a single subagent run, keyed by run id.
  * Values are cumulative (overwrite, not add) because the source AgentProgress
@@ -101,29 +40,6 @@ export interface SubagentActivity {
 	/** Cumulative billing cost in USD reported by the subagent. */
 	cost: number;
 	lastUpdate: number;
-	index: number;
-	task?: string;
-	assignment?: string;
-	description?: string;
-	currentTool?: string;
-	currentToolArgs?: string;
-	currentToolStartMs?: number;
-	lastIntent?: string;
-	recentOutput: string[];
-	durationMs: number;
-	contextTokens?: number;
-	contextWindow?: number;
-	resolvedModel?: string;
-	retryState?: SubagentRetryState;
-	retryFailure?: SubagentRetryFailure;
-	startedAt: number;
-	completedAt?: number;
-	failureReason?: string;
-	agentSource?: string;
-	sessionFile?: string;
-	recentTools?: SubagentRecentTool[];
-	extractedToolData?: Record<string, unknown[]>;
-	inflightTaskDetails?: unknown;
 }
 
 /** Rolled-up totals across all observed subagents. */
@@ -153,7 +69,6 @@ export interface ObserverStats {
 	 * events never reach this (parent) extension instance.
 	 */
 	subagents: Map<string, SubagentActivity>;
-	ircMessages: IrcMessageActivity[];
 }
 
 export function createObserverStats(): ObserverStats {
@@ -168,7 +83,6 @@ export function createObserverStats(): ObserverStats {
 		toolCallCounts: new Map(),
 		estimatedCost: 0,
 		subagents: new Map(),
-		ircMessages: [],
 	};
 }
 
@@ -280,11 +194,14 @@ export function onTokensUsed(modelId: string, inputTokens: number, outputTokens:
  * Record the latest cumulative activity snapshot for a subagent run.
  * Cumulative values overwrite (do not add) the previous snapshot for the id.
  */
-export function onSubagentProgress(update: SubagentProgressUpdate): void {
-	const now = Date.now();
-	const existing = stats.subagents.get(update.id);
-	const startedAt = existing?.startedAt ?? now - (update.durationMs ?? 0);
-	const completedAt = isTerminalStatus(update.status) ? (existing?.completedAt ?? now) : undefined;
+export function onSubagentProgress(update: {
+	id: string;
+	agent: string;
+	status: SubagentStatus;
+	tokens: number;
+	toolCount: number;
+	cost: number;
+}): void {
 	stats.subagents.set(update.id, {
 		id: update.id,
 		agent: update.agent,
@@ -292,55 +209,16 @@ export function onSubagentProgress(update: SubagentProgressUpdate): void {
 		tokens: update.tokens,
 		toolCount: update.toolCount,
 		cost: update.cost,
-		lastUpdate: now,
-		index: update.index ?? existing?.index ?? Number.MAX_SAFE_INTEGER,
-		task: update.task ?? existing?.task,
-		assignment: update.assignment ?? existing?.assignment,
-		description: update.description ?? existing?.description,
-		currentTool: update.currentTool ?? existing?.currentTool,
-		currentToolArgs: update.currentToolArgs ?? existing?.currentToolArgs,
-		currentToolStartMs: update.currentToolStartMs ?? existing?.currentToolStartMs,
-		lastIntent: update.lastIntent ?? existing?.lastIntent,
-		recentOutput: update.recentOutput ?? existing?.recentOutput ?? [],
-		durationMs: update.durationMs ?? existing?.durationMs ?? 0,
-		contextTokens: update.contextTokens ?? existing?.contextTokens,
-		contextWindow: update.contextWindow ?? existing?.contextWindow,
-		resolvedModel: update.resolvedModel ?? existing?.resolvedModel,
-		retryState: update.retryState ?? existing?.retryState,
-		retryFailure: update.retryFailure ?? existing?.retryFailure,
-		startedAt,
-		completedAt,
-		failureReason: update.failureReason ?? existing?.failureReason,
-		agentSource: update.agentSource ?? existing?.agentSource,
-		sessionFile: update.sessionFile ?? existing?.sessionFile,
-		recentTools: update.recentTools ?? existing?.recentTools,
-		extractedToolData: update.extractedToolData ?? existing?.extractedToolData,
-		inflightTaskDetails: update.inflightTaskDetails ?? existing?.inflightTaskDetails,
+		lastUpdate: Date.now(),
 	});
 }
 
-function isTerminalStatus(status: SubagentStatus): boolean {
-	return status === "completed" || status === "failed" || status === "aborted";
-}
-
-/** Update a subagent's status from a lifecycle event while preserving any progress fields already observed. */
-export function onSubagentLifecycle(
-	id: string,
-	agent: string,
-	status: SubagentStatus,
-	details: { index?: number; task?: string; description?: string } = {},
-): void {
+/** Update a subagent's terminal status from a lifecycle event. */
+export function onSubagentLifecycle(id: string, agent: string, status: SubagentStatus): void {
 	const existing = stats.subagents.get(id);
-	const now = Date.now();
 	if (existing) {
 		existing.status = status;
-		existing.agent = agent;
-		existing.lastUpdate = now;
-		existing.index = details.index ?? existing.index;
-		existing.task = details.task ?? existing.task;
-		existing.description = details.description ?? existing.description;
-		if (isTerminalStatus(status)) existing.completedAt = now;
-		if (status === "running" && existing.startedAt === 0) existing.startedAt = now;
+		existing.lastUpdate = Date.now();
 	} else {
 		stats.subagents.set(id, {
 			id,
@@ -349,24 +227,11 @@ export function onSubagentLifecycle(
 			tokens: 0,
 			toolCount: 0,
 			cost: 0,
-			lastUpdate: now,
-			index: details.index ?? Number.MAX_SAFE_INTEGER,
-			task: details.task,
-			description: details.description,
-			recentOutput: [],
-			durationMs: 0,
-			startedAt: now,
-			completedAt: isTerminalStatus(status) ? now : undefined,
+			lastUpdate: Date.now(),
 		});
 	}
 }
 
-export function onIrcMessage(message: IrcMessageActivity): void {
-	stats.ircMessages.push(message);
-	if (stats.ircMessages.length > MAX_IRC_MESSAGES) {
-		stats.ircMessages.splice(0, stats.ircMessages.length - MAX_IRC_MESSAGES);
-	}
-}
 /** Sum the latest per-subagent snapshots into rolled-up totals. */
 export function getSubagentTotals(): SubagentTotals {
 	let tokens = 0;

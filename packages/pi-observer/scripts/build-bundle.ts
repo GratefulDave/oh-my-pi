@@ -19,7 +19,6 @@ export function visibleWidth(text) { return text.length; }
 export function sliceWithWidth(text) { return { text, width: text.length }; }
 export function extractSegments(line, beforeEnd, afterStart) { return { before: line.slice(0, beforeEnd), after: line.slice(afterStart), beforeWidth: beforeEnd, afterWidth: line.length - afterStart }; }
 export function wrapTextWithAnsi(text) { return [text]; }
-export function setHangulCompatJamoWidthOverride() {}
 `;
 
 const result = await Bun.build({
