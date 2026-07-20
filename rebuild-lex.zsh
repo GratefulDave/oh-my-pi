@@ -144,6 +144,9 @@ mkdir -p "$link_dir"
 ln -sf "$binary" "$link_dir/lex"
 ln -sf "$binary" "$link_dir/omp"
 
+print_step "Rebuilding Lex-managed extensions"
+bun scripts/rebuild-extensions.ts
+
 # Rebuild personal extensions against the freshly compiled lex binary, then install
 # the fork-managed extension set last. Some package names exist in both repos; the
 # user-level config must resolve those to this lex checkout, while personal-only
