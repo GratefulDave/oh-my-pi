@@ -10,6 +10,8 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import observer from "../src/extension";
+import { buildObserverHierarchy } from "../src/hierarchy";
+import { stripAnsi } from "../src/renderer";
 import {
 	getStats,
 	getSubagentTotals,
@@ -19,7 +21,41 @@ import {
 } from "../src/stats-collector";
 
 const PROGRESS_CHANNEL = "task:subagent:progress";
+const RAW_EVENT_CHANNEL = "task:subagent:event";
 const LIFECYCLE_CHANNEL = "task:subagent:lifecycle";
+const IRC_CHANNEL = "irc:message";
+
+type FakeCustomTheme = {
+	fg?: (color: string, text: string) => string;
+	bold?: (text: string) => string;
+	dim?: (text: string) => string;
+};
+
+type FakeCustomView = {
+	render(width: number, height: number): string[];
+	destroy(): void;
+};
+
+type FakeCommandContext = {
+	cwd: string;
+	ui: {
+		setEditorText(text: string): void;
+		custom<T>(
+			factory: (
+				tui: { requestRender(): void; terminal?: { rows: number } },
+				theme: FakeCustomTheme,
+				keybindings: unknown,
+				done: (result: T) => void,
+			) => unknown,
+			options?: { overlay?: boolean },
+		): Promise<T>;
+	};
+};
+
+type FakeCommand = {
+	description: string;
+	handler: (args: string, ctx: FakeCommandContext) => Promise<void> | void;
+};
 
 /** Minimal EventBus matching coding-agent's on/emit contract. */
 class FakeEventBus {
@@ -37,13 +73,30 @@ class FakeEventBus {
 /** Minimal ExtensionAPI stub exposing just what observer() touches. */
 function makeFakePi() {
 	const events = new FakeEventBus();
+	const sessionHandlers = new Map<string, (event: unknown) => void>();
+	const commands = new Map<string, FakeCommand>();
 	const pi = {
 		events,
 		setLabel() {},
-		on() {},
-		registerCommand() {},
+		on(event: string, handler: (event: unknown) => void) {
+			sessionHandlers.set(event, handler);
+		},
+		registerCommand(name: string, command: FakeCommand) {
+			commands.set(name, command);
+		},
 	};
-	return { pi: pi as Parameters<typeof observer>[0], events };
+	return { pi: pi as Parameters<typeof observer>[0], events, sessionHandlers, commands };
+}
+
+function isFakeCustomView(value: unknown): value is FakeCustomView {
+	return (
+		value != null &&
+		typeof value === "object" &&
+		"render" in value &&
+		"destroy" in value &&
+		typeof value.render === "function" &&
+		typeof value.destroy === "function"
+	);
 }
 
 describe("pi-observer subagent fan-in", () => {
@@ -64,6 +117,60 @@ describe("pi-observer subagent fan-in", () => {
 		// Second snapshot is cumulative for the same id -> overwrite, not add.
 		onSubagentProgress({ id: "a1", agent: "explore", status: "running", tokens: 250, toolCount: 5, cost: 0.03 });
 		expect(getSubagentTotals()).toEqual({ count: 1, activeCount: 1, tokens: 250, toolCount: 5, cost: 0.03 });
+	});
+
+	test("progress preserves hierarchy fields when later cumulative updates omit them", () => {
+		onSubagentProgress({
+			id: "a1",
+			agent: "explore",
+			status: "running",
+			tokens: 100,
+			toolCount: 2,
+			cost: 0.01,
+			agentSource: "project",
+			sessionFile: "/tmp/session.jsonl",
+			recentTools: [{ tool: "read", args: "dashboard.ts", endMs: 10 }],
+			extractedToolData: {
+				task: [{ results: [], progress: [{ id: "nested", agent: "executor", status: "running", task: "nested" }] }],
+			},
+			inflightTaskDetails: { results: [], progress: [{ id: "live", agent: "reviewer", status: "running" }] },
+		});
+		onSubagentProgress({ id: "a1", agent: "explore", status: "running", tokens: 250, toolCount: 5, cost: 0.03 });
+
+		const subagent = getStats().subagents.get("a1");
+		expect(subagent?.agentSource).toBe("project");
+		expect(subagent?.sessionFile).toBe("/tmp/session.jsonl");
+		expect(subagent?.recentTools).toEqual([{ tool: "read", args: "dashboard.ts", endMs: 10 }]);
+		expect(subagent?.extractedToolData?.task).toHaveLength(1);
+		expect(subagent?.inflightTaskDetails).toEqual({
+			results: [],
+			progress: [{ id: "live", agent: "reviewer", status: "running" }],
+		});
+	});
+
+	test("lifecycle merge does not wipe task hierarchy fields", () => {
+		onSubagentProgress({
+			id: "a1",
+			agent: "explore",
+			status: "running",
+			tokens: 100,
+			toolCount: 2,
+			cost: 0.01,
+			recentTools: [{ tool: "edit", args: "hierarchy.ts", endMs: 10 }],
+			extractedToolData: { task: [{ results: [{ id: "done", agent: "executor", status: "completed" }] }] },
+			inflightTaskDetails: { results: [], async: { state: "running", jobId: "job-1", type: "task" } },
+		});
+		onSubagentLifecycle("a1", "explore", "completed", { task: "trace bug" });
+
+		const subagent = getStats().subagents.get("a1");
+		expect(subagent?.status).toBe("completed");
+		expect(subagent?.task).toBe("trace bug");
+		expect(subagent?.recentTools).toEqual([{ tool: "edit", args: "hierarchy.ts", endMs: 10 }]);
+		expect(subagent?.extractedToolData?.task).toHaveLength(1);
+		expect(subagent?.inflightTaskDetails).toEqual({
+			results: [],
+			async: { state: "running", jobId: "job-1", type: "task" },
+		});
 	});
 
 	test("multiple subagents sum; lifecycle flips active count", () => {
@@ -92,7 +199,23 @@ describe("pi-observer subagent fan-in", () => {
 			index: 0,
 			agent: "explore",
 			task: "trace bug",
-			progress: { id: "sub-1", agent: "explore", status: "running", tokens: 1234, toolCount: 7, cost: 0.12 },
+			progress: {
+				id: "sub-1",
+				agent: "explore",
+				status: "running",
+				tokens: 1234,
+				toolCount: 7,
+				cost: 0.12,
+				description: "Trace bug",
+				currentTool: "read",
+				durationMs: 1500,
+				resolvedModel: "anthropic/claude-sonnet-4",
+				agentSource: "builtin",
+				sessionFile: "/tmp/sub-1.jsonl",
+				recentTools: [{ tool: "read", args: "stats", endMs: 10 }],
+				extractedToolData: { task: [{ results: [], progress: [] }] },
+				inflightTaskDetails: { results: [], progress: [] },
+			},
 		});
 
 		const totals = getSubagentTotals();
@@ -100,12 +223,216 @@ describe("pi-observer subagent fan-in", () => {
 		expect(totals.tokens).toBe(1234);
 		expect(totals.toolCount).toBe(7);
 		expect(totals.cost).toBeCloseTo(0.12, 6);
+		const subagent = getStats().subagents.get("sub-1");
+		expect(subagent?.description).toBe("Trace bug");
+		expect(subagent?.task).toBe("trace bug");
+		expect(subagent?.currentTool).toBe("read");
+		expect(subagent?.durationMs).toBe(1500);
+		expect(subagent?.resolvedModel).toBe("anthropic/claude-sonnet-4");
+		expect(subagent?.agentSource).toBe("builtin");
+		expect(subagent?.sessionFile).toBe("/tmp/sub-1.jsonl");
+		expect(subagent?.recentTools).toEqual([{ tool: "read", args: "stats", endMs: 10 }]);
+		expect(subagent?.extractedToolData?.task).toHaveLength(1);
+		expect(subagent?.inflightTaskDetails).toEqual({ results: [], progress: [] });
 
 		// Lifecycle "completed" marks it inactive but keeps its accumulated totals.
 		events.emit(LIFECYCLE_CHANNEL, { id: "sub-1", agent: "explore", status: "completed", index: 0 });
 		const after = getSubagentTotals();
 		expect(after.activeCount).toBe(0);
 		expect(after.tokens).toBe(1234);
+	});
+
+	test("observe command tolerates custom UI themes without dim helper", async () => {
+		const { pi, commands } = makeFakePi();
+		observer(pi);
+		const command = commands.get("observe");
+		expect(command).toBeDefined();
+		let editorText: string | undefined;
+		let rendered: string[] = [];
+		const ctx: FakeCommandContext = {
+			cwd: "/tmp",
+			ui: {
+				setEditorText(text: string): void {
+					editorText = text;
+				},
+				async custom<T>(factory): Promise<T> {
+					const view = factory(
+						{ requestRender() {} },
+						{
+							fg(color: string, text: string): string {
+								if (color !== "dim") throw new Error(`Unknown theme color: ${color}`);
+								return text;
+							},
+							bold(text: string): string {
+								return text;
+							},
+						},
+						undefined,
+						() => {},
+					);
+					if (!isFakeCustomView(view)) throw new Error("Expected observer dashboard view");
+					rendered = view.render(120, 50).map(stripAnsi);
+					view.destroy();
+					return undefined as T;
+				},
+			},
+		};
+
+		await command!.handler("", ctx);
+
+		expect(editorText).toBe("");
+		expect(rendered).toContain("session-observability");
+		expect(rendered.some(line => line.includes("Observability · 1 node ┬ Session observability"))).toBe(true);
+	});
+
+	test("end-to-end: optional IRC EventBus records are bounded and normalized", () => {
+		const { pi, events } = makeFakePi();
+		observer(pi);
+
+		events.emit(IRC_CHANNEL, {
+			timestamp: 1,
+			channel: "#agents",
+			from: "Main",
+			to: "#agents",
+			body: "hello",
+			kind: "message",
+			delivered: ["executor"],
+			failed: [],
+		});
+
+		expect(getStats().ircMessages).toEqual([
+			{
+				timestamp: 1,
+				channel: "#agents",
+				from: "Main",
+				to: "#agents",
+				body: "hello",
+				kind: "message",
+				delivered: ["executor"],
+				failed: [],
+			},
+		]);
+	});
+
+	test("raw subagent events and canonical IRC form one ordered per-agent timeline", () => {
+		const { pi, events } = makeFakePi();
+		observer(pi);
+		observer(pi);
+		events.emit(PROGRESS_CHANNEL, {
+			agent: "executor",
+			task: "Trace",
+			progress: { id: "timeline-1", agent: "executor", status: "running", tokens: 10, toolCount: 1, cost: 0 },
+		});
+		events.emit(RAW_EVENT_CHANNEL, {
+			id: "timeline-1",
+			event: {
+				type: "message_end",
+				timestamp: 1,
+				message: { role: "assistant", content: [{ type: "text", text: "chat first" }] },
+			},
+		});
+		events.emit(RAW_EVENT_CHANNEL, {
+			id: "timeline-1",
+			event: { type: "tool_execution_start", timestamp: 2, toolName: "read", args: { path: "x.ts" } },
+		});
+		events.emit(IRC_CHANNEL, {
+			id: "irc-1",
+			timestamp: 3,
+			channel: "irc:message",
+			from: "Main",
+			to: "timeline-1",
+			body: "status?",
+			kind: "message",
+			delivered: ["timeline-1"],
+			failed: [],
+		});
+		events.emit(IRC_CHANNEL, {
+			id: "irc-1",
+			timestamp: 3,
+			channel: "irc:message",
+			from: "Main",
+			to: "timeline-1",
+			body: "status?",
+			kind: "message",
+			delivered: ["timeline-1"],
+			failed: [],
+		});
+		events.emit(IRC_CHANNEL, {
+			id: "irc-2",
+			timestamp: 3,
+			channel: "irc:message",
+			from: "Main",
+			to: "timeline-1",
+			body: "status?",
+			kind: "message",
+			delivered: ["timeline-1"],
+			failed: [],
+		});
+		events.emit(IRC_CHANNEL, {
+			id: "irc-alias",
+			timestamp: 3,
+			channel: "irc:message",
+			from: "Main",
+			to: "executor",
+			body: "misrouted",
+			kind: "message",
+			delivered: ["executor"],
+			failed: [],
+		});
+		events.emit(RAW_EVENT_CHANNEL, {
+			id: "timeline-1",
+			event: { type: "tool_execution_end", timestamp: 4, toolName: "read", result: { text: "done" } },
+		});
+		events.emit(RAW_EVENT_CHANNEL, {
+			id: "timeline-1",
+			event: {
+				type: "agent_end",
+				timestamp: 5,
+				messages: [
+					{ role: "user", content: [{ type: "text", text: "initial prompt" }] },
+					{ role: "assistant", content: [{ type: "text", text: "final answer" }] },
+				],
+			},
+		});
+
+		const activity = getStats().subagents.get("timeline-1");
+		expect(activity?.timeline?.map(entry => entry.kind)).toEqual(["chat", "tool", "irc", "irc", "tool", "outcome"]);
+		expect(activity?.timeline?.filter(entry => entry.kind === "irc")).toHaveLength(2);
+		expect(getStats().ircMessages).toHaveLength(3);
+		const detail = buildObserverHierarchy(getStats(), 6_000).getNode("agent:timeline-1")?.detail ?? [];
+		expect(detail.join("\n").indexOf("chat first")).toBeLessThan(detail.join("\n").indexOf("status?"));
+		expect(detail.join("\n").indexOf("status?")).toBeLessThan(detail.join("\n").indexOf("done"));
+		expect(detail.filter(line => line.includes("status?"))).toHaveLength(2);
+		expect(detail.join("\n")).toContain("final answer");
+		expect(detail.join("\n")).not.toContain("initial prompt");
+		expect(detail.join("\n")).not.toContain("misrouted");
+	});
+
+	test("IRC received before progress is sanitized and attached once by agent id", () => {
+		const { pi, events } = makeFakePi();
+		observer(pi);
+		events.emit(IRC_CHANNEL, {
+			id: "irc-before",
+			timestamp: 1,
+			channel: "irc:message",
+			from: "Main",
+			to: "late-agent",
+			body: `first\nsecond\u001b[31m${"x".repeat(400)}`,
+			kind: "message",
+			delivered: ["late-agent"],
+			failed: [],
+		});
+		events.emit(PROGRESS_CHANNEL, {
+			agent: "executor",
+			task: "Late",
+			progress: { id: "late-agent", agent: "executor", status: "running", tokens: 0, toolCount: 0, cost: 0 },
+		});
+
+		const timeline = getStats().subagents.get("late-agent")?.timeline ?? [];
+		expect(timeline.filter(entry => entry.kind === "irc")).toHaveLength(1);
+		expect(timeline[0]?.detail).not.toContain("\n");
+		expect(timeline[0]?.detail).not.toContain("\u001b");
+		expect(timeline[0]?.detail.length).toBeLessThanOrEqual(320);
 	});
 
 	test("malformed payloads are ignored", () => {

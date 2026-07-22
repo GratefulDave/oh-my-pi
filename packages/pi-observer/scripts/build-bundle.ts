@@ -14,6 +14,7 @@ export function parseKey() { return null; }
 export function parseKittySequence() { return null; }
 export function encodeSixel() { return ""; }
 export function copyToClipboard() {}
+export function setHangulCompatJamoWidthOverride() {}
 export function truncateToWidth(text) { return text; }
 export function visibleWidth(text) { return text.length; }
 export function sliceWithWidth(text) { return { text, width: text.length }; }
