@@ -389,10 +389,17 @@ function extractPartialBashEnv(partialJson: string | undefined): Record<string, 
 	return Object.keys(env).length > 0 ? env : undefined;
 }
 
-function formatTimeoutClampNotice(requestedTimeoutSec: number, effectiveTimeoutSec: number): string | undefined {
-	return requestedTimeoutSec !== effectiveTimeoutSec
-		? `Timeout clamped to ${effectiveTimeoutSec}s (requested ${requestedTimeoutSec}s; allowed range ${TOOL_TIMEOUTS.bash.min}-${TOOL_TIMEOUTS.bash.max}s).`
-		: undefined;
+function formatTimeoutClampNotice(
+	requestedTimeoutSec: number,
+	effectiveTimeoutSec: number,
+	maxTimeout: number,
+): string | undefined {
+	if (requestedTimeoutSec === effectiveTimeoutSec) return undefined;
+	const cappedByGlobal = maxTimeout > 0 && effectiveTimeoutSec === maxTimeout && maxTimeout < TOOL_TIMEOUTS.bash.max;
+	const limit = cappedByGlobal
+		? `global tools.maxTimeout ceiling ${maxTimeout}s`
+		: `allowed range ${TOOL_TIMEOUTS.bash.min}-${TOOL_TIMEOUTS.bash.max}s`;
+	return `Timeout clamped to ${effectiveTimeoutSec}s (requested ${requestedTimeoutSec}s; ${limit}).`;
 }
 
 function formatWallTimeSeconds(wallTimeMs: number): string {
@@ -907,11 +914,14 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 		// Zero disables the command deadline; positive values clamp to 1s–3600s.
 		const requestedTimeoutSec = rawTimeout;
 		const timeoutDisabled = requestedTimeoutSec === 0;
-		const timeoutSec = timeoutDisabled ? 0 : clampTimeout("bash", requestedTimeoutSec);
-		const timeoutMs = timeoutDisabled ? 0 : timeoutSec * 1000;
+		const maxTimeout = this.session.settings.get("tools.maxTimeout");
+		const timeoutSec = timeoutDisabled ? undefined : clampTimeout("bash", requestedTimeoutSec, maxTimeout);
+		const timeoutMs = timeoutSec === undefined ? undefined : timeoutSec * 1000;
 		const pendingNotices: string[] = [];
-		const timeoutClampNotice = formatTimeoutClampNotice(requestedTimeoutSec, timeoutSec);
-		if (timeoutClampNotice) pendingNotices.push(timeoutClampNotice);
+		if (timeoutSec !== undefined) {
+			const timeoutClampNotice = formatTimeoutClampNotice(requestedTimeoutSec, timeoutSec, maxTimeout);
+			if (timeoutClampNotice) pendingNotices.push(timeoutClampNotice);
+		}
 
 		if (asyncRequested) {
 			if (!this.session.asyncJobManager) {
