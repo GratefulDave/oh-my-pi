@@ -175,20 +175,6 @@ this script, re-apply the nightly PATH prepend block at the top of the new versi
 
 ---
 
-### Patch 8: `antigravity-adapter` package (fork-only extension)
-
-**Why**: The `antigravity-adapter` package does not exist upstream. It bridges the AG OAuth
-provider (Antigravity AI endpoint) into the lex model registry using a custom provider ID
-(`ag-bridge`) and credential type. The serialized credential prefix is kept as `opencode-antigravity:v1:`
-for backward compatibility with stored tokens.
-
-**Files**: entire `packages/antigravity-adapter/` directory
-
-**Verify**: `ls packages/antigravity-adapter/src/` → `auth-adapter.ts extension.ts models.ts …`
-
-**Conflict risk**: none — upstream does not have this directory.
-
----
 
 ### Patch 9: Fork tooling & docs
 
@@ -241,7 +227,6 @@ After every `git merge upstream/main`:
 
 ```
 ~/.omp/agent/extensions/
-  antigravity-adapter/antigravity.bundle.js    # from packages/antigravity-adapter
   profile-manager/profile-manager.bundle.js    # from .omp/extensions/profile-manager
   profile-manager/index.js -> profile-manager.bundle.js   # symlink (rebuild-lex.zsh creates)
   [personal extensions...]                     # from ~/PycharmProjects/omp-personal-extensions

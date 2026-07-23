@@ -211,16 +211,6 @@ printf '  native loads OK\n'
 print_step "Minimizer gain bundle smoke test"
 bun --cwd=packages/pi-minimizer-gain run smoke:bundle
 
-# Smoke-test the extension path that has broken repeatedly: the global
-# Antigravity adapter extension bundle must exist and be readable.
-# (--list-models was removed in v16; verify via symlink presence instead.)
-print_step "Extension load smoke test"
-antigravity_bundle="$HOME/.omp/agent/extensions/antigravity-adapter/antigravity.bundle.js"
-if [[ ! -f "$antigravity_bundle" ]]; then
-	printf 'error: antigravity extension bundle missing after rebuild: %s\n' "$antigravity_bundle" >&2
-	exit 1
-fi
-printf '  antigravity extension bundle present: %s\n' "$antigravity_bundle"
 
 print_step "Verifying OpenAI Codex agent defaults"
 bun scripts/set-agent-codex-defaults.ts --check

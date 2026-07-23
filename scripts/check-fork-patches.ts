@@ -231,18 +231,6 @@ const checks: PatchCheck[] = [
 		},
 	},
 
-	// ── Patch 8: antigravity-adapter package ──────────────────────────────────
-	{
-		id: "P8",
-		description: "packages/antigravity-adapter: fork-only extension package",
-		check() {
-			const missing: string[] = [];
-			if (!fileExists("packages/antigravity-adapter/src/models.ts")) missing.push("models.ts");
-			if (!fileExists("packages/antigravity-adapter/src/auth-adapter.ts")) missing.push("auth-adapter.ts");
-			if (!fileExists("packages/antigravity-adapter/src/extension.ts")) missing.push("extension.ts");
-			return missing.length === 0 ? null : `antigravity-adapter files missing: ${missing.join(", ")}`;
-		},
-	},
 
 	// ── Patch 9: fork tooling scripts ─────────────────────────────────────────
 	{
