@@ -5,13 +5,22 @@ import type * as fs1 from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
-import type { ImageContent, Model, TextContent, TSchema } from "@oh-my-pi/pi-ai";
+import type {
+	ImageContent,
+	Model,
+	ServiceTier,
+	ServiceTierByFamily,
+	ServiceTierFamily,
+	TextContent,
+	TSchema,
+} from "@oh-my-pi/pi-ai";
 import type { KeyId } from "@oh-my-pi/pi-tui";
 import { hasFsCode, isEacces, isEnoent, logger } from "@oh-my-pi/pi-utils";
 import { Type } from "arktype";
 import * as zodModule from "zod/v4";
 import { type ExtensionModule, extensionModuleCapability } from "../../capability/extension-module";
 import { type Hook, hookCapability } from "../../capability/hook";
+import { isServiceTierFamily, isServiceTierForFamily } from "../../config/service-tier";
 import { loadCapability } from "../../discovery";
 import { getExtensionNameFromPath } from "../../discovery/helpers";
 import type { ExecOptions } from "../../exec/exec";
@@ -119,6 +128,13 @@ export class ExtensionRuntime implements IExtensionRuntime {
 		throw new ExtensionRuntimeNotInitializedError();
 	}
 
+	getServiceTiers(): ServiceTierByFamily {
+		throw new ExtensionRuntimeNotInitializedError();
+	}
+
+	setServiceTier(): void {
+		throw new ExtensionRuntimeNotInitializedError();
+	}
 	getSessionName(): string | undefined {
 		throw new ExtensionRuntimeNotInitializedError();
 	}
@@ -276,6 +292,16 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 		this.runtime.overrideEnabledModels(patterns);
 	}
 
+	getServiceTiers(): Readonly<ServiceTierByFamily> {
+		return { ...this.runtime.getServiceTiers() };
+	}
+
+	setServiceTier(family: ServiceTierFamily, tier: ServiceTier | undefined): void {
+		if (!isServiceTierFamily(family) || (tier !== undefined && !isServiceTierForFamily(family, tier))) {
+			throw new TypeError(`Invalid service tier "${String(tier)}" for family "${String(family)}"`);
+		}
+		this.runtime.setServiceTier(family, tier);
+	}
 	getSessionName(): string | undefined {
 		return this.runtime.getSessionName();
 	}

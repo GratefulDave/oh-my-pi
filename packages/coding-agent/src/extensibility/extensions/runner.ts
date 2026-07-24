@@ -72,6 +72,10 @@ export type ExtensionErrorListener = (error: ExtensionError) => void;
 export const EXTENSION_HANDLER_TIMEOUT_MS = 30_000;
 let extensionHandlerTimeoutMs = EXTENSION_HANDLER_TIMEOUT_MS;
 
+function throwUnsupportedServiceTierAction(): never {
+	throw new Error("This extension host does not support service-tier actions");
+}
+
 export function testSetExtensionHandlerTimeoutMs(timeoutMs: number): void {
 	extensionHandlerTimeoutMs = timeoutMs;
 }
@@ -301,6 +305,8 @@ export class ExtensionRunner {
 		this.runtime.overrideModelRoles = actions.overrideModelRoles;
 		this.runtime.replaceModelRoles = actions.replaceModelRoles;
 		this.runtime.overrideEnabledModels = actions.overrideEnabledModels;
+		this.runtime.getServiceTiers = actions.getServiceTiers ?? throwUnsupportedServiceTierAction;
+		this.runtime.setServiceTier = actions.setServiceTier ?? throwUnsupportedServiceTierAction;
 		this.runtime.getSessionName = actions.getSessionName;
 		this.runtime.setSessionName = actions.setSessionName;
 

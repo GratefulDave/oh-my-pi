@@ -93,6 +93,8 @@ export async function initializeExtensions(session: AgentSession, options: Initi
 			overrideModelRoles: roles => session.settings.overrideModelRoles(roles),
 			replaceModelRoles: roles => session.settings.replaceModelRoles(roles),
 			overrideEnabledModels: patterns => session.settings.overrideEnabledModels(patterns),
+			getServiceTiers: () => session.serviceTierByFamily,
+			setServiceTier: (family, tier) => session.setServiceTierFamily(family, tier),
 			getSessionName: () => session.sessionManager.getSessionName(),
 			setSessionName: async name => {
 				await session.sessionManager.setSessionName(name, "user");
