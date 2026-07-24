@@ -33,7 +33,7 @@ import { UserMessageComponent } from "../../modes/components/user-message";
 import { decodeStreamedToolArgs, streamingStringKeysForTool } from "../../modes/controllers/tool-args-reveal";
 import { materializeImageReferenceLinksSync } from "../../modes/image-references";
 import { theme } from "../../modes/theme/theme";
-import type { CompactionQueuedMessage, InteractiveModeContext } from "../../modes/types";
+import type { CompactionQueuedMessage, InteractiveModeContext, RenderSessionContextOptions } from "../../modes/types";
 import {
 	BACKGROUND_TAN_DISPATCH_MESSAGE_TYPE,
 	type CustomMessage,
@@ -72,12 +72,6 @@ type AddMessageOptions = {
 	populateHistory?: boolean;
 	imageLinks?: readonly (string | undefined)[];
 	reuseSettledComponent?: boolean;
-};
-
-type RenderSessionContextOptions = {
-	updateFooter?: boolean;
-	populateHistory?: boolean;
-	reuseSettledComponents?: boolean;
 };
 
 function imageLinksForMessage(
@@ -428,8 +422,12 @@ export class UiHelpers {
 					if (content.type !== "toolCall") {
 						continue;
 					}
-					resolveWaitingPoll(content.name);
 					const afterToolSegment = timeline.afterToolCalls.get(content.id);
+					if (options.preservedLiveToolCallIds?.has(content.id)) {
+						appendAssistantSegment(afterToolSegment);
+						continue;
+					}
+					resolveWaitingPoll(content.name);
 
 					if (content.name === "read" && readArgsCollapseIntoGroup(content.arguments)) {
 						if (hasErrorStop && errorMessage) {
@@ -544,6 +542,7 @@ export class UiHelpers {
 				pendingUsageTtft = message.ttft;
 				pendingUsageTimestamp = message.timestamp;
 			} else if (message.role === "toolResult") {
+				if (options.preservedLiveToolCallIds?.has(message.toolCallId)) continue;
 				const pendingReadComponent = this.ctx.pendingTools.get(message.toolCallId);
 				const isReadGroupResult =
 					message.toolName === "read" &&
