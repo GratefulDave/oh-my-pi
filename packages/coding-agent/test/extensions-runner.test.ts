@@ -1508,6 +1508,7 @@ describe("ExtensionRunner", () => {
 					input: async () => undefined,
 					notify: () => {},
 					onTerminalInput: () => () => {},
+					onSpaceHold: () => () => {},
 					setStatus: () => {},
 					setWorkingMessage: () => {},
 					setWidget: () => {},
@@ -1521,6 +1522,7 @@ describe("ExtensionRunner", () => {
 					editor: async () => undefined,
 					addAutocompleteProvider: () => {},
 					setEditorComponent: () => {},
+					getEditorComponent: () => undefined,
 					get theme() {
 						return {} as never;
 					},

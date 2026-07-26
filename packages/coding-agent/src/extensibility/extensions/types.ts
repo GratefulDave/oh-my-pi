@@ -203,6 +203,15 @@ export interface ExtensionUIDialogOptions {
 /** Raw terminal input listener for extensions. */
 export type TerminalInputHandler = (data: string) => { consume?: boolean; data?: string } | undefined;
 
+/** Prompt-editor push-to-talk callbacks driven by a sustained Space hold. */
+export interface SpaceHoldHandlers {
+	onStart(): void;
+	onEnd(): void;
+}
+
+/** Factory for the interactive prompt editor exposed to extensions. */
+export type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => CustomEditor;
+
 export type WidgetPlacement = "aboveEditor" | "belowEditor";
 
 export interface ExtensionWidgetOptions {
@@ -252,6 +261,9 @@ export interface ExtensionUIContext {
 
 	/** Listen to raw terminal input (interactive mode only). Returns an unsubscribe function. */
 	onTerminalInput(handler: TerminalInputHandler): () => void;
+
+	/** Handle the prompt editor's sustained Space hold gesture. Returns an unsubscribe function. */
+	onSpaceHold(handlers: SpaceHoldHandlers): () => void;
 
 	/** Set status text in the footer/status bar. Pass undefined to clear. */
 	setStatus(key: string, text: string | undefined): void;
@@ -319,9 +331,10 @@ export interface ExtensionUIContext {
 	 * instances do not implement the action-keys, escape callbacks, and custom-key-handler surface
 	 * required by interactive mode.
 	 */
-	setEditorComponent(
-		factory: ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => CustomEditor) | undefined,
-	): void;
+	setEditorComponent(factory: EditorFactory | undefined): void;
+
+	/** Return the configured custom editor factory, or `undefined` when using the default editor. */
+	getEditorComponent(): EditorFactory | undefined;
 
 	/** Get the current theme for styling. */
 	readonly theme: Theme;

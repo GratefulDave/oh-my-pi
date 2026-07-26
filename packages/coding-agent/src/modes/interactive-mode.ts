@@ -17,7 +17,6 @@ import { modelsAreEqual } from "@oh-my-pi/pi-catalog/models";
 import type {
 	AutocompleteProvider,
 	Component,
-	EditorTheme,
 	LoaderMessageColorFn,
 	NativeScrollbackLiveRegion,
 	OverlayHandle,
@@ -69,6 +68,7 @@ import { clearClaudePluginRootsCache } from "../discovery/helpers";
 import type {
 	AutocompleteProviderFactory,
 	ContextUsage,
+	EditorFactory,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
 	ExtensionUISelectItem,
@@ -500,7 +500,9 @@ export function renderSubagentHudLines(sessions: ObservableSession[], columns: n
 		);
 	});
 	if (hiddenCount > 0) {
-		lines.push(truncateToWidth(theme.fg("dim", `… ${hiddenCount} more running — open Agent Hub for full list`), width));
+		lines.push(
+			truncateToWidth(theme.fg("dim", `… ${hiddenCount} more running — open Agent Hub for full list`), width),
+		);
 	}
 	return lines;
 }
@@ -570,6 +572,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	errorBannerContainer: Container;
 	modelCycleContainer: Container;
 	editor: CustomEditor;
+	#editorComponentFactory: EditorFactory | undefined;
 	editorContainer: Container;
 	hookWidgetContainerAbove: Container;
 	hookWidgetContainerBelow: Container;
@@ -4257,9 +4260,8 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#extensionUiController.initializeHookRunner(uiContext, hasUI);
 	}
 
-	setEditorComponent(
-		factory: ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => CustomEditor) | undefined,
-	): void {
+	setEditorComponent(factory: EditorFactory | undefined): void {
+		this.#editorComponentFactory = factory;
 		const previousEditor = this.editor;
 		const previousText = previousEditor.getText();
 		const nextEditor = factory
@@ -4291,6 +4293,7 @@ export class InteractiveMode implements InteractiveModeContext {
 
 		this.#inputController.setupKeyHandlers();
 		this.#inputController.setupEditorSubmitHandler();
+		this.#extensionUiController.rebindExtensionSpaceHoldListeners();
 
 		void this.refreshSlashCommandState().catch(error => {
 			logger.warn("Failed to refresh slash command state for custom editor", { error: String(error) });
@@ -4298,6 +4301,10 @@ export class InteractiveMode implements InteractiveModeContext {
 
 		this.updateEditorBorderColor();
 		this.ui.requestRender();
+	}
+
+	getEditorComponent(): EditorFactory | undefined {
+		return this.#editorComponentFactory;
 	}
 
 	// UI helpers

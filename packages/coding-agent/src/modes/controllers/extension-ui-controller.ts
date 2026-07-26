@@ -18,6 +18,7 @@ import type {
 	ExtensionWidgetContent,
 	ExtensionWidgetOptions,
 	SendUserMessageHandler,
+	SpaceHoldHandlers,
 	TerminalInputHandler,
 } from "../../extensibility/extensions";
 import { getSessionSlashCommands } from "../../extensibility/extensions/get-commands-handler";
@@ -63,6 +64,18 @@ function toWireSelectOptions(options: ExtensionUISelectItem[]): CollabUiSelectIt
 
 export class ExtensionUiController {
 	#extensionTerminalInputUnsubscribers = new Set<() => void>();
+	#extensionSpaceHoldHandlers = new Set<SpaceHoldHandlers>();
+	#spaceHoldEditor: InteractiveModeContext["editor"] | undefined;
+	#spaceHoldEnabledBeforeExtensions: (() => boolean) | undefined;
+	#spaceHoldStartBeforeExtensions: (() => void) | undefined;
+	#spaceHoldEndBeforeExtensions: (() => void) | undefined;
+	#spaceHoldEnabledDispatcher = () => true;
+	#spaceHoldStartDispatcher = () => {
+		for (const handlers of this.#extensionSpaceHoldHandlers) handlers.onStart();
+	};
+	#spaceHoldEndDispatcher = () => {
+		for (const handlers of this.#extensionSpaceHoldHandlers) handlers.onEnd();
+	};
 	#hookWidgetsAbove = new Map<string, ExtensionUiComponent>();
 	#hookWidgetsBelow = new Map<string, ExtensionUiComponent>();
 	// Single-file dialog surface (`editorContainer` + focus) is shared by the
@@ -91,6 +104,7 @@ export class ExtensionUiController {
 			askDialog: (questions, dialogOptions) => this.showAskDialog(questions, dialogOptions),
 			notify: (message, type) => this.showHookNotify(message, type),
 			onTerminalInput: handler => this.addExtensionTerminalInputListener(handler),
+			onSpaceHold: handlers => this.addExtensionSpaceHoldListener(handlers),
 			setStatus: (key, text) => this.setHookStatus(key, text),
 			setWorkingMessage: message => this.ctx.setWorkingMessage(message),
 			setWidget: (key, content, options) => this.setHookWidget(key, content, options),
@@ -123,6 +137,7 @@ export class ExtensionUiController {
 			setFooter: () => {},
 			setHeader: () => {},
 			setEditorComponent: factory => this.ctx.setEditorComponent(factory),
+			getEditorComponent: () => this.ctx.getEditorComponent(),
 			getToolsExpanded: () => this.ctx.toolOutputExpanded,
 			setToolsExpanded: expanded => this.ctx.setToolsExpanded(expanded),
 		};
@@ -1092,6 +1107,50 @@ export class ExtensionUiController {
 		};
 	}
 
+	addExtensionSpaceHoldListener(handlers: SpaceHoldHandlers): () => void {
+		if (this.#extensionSpaceHoldHandlers.size === 0) this.#bindSpaceHoldHandlers(this.ctx.editor);
+		this.#extensionSpaceHoldHandlers.add(handlers);
+
+		return () => {
+			this.#extensionSpaceHoldHandlers.delete(handlers);
+			if (this.#extensionSpaceHoldHandlers.size === 0) this.#restoreSpaceHoldHandlers();
+		};
+	}
+
+	rebindExtensionSpaceHoldListeners(): void {
+		if (this.#extensionSpaceHoldHandlers.size === 0) return;
+		this.#restoreSpaceHoldHandlers();
+		this.#bindSpaceHoldHandlers(this.ctx.editor);
+	}
+
+	#bindSpaceHoldHandlers(editor: InteractiveModeContext["editor"]): void {
+		this.#spaceHoldEditor = editor;
+		this.#spaceHoldEnabledBeforeExtensions = editor.sttHoldEnabled;
+		this.#spaceHoldStartBeforeExtensions = editor.onSpaceHoldStart;
+		this.#spaceHoldEndBeforeExtensions = editor.onSpaceHoldEnd;
+		editor.sttHoldEnabled = this.#spaceHoldEnabledDispatcher;
+		editor.onSpaceHoldStart = this.#spaceHoldStartDispatcher;
+		editor.onSpaceHoldEnd = this.#spaceHoldEndDispatcher;
+	}
+
+	#restoreSpaceHoldHandlers(): void {
+		const editor = this.#spaceHoldEditor;
+		if (!editor) return;
+		if (editor.sttHoldEnabled === this.#spaceHoldEnabledDispatcher) {
+			editor.sttHoldEnabled = this.#spaceHoldEnabledBeforeExtensions;
+		}
+		if (editor.onSpaceHoldStart === this.#spaceHoldStartDispatcher) {
+			editor.onSpaceHoldStart = this.#spaceHoldStartBeforeExtensions;
+		}
+		if (editor.onSpaceHoldEnd === this.#spaceHoldEndDispatcher) {
+			editor.onSpaceHoldEnd = this.#spaceHoldEndBeforeExtensions;
+		}
+		this.#spaceHoldEditor = undefined;
+		this.#spaceHoldEnabledBeforeExtensions = undefined;
+		this.#spaceHoldStartBeforeExtensions = undefined;
+		this.#spaceHoldEndBeforeExtensions = undefined;
+	}
+
 	clearHookWidgets(): void {
 		for (const widget of this.#hookWidgetsAbove.values()) {
 			widget.dispose?.();
@@ -1109,6 +1168,8 @@ export class ExtensionUiController {
 			unsubscribe();
 		}
 		this.#extensionTerminalInputUnsubscribers.clear();
+		this.#extensionSpaceHoldHandlers.clear();
+		this.#restoreSpaceHoldHandlers();
 	}
 
 	showExtensionError(extensionPath: string, error: string): void {

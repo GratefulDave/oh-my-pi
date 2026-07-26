@@ -434,6 +434,7 @@ export function createAcpExtensionUiContext(
 			logger.debug("ACP extension notification", { message, type });
 		},
 		onTerminalInput: () => () => {},
+		onSpaceHold: () => () => {},
 		setStatus: () => {},
 		setWorkingMessage: () => {},
 		setWidget: () => {},
@@ -447,6 +448,7 @@ export function createAcpExtensionUiContext(
 		editor: async () => undefined,
 		addAutocompleteProvider: () => {},
 		setEditorComponent: () => {},
+		getEditorComponent: () => undefined,
 		get theme() {
 			return theme;
 		},

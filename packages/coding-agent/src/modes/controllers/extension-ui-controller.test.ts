@@ -72,4 +72,40 @@ describe("ExtensionUiController editor UI", () => {
 		expect(harness.addAutocompleteProvider).toHaveBeenCalledTimes(1);
 		expect(harness.addAutocompleteProvider).toHaveBeenCalledWith(factory);
 	});
+
+	it("routes prompt Space holds to extensions and restores prior handlers", async () => {
+		const harness = makeHarness();
+		const previousStart = vi.fn();
+		const previousEnd = vi.fn();
+		harness.editor.sttHoldEnabled = () => false;
+		harness.editor.onSpaceHoldStart = previousStart;
+		harness.editor.onSpaceHoldEnd = previousEnd;
+		const ui = await harness.init();
+		const firstStart = vi.fn();
+		const secondStart = vi.fn();
+		const secondEnd = vi.fn();
+		const unsubscribeFirst = ui.onSpaceHold({ onStart: firstStart, onEnd: vi.fn() });
+		const unsubscribeSecond = ui.onSpaceHold({ onStart: secondStart, onEnd: secondEnd });
+
+		expect(harness.editor.sttHoldEnabled()).toBe(true);
+		harness.editor.onSpaceHoldStart?.();
+		harness.editor.onSpaceHoldEnd?.();
+		expect(firstStart).toHaveBeenCalledTimes(1);
+		expect(secondStart).toHaveBeenCalledTimes(1);
+		expect(secondEnd).toHaveBeenCalledTimes(1);
+		expect(previousStart).not.toHaveBeenCalled();
+		expect(previousEnd).not.toHaveBeenCalled();
+
+		unsubscribeFirst();
+		harness.editor.onSpaceHoldStart?.();
+		expect(firstStart).toHaveBeenCalledTimes(1);
+		expect(secondStart).toHaveBeenCalledTimes(2);
+
+		unsubscribeSecond();
+		expect(harness.editor.sttHoldEnabled()).toBe(false);
+		harness.editor.onSpaceHoldStart?.();
+		harness.editor.onSpaceHoldEnd?.();
+		expect(previousStart).toHaveBeenCalledTimes(1);
+		expect(previousEnd).toHaveBeenCalledTimes(1);
+	});
 });

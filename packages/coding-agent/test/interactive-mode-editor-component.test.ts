@@ -9,6 +9,7 @@ import { initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import type { EditorTheme, TUI } from "@oh-my-pi/pi-tui";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
 class TestModalEditor extends CustomEditor {}
@@ -71,6 +72,35 @@ describe("InteractiveMode.setEditorComponent", () => {
 		expect(mode.editor.getText()).toBe("draft prompt");
 		expect(mode.editor.onSubmit).toBeDefined();
 		expect(mode.editor.onEscape).toBeDefined();
+		expect(refreshSpy).toHaveBeenCalled();
+	});
+
+	it("exposes the configured editor factory for extension composition", () => {
+		const refreshSpy = vi.spyOn(mode, "refreshSlashCommandState").mockResolvedValue();
+		const factory = (_tui: TUI, editorTheme: EditorTheme) => new TestModalEditor(editorTheme);
+
+		expect(mode.getEditorComponent()).toBeUndefined();
+		mode.setEditorComponent(factory);
+		expect(mode.getEditorComponent()).toBe(factory);
+
+		mode.setEditorComponent(undefined);
+		expect(mode.getEditorComponent()).toBeUndefined();
+		expect(refreshSpy).toHaveBeenCalledTimes(2);
+	});
+
+	it("keeps extension Space-hold listeners bound after replacing the editor", async () => {
+		const refreshSpy = vi.spyOn(mode, "refreshSlashCommandState").mockResolvedValue();
+		await mode.initHooksAndCustomTools();
+		const ui = mode.getToolUIContext();
+		if (!ui) throw new Error("Extension UI context was not initialized");
+		const onStart = vi.fn();
+		const unsubscribe = ui.onSpaceHold({ onStart, onEnd: vi.fn() });
+
+		mode.setEditorComponent((_tui, editorTheme) => new TestModalEditor(editorTheme));
+		mode.editor.onSpaceHoldStart?.();
+
+		expect(onStart).toHaveBeenCalledTimes(1);
+		unsubscribe();
 		expect(refreshSpy).toHaveBeenCalled();
 	});
 });
