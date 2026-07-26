@@ -1547,6 +1547,14 @@
 - Improved branch-mode task merges to preserve the agent's original commit history (messages and authors) and fixed a bug where merges were rejected due to unrelated dirty changes in the parent checkout.
 - Fixed an issue where the `Working...` loader spinner would prematurely disappear or fail to re-arm after a subagent (`task`) tool completed or during transient overlays (such as auto-compaction or auto-retry).
 
+### Added
+
+- Added `ctx.ui.onSpaceHold()` so prompt-scoped extensions can use the editor's sustained Space gesture for push-to-talk without replacing the editor or intercepting global terminal input.
+
+### Fixed
+
+- Fixed extensions built against the current Pi editor-composition API crashing because `ctx.ui.getEditorComponent()` was missing; interactive contexts now expose the configured custom editor factory, while headless contexts return `undefined`.
+
 ## [16.2.6] - 2026-06-29
 
 ### Changed

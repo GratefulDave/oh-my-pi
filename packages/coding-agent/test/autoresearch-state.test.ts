@@ -497,6 +497,7 @@ function createCommandHarness(
 				notifications.push({ message, type });
 			},
 			onTerminalInput: () => () => {},
+			onSpaceHold: () => () => {},
 			select: async () => undefined,
 			setFooter(): void {},
 			setHeader(): void {},

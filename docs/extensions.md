@@ -341,6 +341,7 @@ Supported:
 - autocomplete stacking: `addAutocompleteProvider(factory)` wraps the built-in editor provider (factories apply in registration order and re-apply on every slash-command refresh)
 - terminal title and working message (`setTitle`, `setWorkingMessage`)
 - notifications/status/editor text/terminal input/custom overlays
+- prompt-scoped sustained Space holds (`onSpaceHold`) for push-to-talk
 - theme listing/loading by name (`setTheme` supports string names)
 - tools expanded toggle
 
@@ -349,7 +350,7 @@ Current no-op methods in this controller:
 - `setFooter`
 - `setHeader`
 
-`setEditorComponent` is wired to the live editor (`ctx.setEditorComponent(factory)`). `setWidget` renders real widget components above or below the editor via `setHookWidget(...)` (`placement: "aboveEditor" | "belowEditor"`; string-array content capped at 10 lines).
+`setEditorComponent` is wired to the live editor (`ctx.setEditorComponent(factory)`); `getEditorComponent()` returns that configured factory so extensions can compose editor replacements. `setWidget` renders real widget components above or below the editor via `setHookWidget(...)` (`placement: "aboveEditor" | "belowEditor"`; string-array content capped at 10 lines).
 
 ### RPC mode (`rpc-mode.ts`)
 
@@ -360,9 +361,9 @@ Current no-op methods in this controller:
 
 Unsupported/no-op in RPC implementation:
 
-- `onTerminalInput`
+- `onTerminalInput`, `onSpaceHold`
 - `custom`
-- `setFooter`, `setHeader`, `setEditorComponent`, `addAutocompleteProvider`
+- `setFooter`, `setHeader`, `setEditorComponent`, `getEditorComponent`, `addAutocompleteProvider`
 - `setWorkingMessage`
 - theme switching/loading (`setTheme` returns failure)
 - tool expansion controls are inert

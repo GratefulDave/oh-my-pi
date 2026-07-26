@@ -781,6 +781,10 @@ export async function runRpcMode(
 			return () => {};
 		}
 
+		onSpaceHold(): () => void {
+			return () => {};
+		}
+
 		notify(message: string, type?: "info" | "warning" | "error"): void {
 			// Fire and forget - no response needed
 			this.output({
@@ -908,6 +912,11 @@ export async function runRpcMode(
 
 		setEditorComponent(): void {
 			// Custom editor components not supported in RPC mode
+		}
+
+		getEditorComponent() {
+			// Custom editor components not supported in RPC mode
+			return undefined;
 		}
 	}
 
