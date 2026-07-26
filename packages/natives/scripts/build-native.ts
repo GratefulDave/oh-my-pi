@@ -445,8 +445,11 @@ if (!napiBin) {
 	throw new Error("Could not locate @napi-rs/cli `napi` binary in node_modules/.bin");
 }
 
+// The package declares Bun as its build runtime. Invoke napi's JavaScript entry
+// through this Bun process instead of its `#!/usr/bin/env node` shim so an old
+// host Node installation cannot make an otherwise supported Bun build fail.
 async function runNapiBuildWithSccacheFallback() {
-	let buildResult = await $`${napiBin} ${napiArgs}`.nothrow();
+	let buildResult = await $`${process.execPath} ${napiBin} ${napiArgs}`.nothrow();
 	let stderr = buildResult.stderr?.toString("utf-8") ?? "";
 	if (
 		buildResult.exitCode !== 0 &&
@@ -462,7 +465,7 @@ async function runNapiBuildWithSccacheFallback() {
 		delete retryEnv.AWS_ACCESS_KEY_ID;
 		delete retryEnv.AWS_SECRET_ACCESS_KEY;
 		console.log("sccache storage unavailable; retrying native build without RUSTC_WRAPPER");
-		buildResult = await $`${napiBin} ${napiArgs}`.env(retryEnv).nothrow();
+		buildResult = await $`${process.execPath} ${napiBin} ${napiArgs}`.env(retryEnv).nothrow();
 		stderr = buildResult.stderr?.toString("utf-8") ?? "";
 	}
 	return { buildResult, stderr };
