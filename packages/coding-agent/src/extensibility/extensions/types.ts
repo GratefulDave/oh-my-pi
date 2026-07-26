@@ -442,6 +442,8 @@ export interface ExtensionContext {
 	shutdown(): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string[];
+	/** Return whether OMP's native Bash minimizer owns this command's output. */
+	isBashMinimizerEligible(command: string): Promise<boolean>;
 	/** Structured memory runtime for status/search/save across the configured backend. */
 	memory?: MemoryRuntimeContext;
 	/**

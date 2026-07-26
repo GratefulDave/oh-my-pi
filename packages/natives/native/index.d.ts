@@ -1269,6 +1269,20 @@ export declare function isoStart(kind: IsoBackendKind | undefined | null, lower:
 /** Tear down a previously started backend at `merged`. */
 export declare function isoStop(kind: IsoBackendKind | undefined | null, merged: string): Promise<void>
 
+/**
+ * Return whether the native shell minimizer will own a command's output.
+ *
+ * This queries the engine's authoritative dispatch semantics before execution,
+ * preserving program/subcommand routing, user pipelines, configuration gates,
+ * and safe-chain analysis. It does not infer ownership from a transformed
+ * output, because an eligible filter may legitimately pass a capture through.
+ *
+ * Async (returns a Promise): resolving `settings_path` can read and parse
+ * TOML, so classification runs on the blocking pool rather than the JS event
+ * loop.
+ */
+export declare function isShellMinimizerEligible(options: ShellMinimizerEligibilityOptions): Promise<boolean>
+
 /** Event types from Kitty keyboard protocol (flag 2). */
 export declare enum KeyEventType {
   /** Key press event. */
@@ -1737,6 +1751,17 @@ export interface ShellMinimizerApplyOptions {
   /** The command's exit status; omitted is treated as success (`0`). */
   exitCode?: number
   /** Minimizer configuration; when omitted the call is a no-op (`null`). */
+  minimizer?: MinimizerOptions
+}
+
+/**
+ * Inputs for [`is_shell_minimizer_eligible`]: a command and the minimizer
+ * configuration that would apply during shell execution.
+ */
+export interface ShellMinimizerEligibilityOptions {
+  /** The command line to classify for native minimizer ownership. */
+  command: string
+  /** Minimizer configuration; when omitted native minimization is disabled. */
   minimizer?: MinimizerOptions
 }
 
