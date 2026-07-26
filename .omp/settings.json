@@ -7,6 +7,7 @@
     "packages/pi-actor-swarm/dist/swarm.bundle.js",
     "packages/pi-omnidelegate/dist/omnidelegate.bundle.js",
     "packages/pi-software-factory/dist/factory.bundle.js",
+    "packages/pi-herdr/dist/herdr.bundle.js",
     ".omp/extensions/profile-manager/dist/index.js"
   ],
   "disabledProviders": [],
