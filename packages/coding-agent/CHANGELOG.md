@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `ExtensionContext.isBashMinimizerEligible()` so extensions can defer supported commands to OMP's native shell minimizer and handle only its remaining gaps.
+
+### Fixed
+
+- Fixed native bash-minimizer routing for `uv run` commands whose value-taking options precede the wrapped tool, including `--env-file`, dependency groups, platform/index selection, and build/resolver options, so wrapped `pytest` output remains natively minimized instead of passing through unchanged.
+
 ## [17.1.3] - 2026-07-24
 
 ### Fixed

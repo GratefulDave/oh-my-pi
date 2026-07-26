@@ -3,10 +3,12 @@
  */
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { CredentialDisabledEvent, ImageContent, Model, ProviderResponseMetadata } from "@oh-my-pi/pi-ai";
+import { isShellMinimizerEligible } from "@oh-my-pi/pi-natives";
 import type { KeyId } from "@oh-my-pi/pi-tui";
 import { logger } from "@oh-my-pi/pi-utils";
 import type { ModelRegistry } from "../../config/model-registry";
 import type { Settings } from "../../config/settings";
+import { buildMinimizerOptions } from "../../exec/bash-executor";
 import type { LocalProtocolOptions } from "../../internal-urls/local-protocol";
 import type { MemoryRuntimeContext } from "../../memory-backend";
 import { type Theme, theme } from "../../modes/theme/theme";
@@ -568,6 +570,18 @@ export class ExtensionRunner {
 			hasPendingMessages: () => this.#hasPendingMessagesFn(),
 			shutdown: () => this.#shutdownHandler(),
 			getSystemPrompt: () => this.#getSystemPromptFn(),
+			isBashMinimizerEligible: async command => {
+				try {
+					return await isShellMinimizerEligible({
+						command,
+						minimizer: this.settings
+							? buildMinimizerOptions(this.settings.getGroup("shellMinimizer"))
+							: undefined,
+					});
+				} catch {
+					return false;
+				}
+			},
 			localProtocolOptions: this.localProtocolOptions,
 			memory: this.#getMemoryFn?.(),
 			setInterval: (callback, ms, ...args) => this.#managedTimers.setInterval(callback, ms, ...args),

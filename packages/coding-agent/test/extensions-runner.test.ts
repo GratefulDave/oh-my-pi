@@ -9,6 +9,7 @@ import type { AgentMessage, AgentTool } from "@oh-my-pi/pi-agent-core";
 import type { ImageContent, TextContent } from "@oh-my-pi/pi-ai";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
+import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { discoverAndLoadExtensions, ExtensionRuntime } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 import {
 	EXTENSION_HANDLER_TIMEOUT_MS,
@@ -94,6 +95,28 @@ describe("ExtensionRunner", () => {
 
 		expect(runner.createContext().localProtocolOptions).toBe(localProtocolOptions);
 	});
+
+	it("reports native Bash minimizer ownership without exposing settings", async () => {
+		const result = await loadTestExtensions();
+		const createContext = (settings: Settings) =>
+			new ExtensionRunner(
+				result.extensions,
+				result.runtime,
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+				undefined,
+				settings,
+			).createContext();
+
+		const enabled = createContext(Settings.isolated());
+		expect(await enabled.isBashMinimizerEligible("git status")).toBe(true);
+		expect(await enabled.isBashMinimizerEligible("unknown-command")).toBe(false);
+		expect(Object.hasOwn(enabled, "settings")).toBe(false);
+
+		const disabled = createContext(Settings.isolated({ "shellMinimizer.enabled": false }));
+		expect(await disabled.isBashMinimizerEligible("git status")).toBe(false);
+	}, 15_000);
 
 	describe("shortcut conflicts", () => {
 		it("warns when extension shortcut conflicts with built-in", async () => {
