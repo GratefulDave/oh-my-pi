@@ -81,3 +81,10 @@ packages/coding-agent/bench/boot-baseline.json
 *.bun-build
 .omc/
 omp-session-*.html
+
+# Bazel
+/bazel-bin
+/bazel-out
+/bazel-testlogs
+/bazel-pi
+/.bazelrc.user
