@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [17.1.7] - 2026-07-27
+
+### Added
+
+- Added support for moonshotai/Kimi-K3 and kimi-k3-fast models
+- Added umans-kimi-k3 prerelease model configuration
+
+### Changed
+
+- Updated pricing and token limits for selected models
+
 ## [17.1.6] - 2026-07-27
 
 ### Added

@@ -249,7 +249,7 @@ export class ExtensionUiController {
 				// Update UI
 				this.ctx.renderInitialMessages({ clearTerminalHistory: true });
 				await this.ctx.reloadTodos();
-				this.ctx.editor.setText(result.selectedText);
+				this.ctx.editor.setDraft(result.selectedText, result.selectedImages);
 				this.ctx.showStatus("Branched to new session");
 
 				return { cancelled: false };
@@ -264,7 +264,7 @@ export class ExtensionUiController {
 				this.ctx.renderInitialMessages({ clearTerminalHistory: true });
 				await this.ctx.reloadTodos();
 				if (result.editorText && !this.ctx.editor.getText().trim()) {
-					this.ctx.editor.setText(result.editorText);
+					this.ctx.editor.setDraft(result.editorText, result.editorImages);
 				}
 				this.ctx.showStatus("Navigated to selected point");
 
@@ -482,7 +482,7 @@ export class ExtensionUiController {
 				// Update UI
 				this.ctx.renderInitialMessages({ clearTerminalHistory: true });
 				await this.ctx.reloadTodos();
-				this.ctx.editor.setText(result.selectedText);
+				this.ctx.editor.setDraft(result.selectedText, result.selectedImages);
 				this.ctx.showStatus("Branched to new session");
 
 				return { cancelled: false };
@@ -497,7 +497,7 @@ export class ExtensionUiController {
 				this.ctx.renderInitialMessages({ clearTerminalHistory: true });
 				await this.ctx.reloadTodos();
 				if (result.editorText && !this.ctx.editor.getText().trim()) {
-					this.ctx.editor.setText(result.editorText);
+					this.ctx.editor.setDraft(result.editorText, result.editorImages);
 				}
 				this.ctx.showStatus("Navigated to selected point");
 
