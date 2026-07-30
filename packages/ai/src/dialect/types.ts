@@ -46,6 +46,8 @@ export interface DialectDefinition {
 export interface InbandScannerOptions {
 	/** string-typed arg names for a tool → read verbatim. Ignored by JSON-carrying dialects. */
 	stringArgs?: (toolName: string) => ReadonlySet<string>;
+	/** Full tool schemas for schema-driven dialects such as GLM XML. */
+	tools?: readonly InbandTool[];
 	/** XML only: parse pipe-wrapped DeepSeek DSML tags vs plain Anthropic invoke/parameter tags. */
 	xmlTagset?: "anthropic" | "dsml";
 	/** Emit thinking markers as thinking events instead of visible text when the dialect defines them. */

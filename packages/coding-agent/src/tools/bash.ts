@@ -29,11 +29,11 @@ import { getSixelLineMask } from "../utils/sixel";
 import type { ToolSession } from ".";
 import { truncateForPrompt } from "./approval";
 import { type BashInteractiveResult, runInteractiveBashPty } from "./bash-interactive";
-import { resolveEvalBackends } from "./eval-backends";
 import { checkBashInterception } from "./bash-interceptor";
 import { appendBashMinimizerGainRecord } from "./bash-minimizer-gain";
 import { canUseInteractiveBashPty } from "./bash-pty-selection";
 import { expandInternalUrls, type InternalUrlExpansionOptions } from "./bash-skill-urls";
+import { resolveEvalBackends } from "./eval-backends";
 import { invalidateGithubCacheForBashCommand } from "./gh-cache-invalidation";
 import {
 	formatStyledTruncationWarning,
@@ -656,7 +656,11 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 	 * #buildCompletedResult surfaces it as an error *result* (carrying
 	 * execution details) rather than a throw.
 	 */
-	#throwIfUnfinished(result: BashResult | BashInteractiveResult, timeoutSec: number, outputText: string): void {
+	#throwIfUnfinished(
+		result: BashResult | BashInteractiveResult,
+		timeoutSec: number | undefined,
+		outputText: string,
+	): void {
 		if (result.cancelled) {
 			// Local executor output already carries a leading `[Command cancelled]`
 			// notice from the sink; PTY/bridge output does not, so annotate only
@@ -668,9 +672,13 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 		if (result.timedOut === true) {
 			const out = normalizeResultOutput(result);
 			throw new ToolError(
-				out
-					? `${out}\n\n[Command timed out after ${timeoutSec} seconds]`
-					: `Command timed out after ${timeoutSec} seconds`,
+				timeoutSec === undefined
+					? out
+						? `${out}\n\n[Command timed out]`
+						: "Command timed out"
+					: out
+						? `${out}\n\n[Command timed out after ${timeoutSec} seconds]`
+						: `Command timed out after ${timeoutSec} seconds`,
 			);
 		}
 		if (result.exitCode === undefined) {
@@ -680,7 +688,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 
 	async #buildCompletedResult(
 		result: BashResult | BashInteractiveResult,
-		timeoutSec: number,
+		timeoutSec: number | undefined,
 		options: {
 			requestedTimeoutSec?: number;
 			timeoutDisabled?: boolean;
@@ -713,7 +721,9 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 		// executor/PTY layer.
 		const isTimeout = result.timedOut === true;
 
-		const details: BashToolDetails = options.timeoutDisabled ? { timeoutDisabled: true } : { timeoutSeconds: timeoutSec };
+		const details: BashToolDetails = options.timeoutDisabled
+			? { timeoutDisabled: true }
+			: { timeoutSeconds: timeoutSec };
 		if (options.requestedTimeoutSec !== undefined && options.requestedTimeoutSec !== timeoutSec) {
 			details.requestedTimeoutSeconds = options.requestedTimeoutSec;
 		}
@@ -772,7 +782,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 	#buildBackgroundStartResult(
 		jobId: string,
 		previewText: string,
-		timeoutSec: number,
+		timeoutSec: number | undefined,
 		options: { requestedTimeoutSec?: number; timeoutDisabled?: boolean; notices?: readonly string[] } = {},
 	): AgentToolResult<BashToolDetails> {
 		const details: BashToolDetails = options.timeoutDisabled
@@ -803,8 +813,8 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 	#startManagedBashJob(options: {
 		command: string;
 		commandCwd: string;
-		timeoutMs: number;
-		timeoutSec: number;
+		timeoutMs: number | undefined;
+		timeoutSec: number | undefined;
 		requestedTimeoutSec?: number;
 		timeoutDisabled?: boolean;
 		notices?: readonly string[];
@@ -949,8 +959,9 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 		}
 	}
 
-	#resolveAutoBackgroundWaitMs(timeoutMs: number): number {
+	#resolveAutoBackgroundWaitMs(timeoutMs: number | undefined): number {
 		if (this.#autoBackgroundThresholdMs <= 0) return 0;
+		if (timeoutMs === undefined) return this.#autoBackgroundThresholdMs;
 		const timeoutBufferMs = 1_000;
 		return Math.max(0, Math.min(this.#autoBackgroundThresholdMs, timeoutMs - timeoutBufferMs));
 	}
@@ -1507,7 +1518,6 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 				}
 				throw new ToolError(message);
 			}
-
 		}
 		// Flush the deferred saved record (with real exitCode) or write a missed record.
 		// Skip telemetry for interactive PTY runs — the minimizer never fires there.

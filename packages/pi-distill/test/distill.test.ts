@@ -185,7 +185,7 @@ describe("pi-distill structured compression", () => {
 		expect(parsed.__pi_distill.recover).toContain("Read artifact://0");
 		expect(parsed.data.tool).toContain("mcp__context");
 		expect(parsed.data.lines).toContain("…(+87 items elided)");
-		expect((result?.details as { displayContent?: string }).displayContent).toBe(replacement);
+		expect((result?.details as { displayContent?: string } | undefined)?.displayContent).toBe(replacement);
 		expect(state.hits).toBe(1);
 	});
 
@@ -270,7 +270,7 @@ describe("pi-distill structured compression", () => {
 		expect(parsed.__pi_distill.recover).toContain("Read artifact://0");
 		expect(parsed.data.tool).toBe("ast_grep");
 		expect(parsed.data.lines).toContain("…(+121 items elided)");
-		expect((result?.details as { displayContent?: string }).displayContent).toBe(replacement);
+		expect((result?.details as { displayContent?: string } | undefined)?.displayContent).toBe(replacement);
 		expect(state.savedBytes).toBe(byteLength(text) - byteLength(replacement));
 	});
 
@@ -300,9 +300,10 @@ describe("pi-distill structured compression", () => {
 		expect(parsed.__pi_distill.artifact).toBe("artifact://0");
 		expect(parsed.__pi_distill.originalBytes).toBe(byteLength(displayContent));
 		expect(parsed.data.lines).toContain("…(+77 items elided)");
-		expect((result?.details as { displayContent?: string }).displayContent).toBe(replacement);
+		expect((result?.details as { displayContent?: string } | undefined)?.displayContent).toBe(replacement);
 		expect(
-			(result?.details as { meta?: { truncation?: { artifactId?: string } } }).meta?.truncation?.artifactId,
+			(result?.details as { meta?: { truncation?: { artifactId?: string } } } | undefined)?.meta?.truncation
+				?.artifactId,
 		).toBe("spill-0");
 		expect(state.hits).toBe(1);
 	});
@@ -332,7 +333,7 @@ describe("pi-distill structured compression", () => {
 		expect(parsed.__pi_distill.artifact).toBe("artifact://0");
 		expect(parsed.__pi_distill.originalBytes).toBe(byteLength(text));
 		expect(parsed.data.lines).toContain("…(+31 items elided)");
-		expect((result?.details as { displayContent?: string }).displayContent).toBe(replacement);
+		expect((result?.details as { displayContent?: string } | undefined)?.displayContent).toBe(replacement);
 		expect(state.hits).toBe(1);
 	});
 

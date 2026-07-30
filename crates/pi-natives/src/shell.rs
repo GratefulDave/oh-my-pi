@@ -12,8 +12,7 @@ use pi_shell::{
 	MinimizerResult as CoreMinimizerResult, Shell as CoreShell,
 	ShellExecuteOptions as CoreShellExecuteOptions, ShellOptions as CoreShellOptions,
 	ShellRunOptions as CoreShellRunOptions, ShellRunResult as CoreShellRunResult,
-	execute_shell as core_execute_shell,
-	minimizer,
+	execute_shell as core_execute_shell, minimizer,
 };
 
 use crate::task;
@@ -356,7 +355,6 @@ async fn pump_chunks(rx: flume::Receiver<String>, mut forward: impl AsyncFnMut(S
 		}
 	}
 }
-
 
 /// Inputs for [`apply_shell_minimizer`]: a captured command's text plus the
 /// minimizer configuration to run against it.

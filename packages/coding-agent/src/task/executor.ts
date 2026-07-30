@@ -2766,18 +2766,18 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 					options.enforceAutomaticModelPolicy === true
 						? remapAutomaticAgentModelPatterns([prewalkPattern])[0]
 						: prewalkPattern;
-				const resolvedPrewalk = resolveModelOverride(
-					effectivePrewalkPattern ? [effectivePrewalkPattern] : [],
-					modelLookup,
-					settings,
-				);
+				const {
+					model: target,
+					thinkingLevel: prewalkThinkingLevel,
+					warning: prewalkWarning,
+				} = resolveModelOverride(effectivePrewalkPattern ? [effectivePrewalkPattern] : [], modelLookup, settings);
 				if (!target || !modelRegistry.hasConfiguredAuth(target)) {
 					logger.warn("Subagent prewalk target unavailable; skipping prewalk", {
 						agent: agent.name,
 						pattern: prewalkPattern,
-						warning: resolvedPrewalk.warning,
+						warning: prewalkWarning,
 					});
-				} else if (prewalkWouldBeNoop(model, effectiveThinkingLevel, target, resolvedPrewalk.thinkingLevel)) {
+				} else if (prewalkWouldBeNoop(model, effectiveThinkingLevel, target, prewalkThinkingLevel)) {
 					// Same model AND same effective thinking level: switching would only
 					// inject the plan/checklist nudges for no gain — skip. An effort-only
 					// delta on the same model still arms (it is a real cheapening hand-off).
@@ -2786,7 +2786,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 						pattern: prewalkPattern,
 					});
 				} else {
-					prewalk = { target, thinkingLevel: resolvedPrewalk.thinkingLevel };
+					prewalk = { target, thinkingLevel: prewalkThinkingLevel };
 				}
 			}
 
