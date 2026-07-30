@@ -290,7 +290,26 @@ function findBashApprovalPatternRule(
 	return rules.find(rule => bashApprovalRuleMatches(command, rule));
 }
 
-async function saveBashOriginalArtifact(session: ToolSession, originalText: string): Promise<string | undefined> {
+/**
+ * Minimal session capabilities used to preserve original minimizer output and
+ * persist opt-in gain telemetry. `makeMinimizedSaveHandler` accepts this
+ * narrow contract so bash telemetry tests can exercise the real handler.
+ */
+export interface MinimizedSaveHandlerSession {
+	cwd: string;
+	settings: {
+		get(path: "shellMinimizer.gainTelemetry"): boolean;
+		getAgentDir(): string;
+		getShellConfig(): { prefix?: string | undefined };
+	};
+	getSessionId?: () => string | null;
+	allocateOutputArtifact?: (toolType: string) => Promise<{ id?: string; path?: string }>;
+}
+
+async function saveBashOriginalArtifact(
+	session: MinimizedSaveHandlerSession,
+	originalText: string,
+): Promise<string | undefined> {
 	try {
 		const alloc = await session.allocateOutputArtifact?.("bash-original");
 		if (!alloc?.path || !alloc.id) return undefined;
@@ -301,12 +320,16 @@ async function saveBashOriginalArtifact(session: ToolSession, originalText: stri
 	}
 }
 
-function hasBashMinimizerCommandPrefix(session: ToolSession): boolean {
+function hasBashMinimizerCommandPrefix(session: MinimizedSaveHandlerSession): boolean {
 	return session.settings.getShellConfig?.().prefix !== undefined;
 }
 
+/**
+ * Creates the bash execution callbacks that save original output and append
+ * opt-in gain telemetry once the native command result supplies its exit code.
+ */
 export function makeMinimizedSaveHandler(
-	session: ToolSession,
+	session: MinimizedSaveHandlerSession,
 	command: string,
 	commandCwd: string,
 ): {
