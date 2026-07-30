@@ -11,7 +11,11 @@ import * as path from "node:path";
 import { Agent } from "@oh-my-pi/pi-agent-core";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { InteractiveMode, renderSubagentHudLines, renderToolCounterLine } from "@oh-my-pi/pi-coding-agent/modes/interactive-mode";
+import {
+	InteractiveMode,
+	renderSubagentHudLines,
+	renderToolCounterLine,
+} from "@oh-my-pi/pi-coding-agent/modes/interactive-mode";
 import {
 	type ObservableSession,
 	SessionObserverRegistry,

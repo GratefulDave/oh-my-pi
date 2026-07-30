@@ -185,7 +185,6 @@ describe("IRC", () => {
 			expect(activities[0]?.kind).toBe("message");
 		});
 
-
 		it("publishes one failed activity event when a direct send cannot resolve", async () => {
 			const sender = makeFakeSession();
 			registry.register({ id: "0-A", displayName: "sender", kind: "sub", session: sender.session });

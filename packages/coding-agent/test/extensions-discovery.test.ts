@@ -796,9 +796,7 @@ describe("extensions discovery", () => {
 			expect(paths).toContain(defaultExtensionEntry);
 			expect(paths).toContain(profileExtensionEntry);
 			expect(paths).not.toContain(disabledDefaultEntry);
-			expect(paths.filter(p => path.resolve(p) === path.resolve(defaultExtensionEntry))).toHaveLength(
-				1,
-			);
+			expect(paths.filter(p => path.resolve(p) === path.resolve(defaultExtensionEntry))).toHaveLength(1);
 		} finally {
 			vi.restoreAllMocks();
 			for (const [name, value] of Object.entries(originalEnv)) {

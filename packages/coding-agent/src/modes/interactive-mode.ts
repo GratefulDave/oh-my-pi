@@ -504,7 +504,9 @@ export function renderSubagentHudLines(sessions: ObservableSession[], columns: n
 		);
 	});
 	if (hiddenCount > 0) {
-		lines.push(truncateToWidth(theme.fg("dim", `… ${hiddenCount} more running — open Agent Hub for full list`), width));
+		lines.push(
+			truncateToWidth(theme.fg("dim", `… ${hiddenCount} more running — open Agent Hub for full list`), width),
+		);
 	}
 	return lines;
 }
