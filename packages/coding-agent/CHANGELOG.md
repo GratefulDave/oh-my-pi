@@ -619,7 +619,7 @@
 
 ### Added
 
-- Added bash minimizer gain telemetry (`shellMinimizer.gainTelemetry`): when enabled (default **off**), appends JSONL records to `~/.omp/agent/minimizer-gain.jsonl` for every bash execution — `kind:"saved"` when the shell minimizer compressed output, `kind:"missed"` when it did not. Records include `sessionId`, `cwd`, `command`, `filter`, `inputBytes`, `outputBytes`, `exitCode`, and `timestamp`. Off by default; the setting description documents that the raw command string is recorded verbatim and may contain credentials ([#5795](https://github.com/can1357/oh-my-pi/pull/5795)).
+- Added opt-in bash minimizer gain telemetry (`shellMinimizer.gainTelemetry`): when enabled (default **off**), appends JSONL records to `~/.omp/agent/minimizer-gain.jsonl` only for eligible native bash-minimizer outcomes — `kind:"saved"` when the shell minimizer compressed output, `kind:"missed"` when an eligible filter produced unchanged output. Records include `sessionId`, `cwd`, `command`, `filter`, `inputBytes`, `outputBytes`, `exitCode`, and `timestamp`. The setting description documents that the raw command string is recorded verbatim and may contain credentials ([#5795](https://github.com/can1357/oh-my-pi/pull/5795)).
 
 ## [17.2.0] - 2026-07-30
 

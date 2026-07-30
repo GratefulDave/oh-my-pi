@@ -79,60 +79,101 @@ function matchesProject(cwd: string | undefined, project: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Minimizer JSONL — single read, three derived result sets
+// Minimizer JSONL — stat-keyed parsed cache, three derived result sets
 // ---------------------------------------------------------------------------
 
+interface ParsedMinimizerRecord extends MinimizerRecord {
+	timestampMs: number;
+}
+
 interface MinimizerSets {
-	records: MinimizerRecord[];
-	missed: MinimizerRecord[];
+	records: ParsedMinimizerRecord[];
+	missed: ParsedMinimizerRecord[];
 	projects: Set<string>;
 }
 
-async function readMinimizerFile(): Promise<string | null> {
-	const filePath = path.join(getAgentDir(), "minimizer-gain.jsonl");
-	try {
-		return await Bun.file(filePath).text();
-	} catch (err) {
-		if (!isEnoent(err)) logger.debug("gain-aggregator: failed to read minimizer-gain.jsonl", { err: String(err) });
-		return null;
-	}
+interface MinimizerCache {
+	key: string;
+	records: ParsedMinimizerRecord[];
 }
 
-/**
- * Parse the minimizer JSONL exactly once and derive all three result sets in
- * a single pass. Avoids re-reading and re-parsing the file three times per
- * dashboard request.
- */
-async function readMinimizerSets(cutoff: number | null, project: string | null): Promise<MinimizerSets> {
-	const text = await readMinimizerFile();
-	const sets: MinimizerSets = { records: [], missed: [], projects: new Set() };
-	if (!text) return sets;
+let minimizerCache: MinimizerCache | undefined;
 
+// This is the exact UTC millisecond format emitted by the telemetry writer's
+// `new Date().toISOString()`. Require both this shape and a round-trip match so
+// loose Date coercions cannot turn malformed JSON into historical buckets.
+const WRITER_ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
+
+function parseWriterTimestamp(value: unknown): number | undefined {
+	if (typeof value !== "string" || !WRITER_ISO_TIMESTAMP_RE.test(value)) return undefined;
+	const timestampMs = new Date(value).getTime();
+	return Number.isFinite(timestampMs) && new Date(timestampMs).toISOString() === value ? timestampMs : undefined;
+}
+
+async function readMinimizerRecords(): Promise<ParsedMinimizerRecord[]> {
+	const filePath = path.join(getAgentDir(), "minimizer-gain.jsonl");
+
+	let stat: Stats;
+	try {
+		stat = await fs.stat(filePath);
+	} catch (err) {
+		if (isEnoent(err)) minimizerCache = undefined;
+		else logger.debug("gain-aggregator: failed to stat minimizer-gain.jsonl", { err: String(err) });
+		return [];
+	}
+
+	const cacheKey = `${filePath}:${stat.mtimeMs}:${stat.size}`;
+	if (minimizerCache?.key === cacheKey) return minimizerCache.records;
+
+	let text: string;
+	try {
+		text = await Bun.file(filePath).text();
+	} catch (err) {
+		if (isEnoent(err)) minimizerCache = undefined;
+		else logger.debug("gain-aggregator: failed to read minimizer-gain.jsonl", { err: String(err) });
+		return [];
+	}
+
+	const records: ParsedMinimizerRecord[] = [];
 	for (const line of text.split("\n")) {
 		if (!line.trim()) continue;
 		try {
 			const rec = JSON.parse(line) as MinimizerRecord;
-
-			const ts = new Date(rec.timestamp).getTime();
-			if (!Number.isFinite(ts)) continue;
-			if (cutoff !== null && ts < cutoff) continue;
-
-			// Collect range-scoped project cwds before the per-project filter so the
-			// selector still shows other projects in the active time range.
-			if (rec.cwd) sets.projects.add(rec.cwd);
-
-			if (project !== null && !matchesProject(rec.cwd, project)) continue;
-
-			if (rec.kind === "missed") {
-				// Missed records from meaningful cwds are filter-tuning candidates.
-				if (!TEMP_PATH_RE.test(rec.cwd ?? "")) {
-					sets.missed.push(rec);
-				}
-			} else {
-				sets.records.push(rec);
-			}
+			const timestampMs = parseWriterTimestamp(rec.timestamp);
+			if (timestampMs !== undefined) records.push({ ...rec, timestampMs });
 		} catch {
-			/* skip malformed */
+			/* skip malformed line */
+		}
+	}
+	minimizerCache = { key: cacheKey, records };
+	return records;
+}
+
+/**
+ * Derive all three minimizer result sets from cached, writer-validated records.
+ * The stat key prevents unchanged dashboard polls from re-reading or re-parsing
+ * the lifetime JSONL file.
+ */
+async function readMinimizerSets(cutoff: number | null, project: string | null): Promise<MinimizerSets> {
+	const records = await readMinimizerRecords();
+	const sets: MinimizerSets = { records: [], missed: [], projects: new Set() };
+
+	for (const rec of records) {
+		if (cutoff !== null && rec.timestampMs < cutoff) continue;
+
+		// Collect range-scoped project cwds before the per-project filter so the
+		// selector still shows other projects in the active time range.
+		if (rec.cwd) sets.projects.add(rec.cwd);
+
+		if (project !== null && !matchesProject(rec.cwd, project)) continue;
+
+		if (rec.kind === "missed") {
+			// Missed records from meaningful cwds are filter-tuning candidates.
+			if (!TEMP_PATH_RE.test(rec.cwd ?? "")) {
+				sets.missed.push(rec);
+			}
+		} else {
+			sets.records.push(rec);
 		}
 	}
 	return sets;
@@ -395,8 +436,7 @@ export async function getGainDashboardStats(
 			filterMap.set(rec.filter, { filter: rec.filter, savedTokens: tokens, savedBytes, hits: 1 });
 		}
 
-		const ts = new Date(rec.timestamp).getTime();
-		const date = toDateBucket(ts);
+		const date = toDateBucket(rec.timestampMs);
 		const bucket = timeMap.get(date) ?? { minimizer: 0, snapcompact: 0 };
 		bucket.minimizer += tokens;
 		timeMap.set(date, bucket);

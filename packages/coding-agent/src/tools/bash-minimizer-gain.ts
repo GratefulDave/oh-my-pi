@@ -5,8 +5,13 @@ import { getAgentDir } from "@oh-my-pi/pi-utils";
 const MINIMIZER_GAIN_FILE = "minimizer-gain.jsonl";
 const BYTES_PER_TOKEN_ESTIMATE = 4;
 
+/** Classification persisted for a completed eligible bash execution; consumed by the Stats Gain dashboard. */
 export type BashMinimizerGainKind = "saved" | "missed";
 
+/**
+ * Completed native bash-minimizer outcome supplied by bash-session telemetry
+ * callers before it is persisted for the Stats Gain dashboard.
+ */
 export interface BashMinimizerGainInput {
 	command: string;
 	cwd?: string;
@@ -20,10 +25,15 @@ export interface BashMinimizerGainInput {
 	agentDir?: string;
 }
 
+/** Resolves the opt-in local JSONL destination used by telemetry writers and their tests. */
 export function getBashMinimizerGainPath(agentDir = getAgentDir()): string {
 	return path.join(agentDir, MINIMIZER_GAIN_FILE);
 }
 
+/**
+ * Appends one eligible native bash-minimizer outcome for the Stats Gain dashboard.
+ * Called by bash execution paths only after the command has completed.
+ */
 export async function appendBashMinimizerGainRecord(input: BashMinimizerGainInput): Promise<void> {
 	const kind = input.kind ?? "saved";
 	const savedBytes = kind === "saved" ? input.inputBytes - input.outputBytes : 0;

@@ -126,8 +126,8 @@ pub struct ShellRunResult {
 	pub cancelled:          bool,
 	pub timed_out:          bool,
 	pub minimized:          Option<MinimizerResult>,
-	/// Whether the native minimizer executed a filter-backed command without
-	/// exceeding its capture cap.
+	/// Whether the native minimizer captured a filter-backed command within its
+	/// cap and the filter was not skipped by its exit gate.
 	pub minimizer_eligible: bool,
 	pub working_dir:        Option<String>,
 }
@@ -863,7 +863,7 @@ async fn run_shell_command_single(
 	)
 	.await?;
 
-	let minimizer_eligible =
+	let mut minimizer_eligible =
 		matches!(minimizer_mode, minimizer::engine::MinimizerMode::WholeCommand)
 			&& command_run
 				.buffered
@@ -895,6 +895,12 @@ async fn run_shell_command_single(
 					minimizer::MinimizerOutput::passthrough(&buffered.text)
 				},
 			};
+			// A pipeline gated off by `only_on_exit` / `except_on_exit` never had
+			// an opportunity to minimize this result. Do not report it as an
+			// eligible no-op to the gain telemetry consumer.
+			if minimized.filter == "exit-skip" {
+				minimizer_eligible = false;
+			}
 			// Surface telemetry only when the filter actually rewrote the output
 			// and kept the original buffer — same contract as `apply_shell_minimizer`
 			// in `pi-natives`. A supported filter that runs but leaves the output
@@ -968,7 +974,7 @@ async fn run_shell_command_segmented_chain(
 
 	let params = session.shell.default_exec_params();
 	let mut aggregate = Some(ChainCapture::new());
-	let mut ran_filter_backed_segment = false;
+	let mut ran_exit_eligible_filter = false;
 	let mut previous_succeeded = true;
 	let mut last_result = None;
 	let max_capture_bytes = config.max_capture_bytes as usize;
@@ -996,9 +1002,6 @@ async fn run_shell_command_segmented_chain(
 		)
 		.await?;
 
-		if minimizer::engine::should_minimize(&segment.command, config) {
-			ran_filter_backed_segment = true;
-		}
 
 		let exit = exit_code(&command_run.result);
 		previous_succeeded = exit == 0;
@@ -1014,7 +1017,10 @@ async fn run_shell_command_segmented_chain(
 				if next_input_bytes > max_capture_bytes {
 					aggregate = None;
 				} else {
+					let filter_backed_segment =
+						minimizer::engine::should_minimize(&segment.command, config);
 					let minimized = minimizer::apply(&segment.command, &buffered.text, exit, config);
+					ran_exit_eligible_filter |= filter_backed_segment && minimized.filter != "exit-skip";
 					capture.push(
 						&buffered.text,
 						buffered.input_bytes,
@@ -1038,7 +1044,7 @@ async fn run_shell_command_segmented_chain(
 		return Err(Error::msg("Segmented chain executed no segments"));
 	};
 
-	let minimizer_eligible = aggregate.is_some() && ran_filter_backed_segment;
+	let minimizer_eligible = aggregate.is_some() && ran_exit_eligible_filter;
 	let minimized_out = aggregate
 		// Only surface telemetry when the segmented chain actually rewrote the
 		// output; a `chain-noop` capture (`changed == false`) must yield `None`,
@@ -4704,6 +4710,82 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 		assert_eq!(output, "prep\n");
 		assert!(result.minimized.is_none());
 		assert!(!result.minimizer_eligible);
+	}
+
+	#[cfg(unix)]
+	#[tokio::test(flavor = "multi_thread")]
+	async fn whole_command_exit_gated_filters_are_not_minimizer_eligible() {
+		let root = unique_temp_dir("exit-gated-whole-command");
+		let settings_path = root.join("minimizer.toml");
+		std::fs::write(
+			&settings_path,
+			r#"
+schema_version = 1
+
+[filters.false]
+match_command = "^false$"
+replace = [{ pattern = "unused", replacement = "UNUSED" }]
+only_on_exit = [0]
+
+[filters.true]
+match_command = "^true$"
+replace = [{ pattern = "unused", replacement = "UNUSED" }]
+except_on_exit = [0]
+"#,
+		)
+		.expect("write settings");
+		let minimizer = minimizer::MinimizerOptions {
+			enabled: Some(true),
+			settings_path: Some(settings_path.to_string_lossy().into_owned()),
+			..Default::default()
+		};
+
+		for command in ["false", "true"] {
+			let (result, output) =
+				run_command_capture(command, None, Some(minimizer.clone()), CancelToken::default()).await;
+			assert!(output.is_empty());
+			assert!(result.minimized.is_none());
+			assert!(!result.minimizer_eligible, "{command} exit gate must not emit a missed record");
+		}
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	#[cfg(unix)]
+	#[tokio::test(flavor = "multi_thread")]
+	async fn segmented_exit_gated_filters_are_not_minimizer_eligible() {
+		let root = unique_temp_dir("exit-gated-segmented");
+		let settings_path = root.join("minimizer.toml");
+		std::fs::write(
+			&settings_path,
+			r#"
+schema_version = 1
+
+[filters.false]
+match_command = "^false$"
+replace = [{ pattern = "unused", replacement = "UNUSED" }]
+only_on_exit = [0]
+
+[filters.true]
+match_command = "^true$"
+replace = [{ pattern = "unused", replacement = "UNUSED" }]
+except_on_exit = [0]
+"#,
+		)
+		.expect("write settings");
+		let minimizer = minimizer::MinimizerOptions {
+			enabled: Some(true),
+			settings_path: Some(settings_path.to_string_lossy().into_owned()),
+			..Default::default()
+		};
+
+		for command in ["echo prep; false", "echo prep; true"] {
+			let (result, output) =
+				run_command_capture(command, None, Some(minimizer.clone()), CancelToken::default()).await;
+			assert_eq!(output, "prep\n");
+			assert!(result.minimized.is_none());
+			assert!(!result.minimizer_eligible, "{command} exit gate must not emit a missed record");
+		}
+		let _ = std::fs::remove_dir_all(&root);
 	}
 
 	/// Regression: a quoted here-doc followed by another command must execute
