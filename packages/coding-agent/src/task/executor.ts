@@ -351,6 +351,8 @@ export interface ExecutorOptions {
 	cwd: string;
 	/** Additional workspace directories to seed on the subagent session (multi-root). */
 	additionalDirectories?: string[];
+	/** Exact provider credential resolver inherited from the parent session. */
+	getApiKey?: CreateAgentSessionOptions["getApiKey"];
 	worktree?: string;
 	agent: AgentDefinition;
 	task: string;
@@ -2857,6 +2859,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				additionalDirectories: worktree !== undefined ? undefined : options.additionalDirectories,
 				authStorage,
 				modelRegistry,
+				getApiKey: options.getApiKey,
 				settings: subagentSettings,
 				model,
 				modelPattern: model || modelOverride === undefined ? undefined : modelPatterns,
