@@ -795,6 +795,11 @@ export async function runRpcMode(
 			return () => {};
 		}
 
+		onSpaceHold(): () => void {
+			// Core editor gestures are not available in RPC mode.
+			return () => {};
+		}
+
 		notify(message: string, type?: "info" | "warning" | "error"): void {
 			// Fire and forget - no response needed
 			this.output({

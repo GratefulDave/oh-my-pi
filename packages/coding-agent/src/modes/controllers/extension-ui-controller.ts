@@ -63,6 +63,15 @@ function toWireSelectOptions(options: ExtensionUISelectItem[]): CollabUiSelectIt
 
 export class ExtensionUiController {
 	#extensionTerminalInputUnsubscribers = new Set<() => void>();
+	#spaceHoldHandlers = new Set<{ onStart(): void; onEnd(): void }>();
+	#spaceHoldCoreActive = false;
+	#spaceHoldBinding:
+		| {
+				start: (() => void) | undefined;
+				end: (() => void) | undefined;
+				enabled: (() => boolean) | undefined;
+		  }
+		| undefined;
 	#hookWidgetsAbove = new Map<string, ExtensionUiComponent>();
 	#hookWidgetsBelow = new Map<string, ExtensionUiComponent>();
 	// Single-file dialog surface (`editorContainer` + focus) is shared by the
@@ -91,6 +100,7 @@ export class ExtensionUiController {
 			askDialog: (questions, dialogOptions) => this.showAskDialog(questions, dialogOptions),
 			notify: (message, type) => this.showHookNotify(message, type),
 			onTerminalInput: handler => this.addExtensionTerminalInputListener(handler),
+			onSpaceHold: handlers => this.addExtensionSpaceHoldListener(handlers),
 			setStatus: (key, text) => this.setHookStatus(key, text),
 			setWorkingMessage: message => this.ctx.setWorkingMessage(message),
 			setWidget: (key, content, options) => this.setHookWidget(key, content, options),
@@ -1110,6 +1120,37 @@ export class ExtensionUiController {
 		return () => {
 			unsubscribe();
 			this.#extensionTerminalInputUnsubscribers.delete(unsubscribe);
+		};
+	}
+
+	addExtensionSpaceHoldListener(handlers: { onStart(): void; onEnd(): void }): () => void {
+		if (this.#spaceHoldHandlers.size === 0) {
+			const start = this.ctx.editor.onSpaceHoldStart;
+			const end = this.ctx.editor.onSpaceHoldEnd;
+			const enabled = this.ctx.editor.sttHoldEnabled;
+			this.#spaceHoldBinding = { start, end, enabled };
+			this.ctx.editor.onSpaceHoldStart = () => {
+				this.#spaceHoldCoreActive = enabled?.() ?? false;
+				if (this.#spaceHoldCoreActive) start?.();
+				for (const handler of this.#spaceHoldHandlers) handler.onStart();
+			};
+			this.ctx.editor.onSpaceHoldEnd = () => {
+				if (this.#spaceHoldCoreActive) end?.();
+				this.#spaceHoldCoreActive = false;
+				for (const handler of this.#spaceHoldHandlers) handler.onEnd();
+			};
+			this.ctx.editor.sttHoldEnabled = () => (enabled?.() ?? false) || this.#spaceHoldHandlers.size > 0;
+		}
+		this.#spaceHoldHandlers.add(handlers);
+		return () => {
+			this.#spaceHoldHandlers.delete(handlers);
+			if (this.#spaceHoldHandlers.size !== 0 || !this.#spaceHoldBinding) return;
+			const { start, end, enabled } = this.#spaceHoldBinding;
+			this.ctx.editor.onSpaceHoldStart = start;
+			this.ctx.editor.onSpaceHoldEnd = end;
+			this.ctx.editor.sttHoldEnabled = enabled;
+			this.#spaceHoldCoreActive = false;
+			this.#spaceHoldBinding = undefined;
 		};
 	}
 

@@ -84,6 +84,52 @@ describe("ExtensionUiController editor UI", () => {
 		expect(harness.requestRender).toHaveBeenCalledTimes(1);
 	});
 
+	it("dispatches extension space holds without disabling the built-in handler", async () => {
+		const harness = makeHarness();
+		const events: string[] = [];
+		let coreEnabled = false;
+		harness.editor.onSpaceHoldStart = () => events.push("core-start");
+		harness.editor.onSpaceHoldEnd = () => events.push("core-end");
+		harness.editor.sttHoldEnabled = () => coreEnabled;
+		const ui = await harness.init();
+		const unsubscribe = ui.onSpaceHold({
+			onStart: () => events.push("extension-start"),
+			onEnd: () => events.push("extension-end"),
+		});
+
+		expect(harness.editor.sttHoldEnabled?.()).toBe(true);
+		harness.editor.onSpaceHoldStart?.();
+		harness.editor.onSpaceHoldEnd?.();
+		expect(events).toEqual(["extension-start", "extension-end"]);
+
+		coreEnabled = true;
+		harness.editor.onSpaceHoldStart?.();
+		harness.editor.onSpaceHoldEnd?.();
+		expect(events).toEqual([
+			"extension-start",
+			"extension-end",
+			"core-start",
+			"extension-start",
+			"core-end",
+			"extension-end",
+		]);
+
+		unsubscribe();
+		expect(harness.editor.sttHoldEnabled?.()).toBe(true);
+		harness.editor.onSpaceHoldStart?.();
+		harness.editor.onSpaceHoldEnd?.();
+		expect(events).toEqual([
+			"extension-start",
+			"extension-end",
+			"core-start",
+			"extension-start",
+			"core-end",
+			"extension-end",
+			"core-start",
+			"core-end",
+		]);
+	});
+
 	it("keeps a populated prompt visible and routes input to it until the draft is cleared", async () => {
 		const harness = makeHarness();
 		harness.editor.setText("finish this wor");

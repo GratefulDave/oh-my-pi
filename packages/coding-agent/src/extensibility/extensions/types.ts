@@ -254,6 +254,9 @@ export interface ExtensionUIContext {
 	/** Listen to raw terminal input (interactive mode only). Returns an unsubscribe function. */
 	onTerminalInput(handler: TerminalInputHandler): () => void;
 
+	/** Listen for a hold-and-release space-bar gesture in the core editor. Returns an unsubscribe function. */
+	onSpaceHold(handlers: { onStart(): void; onEnd(): void }): () => void;
+
 	/** Set status text in the footer/status bar. Pass undefined to clear. */
 	setStatus(key: string, text: string | undefined): void;
 

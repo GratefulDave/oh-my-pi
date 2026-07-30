@@ -1765,6 +1765,7 @@ describe("ExtensionRunner", () => {
 					input: async () => undefined,
 					notify: () => {},
 					onTerminalInput: () => () => {},
+					onSpaceHold: () => () => {},
 					setStatus: () => {},
 					setWorkingMessage: () => {},
 					setWidget: () => {},
