@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Fixed terminal selection copying leading whitespace into assistant fenced-code rows, which could prevent pasted heredoc terminators from closing.
+
 ## [17.2.1] - 2026-07-30
 
 ### Added
