@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { makeMinimizedSaveHandler } from "@oh-my-pi/pi-coding-agent/tools/bash";
+import {
+	makeMinimizedSaveHandler,
+	type MinimizedSaveHandlerSession,
+} from "@oh-my-pi/pi-coding-agent/tools/bash";
 import {
 	appendBashMinimizerGainRecord,
 	getBashMinimizerGainPath,
@@ -143,18 +146,16 @@ describe("makeMinimizedSaveHandler", () => {
 		await fs.rm(tempDir, { recursive: true, force: true });
 	});
 
-	function mockSession(gainTelemetry: boolean, prefix?: string) {
+	function mockSession(gainTelemetry: boolean, prefix?: string): MinimizedSaveHandlerSession {
 		return {
 			cwd: tempDir,
-			hasUI: false,
 			getSessionId: () => "test-session",
-			getSessionFile: () => null,
 			settings: {
-				get: (key: string) => (key === "shellMinimizer.gainTelemetry" ? gainTelemetry : undefined),
+				get: () => gainTelemetry,
 				getAgentDir: () => agentDir,
 				getShellConfig: () => ({ prefix }),
 			},
-		} as Parameters<typeof makeMinimizedSaveHandler>[0];
+		};
 	}
 
 	test("flushes saved telemetry after the real exit code is available", async () => {
