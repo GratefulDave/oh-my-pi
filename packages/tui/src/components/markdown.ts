@@ -41,6 +41,10 @@ function isOsc66Line(line: string): boolean {
 	return line.includes(OSC66_LINE_PREFIX);
 }
 
+// Internal zero-width marker carried through list/blockquote renderers. It is
+// removed before output, along with every visual container prefix before it.
+const LITERAL_CODE_ROW_MARKER = "\0";
+
 function normalizeHtmlEntitiesForTerminal(raw: string): string {
 	const parseCodePoint = (value: number): string => {
 		if (Number.isFinite(value) && value >= 0 && value <= 0x10ffff) {
@@ -1858,7 +1862,7 @@ export class Markdown implements Component, NativeScrollbackCommittedRows, Nativ
 		rowOffset: number,
 		startingSourceOffset: number,
 	): string[] {
-		const wrappedLines: string[] = [];
+		const wrappedLines: Array<{ text: string; unpadded: boolean }> = [];
 		let sourceOffset = startingSourceOffset;
 		for (let i = start; i < end; i++) {
 			const token = tokens[i];
@@ -1878,10 +1882,13 @@ export class Markdown implements Component, NativeScrollbackCommittedRows, Nativ
 				// Lists wrap while their structural prefixes are still available, so
 				// continuation rows retain the correct hanging indent. Re-wrapping the
 				// flattened rows here would discard that structure.
+				const unpadded = token.type === "code" && this.#codeBlockIndent === 0;
 				if (token.type === "list" || TERMINAL.isImageLine(line) || isOsc66Line(line)) {
-					wrappedLines.push(line);
+					wrappedLines.push({ text: line, unpadded });
 				} else {
-					wrappedLines.push(...wrapTextWithAnsi(line, contentWidth));
+					for (const wrappedLine of wrapTextWithAnsi(line, contentWidth)) {
+						wrappedLines.push({ text: wrappedLine, unpadded });
+					}
 				}
 				tokenLineOffsets.push(wrappedLines.length - tokenWrappedRowStart);
 			}
@@ -1914,8 +1921,13 @@ export class Markdown implements Component, NativeScrollbackCommittedRows, Nativ
 		const bgFn = this.#defaultTextStyle?.bgColor;
 		const contentLines: string[] = [];
 		let previousLineWasOsc66 = false;
-
-		for (const line of wrappedLines) {
+		for (const renderedLine of wrappedLines) {
+			const literalMarkerIndex = renderedLine.text.indexOf(LITERAL_CODE_ROW_MARKER);
+			const literalCodeRow = renderedLine.unpadded || literalMarkerIndex !== -1;
+			const line =
+				literalMarkerIndex !== -1
+					? renderedLine.text.slice(literalMarkerIndex + LITERAL_CODE_ROW_MARKER.length)
+					: renderedLine.text;
 			// The first empty row after a scale>1 OSC 66 heading is structural:
 			// it reserves the lower cells occupied by the multicell glyphs. Do
 			// not pad or background-fill it, because real spaces on that row can
@@ -1935,6 +1947,10 @@ export class Markdown implements Component, NativeScrollbackCommittedRows, Nativ
 			}
 
 			previousLineWasOsc66 = false;
+			if (literalCodeRow) {
+				contentLines.push(line);
+				continue;
+			}
 			const lineWithMargins = leftMargin + line + rightMargin;
 
 			if (bgFn) {
@@ -1966,6 +1982,7 @@ export class Markdown implements Component, NativeScrollbackCommittedRows, Nativ
 	}
 
 	#renderCodeBodyLines(token: Token, codeIndent: string): string[] {
+		const literalRowPrefix = this.#codeBlockIndent === 0 ? LITERAL_CODE_ROW_MARKER : codeIndent;
 		const bodyLines: string[] = [];
 		const tokenText = "text" in token && typeof token.text === "string" ? token.text : "";
 		const lang = "lang" in token && typeof token.lang === "string" ? token.lang : undefined;
@@ -1979,7 +1996,7 @@ export class Markdown implements Component, NativeScrollbackCommittedRows, Nativ
 		if (this.#theme.highlightCode && (!this.transientRenderCache || this.#renderingFrozenPrefix)) {
 			const highlightedLines = this.#theme.highlightCode(tokenText, lang);
 			for (const hlLine of highlightedLines) {
-				bodyLines.push(`${codeIndent}${hlLine}`);
+				bodyLines.push(`${literalRowPrefix}${hlLine}`);
 			}
 			return bodyLines;
 		}
@@ -1990,11 +2007,11 @@ export class Markdown implements Component, NativeScrollbackCommittedRows, Nativ
 			if (closedFence || lineEnd >= 0) {
 				const completedText = closedFence ? tokenText : tokenText.slice(0, lineEnd);
 				for (const hlLine of this.#highlightStreamingDiffLines(completedText, lang)) {
-					bodyLines.push(`${codeIndent}${hlLine}`);
+					bodyLines.push(`${literalRowPrefix}${hlLine}`);
 				}
 				if (!closedFence) {
 					for (const codeLine of tokenText.slice(lineEnd + 1).split("\n")) {
-						bodyLines.push(`${codeIndent}${this.#theme.codeBlock(codeLine)}`);
+						bodyLines.push(`${literalRowPrefix}${this.#theme.codeBlock(codeLine)}`);
 					}
 				}
 				return bodyLines;
@@ -2002,7 +2019,7 @@ export class Markdown implements Component, NativeScrollbackCommittedRows, Nativ
 		}
 
 		for (const codeLine of tokenText.split("\n")) {
-			bodyLines.push(`${codeIndent}${this.#theme.codeBlock(codeLine)}`);
+			bodyLines.push(`${literalRowPrefix}${this.#theme.codeBlock(codeLine)}`);
 		}
 		return bodyLines;
 	}
