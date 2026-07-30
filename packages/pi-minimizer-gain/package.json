@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "pi-minimizer-gain",
-	"version": "15.10.3-lex",
+	"version": "17.2.1",
 	"description": "OMP extension for visualizing native minimizer token savings and efficiency",
 	"author": "David Andrews",
 	"license": "MIT",
@@ -24,7 +24,7 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-utils": "^15.10.3-lex"
+		"@oh-my-pi/pi-utils": "^17.2.1"
 	},
 	"peerDependencies": {
 		"@oh-my-pi/pi-coding-agent": "workspace:*",
