@@ -1274,6 +1274,7 @@ export class VibeSessionRegistry {
 			taskDepth: session.taskDepth ?? 0,
 			detached: true,
 			modelOverride: record.modelOverride,
+			enforceAutomaticModelPolicy: true,
 			parentActiveModelPattern: session.getActiveModelString?.(),
 			thinkingLevel: record.agent.thinkingLevel,
 			sessionFile,
