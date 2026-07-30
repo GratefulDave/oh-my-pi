@@ -124,33 +124,28 @@ After native changes or a version restamp, keep package versions and N-API senti
 Use:
 
 ```bash
-bun scripts/sync-versions.ts <version>
+bun "${LEX_MAINTENANCE_HOME:-../lex-maintenance}/scripts/sync-versions.ts" <version>
 ```
 
-Then rebuild:
-
+Then run the binary-only rebuild:
 ```bash
 ./rebuild-lex.zsh
 ```
 
-`rebuild-lex.zsh` runs install/build, creates `packages/coding-agent/dist/omp`, links it to `~/.local/bin/lex`, and prints `lex --version`.
-
-## 8. Extension rebuilds after sync
-
-Extensions survive upstream binary replacement because they load from bundles in settings. Source edits still require rebundling and a process restart.
-
-Rebuild touched extensions:
-
+`rebuild-lex.zsh` builds the native addon and `packages/coding-agent/dist/omp`, links it to
+`~/.local/bin/lex`/`omp`, and preserves all existing extension bundles, registrations, profiles,
+and user settings. Extension rebuild/install requires explicit opt-in:
 ```bash
-bun --cwd=packages/pi-observer run build
-bun --cwd=packages/pi-minimizer-gain run build
+LEX_REBUILD_EXTENSIONS=1 LEX_ALLOW_EXTENSION_STATE_CHANGE=1 ./rebuild-lex.zsh
 ```
 
-Install globally if you want `lex` to load them from any cwd:
+## 8. Intentional extension rebuilds
+
+Extensions survive upstream binary replacement because they load from existing bundles in settings.
+Do not rebuild or reinstall them during routine sync. If extension source changed intentionally:
 
 ```bash
-bun scripts/install-user-extensions.ts --dry-run
-bun scripts/install-user-extensions.ts
+LEX_REBUILD_EXTENSIONS=1 LEX_ALLOW_EXTENSION_STATE_CHANGE=1 ./rebuild-lex.zsh
 ```
 
 Restart `lex` / `omp`; extensions load at startup.
@@ -173,8 +168,11 @@ bun --cwd=packages/pi-minimizer-gain run check
 ./rebuild-lex.zsh
 ```
 
+The default rebuild must report unchanged extension bundles and registrations. Use the explicit
+extension opt-in command only when extension source changes are part of the requested work.
+
 For #1750/native minimizer fixes, run focused Rust regressions for the changed behavior before broader checks.
 
-## 10. Known doc drift
+## 10. Maintenance tool location
 
-`docs/upstream-rebase-and-fork-maintenance.md` mentions `scripts/update-from-upstream.sh`, but that script is absent in this checkout. Use the explicit fetch/classify/fresh-branch flow above unless the script is restored and verified.
+`update-from-upstream.sh` lives in the sibling `../lex-maintenance` repository. Run `just rebase`, or invoke it with `--repo "$PWD"`.

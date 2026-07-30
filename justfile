@@ -99,16 +99,16 @@ rs-check crate="pi-shell":
 # Pull upstream (can1357/oh-my-pi) and rebase the CURRENT branch onto upstream/main.
 # Pauses on conflict; follow the printed steps, then `just rebuild`.
 rebase:
-    ./scripts/update-from-upstream.sh
+    LEX_REPO_DIR="$PWD" "${LEX_MAINTENANCE_HOME:-${PWD%/*}/lex-maintenance}/scripts/update-from-upstream.sh"
 
 # Rebase a SPECIFIC branch.  e.g. `just rebase-branch wip/lex-binary-extraction`
 rebase-branch branch:
     git checkout {{branch}}
-    ./scripts/update-from-upstream.sh
+    LEX_REPO_DIR="$PWD" "${LEX_MAINTENANCE_HOME:-${PWD%/*}/lex-maintenance}/scripts/update-from-upstream.sh"
 
 # After a rebase: re-stamp the fork version everywhere (default 15.7.3-lex).
 stamp version="15.7.3-lex":
-    bun scripts/sync-versions.ts {{version}}
+    bun "${LEX_MAINTENANCE_HOME:-${PWD%/*}/lex-maintenance}/scripts/sync-versions.ts" {{version}}
 
 # Full post-rebase fixup: re-stamp version, then rebuild + install.
 post-rebase version="15.7.3-lex": (stamp version) rebuild

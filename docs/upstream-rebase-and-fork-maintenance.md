@@ -1,8 +1,13 @@
 # Fork Maintenance Guide — GratefulDave/oh-my-pi (lex fork)
 
 > **Canonical workflow**: `git merge upstream/main` → resolve conflicts → `./rebuild-lex.zsh`
+> `rebuild-lex.zsh` changes only the binary/native cache by default. Existing extensions,
+> extension registrations, profiles, and user settings remain untouched.
+> Extension rebuild/install requires explicit `LEX_REBUILD_EXTENSIONS=1 LEX_ALLOW_EXTENSION_STATE_CHANGE=1`.
 > This doc replaces the stale rebase-based procedure. All PRs were merged upstream; the fork now
 > carries only the patches listed in §3.
+
+Fork-maintenance helpers live in the sibling `../lex-maintenance` repository; override that location with `LEX_MAINTENANCE_HOME`.
 
 ---
 
@@ -43,9 +48,15 @@ After a clean merge:
 ./rebuild-lex.zsh
 ```
 
+This is a binary-only rebuild. It preserves existing global extension bundles, symlink targets,
+registrations, profiles, and user settings. To intentionally rebuild/install extensions:
+```bash
+LEX_REBUILD_EXTENSIONS=1 LEX_ALLOW_EXTENSION_STATE_CHANGE=1 ./rebuild-lex.zsh
+```
+
 After a successful rebuild, run the patch checker to confirm all fork patches survived:
 ```bash
-bun scripts/check-fork-patches.ts
+bun "${LEX_MAINTENANCE_HOME:-../lex-maintenance}/scripts/check-fork-patches.ts" --repo "$PWD"
 ```
 
 ---
@@ -175,22 +186,49 @@ this script, re-apply the nightly PATH prepend block at the top of the new versi
 
 ---
 
+### Patch 8: Automatic agents use OpenAI Codex
 
-### Patch 9: Fork tooling & docs
+**Why**: Automatic task and Vibe agents must never spend OpenRouter credits, regardless of the
+active model profile or an agent definition's fallback chain. OpenRouter Claude-family selectors
+map to comparable OpenAI Codex models at `auto` effort:
 
-Fork-private scripts and docs that upstream does not have:
-- `rebuild-lex.zsh` — canonical rebuild entrypoint
-- `scripts/check-fork-patches.ts` — post-merge patch integrity checker (this repo)
-- `scripts/install-user-extensions.ts` — installs fork-managed extensions globally
-- `scripts/rebuild-extensions.ts` — rebuilds extension bundles
-- `scripts/sync-pi-to-lex-auth.py` — syncs pi auth to lex auth DB
-- `docs/upstream-rebase-and-fork-maintenance.md` — this file
-- `docs/extensions-build-and-test.md`
-- `docs/fork-diff-summary.md`
-- `docs/rebase-pr-acceptance-playbook.md`
-- `AGENTS.md`, `GITHUB_ANSI.md`
-- `.omp/settings.json`, `.omp/extensions/`, `.omp/agent/`
-- `.claude/`, `.codex/`, `.gemini/`, `.lex/` — AI agent config dirs
+- Opus → `openai-codex/gpt-5.6-sol:auto`
+- Sonnet → `openai-codex/gpt-5.6-terra:auto`
+- Haiku → `openai-codex/gpt-5.6-luna:auto`
+- Unknown OpenRouter automatic agent → `openai-codex/gpt-5.6-terra:auto`
+
+Explicit per-call model requests remain explicit overrides. The external maintenance rebuild runs
+`set-agent-codex-defaults.ts`, which writes fixed Codex defaults into canonical and isolated
+`.omp`/`.lex` profile configs without changing credentials or unrelated settings.
+
+**Files**:
+- `packages/coding-agent/src/task/executor.ts`
+- `packages/coding-agent/src/task/structured-subagent.ts`
+- `packages/coding-agent/src/vibe/runtime.ts`
+- `../lex-maintenance/scripts/set-agent-codex-defaults.ts`
+- `rebuild-lex.zsh` — external-tool launcher
+
+**Verify**:
+- `bun test packages/coding-agent/test/task/executor-subagent-reminders.test.ts`
+- `bun "${LEX_MAINTENANCE_HOME:-../lex-maintenance}/scripts/set-agent-codex-defaults.test.ts"`
+- `bun "${LEX_MAINTENANCE_HOME:-../lex-maintenance}/scripts/check-fork-patches.ts" --repo "$PWD"`
+
+**Conflict risk**: medium — upstream task-routing changes can touch the same executor paths. The
+fork checker rejects a rebuild if any mapping, provider exclusion, task/Vibe enforcement, or
+rebuild normalization hook disappears.
+
+---
+
+### Patch 9: External maintenance tooling
+
+Fork-maintenance tooling lives outside this upstream-facing checkout:
+- `../lex-maintenance/scripts/rebuild-lex.zsh` — rebuild implementation and extension-state guard
+- `../lex-maintenance/scripts/check-fork-patches.ts` — post-merge runtime patch checker
+- `../lex-maintenance/scripts/update-from-upstream.sh` — upstream synchronization
+- `../lex-maintenance/scripts/sync-versions.ts` — fork version stamp
+- `../lex-maintenance/scripts/check-lex-auth.sh` and `../lex-maintenance/scripts/sync-pi-to-lex-auth.py` — local auth maintenance
+
+The Lex checkout retains only the `rebuild-lex.zsh` launcher and runtime/product patches.
 
 ---
 
@@ -198,13 +236,14 @@ Fork-private scripts and docs that upstream does not have:
 
 After every `git merge upstream/main`:
 
-1. **Check patch integrity**: `bun scripts/check-fork-patches.ts`
+1. **Check patch integrity**: `bun "${LEX_MAINTENANCE_HOME:-../lex-maintenance}/scripts/check-fork-patches.ts" --repo "$PWD"`
    — reports any patch that no longer applies (method removed, file replaced, grep miss)
 2. **Conflict hot zone review**: `git diff upstream/main HEAD -- packages/coding-agent/src/modes/interactive-mode.ts | head -50`
    — if the subagent HUD region changed upstream, re-verify Patch 3
 3. **`bun check`** — catches type errors from upstream API changes
-4. **`./rebuild-lex.zsh`** — full build + smoke tests
-5. **Live test**: start lex, run `/pm use ag`, open `/models` — should show only `ag/*` models
+4. **`./rebuild-lex.zsh`** — binary/native build + extension-state preservation guard
+5. **Optional extension rebuild** — only with both explicit opt-in environment variables
+6. **Live test**: start lex, run `/pm use ag`, open `/models` — should show only `ag/*` models
 
 ---
 
@@ -212,13 +251,14 @@ After every `git merge upstream/main`:
 
 | Task | Command |
 |------|---------|
-| Full build + install | `./rebuild-lex.zsh` |
+| Binary/native build + install | `./rebuild-lex.zsh` |
+| Explicit extension rebuild/install | `LEX_REBUILD_EXTENSIONS=1 LEX_ALLOW_EXTENSION_STATE_CHANGE=1 ./rebuild-lex.zsh` |
 | TS type check | `bun check` |
 | Native only | `bun --cwd=packages/natives run build` |
-| Verify fork patches | `bun scripts/check-fork-patches.ts` |
+| Verify fork patches | `bun "${LEX_MAINTENANCE_HOME:-../lex-maintenance}/scripts/check-fork-patches.ts" --repo "$PWD"` |
 | All TS tests | `bun test` |
 | Single package tests | `bun test packages/coding-agent/test/<file>.test.ts` |
-| Sync fork version stamp | `bun scripts/sync-versions.ts <version>` |
+| Sync fork version stamp | `bun "${LEX_MAINTENANCE_HOME:-../lex-maintenance}/scripts/sync-versions.ts" <version>` |
 | Upgrade profile-manager | `bun build .omp/extensions/profile-manager/index.ts --outfile .omp/extensions/profile-manager/dist/index.js --target bun --format esm` |
 
 ---
