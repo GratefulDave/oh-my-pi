@@ -2,10 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import {
-	makeMinimizedSaveHandler,
-	type MinimizedSaveHandlerSession,
-} from "@oh-my-pi/pi-coding-agent/tools/bash";
+import { type MinimizedSaveHandlerSession, makeMinimizedSaveHandler } from "@oh-my-pi/pi-coding-agent/tools/bash";
 import {
 	appendBashMinimizerGainRecord,
 	getBashMinimizerGainPath,
