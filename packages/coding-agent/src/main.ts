@@ -521,6 +521,7 @@ async function runInteractiveMode(
 	}
 
 	if (initialMessage !== undefined) {
+		session.maybeStartTitleGeneration(initialMessage);
 		try {
 			using _keepalive = new EventLoopKeepalive();
 			await session.prompt(initialMessage, { images: initialImages });
@@ -531,6 +532,7 @@ async function runInteractiveMode(
 	}
 
 	for (const message of initialMessages) {
+		session.maybeStartTitleGeneration(message);
 		try {
 			using _keepalive = new EventLoopKeepalive();
 			await session.prompt(message);
@@ -1625,6 +1627,7 @@ export async function runRootCommand(
 				modelRegistry,
 				settings: settingsInstance,
 				enableLsp: sessionOptions.enableLsp ?? true,
+				eventBus,
 			}),
 			Math.trunc(Number(settingsInstance.get("task.agentIdleTtlMs") ?? 420_000) || 0),
 		);
