@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "pi-omnidelegate",
-	"version": "17.2.1",
+	"version": "17.2.2",
 	"description": "OMP extension for delegating work to external AI agents (Claude, Codex, Gemini) via acpx/tmux/cmux",
 	"author": "David Andrews",
 	"license": "MIT",
@@ -22,7 +22,7 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-utils": "^17.2.1"
+		"@oh-my-pi/pi-utils": "^17.2.2"
 	},
 	"peerDependencies": {
 		"@oh-my-pi/pi-coding-agent": "workspace:*",
