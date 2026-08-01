@@ -24,6 +24,7 @@
  */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { generateEnumExports } from "../packages/natives/scripts/gen-enums";
 import { detectHostAvx2Support } from "./host-detect";
 
 const repoRoot = path.join(import.meta.dir, "..");
@@ -282,6 +283,10 @@ async function main(): Promise<void> {
 		const destPath = path.join(destDir, path.basename(output));
 		await installAddon(absolute, destPath);
 		console.log(`installed ${path.basename(output)} → ${destPath}`);
+	}
+
+	if (destDir === path.join(repoRoot, "packages/natives/native")) {
+		await generateEnumExports();
 	}
 }
 

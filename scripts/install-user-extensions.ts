@@ -52,61 +52,37 @@ async function readJson<T>(p: string): Promise<T | null> {
 	}
 }
 
-function isManagedExtensionPath(value: string, managedNames: Set<string>): boolean {
-	return (
-		managedNames.has(extName(value)) ||
-		value.startsWith("~/.omp/agent/extensions/") ||
-		path.resolve(value).startsWith(`${EXT_DIR}${path.sep}`)
-	);
+function expandTildePath(value: string): string {
+	return value === "~" ? HOME : value.startsWith("~/") ? path.join(HOME, value.slice(2)) : value;
 }
 
-function mergeExtensionList(previous: unknown, managedNames: Set<string>, registeredExtensions: string[]): string[] {
+async function pointsToThisRepo(value: string): Promise<boolean> {
+	const resolved = path.resolve(expandTildePath(value));
+	if (!resolved.startsWith(`${EXT_DIR}${path.sep}`)) return false;
+
+	const target = await fs.readlink(resolved).catch(() => null);
+	if (!target) return false;
+
+	const targetPath = path.resolve(path.dirname(resolved), target);
+	return targetPath === REPO || targetPath.startsWith(`${REPO}${path.sep}`);
+}
+
+export async function mergeExtensionList(previous: unknown, registeredExtensions: string[]): Promise<string[]> {
 	const existing = Array.isArray(previous)
 		? previous.filter((value): value is string => typeof value === "string")
 		: [];
-	const unmanaged = existing.filter(value => !isManagedExtensionPath(value, managedNames));
+	const registered = new Set(registeredExtensions);
+	const unmanaged = (
+		await Promise.all(
+			existing.map(async value => ({
+				value,
+				managed: registered.has(value) || (await pointsToThisRepo(value)),
+			})),
+		)
+	)
+		.filter(entry => !entry.managed)
+		.map(entry => entry.value);
 	return Array.from(new Set([...unmanaged, ...registeredExtensions]));
-}
-
-function normalizeAntigravityConfig(value: unknown, key = ""): unknown {
-	if (typeof value === "string") {
-		return value.startsWith("antigravity/") ? `google-antigravity/${value.slice("antigravity/".length)}` : value;
-	}
-	if (Array.isArray(value)) {
-		const normalized = value.map(item => normalizeAntigravityConfig(item, key));
-		if (key === "disabledProviders") {
-			return normalized.filter(item => item !== "google-antigravity");
-		}
-		return normalized.filter(item => item !== "antigravity" && item !== "antigravity/*");
-	}
-	if (value && typeof value === "object") {
-		const normalized: Record<string, unknown> = {};
-		for (const [childKey, childValue] of Object.entries(value)) {
-			normalized[childKey] = normalizeAntigravityConfig(childValue, childKey);
-		}
-		return normalized;
-	}
-	return value;
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function applyActiveProfile(settings: Record<string, unknown>): void {
-	const active = settings.activeModelProfile;
-	const profiles = settings.modelProfiles;
-	if (typeof active !== "string" || !isRecord(profiles) || !isRecord(profiles[active])) return;
-	const profile = profiles[active];
-	for (const key of ["modelRoles", "defaultThinkingLevel", "enabledModels", "cycleOrder", "modelProviderOrder"]) {
-		const value = profile[key];
-		if (Array.isArray(value)) {
-			settings[key] = [...value];
-		} else if (isRecord(value)) {
-			settings[key] = { ...value };
-		} else if (typeof value === "string") {
-			settings[key] = value;
-		}
-	}
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -196,12 +172,8 @@ async function main(): Promise<void> {
 	// Merge into user settings.json, preserving external extension paths but making
 	// every repo-managed extension authoritative. Never rewrite config.yml here:
 	// profiles, model defaults, disabled capabilities, and symlink targets must persist.
-	const managedNames = new Set(registered.map(extName));
-	const settingsJson = normalizeAntigravityConfig(
-		(await readJson<Record<string, unknown>>(USER_SETTINGS)) ?? {},
-	) as Record<string, unknown>;
-	const settingsJsonExtensions = mergeExtensionList(settingsJson.extensions, managedNames, registered);
-	applyActiveProfile(settingsJson);
+	const settingsJson = (await readJson<Record<string, unknown>>(USER_SETTINGS)) ?? {};
+	const settingsJsonExtensions = await mergeExtensionList(settingsJson.extensions, registered);
 	settingsJson.extensions = settingsJsonExtensions;
 
 	console.log(`\n${DRY ? "[dry] " : ""}write ${USER_SETTINGS}`);

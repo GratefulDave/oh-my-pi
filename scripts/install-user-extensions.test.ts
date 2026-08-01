@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { removeStaleManagedDiscoveryFiles } from "./install-user-extensions";
+import { mergeExtensionList, removeStaleManagedDiscoveryFiles } from "./install-user-extensions";
 
 describe("removeStaleManagedDiscoveryFiles", () => {
 	let tempDir = "";
@@ -45,4 +45,11 @@ it("keeps repo settings free of managed .omp extension bundle duplicates", async
 	expect(
 		extensions.filter(entry => /^\.omp\/extensions\/(?!profile-manager\/)[^/]+\/dist\/index\.js$/.test(entry)),
 	).toEqual([]);
+});
+
+it("preserves user extension registrations under the managed directory", async () => {
+	const userExtension = "~/.omp/agent/extensions/user-extension/index.js";
+	const registered = "~/.omp/agent/extensions/pi-observer/observer.bundle.js";
+
+	await expect(mergeExtensionList([userExtension], [registered])).resolves.toEqual([userExtension, registered]);
 });
