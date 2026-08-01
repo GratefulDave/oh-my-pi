@@ -71,18 +71,27 @@ export async function mergeExtensionList(previous: unknown, registeredExtensions
 	const existing = Array.isArray(previous)
 		? previous.filter((value): value is string => typeof value === "string")
 		: [];
-	const registered = new Set(registeredExtensions);
-	const unmanaged = (
-		await Promise.all(
-			existing.map(async value => ({
-				value,
-				managed: registered.has(value) || (await pointsToThisRepo(value)),
-			})),
-		)
-	)
-		.filter(entry => !entry.managed)
-		.map(entry => entry.value);
-	return Array.from(new Set([...unmanaged, ...registeredExtensions]));
+	const registeredByName = new Map(registeredExtensions.map(extension => [extName(extension), extension]));
+	const handledNames = new Set<string>();
+	const merged: string[] = [];
+
+	for (const value of existing) {
+		const name = extName(value);
+		const registered = registeredByName.get(name);
+		if (registered) {
+			merged.push(registered);
+			handledNames.add(name);
+			continue;
+		}
+
+		if (!(await pointsToThisRepo(value))) merged.push(value);
+	}
+
+	for (const extension of registeredExtensions) {
+		if (!handledNames.has(extName(extension))) merged.push(extension);
+	}
+
+	return Array.from(new Set(merged));
 }
 
 async function pathExists(p: string): Promise<boolean> {

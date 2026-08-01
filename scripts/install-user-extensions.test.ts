@@ -53,3 +53,14 @@ it("preserves user extension registrations under the managed directory", async (
 
 	await expect(mergeExtensionList([userExtension], [registered])).resolves.toEqual([userExtension, registered]);
 });
+
+it("preserves registration order while replacing a managed extension", async () => {
+	const staleManaged = "~/.omp/agent/extensions/pi-observer/old.bundle.js";
+	const userExtension = "~/.omp/agent/extensions/user-extension/index.js";
+	const registered = "~/.omp/agent/extensions/pi-observer/observer.bundle.js";
+
+	await expect(mergeExtensionList([staleManaged, userExtension], [registered])).resolves.toEqual([
+		registered,
+		userExtension,
+	]);
+});
