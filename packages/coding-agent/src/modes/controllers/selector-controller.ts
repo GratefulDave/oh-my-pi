@@ -777,7 +777,6 @@ export class SelectorController {
 	 * entry — used when reopening the hub after a /login round-trip.
 	 */
 	#showModelHub(hubOptions: { initialProviderId?: string }): void {
-		const currentContextTokens = this.ctx.session.getContextUsage()?.tokens ?? 0;
 		const { scopedModels } = this.ctx.session;
 		// When no CLI --models scope is active, apply the in-session enabledModels filter
 		// so the model hub respects the active profile set by /pm use.
