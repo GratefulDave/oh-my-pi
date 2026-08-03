@@ -8,6 +8,7 @@ export const KeyEventType = { Press: 0, Release: 1, Repeat: 2 };
 export const ProcessStatus = { Running: 0, Exited: 1, Signaled: 2 };
 export const FileType = { File: 0, Dir: 1, Symlink: 2 };
 export const Process = class {};
+export const FileLock = class { static tryAcquire() { return new this(); } acquired = false; release() {} };
 export function fuzzyFind() { return Promise.resolve({ matches: [] }); }
 export function matchesKey() { return false; }
 export function parseKey() { return null; }
