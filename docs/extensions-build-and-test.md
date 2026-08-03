@@ -38,7 +38,6 @@ binary and the extensions keep working** — nothing in the binary's own source 
 | pi-observer | `packages/pi-observer/` | `src/extension.ts` | `dist/observer.bundle.js` | yes |
 | pi-actor-swarm | `packages/pi-actor-swarm/` | `src/extension.ts` | `dist/swarm.bundle.js` | yes |
 | pi-omnidelegate | `packages/pi-omnidelegate/` | `src/extension.ts` | `dist/omnidelegate.bundle.js` | yes |
-| pi-software-factory | `packages/pi-software-factory/` | `src/extension.ts` | `dist/factory.bundle.js` (+ CLI bins) | yes (`build-bin.ts`) |
 | swarm-extension | `packages/swarm-extension/` | `src/extension.ts` | `dist/extension.bundle.js` | pre-built |
 | profile-manager | `.omp/extensions/profile-manager/` | `index.ts` | `dist/index.js` | pre-built |
 | semantic-search | `.omp/extensions/semantic-search/` | `index.ts` | source (unbundled) | none |
@@ -164,7 +163,7 @@ Restart omp to pick up a new bundle (extensions load at startup).
 ## 7. Off-lex status (does it need the fork binary?)
 
 - **OFF-LEX SAFE** (run on stock upstream omp): pi-observer, pi-actor-swarm, pi-omnidelegate,
-  pi-software-factory, swarm-extension, semantic-search, profile-manager (reprofiled to read/write
-  `.omp/settings.json` `modelProfiles`, no LEX `getProfileApi`).
+  swarm-extension, semantic-search, profile-manager (reprofiled to read/write `.omp/settings.json`
+  `modelProfiles`, no LEX `getProfileApi`).
 - **BLOCKED**: pi-minimizer-gain — depends on `pi-natives` native surface; unblocks when the NAPI
   minimizer binding (PR #1642) lands.
