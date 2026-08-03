@@ -5,6 +5,12 @@
 ### Fixed
 - Fixed terminal selection copying leading whitespace into fenced-code rows in coding-agent assistant messages, which could prevent pasted heredoc terminators from closing.
 
+## [17.2.5] - 2026-08-03
+
+### Fixed
+
+- Fixed Kitty and Ghostty keyboard shortcuts on non-Latin keyboard layouts by requesting base-layout key reporting from the terminal.
+
 ## [17.2.4] - 2026-08-01
 
 ### Fixed
