@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [17.2.6] - 2026-08-03
+
+### Added
+
+- Added profile-aware Bedrock Mantle region selection, authenticated model discovery, bearer-token or SigV4 authentication, and credential refresh handling for OpenAI Responses models.
+
+### Fixed
+
+- Fixed an issue where Ollama requests without a user-role message would fail to generate output or silently fail with a misleading error.
+
 ## [17.2.5] - 2026-08-03
 
 ### Changed
