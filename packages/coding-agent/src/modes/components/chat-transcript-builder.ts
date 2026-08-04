@@ -25,6 +25,7 @@ import {
 	LSP_LATE_DIAGNOSTIC_MESSAGE_TYPE,
 	SKILL_PROMPT_MESSAGE_TYPE,
 	type SkillPromptDetails,
+	SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
 } from "../../session/messages";
 import type { SessionMessageEntry } from "../../session/session-entries";
 import { theme } from "../theme/theme";
@@ -37,7 +38,6 @@ import {
 	buildSubagentHudSummaryBlock,
 	normalizeToolArgs,
 	resolveAssistantErrorPresentation,
-	SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
 	splitAssistantMessageToolTimeline,
 } from "../utils/transcript-render-helpers";
 import { createAdvisorMessageCard } from "./advisor-message";

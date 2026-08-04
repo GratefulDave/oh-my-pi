@@ -48,6 +48,7 @@ import {
 	LSP_LATE_DIAGNOSTIC_MESSAGE_TYPE,
 	SKILL_PROMPT_MESSAGE_TYPE,
 	type SkillPromptDetails,
+	SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
 } from "../../session/messages";
 import type { SessionContext, StrippedToolCallsMarker } from "../../session/session-context";
 import { replaceTabs } from "../../tools/render-utils";
@@ -62,7 +63,6 @@ import {
 	buildSubagentHudSummaryBlock,
 	normalizeToolArgs,
 	resolveAssistantErrorPresentation,
-	SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
 	splitAssistantMessageToolTimeline,
 } from "./transcript-render-helpers";
 
