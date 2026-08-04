@@ -24,11 +24,11 @@ beforeAll(async () => {
 });
 
 describe("subagent HUD summary message", () => {
-	it("renders settled rows with accent labels and status-colored metrics", () => {
+	it("renders settled rows with sanitized accent labels and status-colored metrics", () => {
 		const message: CustomMessage<SubagentHudSummaryDetails> = {
 			role: "custom",
 			customType: "subagent-hud-summary",
-			content: "2 agents settled",
+			content: "2 agents\tsettled",
 			display: true,
 			attribution: "agent",
 			timestamp: 1,
@@ -37,8 +37,8 @@ describe("subagent HUD summary message", () => {
 				rows: [
 					{
 						id: "done-1",
-						roleLabel: "task",
-						label: "Done worker",
+						roleLabel: "task\tworker",
+						label: "Done worker\nnow",
 						status: "completed",
 						toolCount: 2,
 						tokenLabel: "1.2k tokens",
@@ -52,7 +52,6 @@ describe("subagent HUD summary message", () => {
 						toolCount: 3,
 						tokenLabel: "2.4k tokens",
 						durationLabel: "2.3s",
-						failureReason: "boom",
 					},
 				],
 			},
@@ -62,11 +61,12 @@ describe("subagent HUD summary message", () => {
 		const stripped = Bun.stripANSI(raw);
 
 		expect(stripped).toContain("2 agents settled");
-		expect(raw).toContain(`${ansi.accent}[task]\x1b[39m`);
-		expect(raw).toContain(`${ansi.accent}Done worker\x1b[39m`);
+		expect(stripped).toContain("Done worker now");
+		expect(stripped).not.toContain("\t");
+		expect(raw).toContain(`${ansi.accent}[task worker]\x1b[39m`);
+		expect(raw).toContain(`${ansi.accent}Done worker now\x1b[39m`);
 		expect(raw).toContain(`${ansi.success}2 tool use(s)\x1b[39m`);
 		expect(raw).toContain(`${ansi.error}3 tool use(s)\x1b[39m`);
 		expect(raw).toContain(`${ansi.accent}[reviewer]\x1b[39m`);
-		expect(stripped).toContain("boom");
 	});
 });

@@ -6070,6 +6070,7 @@ export class AgentSession {
 	 * Send a custom message to the session. Creates a CustomMessageEntry.
 	 *
 	 * Handles three cases:
+	 * - `deliverAs: "persist"`: appends directly to state/session without affecting a live turn
 	 * - Streaming: queue as steer/follow-up or store for next turn
 	 * - Not streaming + triggerTurn: appends to state/session, starts new turn unless the client cannot own it
 	 * - Not streaming + no trigger: appends to state/session, no turn
@@ -6084,7 +6085,7 @@ export class AgentSession {
 		message: CustomMessagePayload<T>,
 		options?: {
 			triggerTurn?: boolean;
-			deliverAs?: "steer" | "followUp" | "nextTurn";
+			deliverAs?: "steer" | "followUp" | "nextTurn" | "persist";
 			queueChipText?: string;
 			acceptTerminalEmptyStop?: boolean;
 		},
@@ -6109,6 +6110,17 @@ export class AgentSession {
 			timestamp: Date.now(),
 		};
 		const normalizedAppMessage = await this.#normalizeAgentMessageImages(appMessage);
+		if (options?.deliverAs === "persist") {
+			this.agent.appendMessage(normalizedAppMessage);
+			this.sessionManager.appendCustomMessageEntry(
+				normalizedAppMessage.customType,
+				normalizedAppMessage.content,
+				normalizedAppMessage.display,
+				normalizedAppMessage.details,
+				normalizedAppMessage.attribution,
+			);
+			return false;
+		}
 		if (this.isStreaming) {
 			if (options?.deliverAs === "nextTurn") {
 				this.#queueHiddenNextTurnMessage(normalizedAppMessage, options?.triggerTurn ?? false);
