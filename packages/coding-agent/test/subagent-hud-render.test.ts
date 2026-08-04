@@ -303,4 +303,29 @@ describe("InteractiveMode subagent observer UI sync", () => {
 		expect(rebuildHud).toHaveBeenCalledTimes(1);
 		expect(requestRender).toHaveBeenCalledTimes(1);
 	});
+
+	it("persists a fast detached settlement without steering the active parent turn", async () => {
+		await mode.init({ suppressWelcomeIntro: true });
+		vi.useFakeTimers();
+		const sendCustomMessage = vi.spyOn(session, "sendCustomMessage");
+
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, makeLifecycle("FastAgent", 0, "quick task", true));
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			...makeLifecycle("FastAgent", 0, "quick task", true),
+			status: "completed",
+		});
+		vi.runAllTimers();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		const summaries = session.state.messages.filter(
+			message => message.role === "custom" && message.customType === "subagent-hud-summary",
+		);
+		expect(summaries).toHaveLength(1);
+		expect(sendCustomMessage).toHaveBeenCalledWith(expect.objectContaining({ customType: "subagent-hud-summary" }), {
+			deliverAs: "persist",
+		});
+		expect(summaries[0]).toMatchObject({ content: "1 agent settled" });
+		expect(session.agent.peekSteeringQueue()).toEqual([]);
+	});
 });

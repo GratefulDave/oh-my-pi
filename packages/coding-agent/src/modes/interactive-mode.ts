@@ -2193,6 +2193,14 @@ export class InteractiveMode implements InteractiveModeContext {
 	}
 
 	#scheduleObserverUiSync(kind: SessionObserverChangeKind): void {
+		if (
+			kind === "lifecycle" &&
+			this.#observerRegistry
+				.getSessions()
+				.some(session => session.kind === "subagent" && session.status === "active" && session.detached === true)
+		) {
+			this.#hadActiveSubagents = true;
+		}
 		if (kind !== "progress") {
 			this.#observerUiSyncNeedsTodoReconcile = true;
 		}
@@ -2241,13 +2249,16 @@ export class InteractiveMode implements InteractiveModeContext {
 		const content = `${rows.length} agent${rows.length === 1 ? "" : "s"} settled`;
 		const details: SubagentHudSummaryDetails = { emittedAt: Date.now(), rows };
 		void this.session
-			.sendCustomMessage<SubagentHudSummaryDetails>({
-				customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
-				content,
-				display: true,
-				details,
-				attribution: "agent",
-			})
+			.sendCustomMessage<SubagentHudSummaryDetails>(
+				{
+					customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+					content,
+					display: true,
+					details,
+					attribution: "agent",
+				},
+				{ deliverAs: "persist" },
+			)
 			.catch(err => logger.debug("subagent HUD summary delivery failed", { err: String(err) }));
 		this.addMessageToChat({
 			role: "custom",
