@@ -16,8 +16,15 @@ import {
 	SessionObserverRegistry,
 } from "@oh-my-pi/pi-coding-agent/modes/session-observer-registry";
 import { initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SubagentHudSummaryDetails } from "@oh-my-pi/pi-coding-agent/modes/utils/transcript-render-helpers";
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+import {
+	type CustomMessage,
+	convertToLlm,
+	SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+} from "@oh-my-pi/pi-coding-agent/session/messages";
+
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import {
 	type AgentProgress,
@@ -319,13 +326,44 @@ describe("InteractiveMode subagent observer UI sync", () => {
 		await Promise.resolve();
 
 		const summaries = session.state.messages.filter(
-			message => message.role === "custom" && message.customType === "subagent-hud-summary",
+			(message): message is CustomMessage<SubagentHudSummaryDetails> =>
+				message.role === "custom" && message.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
 		);
 		expect(summaries).toHaveLength(1);
-		expect(sendCustomMessage).toHaveBeenCalledWith(expect.objectContaining({ customType: "subagent-hud-summary" }), {
-			deliverAs: "persist",
-		});
+		expect(sendCustomMessage).toHaveBeenCalledWith(
+			expect.objectContaining({ customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE }),
+			{ deliverAs: "persist" },
+		);
 		expect(summaries[0]).toMatchObject({ content: "1 agent settled" });
 		expect(session.agent.peekSteeringQueue()).toEqual([]);
+		expect(convertToLlm(session.state.messages)).toEqual([]);
+	});
+
+	it("persists every retained subagent lifecycle with its latest description", async () => {
+		await mode.init({ suppressWelcomeIntro: true });
+		vi.useFakeTimers();
+		const started = { ...makeLifecycle("RetainedAgent", 0, "", true), description: undefined };
+
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, started);
+		eventBus.emit(TASK_SUBAGENT_PROGRESS_CHANNEL, makeProgressPayload("RetainedAgent", 0, "first task", true));
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, { ...started, status: "completed" });
+		vi.runAllTimers();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, started);
+		eventBus.emit(TASK_SUBAGENT_PROGRESS_CHANNEL, makeProgressPayload("RetainedAgent", 0, "follow-up task", true));
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, { ...started, status: "completed" });
+		vi.runAllTimers();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		const labels = session.state.messages
+			.filter(
+				(message): message is CustomMessage<SubagentHudSummaryDetails> =>
+					message.role === "custom" && message.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+			)
+			.map(message => message.details?.rows[0]?.label);
+		expect(labels).toEqual(["first task", "follow-up task"]);
 	});
 });

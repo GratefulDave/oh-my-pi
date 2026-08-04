@@ -109,6 +109,7 @@ import {
 import type { CompactMode } from "../session/compact-modes";
 import type { ForeignSessionSource } from "../session/foreign-session-store";
 import { HistoryStorage } from "../session/history-storage";
+import { SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE } from "../session/messages";
 import type { SessionContext } from "../session/session-context";
 import { getRecentSessions } from "../session/session-listing";
 import type { SessionManager } from "../session/session-manager";
@@ -224,11 +225,7 @@ import type {
 	TodoItem,
 	TodoPhase,
 } from "./types";
-import {
-	SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
-	type SubagentHudSummaryDetails,
-	type SubagentHudSummaryRow,
-} from "./utils/transcript-render-helpers";
+import type { SubagentHudSummaryDetails, SubagentHudSummaryRow } from "./utils/transcript-render-helpers";
 import { UiHelpers } from "./utils/ui-helpers";
 
 const STILL_CLOSING_DELAY_MS = 3_000;
@@ -515,7 +512,7 @@ function toSubagentHudSummaryRow(session: ObservableSession): SubagentHudSummary
 	return {
 		id: session.id,
 		roleLabel: session.agent ?? "task",
-		label: session.label || session.description || formatTaskId(session.id),
+		label: session.description || session.label || formatTaskId(session.id),
 		status: session.status as "completed" | "failed" | "aborted",
 		toolCount: session.progress?.toolCount ?? 0,
 		tokenLabel,
@@ -2193,13 +2190,12 @@ export class InteractiveMode implements InteractiveModeContext {
 	}
 
 	#scheduleObserverUiSync(kind: SessionObserverChangeKind): void {
-		if (
-			kind === "lifecycle" &&
-			this.#observerRegistry
-				.getSessions()
-				.some(session => session.kind === "subagent" && session.status === "active" && session.detached === true)
-		) {
-			this.#hadActiveSubagents = true;
+		if (kind === "lifecycle") {
+			for (const session of this.#observerRegistry.getSessions()) {
+				if (session.kind !== "subagent" || session.status !== "active" || session.detached !== true) continue;
+				this.#hadActiveSubagents = true;
+				this.#emittedSubagentSummaryIds.delete(session.id);
+			}
 		}
 		if (kind !== "progress") {
 			this.#observerUiSyncNeedsTodoReconcile = true;

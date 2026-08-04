@@ -255,8 +255,6 @@ export function assistantUsageIsBilled(usage: AssistantAgentMessage["usage"]): b
 	return false;
 }
 
-export const SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE = "subagent-hud-summary";
-
 export interface SubagentHudSummaryRow {
 	id: string;
 	roleLabel: string;

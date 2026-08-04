@@ -310,6 +310,8 @@ export const DEFAULT_CUSTOM_MESSAGE_TYPE = "custom-message";
 
 /** Custom message carrying a coding request delegated by the live voice model. */
 export const LIVE_DELEGATION_MESSAGE_TYPE = "live-delegation";
+/** Display-only transcript record for detached subagents that have settled. */
+export const SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE = "subagent-hud-summary";
 
 /** Content shape accepted for extension-injected messages. */
 export type CustomMessageContent = string | (TextContent | ImageContent)[];
@@ -1235,7 +1237,7 @@ function convertOne(m: AgentMessage, interruptedNext: boolean): Message[] {
 			return out;
 		}
 		case "custom": {
-			if (!isCustomMessageContent(m.content)) return [];
+			if (m.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE || !isCustomMessageContent(m.content)) return [];
 			if (isSteeringUserMessage(m)) {
 				const converted = convertMessageToLlm(wrapSteeringUserMessage(m));
 				return converted ? [converted] : [];
