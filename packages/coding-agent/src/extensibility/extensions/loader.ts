@@ -14,7 +14,6 @@ import type {
 	ServiceTierByFamily,
 	ServiceTierFamily,
 	TextContent,
-	TSchema,
 } from "@oh-my-pi/pi-ai";
 import type { KeyId } from "@oh-my-pi/pi-tui";
 import { hasFsCode, isEacces, isEnoent, logger } from "@oh-my-pi/pi-utils";
@@ -40,6 +39,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 	ExtensionFactory,
+	ExtensionToolParameters,
 	ExtensionRuntime as IExtensionRuntime,
 	LoadExtensionsResult,
 	MessageRenderer,
@@ -174,7 +174,9 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 		this.extension.handlers.set(event, list);
 	}
 
-	registerTool<TParams extends TSchema = TSchema, TDetails = unknown>(tool: ToolDefinition<TParams, TDetails>): void {
+	registerTool<TParams extends ExtensionToolParameters = ExtensionToolParameters, TDetails = unknown>(
+		tool: ToolDefinition<TParams, TDetails>,
+	): void {
 		const registered = {
 			definition: tool,
 			extensionPath: this.extension.path,
