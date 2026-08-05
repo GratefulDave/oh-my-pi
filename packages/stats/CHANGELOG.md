@@ -6,6 +6,12 @@
 
 - Bash Minimizer gain dashboard in `omp stats` — shows bash minimizer token-savings alongside existing snapcompact savings with stacked time series, top-filter breakdown, project selector, and missed-command tuning table ([#3691](https://github.com/can1357/oh-my-pi/pull/3691)).
 
+## [17.2.9] - 2026-08-05
+
+### Fixed
+
+- Restricted the stats dashboard to IPv4 loopback and removed wildcard CORS access to its API ([#7633](https://github.com/can1357/oh-my-pi/issues/7633)).
+
 ## [17.2.4] - 2026-08-01
 
 ### Fixed
