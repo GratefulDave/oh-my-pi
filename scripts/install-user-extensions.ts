@@ -31,6 +31,7 @@ const USER_DIR = path.join(HOME, ".omp", "agent");
 const EXT_DIR = path.join(USER_DIR, "extensions");
 const USER_SETTINGS = path.join(USER_DIR, "settings.json");
 const DRY = process.argv.includes("--dry-run");
+const PRESERVE_SETTINGS = process.argv.includes("--preserve-settings");
 
 // Derive a stable folder name from a source bundle path.
 //   packages/pi-observer/dist/observer.bundle.js   -> pi-observer
@@ -181,17 +182,21 @@ async function main(): Promise<void> {
 	// Merge into user settings.json, preserving external extension paths but making
 	// every repo-managed extension authoritative. Never rewrite config.yml here:
 	// profiles, model defaults, disabled capabilities, and symlink targets must persist.
-	const settingsJson = (await readJson<Record<string, unknown>>(USER_SETTINGS)) ?? {};
-	const settingsJsonExtensions = await mergeExtensionList(settingsJson.extensions, registered);
-	settingsJson.extensions = settingsJsonExtensions;
+	if (PRESERVE_SETTINGS) {
+		console.log(`\nPreserve ${USER_SETTINGS}`);
+	} else {
+		const settingsJson = (await readJson<Record<string, unknown>>(USER_SETTINGS)) ?? {};
+		const settingsJsonExtensions = await mergeExtensionList(settingsJson.extensions, registered);
+		settingsJson.extensions = settingsJsonExtensions;
 
-	console.log(`\n${DRY ? "[dry] " : ""}write ${USER_SETTINGS}`);
-	console.log(`  extensions (${settingsJsonExtensions.length}):`);
-	for (const e of settingsJsonExtensions) console.log(`    ${e}`);
+		console.log(`\n${DRY ? "[dry] " : ""}write ${USER_SETTINGS}`);
+		console.log(`  extensions (${settingsJsonExtensions.length}):`);
+		for (const extension of settingsJsonExtensions) console.log(`    ${extension}`);
 
-	if (!DRY) {
-		await fs.mkdir(USER_DIR, { recursive: true });
-		await fs.writeFile(USER_SETTINGS, `${JSON.stringify(settingsJson, null, 2)}\n`);
+		if (!DRY) {
+			await fs.mkdir(USER_DIR, { recursive: true });
+			await fs.writeFile(USER_SETTINGS, `${JSON.stringify(settingsJson, null, 2)}\n`);
+		}
 	}
 
 	const verifyErrors: string[] = [];

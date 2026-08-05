@@ -64,3 +64,29 @@ it("preserves registration order while replacing a managed extension", async () 
 		userExtension,
 	]);
 });
+
+it("preserves user settings when requested by the rebuild guard", async () => {
+	const home = await fs.mkdtemp(path.join(os.tmpdir(), "omp-extension-settings-"));
+	const settingsPath = path.join(home, ".omp", "agent", "settings.json");
+	const original = JSON.stringify(
+		{ extensions: ["~/.omp/agent/extensions/custom/index.js"], theme: "custom" },
+		null,
+		2,
+	);
+	try {
+		await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+		await Bun.write(settingsPath, `${original}\n`);
+
+		const child = Bun.spawn(["bun", "scripts/install-user-extensions.ts", "--preserve-settings"], {
+			cwd: path.resolve(import.meta.dir, ".."),
+			env: { ...process.env, HOME: home },
+			stderr: "pipe",
+			stdout: "pipe",
+		});
+
+		expect(await child.exited).toBe(0);
+		expect(await Bun.file(settingsPath).text()).toBe(`${original}\n`);
+	} finally {
+		await fs.rm(home, { recursive: true, force: true });
+	}
+});
