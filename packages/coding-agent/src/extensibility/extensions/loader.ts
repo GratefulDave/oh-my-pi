@@ -14,6 +14,7 @@ import type {
 	ServiceTierByFamily,
 	ServiceTierFamily,
 	TextContent,
+	TSchema,
 } from "@oh-my-pi/pi-ai";
 import type { KeyId } from "@oh-my-pi/pi-tui";
 import { hasFsCode, isEacces, isEnoent, logger } from "@oh-my-pi/pi-utils";
@@ -174,7 +175,7 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 		this.extension.handlers.set(event, list);
 	}
 
-	registerTool<TParams extends ExtensionToolParameters = ExtensionToolParameters, TDetails = unknown>(
+	registerTool<TParams extends ExtensionToolParameters = TSchema, TDetails = unknown>(
 		tool: ToolDefinition<TParams, TDetails>,
 	): void {
 		this.extension.tools.set(tool.name, {
