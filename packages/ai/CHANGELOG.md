@@ -151,6 +151,10 @@
 
 - Added Zod v3 extension-tool schema support, preserving schema-derived argument inference, validation, and provider wire conversion.
 
+### Fixed
+
+- Added Zod v3 extension-tool schema support, preserving schema-derived argument inference, validation, and provider wire conversion.
+
 ## [17.2.9] - 2026-08-05
 
 ### Fixed
