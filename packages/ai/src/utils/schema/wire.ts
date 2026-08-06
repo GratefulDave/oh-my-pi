@@ -1,27 +1,93 @@
 /**
  * Compute the wire (JSON Schema) representation of a tool's parameters.
  *
- * Tools may author parameters as ArkType schemas or legacy TypeBox / plain JSON
- * Schema documents. Both are normalized at the boundary so providers and
- * validators see the same JSON Schema dialect.
+ * Tools may author parameters in three shapes:
+ *   1. Zod (canonical) — converted to JSON Schema on demand.
+ *   2. ArkType — converted to JSON Schema via its native `toJsonSchema`.
+ *   3. TypeBox / plain JSON Schema (legacy + extension compat) — upgraded to
+ *      draft 2020-12 without converting.
+ *
+ * All four are normalized at the boundary so providers and validators see the same
+ * JSON Schema dialect.
  */
 
 import type { Type } from "@oh-my-pi/omptype";
-import type { Tool, TSchema } from "../../types";
+import type { ZodType as ZodV3Type } from "zod/v3";
+// We import the Zod *value* (z) for runtime APIs. Marker checks rely on the
+// `_zod` symbol that every Zod v4 schema instance carries.
+import { type ZodType, z } from "zod/v4";
+import { zodToJsonSchema } from "zod-to-json-schema";
+import type { Tool, TSchema, ZodV3Schema } from "../../types";
 import { upgradeJsonSchemaTo202012 } from "./draft";
 import { stamp } from "./stamps";
+
+/**
+ * True when `value` is a live Zod schema instance.
+ *
+ * The check is stricter than "has a `_zod` property" because a JSON
+ * round-trip preserves the `_zod` key as a plain object and would otherwise
+ * fool the predicate — see issue #1101, where MCP servers ship
+ * `JSON.stringify(zodSchemaInstance)` as a tool's `inputSchema` and the
+ * resulting plain object then explodes `z.toJSONSchema` because the prototype
+ * (and every Zod parsing method) is gone.
+ *
+ * Live Zod instances always carry a `.parse` function on the prototype;
+ * impostors do not.
+ */
+export function isZodSchema(value: unknown): value is ZodType {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		// Zod v4 instances expose a `_zod` internal property with a `def` object.
+		// Tagging on this marker keeps the check stable across Zod minor versions.
+		// (`_zod` is part of Zod's documented internal contract used by introspection.)
+		// We avoid checking constructor name because Zod ships multiple variants
+		// (`ZodObject`, `ZodOptional`, etc.) and a tagged-union style check would
+		// have to enumerate them all.
+		"_zod" in value &&
+		typeof value._zod === "object" &&
+		// Reject JSON-roundtripped objects that kept the `_zod` key but lost the
+		// prototype. Real instances have `.parse` on the prototype chain.
+		"parse" in value &&
+		typeof value.parse === "function"
+	);
+}
+export interface ZodV3RuntimeSchema extends ZodV3Schema {
+	readonly _def: unknown;
+	parse(input: unknown): unknown;
+	safeParse(input: unknown): { success: true; data: unknown } | { success: false; error: { issues: unknown[] } };
+}
+
+/** True when `value` is a live Zod v3 schema instance. */
+export function isZodV3Schema(value: unknown): value is ZodV3RuntimeSchema {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		!("_zod" in value) &&
+		"_def" in value &&
+		typeof value._def === "object" &&
+		"parse" in value &&
+		typeof value.parse === "function" &&
+		"safeParse" in value &&
+		typeof value.safeParse === "function"
+	);
+}
 
 /**
  * True when `value` is a live ArkType schema instance.
  *
  * ArkType schemas are callable functions carrying `toJsonSchema`/`assert`
- * methods, while raw JSON Schema is a plain object.
+ * methods. Zod v4 instances are non-callable objects (keyed off `_zod`), and
+ * raw JSON Schema is a plain object — the three are disjoint. We deliberately
+ * avoid the Standard Schema `~standard` marker because Zod v4 implements it too.
  */
 export function isArkSchema(value: unknown): value is Type {
 	return (
 		typeof value === "function" &&
-		typeof (value as { toJsonSchema?: unknown }).toJsonSchema === "function" &&
-		typeof (value as { assert?: unknown }).assert === "function"
+		"toJsonSchema" in value &&
+		typeof value.toJsonSchema === "function" &&
+		"assert" in value &&
+		typeof value.assert === "function"
 	);
 }
 
@@ -108,17 +174,42 @@ function arkJsonAstToWire(value: unknown): unknown {
 }
 
 /** Symbol-stamped caches keyed by schema object identity. */
+const kZodWireSchema = Symbol("pi.schema.zod.wire");
+const kZodV3WireSchema = Symbol("pi.schema.zod-v3.wire");
 const kJsonWireSchema = Symbol("pi.schema.json.wire");
 const kArkWireSchema = Symbol("pi.schema.ark.wire");
 const kStrippedSchema = Symbol("pi.schema.descriptions.stripped");
 
-function postProcessJsonSchema(schema: Record<string, unknown>): Record<string, unknown> {
-	walk(schema);
+/**
+ * Post-process Zod-emitted JSON Schema so it matches the wire shape providers
+ * already expect from TypeBox-authored tools:
+ *
+ *   - Drop the `$schema` URL (providers parse the body, not the metadata).
+ *   - Make fields with a `default` non-required (TypeBox/JSON-Schema semantics
+ *     treat defaulted fields as optional; Zod inverts this and keeps them
+ *     required at the input boundary, then materializes the default).
+ *   - Strip the noisy safe-integer bounds Zod injects for `z.number().int()`.
+ *
+ * The empty-schema normalization (`{}` → `true`, see `normalizeEmptySchemas`)
+ * runs separately from `toolWireSchema` so both Zod and TypeBox tools get it.
+ */
+function postProcess(schema: Record<string, unknown>): Record<string, unknown> {
+	delete schema.$schema;
+	walk(schema, true);
 	normalizeArkPropertyComments(schema);
 	normalizeEmptySchemas(schema);
 	return schema;
 }
 
+function postProcessJsonSchema(schema: Record<string, unknown>): Record<string, unknown> {
+	walk(schema, false);
+	normalizeArkPropertyComments(schema);
+	normalizeEmptySchemas(schema);
+	return schema;
+}
+
+const SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
+const SAFE_INTEGER_MIN = Number.MIN_SAFE_INTEGER;
 const NULLABLE_SCALAR_TYPES = new Set(["string", "number", "integer", "boolean"]);
 
 const SCHEMA_DEFINING_SIBLING_KEYS = new Set([
@@ -161,6 +252,11 @@ function isNullVariant(schema: Record<string, unknown>): boolean {
 function isScalarVariant(schema: Record<string, unknown>): schema is Record<string, unknown> & { type: string } {
 	return typeof schema.type === "string" && NULLABLE_SCALAR_TYPES.has(schema.type);
 }
+
+function hasIntegerType(type: unknown): boolean {
+	return type === "integer" || (Array.isArray(type) && type.includes("integer"));
+}
+
 function copyNullableScalarConstraints(schema: Record<string, unknown>, scalarVariant: Record<string, unknown>): void {
 	for (const key in scalarVariant) {
 		if (key === "type" || key === "enum" || key === "const" || Object.hasOwn(schema, key)) continue;
@@ -416,9 +512,9 @@ function collapseConstUnionAnyOf(obj: Record<string, unknown>): void {
 	}
 }
 
-function walk(node: unknown): void {
+function walk(node: unknown, zodCleanup: boolean): void {
 	if (Array.isArray(node)) {
-		for (const child of node) walk(child);
+		for (const child of node) walk(child, zodCleanup);
 		return;
 	}
 	if (!node || typeof node !== "object") return;
@@ -426,16 +522,48 @@ function walk(node: unknown): void {
 	rewriteNullableScalarAnyOf(obj);
 	inferBareEnumScalarType(obj);
 	collapseConstUnionAnyOf(obj);
-	for (const k in obj) walk(obj[k]);
+
+	if (zodCleanup) {
+		// Drop noise injected for `z.number().int()`.
+		if (hasIntegerType(obj.type)) {
+			if (obj.minimum === SAFE_INTEGER_MIN) delete obj.minimum;
+			if (obj.maximum === SAFE_INTEGER_MAX) delete obj.maximum;
+		}
+
+		// Make defaulted properties non-required.
+		if (Array.isArray(obj.required) && obj.properties && typeof obj.properties === "object") {
+			const properties = obj.properties as Record<string, unknown>;
+			const required = obj.required as string[];
+			const filtered = required.filter(name => {
+				const propertySchema = properties[name];
+				if (!propertySchema || typeof propertySchema !== "object") return true;
+				return !("default" in (propertySchema as Record<string, unknown>));
+			});
+			if (filtered.length !== required.length) {
+				if (filtered.length === 0) {
+					delete obj.required;
+				} else {
+					obj.required = filtered;
+				}
+			}
+		}
+	}
+
+	for (const k in obj) walk(obj[k], zodCleanup);
 }
 
 /**
- * Normalize `{}` (an unconstrained schema) to boolean `true` in every
- * schema-valued position. JSON Schema draft 2020-12 §4.3.1 defines them as
- * semantically equivalent. Grammar-constrained samplers often treat the object
- * form as "generate an empty object" rather than "any JSON value".
+ * Normalize `{}` (empty JSON Schema = `z.unknown()` / unconstrained value) to
+ * boolean `true` in every schema-valued position. JSON Schema draft 2020-12
+ * §4.3.1: `{}` and `true` are semantically equivalent ("any JSON value").
+ * Grammar-constrained samplers (llama.cpp, etc.) treat the object form as
+ * "generate an empty object" rather than "any JSON value", causing open-typed
+ * fields like `extra.title` (from `z.record(z.string(), z.unknown())`) to
+ * always emit `{}` instead of the intended string/number/etc. (issue #1179).
  *
- * Mutates in place and applies to every tool wire schema.
+ * Mutates in place. Provider-agnostic — applied to every tool wire schema so
+ * Anthropic, Google, OpenAI, Ollama, Bedrock, and Cursor all see the
+ * normalized form, regardless of whether the source was Zod or TypeBox.
  */
 export function normalizeEmptySchemas(node: unknown): void {
 	if (Array.isArray(node)) {
@@ -468,10 +596,35 @@ export function normalizeEmptySchemas(node: unknown): void {
 	for (const k in obj) normalizeEmptySchemas(obj[k]);
 }
 
+/** Convert a Zod schema into the JSON Schema shape providers consume. */
+export function zodToWireSchema(schema: ZodType): Record<string, unknown> {
+	return stamp(schema, kZodWireSchema, s => {
+		// `target: "draft-2020-12"` matches what Anthropic's `input_schema` validator
+		// requires out of the box; our other provider sanitizers (OpenAI strict,
+		// Google, Anthropic CCA) already handle the superset structurally.
+		const raw = z.toJSONSchema(s, { target: "draft-2020-12" }) as Record<string, unknown>;
+		return postProcess(raw);
+	});
+}
+
+/** Convert a Zod v3 schema into the JSON Schema shape providers consume. */
+export function zodV3ToWireSchema(schema: ZodV3RuntimeSchema): Record<string, unknown> {
+	return stamp(schema, kZodV3WireSchema, s => {
+		// The structural extension contract is deliberately broader than this
+		// dependency's nominal type so separately installed Zod v3 copies work.
+		const zodSchema = s as ZodV3Type;
+		const raw = zodToJsonSchema(zodSchema);
+		const upgraded = upgradeJsonSchemaTo202012(raw);
+		return postProcess(isSchemaRecord(upgraded) ? upgraded : {});
+	});
+}
+
 /**
  * Recursively set `additionalProperties: false` on declared object nodes so the
- * model-facing wire is closed. Only nodes that declare `properties` and carry
- * neither `additionalProperties` nor `patternProperties` are closed.
+ * model-facing wire matches Zod's closed emission. Only nodes that declare
+ * `properties` and carry neither `additionalProperties` nor `patternProperties`
+ * are closed — open record/index nodes (which already carry one of those, e.g.
+ * `additionalProperties: true` after empty-schema normalization) stay open.
  *
  * Traverses only schema-valued positions via the shared traversal-key constants
  * so it never descends into `default`/`examples`/`enum`/`const` instance data.
@@ -581,6 +734,14 @@ function pruneArkUndefinedUnionBranches(node: unknown): void {
 
 /**
  * Convert an ArkType schema into the JSON Schema shape providers consume.
+ *
+ * Mirrors {@link zodToWireSchema}: emit draft-2020-12, drop the `$schema`
+ * metadata, run the JSON-schema post-process (NOT the Zod-only cleanup), then
+ * close declared objects so the wire is `additionalProperties: false` like Zod.
+ *
+ * The `fallback` degrades any un-emittable node (a `.narrow()` predicate or a
+ * morph) to its underlying base schema instead of throwing — matching Zod,
+ * whose `.refine()`/`.transform()` likewise never appear in the wire schema.
  */
 export function arkToWireSchema(schema: Type): Record<string, unknown> {
 	return stamp(schema, kArkWireSchema, s => {
@@ -595,12 +756,17 @@ export function arkToWireSchema(schema: Type): Record<string, unknown> {
 
 /**
  * Resolve a tool's parameters to a JSON Schema object suitable for sending
- * over the wire. ArkType schemas are converted and cached; legacy TypeBox /
- * raw JSON Schema parameters are upgraded to draft 2020-12 and cached.
+ * over the wire. Zod schemas are converted (and cached); legacy TypeBox / raw
+ * JSON Schema parameters are upgraded to draft 2020-12 (and cached).
+ *
+ * Zod schemas also receive Zod-artifact cleanup; both branches normalize
+ * schema-valued positions and nullable scalar unions.
  */
 export function toolWireSchema(tool: Tool): Record<string, unknown> {
 	const params: TSchema = tool.parameters;
 	if (isArkSchema(params)) return arkToWireSchema(params);
+	if (isZodSchema(params)) return zodToWireSchema(params);
+	if (isZodV3Schema(params)) return zodV3ToWireSchema(params);
 	return stamp(params as Record<string, unknown>, kJsonWireSchema, p => {
 		const raw = isArkJsonAst(p) ? arkJsonAstToWire(p) : p;
 		const upgraded = upgradeJsonSchemaTo202012(raw) as Record<string, unknown>;

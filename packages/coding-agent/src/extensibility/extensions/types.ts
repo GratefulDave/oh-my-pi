@@ -571,13 +571,10 @@ export interface ToolSessionEvent {
 	previousSessionFile: string | undefined;
 }
 
-/** Schema forms accepted from extension tools, including the host's Zod-compatible facade. */
-export type ExtensionToolParameters = TSchema | zod.ZodLikeSchema<unknown>;
-
 /**
  * Tool definition for registerTool().
  */
-export interface ToolDefinition<TParams extends ExtensionToolParameters = TSchema, TDetails = unknown> {
+export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown> {
 	/** Tool name (used in LLM tool calls) */
 	name: string;
 	/** Human-readable label for UI */
@@ -1258,9 +1255,7 @@ export interface ExtensionAPI {
 	// =========================================================================
 
 	/** Register a tool that the LLM can call. */
-	registerTool<TParams extends ExtensionToolParameters = TSchema, TDetails = unknown>(
-		tool: ToolDefinition<TParams, TDetails>,
-	): void;
+	registerTool<TParams extends TSchema = TSchema, TDetails = unknown>(tool: ToolDefinition<TParams, TDetails>): void;
 
 	/**
 	 * Register a fallback writer consulted when a native `write`/`edit` byte-write is

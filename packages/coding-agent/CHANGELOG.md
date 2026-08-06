@@ -356,6 +356,10 @@
 - Fixed persisted Agent Hub rows losing the explicit caller model role when a subagent used a model override, preserving role provenance across restarts.
 - Fixed unobserved promise rejections in browser helpers (such as `tab.waitForResponse()`) causing tab workers to hang or crash.
 
+### Fixed
+
+- Fixed extensions using external Zod v3 schemas being rejected when registering tools.
+
 ## [17.2.9] - 2026-08-05
 
 ### Breaking Changes
