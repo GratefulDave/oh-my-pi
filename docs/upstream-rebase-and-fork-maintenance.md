@@ -88,20 +88,6 @@ Pattern: wherever `overrideModelRoles` is wired, `replaceModelRoles` must be wir
 
 ---
 
-### Patch 2: `bash.ts` env type widening (`Record<string, unknown>`)
-
-**Why**: `formatBashEnvAssignments` / `getBashEnvForDisplay` / `resolveEnv` typed as
-`Record<string, string>` upstream, but env values may arrive as non-string (number, boolean)
-from some extension providers. Widening to `unknown` + `String(value)` prevents a runtime crash.
-
-**Files**:
-- `packages/coding-agent/src/tools/bash.ts`
-
-**Verify**: `grep 'unknown' packages/coding-agent/src/tools/bash.ts | grep -c 'Record'` → 3.
-
-**Conflict risk**: low — upstream is unlikely to change this signature; if it does, re-apply widening.
-
----
 
 ### Patch 3: Subagent HUD — spinner, settle summary, activity rows
 
