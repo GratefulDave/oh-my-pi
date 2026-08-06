@@ -39,16 +39,15 @@ describe("bashToolRenderer", () => {
 		const theme = await getThemeByName("dark");
 		expect(theme).toBeDefined();
 		const uiTheme = theme!;
-		const args = {
-			command: 'echo "$DEBUG"',
-			env: { DEBUG: true },
-		} as unknown as Parameters<typeof bashToolRenderer.renderCall>[0];
-		const component = bashToolRenderer.renderCall(args, { expanded: false, isPartial: false }, uiTheme);
+		const component = bashToolRenderer.renderCall(
+			{ command: 'echo "$DEBUG"', env: { DEBUG: true } },
+			{ expanded: false, isPartial: false },
+			uiTheme,
+		);
 		const rendered = sanitizeText(component.render(120).join("\n"));
 		expect(rendered).toContain('DEBUG="true"');
 		expect(rendered).toContain('echo "$DEBUG"');
 	});
-
 	it("shows partial env assignments while tool args are still streaming", async () => {
 		const theme = await getThemeByName("dark");
 		expect(theme).toBeDefined();
