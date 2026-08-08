@@ -434,6 +434,7 @@ fn run_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<MinimizerR
 	}
 	None
 }
+
 #[cfg(test)]
 mod tests {
 	use std::time::Duration;
@@ -521,6 +522,48 @@ mod tests {
 			.await
 			.expect("pump should exit after forward fails")
 			.expect("pump task");
+	}
+
+	#[test]
+	fn apply_shell_minimizer_surfaces_rewrite_with_original() {
+		let captured = "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n";
+		let result = super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
+			command:   "git diff".to_string(),
+			captured:  captured.to_string(),
+			exit_code: Some(0),
+			minimizer: Some(super::MinimizerOptions { enabled: Some(true), ..Default::default() }),
+		})
+		.expect("an enabled, supported command should surface a rewrite");
+		assert_eq!(result.filter, "git");
+		// A genuine rewrite carries the untouched capture in `original_text`
+		// and a strictly different minimized `text`.
+		assert_eq!(result.original_text, captured);
+		assert_ne!(result.text, result.original_text);
+		assert_eq!(result.input_bytes as usize, captured.len());
+	}
+
+	#[test]
+	fn apply_shell_minimizer_returns_none_when_disabled() {
+		// `enabled: false` keeps the engine in passthrough — no telemetry.
+		assert!(
+			super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
+				command:   "git diff".to_string(),
+				captured:  "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n".to_string(),
+				exit_code: Some(0),
+				minimizer: Some(super::MinimizerOptions { enabled: Some(false), ..Default::default() }),
+			})
+			.is_none()
+		);
+		// A missing minimizer handle is also a no-op.
+		assert!(
+			super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
+				command:   "git diff".to_string(),
+				captured:  "diff --git a/file.rs b/file.rs\n".to_string(),
+				exit_code: Some(0),
+				minimizer: None,
+			})
+			.is_none()
+		);
 	}
 
 	#[test]
