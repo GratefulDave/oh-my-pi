@@ -279,28 +279,7 @@ export declare function __ompInstallTokioRuntime(): void
  * `packages/natives/native/index.js` (which derives the name from
  * `package.json#version`).
  */
-export declare function __piNativesV17_2_10_lex(): void
-
-/**
- * Run the shell-output minimizer over an already-captured command result,
- * without spawning a shell.
- *
- * This is the one-shot counterpart to the minimization that
- * [`execute_shell`] performs inline: callers that captured a command's output
- * elsewhere can pass it here to obtain the same telemetry.
- *
- * Returns [`MinimizerResult`] **only** when the minimizer actually rewrote the
- * output (`changed == true`) and retained the original buffer, mirroring the
- * persistent-shell path. Returns `null` for every no-op case: when
- * `minimizer` is omitted, when the config is disabled, or when the filter
- * passes the output through unchanged. A missing `exit_code` is treated as
- * success (`0`).
- *
- * Async (returns a Promise): minimization can scan multi-megabyte captured
- * output, so the work runs on a blocking pool to avoid stalling the JS event
- * loop.
- */
-export declare function applyShellMinimizer(options: ShellMinimizerApplyOptions): Promise<MinimizerResult | null>
+export declare function __piNativesV17_2_11_lex(): void
 
 /**
  * Apply ast-grep rewrite rules to matching files; honors `dryRun` and returns
@@ -723,8 +702,10 @@ export interface DesktopSessionOptions {
 /** One capturable top-level window in global logical desktop coordinates. */
 export interface DesktopWindow {
   /**
-   * Stable numeric window id, valid as a capture target while the window
-   * lives.
+   * Backend-defined opaque window id, valid as a capture target while the
+   * window lives. Numeric on X11/Win32/macOS; a composite AT-SPI string on
+   * Wayland (e.g. `atspi::1.31:/org/a11y/atspi/accessible/1`). Never parse
+   * it.
    */
   id: string
   /** Window title; may be empty for untitled windows. */
@@ -1791,21 +1772,6 @@ export interface ShellExecuteOptions {
   signal?: unknown
 }
 
-/**
- * Inputs for [`apply_shell_minimizer`]: a captured command's text plus the
- * minimizer configuration to run against it.
- */
-export interface ShellMinimizerApplyOptions {
-  /** The command line that produced `captured` (used to select a filter). */
-  command: string
-  /** The full captured stdout/stderr to minimize. */
-  captured: string
-  /** The command's exit status; omitted is treated as success (`0`). */
-  exitCode?: number
-  /** Minimizer configuration; when omitted the call is a no-op (`null`). */
-  minimizer?: MinimizerOptions
-}
-
 /** Options for configuring a persistent shell session. */
 export interface ShellOptions {
   /** Environment variables to apply once per session. */
@@ -1845,11 +1811,6 @@ export interface ShellRunResult {
    * minimized text shown to the agent. `None` when nothing was rewritten.
    */
   minimized?: MinimizerResult
-  /**
-   * Whether the native minimizer captured the command without exceeding its
-   * cap.
-   */
-  minimizerEligible?: boolean
   /** Shell working directory after command completion. */
   workingDir?: string
 }

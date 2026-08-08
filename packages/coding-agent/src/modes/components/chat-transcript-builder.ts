@@ -63,6 +63,8 @@ import { CollapsedSyntheticMessageComponent, UserMessageComponent } from "./user
 export interface ChatTranscriptBuilderDeps {
 	ui: TUI;
 	getTool?: (name: string) => AgentTool | undefined;
+	/** Whether the active registry entry came from a built-in factory. */
+	isBuiltInTool?: (name: string) => boolean;
 	getMessageRenderer?: (customType: string) => MessageRenderer | undefined;
 	cwd: string;
 	hideThinkingBlock?: () => boolean;
@@ -394,6 +396,7 @@ export class ChatTranscriptBuilder {
 				content.name,
 				content.arguments,
 				{
+					useBuiltInRenderer: this.deps.isBuiltInTool?.(content.name) ?? true,
 					// Stable ids and Kitty placeholder cells keep images anchored
 					// while the transcript viewport scrolls and reflows.
 					showImages: settings.get("terminal.showImages"),
