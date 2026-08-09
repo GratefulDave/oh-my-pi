@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/pi-utils",
-	"version": "17.2.11-lex",
+	"version": "17.2.12-lex",
 	"description": "Shared utilities for pi packages",
 	"homepage": "https://omp.sh",
 	"author": "Can Boluk",
@@ -31,7 +31,7 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-natives": "^17.2.11-lex"
+		"@oh-my-pi/pi-natives": "^17.2.12-lex"
 	},
 	"devDependencies": {
 		"@types/bun": "catalog:"
