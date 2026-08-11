@@ -24,4 +24,24 @@ describe("Zod v3 tool schemas", () => {
 		});
 		expect(arguments_).toEqual({ message: "hello" });
 	});
+
+	it("coerces nested union members without duplicating Zod v3 issue paths", () => {
+		const unionParameters = z.object({
+			value: z.union([z.object({ ids: z.array(z.string()) }), z.object({ id: z.string() })]),
+		});
+		const unionTool: Tool<typeof unionParameters> = {
+			name: "zod-v3-union",
+			description: "",
+			parameters: unionParameters,
+		};
+
+		const arguments_ = validateToolArguments(unionTool, {
+			type: "toolCall",
+			id: "zod-v3-union-coercion",
+			name: unionTool.name,
+			arguments: { value: { ids: "one" } },
+		});
+
+		expect(arguments_).toEqual({ value: { ids: ["one"] } });
+	});
 });

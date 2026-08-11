@@ -1455,19 +1455,31 @@ function isZodIssue(value: unknown): value is ZodIssue {
 	);
 }
 
-function zodUnionBranches(issue: ZodIssue): ReadonlyArray<ReadonlyArray<ZodIssue>> {
+interface ZodUnionBranch {
+	issues: ReadonlyArray<ZodIssue>;
+	pathsAreAbsolute: boolean;
+}
+
+function zodUnionBranches(issue: ZodIssue): ReadonlyArray<ZodUnionBranch> {
 	if ("errors" in issue && Array.isArray(issue.errors)) {
-		return issue.errors.map(branch => (Array.isArray(branch) ? branch.filter(isZodIssue) : []));
+		return issue.errors.map(branch => ({
+			issues: Array.isArray(branch) ? branch.filter(isZodIssue) : [],
+			pathsAreAbsolute: false,
+		}));
 	}
 	if ("unionErrors" in issue && Array.isArray(issue.unionErrors)) {
 		return issue.unionErrors.flatMap(error => {
 			if (typeof error === "object" && error !== null && "issues" in error && Array.isArray(error.issues)) {
-				return [error.issues.filter(isZodIssue)];
+				return [{ issues: error.issues.filter(isZodIssue), pathsAreAbsolute: true }];
 			}
 			return [];
 		});
 	}
 	return [];
+}
+
+function pathsEqual(left: ReadonlyArray<PropertyKey>, right: ReadonlyArray<PropertyKey>): boolean {
+	return left.length === right.length && left.every((part, index) => part === right[index]);
 }
 
 function flattenIssues(issues: ReadonlyArray<ZodIssue>): FlatIssue[] {
@@ -1502,9 +1514,13 @@ function flattenIssues(issues: ReadonlyArray<ZodIssue>): FlatIssue[] {
 			// sits at the union node's own path. Issues whose own path is
 			// non-empty live on a deeper field that an already-identified
 			// branch owns, so the singleton-array repair should still apply.
-			for (const branch of zodUnionBranches(issue)) {
+			for (const { issues: branch, pathsAreAbsolute } of zodUnionBranches(issue)) {
 				for (const child of branch) {
-					walk(child, fullPath, child.path.length === 0);
+					walk(
+						child,
+						pathsAreAbsolute ? [] : fullPath,
+						pathsAreAbsolute ? pathsEqual(child.path, fullPath) : child.path.length === 0,
+					);
 				}
 			}
 			return;
