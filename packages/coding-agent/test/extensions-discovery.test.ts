@@ -232,6 +232,17 @@ describe("extensions discovery", () => {
 		}
 	});
 
+	it("honors disabled IDs for explicit extension files", async () => {
+		const extensionPath = path.join(tempDir.path(), "disabled-extension.ts");
+		fs.writeFileSync(extensionPath, extensionCode);
+
+		await expect(
+			discoverExtensionPaths([extensionPath], tempDir.path(), ["extension-module:disabled-extension"], {
+				ambient: false,
+			}),
+		).resolves.toEqual([]);
+	});
+
 	it("discovers a symlinked extension package directory", async () => {
 		const packageDir = path.join(tempDir.path(), "linked-package");
 		const sourceDir = path.join(packageDir, "src");

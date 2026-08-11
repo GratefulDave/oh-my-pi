@@ -54,6 +54,40 @@ installLegacyPiSpecifierShim();
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 type LoadedExtensionModule = ExtensionFactory | { default?: ExtensionFactory };
 
+/**
+ * Maximum time an extension module import or factory may await during startup.
+ *
+ * Compiled binaries may cold-load a legacy host-compatibility module before an
+ * extension factory runs. Preserve a finite guard without rejecting that load.
+ */
+export const EXTENSION_LOAD_TIMEOUT_MS = 30_000;
+let extensionLoadTimeoutMs = EXTENSION_LOAD_TIMEOUT_MS;
+
+/** Test-only override; production always uses {@link EXTENSION_LOAD_TIMEOUT_MS}. */
+export function testSetExtensionLoadTimeoutMs(timeoutMs: number): void {
+	extensionLoadTimeoutMs = timeoutMs;
+}
+
+/**
+ * Bound asynchronous extension initialization so one unresolved import or
+ * factory cannot block every later extension and the whole CLI startup.
+ *
+ * This cannot preempt synchronous JavaScript or native work. Timed-out work
+ * may still settle later, but the loader releases its host guard immediately
+ * and treats that extension as unavailable for the current session.
+ */
+async function raceExtensionLoadTimeout<T>(phase: string, run: () => Promise<T>): Promise<T> {
+	const { promise: timeoutPromise, reject: rejectTimeout } = Promise.withResolvers<never>();
+	const timer = setTimeout(() => {
+		rejectTimeout(new Error(`Extension ${phase} timed out after ${extensionLoadTimeoutMs}ms`));
+	}, extensionLoadTimeoutMs);
+	try {
+		return await Promise.race([run(), timeoutPromise]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 function getExtensionFactory(module: LoadedExtensionModule): ExtensionFactory | null {
 	const candidate = typeof module === "function" ? module : module.default;
 	return typeof candidate === "function" ? candidate : null;
@@ -381,7 +415,9 @@ interface ImportedExtensionModule {
 async function importExtensionModule(extensionPath: string, cwd: string): Promise<ImportedExtensionModule> {
 	const resolvedPath = resolvePath(extensionPath, cwd);
 	try {
-		const module = (await withHostGuard(() => loadLegacyPiModule(resolvedPath))) as LoadedExtensionModule;
+		const module = (await withHostGuard(() =>
+			raceExtensionLoadTimeout("module import", () => loadLegacyPiModule(resolvedPath)),
+		)) as LoadedExtensionModule;
 		const factory = getExtensionFactory(module);
 
 		if (typeof factory !== "function") {
@@ -413,7 +449,7 @@ async function bindExtension(
 	try {
 		const extension = createExtension(extensionPath, imported.resolvedPath);
 		const api = new ConcreteExtensionAPI(PiCodingAgent, extension, runtime, cwd, eventBus);
-		await withHostGuard(() => runExtensionFactory(factory, api, runtime));
+		await withHostGuard(() => raceExtensionLoadTimeout("factory", () => runExtensionFactory(factory, api, runtime)));
 
 		return { extension, error: null };
 	} catch (err) {
@@ -439,12 +475,8 @@ export async function loadExtensionFromFactory(
 }
 
 /**
- * Load extensions from paths.
- *
- * Module import (the dominant cold-start cost — file I/O plus module
- * evaluation) runs concurrently across extensions; factory binding then runs
- * sequentially in the original path order, so registration semantics
- * (last-wins collisions, shared runtime flag defaults) stay deterministic.
+ * Import extension modules concurrently, then bind factories in discovery order
+ * so registration remains deterministic.
  */
 export async function loadExtensions(paths: string[], cwd: string, eventBus?: EventBus): Promise<LoadExtensionsResult> {
 	const extensions: Extension[] = [];
@@ -452,11 +484,19 @@ export async function loadExtensions(paths: string[], cwd: string, eventBus?: Ev
 	const resolvedEventBus = eventBus ?? new EventBus();
 	const runtime = new ExtensionRuntime();
 
-	const imported = await Promise.all(paths.map(extPath => importExtensionModule(extPath, cwd)));
+	const imported = await Promise.all(
+		paths.map(extensionPath =>
+			logger.time(`importExtension:${path.basename(extensionPath)}`, () =>
+				importExtensionModule(extensionPath, cwd),
+			),
+		),
+	);
 
 	for (let i = 0; i < paths.length; i++) {
 		const extPath = paths[i]!;
-		const { extension, error } = await bindExtension(extPath, imported[i]!, cwd, resolvedEventBus, runtime);
+		const { extension, error } = await logger.time(`bindExtension:${path.basename(extPath)}`, () =>
+			bindExtension(extPath, imported[i]!, cwd, resolvedEventBus, runtime),
+		);
 
 		if (error) {
 			errors.push({ path: extPath, error });
@@ -579,6 +619,8 @@ async function discoverExtensionsInDir(dir: string): Promise<string[]> {
 		logger.warn("Failed to discover extensions in directory", { path: dir, error: String(err) });
 		return [];
 	}
+
+	entries.sort((left, right) => left.name.localeCompare(right.name));
 
 	for (const entry of entries) {
 		const entryPath = path.join(dir, entry.name);
@@ -728,7 +770,9 @@ export async function discoverExtensionPaths(
 			continue;
 		}
 
-		addPath(resolved);
+		if (!isDisabledName(getExtensionNameFromPath(resolved))) {
+			addPath(resolved);
+		}
 	}
 
 	return allPaths;

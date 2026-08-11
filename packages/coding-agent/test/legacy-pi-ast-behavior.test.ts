@@ -401,6 +401,28 @@ describe("legacy Pi Babel AST behavior baseline", () => {
 		}
 	});
 
+	test("leaves type-only module references unresolved", async () => {
+		const source = [
+			'import type { EntryType } from "tracked-dep";',
+			'import { type SpecifierType } from "tracked-dep";',
+			'import { type MixedType, value } from "tracked-dep";',
+			'export type { EntryType } from "tracked-dep";',
+			'export { type SpecifierType } from "tracked-dep";',
+			'export { type MixedType, value as exportedValue } from "tracked-dep";',
+		].join("\n");
+
+		expect(await __rewriteLegacyExtensionSourceForTests(source, rewriteImporter)).toBe(
+			[
+				'import type { EntryType } from "tracked-dep";',
+				'import { type SpecifierType } from "tracked-dep";',
+				`import { type MixedType, value } from ${JSON.stringify(importTarget)};`,
+				'export type { EntryType } from "tracked-dep";',
+				'export { type SpecifierType } from "tracked-dep";',
+				`export { type MixedType, value as exportedValue } from ${JSON.stringify(importTarget)};`,
+			].join("\n"),
+		);
+	});
+
 	test("discovers exact CommonJS named exports with Babel binding semantics", async () => {
 		for (const testCase of commonJsCases) {
 			const actual = await loadCommonJsCase(testCase);

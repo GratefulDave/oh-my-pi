@@ -9,7 +9,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { loadExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
+import {
+	EXTENSION_LOAD_TIMEOUT_MS,
+	loadExtensions,
+	testSetExtensionLoadTimeoutMs,
+} from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 import { loadHooks } from "@oh-my-pi/pi-coding-agent/extensibility/hooks/loader";
 import { ExtensionExitError, withHostGuard } from "@oh-my-pi/pi-coding-agent/extensibility/utils";
 import { TempDir } from "@oh-my-pi/pi-utils";
@@ -22,6 +26,7 @@ describe("extension/hook loader process.exit guard (#3680)", () => {
 	});
 
 	afterEach(() => {
+		testSetExtensionLoadTimeoutMs(EXTENSION_LOAD_TIMEOUT_MS);
 		project?.removeSync();
 		project = undefined;
 	});
@@ -152,6 +157,44 @@ void withHostGuard(async () => {
 
 		expect(result.errors.map(e => e.path)).toEqual([bad]);
 		expect(result.extensions.map(e => path.basename(e.path))).toEqual(["good-extension.ts"]);
+	});
+
+	it("skips an extension whose factory never settles", async () => {
+		testSetExtensionLoadTimeoutMs(250);
+		const hung = writeModule(
+			"hung-extension.ts",
+			"export default async function() { const pending = Promise.withResolvers<void>(); await pending.promise; }\n",
+		);
+		const good = writeModule(
+			"good-extension.ts",
+			"export default function(pi) { pi.registerCommand('ok', { handler: async () => {} }); }\n",
+		);
+
+		const result = await loadExtensions([hung, good], project!.path());
+
+		expect(result.errors).toHaveLength(1);
+		expect(result.errors[0].path).toBe(hung);
+		expect(result.errors[0].error).toContain("factory timed out after 250ms");
+		expect(result.extensions.map(extension => path.basename(extension.path))).toEqual(["good-extension.ts"]);
+	});
+
+	it("skips an extension whose module import never settles", async () => {
+		testSetExtensionLoadTimeoutMs(250);
+		const hung = writeModule(
+			"hung-import-extension.ts",
+			"const pending = Promise.withResolvers<void>(); await pending.promise; export default function() {}\n",
+		);
+		const good = writeModule(
+			"good-extension.ts",
+			"export default function(pi) { pi.registerCommand('ok', { handler: async () => {} }); }\n",
+		);
+
+		const result = await loadExtensions([hung, good], project!.path());
+
+		expect(result.errors).toHaveLength(1);
+		expect(result.errors[0].path).toBe(hung);
+		expect(result.errors[0].error).toContain("module import timed out after 250ms");
+		expect(result.extensions.map(extension => path.basename(extension.path))).toEqual(["good-extension.ts"]);
 	});
 
 	it("restores process.exit after a synchronous throw inside the guarded callback", async () => {

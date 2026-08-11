@@ -4,6 +4,7 @@
 
 ### Fixed
 - Fixed terminal selection copying leading whitespace into assistant fenced-code rows, which could prevent pasted heredoc terminators from closing.
+- Fixed compiled-binary legacy extensions stalling during host compatibility imports and ensured disabled explicit extension files stay disabled.
 
 ## [17.2.12] - 2026-08-08
 

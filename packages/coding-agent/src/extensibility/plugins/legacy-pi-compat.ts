@@ -460,6 +460,23 @@ function staticObjectPropertyName(node: StructuralAstNode): string | null {
 	return key?.type === "StringLiteral" && typeof key.value === "string" ? key.value : null;
 }
 
+/**
+ * TypeScript removes type-only module references before runtime resolution.
+ * Rewriting them can force compiled binaries to hydrate legacy host modules
+ * that the extension never imports at runtime.
+ */
+function isTypeOnlyModuleDeclaration(node: StructuralAstNode): boolean {
+	if (node.importKind === "type" || node.exportKind === "type") return true;
+	const specifiers = Array.isArray(node.specifiers) ? node.specifiers : [];
+	return (
+		specifiers.length > 0 &&
+		specifiers.every(value => {
+			const specifier = asAstNode(value);
+			return specifier?.importKind === "type" || specifier?.exportKind === "type";
+		})
+	);
+}
+
 function collectExtensionSpecifierReferences(
 	source: string,
 	importerPath: string,
@@ -501,9 +518,10 @@ function collectExtensionSpecifierReferences(
 	}
 	for (const { node, scope } of collectScopedAstNodes(ast, isSpecifierReferenceNode)) {
 		if (
-			node.type === "ImportDeclaration" ||
-			node.type === "ExportNamedDeclaration" ||
-			node.type === "ExportAllDeclaration"
+			(node.type === "ImportDeclaration" ||
+				node.type === "ExportNamedDeclaration" ||
+				node.type === "ExportAllDeclaration") &&
+			!isTypeOnlyModuleDeclaration(node)
 		) {
 			record("import", node.source);
 		} else if (node.type === "ImportExpression") {
@@ -1000,9 +1018,6 @@ async function rewriteLegacyExtensionSource(
 	mtimeTag: string | null = null,
 	resolvedImportMtimeTag: string | null = mtimeTag,
 ): Promise<string> {
-	// Compiled mode completes the override map from the build-supplied module
-	// keys on first use; every rewrite path must see the full map.
-	await ensureLegacyPiOverridesReady();
 	const references = collectExtensionSpecifierReferences(source, importerPath);
 	const replacements: Array<ExtensionSpecifierReference & { replacement: string }> = [];
 	for (const reference of references) {
@@ -1012,6 +1027,7 @@ async function rewriteLegacyExtensionSource(
 		let replacement: string | null = null;
 		const remappedSpecifier = remapLegacyPiSpecifier(specifier);
 		if (remappedSpecifier) {
+			await ensureLegacyPiOverridesReady();
 			try {
 				replacement = toImportSpecifier(resolveCanonicalPiSpecifier(remappedSpecifier));
 			} catch {
@@ -1701,6 +1717,7 @@ async function resolveExtensionCommonJsRequire(specifier: string, importerPath: 
 	}
 	const remappedSpecifier = remapLegacyPiSpecifier(specifier);
 	if (remappedSpecifier) {
+		await ensureLegacyPiOverridesReady();
 		try {
 			const resolved = resolveCanonicalPiSpecifier(remappedSpecifier);
 			if (isBundledVirtualSpecifier(resolved)) {
@@ -1820,6 +1837,7 @@ const commonJsFallbackModulePaths = new Map<string, string>();
 const extensionSynchronousSpecifierTargets = new Map<string, Map<string, string>>();
 const synchronousModuleSources = new Map<string, string>();
 const commonJsGraphModulePaths = new Set<string>();
+
 const COMMONJS_REQUIRE_GLOBAL = "__ompLegacyPiRequireGraphModule";
 const commonJsModuleDefinitions = new Map<string, { source: string; filename: string; dirname: string }>();
 const commonJsModuleCache = new Map<
@@ -2544,7 +2562,6 @@ export async function loadLegacyPiModule(resolvedPath: string): Promise<unknown>
 	// `bun link`/pnpm installs) so the rewrite filter matches the path Bun
 	// actually hands the hook.
 	const entryRealPath = await realpathOrSelf(path.resolve(resolvedPath));
-	await ensureLegacyPiOverridesReady();
 	const pendingSources = await ensureExtensionGraphHook(entryRealPath);
 	try {
 		// Dynamic import is required: legacy extension entry paths are user/plugin supplied at runtime.
