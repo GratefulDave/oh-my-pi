@@ -125,15 +125,16 @@ export class BashRunner {
 				// Native capture eligibility accounts for user-shell wrapping,
 				// prefixes, filters, pipelines, and the output capture cap.
 				if (savedGain.info) {
-					// Flush saved record with real exitCode now that the result is known.
+					// Flush saved record once the final output bytes and exit code are known.
 					const info = savedGain.info;
 					await appendBashMinimizerGainRecord({
 						command,
 						cwd,
+						sessionCwd: cwd,
 						sessionId: target.sessionId,
 						filter: info.filter,
 						inputBytes: info.inputBytes,
-						outputBytes: info.outputBytes,
+						outputBytes: result.outputBytes,
 						exitCode: result.exitCode ?? null,
 						kind: "saved",
 						agentDir: settings.getAgentDir(),
@@ -147,6 +148,7 @@ export class BashRunner {
 					await appendBashMinimizerGainRecord({
 						command,
 						cwd,
+						sessionCwd: cwd,
 						sessionId: target.sessionId,
 						filter: "missed",
 						inputBytes: result.totalBytes,

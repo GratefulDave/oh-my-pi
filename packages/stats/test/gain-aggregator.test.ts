@@ -324,6 +324,45 @@ describe("getGainDashboardStats", () => {
 		expect(statsB.bySource.minimizer.savedTokens).toBe(100);
 	});
 
+	it("attributes an external execution cwd to its session project without changing ordinary cwd records", async () => {
+		const now = new Date().toISOString();
+		await writeMinimizerJSONL([
+			{
+				timestamp: now,
+				filter: "git-status",
+				inputBytes: 1000,
+				outputBytes: 200,
+				savedBytes: 800,
+				savedTokens: 200,
+				kind: "saved",
+				cwd: "/Users/x/external-repo",
+				sessionCwd: "/Users/x/proj-a",
+			},
+			{
+				timestamp: now,
+				filter: "git-log",
+				inputBytes: 500,
+				outputBytes: 100,
+				savedBytes: 400,
+				savedTokens: 100,
+				kind: "saved",
+				cwd: "/Users/x/proj-b",
+				sessionCwd: "/Users/x/proj-b",
+			},
+		]);
+
+		const statsA = await getGainDashboardStats(null, "/Users/x/proj-a");
+		expect(statsA.bySource.minimizer).toEqual(expect.objectContaining({ hits: 1, savedTokens: 200 }));
+		expect(statsA.topFilters).toEqual([expect.objectContaining({ filter: "git-status", hits: 1 })]);
+
+		const statsB = await getGainDashboardStats(null, "/Users/x/proj-b");
+		expect(statsB.bySource.minimizer).toEqual(expect.objectContaining({ hits: 1, savedTokens: 100 }));
+		expect(statsB.topFilters).toEqual([expect.objectContaining({ filter: "git-log", hits: 1 })]);
+
+		const unfiltered = await getGainDashboardStats();
+		expect(unfiltered.projects).toEqual(["/Users/x/proj-a", "/Users/x/proj-b"]);
+	});
+
 	it("project filter is separator-safe — /foo/bar does not match /foo/barbaz", async () => {
 		const now = new Date().toISOString();
 		await writeMinimizerJSONL([
