@@ -338,8 +338,8 @@ export function makeMinimizedSaveHandler(
 		info: { filter: string; inputBytes: number; outputBytes: number },
 	) => Promise<string | undefined>;
 	didSave: () => boolean;
-	/** Call after executeBash resolves to write the saved record with the real exitCode. */
-	flushSaved: (exitCode: number | null) => Promise<void>;
+	/** Call after executeBash resolves to write the saved record with its final output byte count and exitCode. */
+	flushSaved: (exitCode: number | null, outputBytes: number) => Promise<void>;
 } {
 	let saved = false;
 	let pendingSaved: { filter: string; inputBytes: number; outputBytes: number } | null = null;
@@ -352,7 +352,7 @@ export function makeMinimizedSaveHandler(
 			return saveBashOriginalArtifact(session, originalText);
 		},
 		didSave: () => saved,
-		flushSaved: async exitCode => {
+		flushSaved: async (exitCode, outputBytes) => {
 			if (!pendingSaved) return;
 			const info = pendingSaved;
 			pendingSaved = null;
@@ -363,7 +363,7 @@ export function makeMinimizedSaveHandler(
 				sessionId: session.getSessionId?.() ?? undefined,
 				filter: info.filter,
 				inputBytes: info.inputBytes,
-				outputBytes: info.outputBytes,
+				outputBytes,
 				exitCode,
 				kind: "saved",
 				agentDir: session.settings.getAgentDir(),
@@ -939,7 +939,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 						},
 						onMinimizedSave: minimizedSave.onMinimizedSave,
 					});
-					await minimizedSave.flushSaved(result.exitCode ?? null).catch(() => {});
+					await minimizedSave.flushSaved(result.exitCode ?? null, result.outputBytes).catch(() => {});
 					if (!minimizedSave.didSave()) {
 						await recordBashMinimizerGain({
 							session: this.session,
@@ -1603,8 +1603,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 		// Flush the deferred saved record (with real exitCode) or write a missed record.
 		// Skip telemetry for interactive PTY runs — the minimizer never fires there.
 		if (!interactiveUi) {
-			const exitCode = "exitCode" in result ? (result.exitCode ?? null) : null;
-			await minimizedSave.flushSaved(exitCode).catch(() => {});
+			await minimizedSave.flushSaved(result.exitCode ?? null, result.outputBytes).catch(() => {});
 			if (!minimizedSave.didSave()) {
 				await recordBashMinimizerGain({
 					session: this.session,
