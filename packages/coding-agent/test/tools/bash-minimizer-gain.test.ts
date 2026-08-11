@@ -1,7 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { BashResult } from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
+import * as bashExecutor from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
+import { BashRunner, type BashRunnerHost } from "@oh-my-pi/pi-coding-agent/session/bash-runner";
 import { type MinimizedSaveHandlerSession, makeMinimizedSaveHandler } from "@oh-my-pi/pi-coding-agent/tools/bash";
 import {
 	appendBashMinimizerGainRecord,
@@ -158,7 +161,7 @@ describe("makeMinimizedSaveHandler", () => {
 	test("flushes saved telemetry after the real exit code is available", async () => {
 		const handler = makeMinimizedSaveHandler(mockSession(true), "bun test noisy.test.ts", tempDir);
 		await handler.onMinimizedSave("original output", { filter: "bun-test", inputBytes: 4000, outputBytes: 1000 });
-		await handler.flushSaved(1);
+		await handler.flushSaved(1, 1000);
 
 		const [line] = (await Bun.file(getBashMinimizerGainPath(agentDir)).text()).trim().split("\n");
 		const record = JSON.parse(line!) as GainRecord;
@@ -166,13 +169,102 @@ describe("makeMinimizedSaveHandler", () => {
 		expect(record).toEqual(expect.objectContaining({ kind: "saved", filter: "bun-test", exitCode: 1 }));
 	});
 
+	test("records final output bytes including a successful raw-output artifact footer", async () => {
+		const handler = makeMinimizedSaveHandler(mockSession(true), "bun test noisy.test.ts", tempDir);
+		const visibleOutput = "minimized result\n[raw output: artifact://artifact-42]\n";
+		await handler.onMinimizedSave("original output", { filter: "bun-test", inputBytes: 4000, outputBytes: 17 });
+		await handler.flushSaved(0, Buffer.byteLength(visibleOutput));
+
+		const [line] = (await Bun.file(getBashMinimizerGainPath(agentDir)).text()).trim().split("\n");
+		const record = JSON.parse(line!) as GainRecord;
+		expect(record).toEqual(
+			expect.objectContaining({
+				kind: "saved",
+				exitCode: 0,
+				outputBytes: Buffer.byteLength(visibleOutput),
+				savedBytes: 4000 - Buffer.byteLength(visibleOutput),
+			}),
+		);
+	});
+
 	test("suppresses saved telemetry when disabled or prefixed", async () => {
 		for (const session of [mockSession(false), mockSession(true, "time")]) {
 			const handler = makeMinimizedSaveHandler(session, "git status", tempDir);
 			await handler.onMinimizedSave("status output", { filter: "git", inputBytes: 2000, outputBytes: 500 });
-			await handler.flushSaved(0);
+			await handler.flushSaved(0, 500);
 		}
 
 		expect(await Bun.file(getBashMinimizerGainPath(agentDir)).exists()).toBe(false);
+	});
+});
+
+describe("BashRunner gain telemetry", () => {
+	let tempDir: string;
+	let agentDir: string;
+
+	beforeEach(async () => {
+		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-gain-runner-"));
+		agentDir = path.join(tempDir, "agent");
+	});
+
+	afterEach(async () => {
+		vi.restoreAllMocks();
+		await fs.rm(tempDir, { recursive: true, force: true });
+	});
+
+	test("records the completed output including its raw-output artifact footer", async () => {
+		const rawArtifactId = "artifact-42";
+		const visibleOutput = `minimized result\n[raw output: artifact://${rawArtifactId}]\n`;
+		const execute = vi.spyOn(bashExecutor, "executeBash").mockImplementation(async (_command, options) => {
+			const artifactId = await options?.onMinimizedSave?.("original output", {
+				filter: "bun-test",
+				inputBytes: 4000,
+				outputBytes: 17,
+			});
+			expect(artifactId).toBe(rawArtifactId);
+			return {
+				output: visibleOutput,
+				exitCode: 0,
+				cancelled: false,
+				truncated: false,
+				totalLines: 2,
+				totalBytes: Buffer.byteLength(visibleOutput),
+				outputLines: 2,
+				outputBytes: Buffer.byteLength(visibleOutput),
+			} satisfies BashResult;
+		});
+		const runner = new BashRunner({
+			agent: { appendMessage: vi.fn() },
+			sessionManager: {
+				getSessionId: () => "test-session",
+				getCwd: () => tempDir,
+				appendMessage: vi.fn(),
+				saveArtifact: async () => rawArtifactId,
+			},
+			settings: {
+				get: (key: string) =>
+					key === "shellMinimizer.gainTelemetry" || key === "shellMinimizer.enabled"
+						? true
+						: key === "tools.maxTimeout"
+							? 300
+							: undefined,
+				getShellConfig: () => ({}),
+				getAgentDir: () => agentDir,
+			},
+			extensionRunner: () => undefined,
+			isStreaming: () => false,
+		} as unknown as BashRunnerHost);
+
+		await runner.executeBash("bun test noisy.test.ts");
+
+		expect(execute).toHaveBeenCalledTimes(1);
+		const [line] = (await Bun.file(getBashMinimizerGainPath(agentDir)).text()).trim().split("\n");
+		expect(JSON.parse(line!)).toEqual(
+			expect.objectContaining({
+				outputBytes: Buffer.byteLength(visibleOutput),
+				savedBytes: 4000 - Buffer.byteLength(visibleOutput),
+				sessionCwd: tempDir,
+			}),
+		);
 	});
 });

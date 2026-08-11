@@ -39,6 +39,8 @@ interface MinimizerRecord {
 	savedTokens?: number;
 	kind: "saved" | "missed";
 	sessionId?: string;
+	/** Session project that originated the command when its execution cwd is external. */
+	sessionCwd?: string;
 	cwd: string;
 }
 
@@ -76,6 +78,12 @@ function matchesProject(cwd: string | undefined, project: string): boolean {
 	const normalizedCwd = normalizeProjectPath(cwd) ?? canonicalProjectPath(cwd);
 	const normalizedProject = normalizeProjectPath(project) ?? canonicalProjectPath(project);
 	return isSameOrSubPath(normalizedCwd, normalizedProject) || isSameOrSubPath(cwd, normalizedProject);
+}
+
+/** Returns the project that should receive a record's gain attribution. */
+function attributedProjectCwd(record: MinimizerRecord): string {
+	if (record.sessionCwd && !matchesProject(record.cwd, record.sessionCwd)) return record.sessionCwd;
+	return record.cwd;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,10 +170,12 @@ async function readMinimizerSets(cutoff: number | null, project: string | null):
 		if (cutoff !== null && rec.timestampMs < cutoff) continue;
 
 		// Collect range-scoped project cwds before the per-project filter so the
-		// selector still shows other projects in the active time range.
-		if (rec.cwd) sets.projects.add(rec.cwd);
+		// selector still shows other projects in the active time range. Explicit
+		// external execution cwds belong to the session project that launched them.
+		const projectCwd = attributedProjectCwd(rec);
+		if (projectCwd) sets.projects.add(projectCwd);
 
-		if (project !== null && !matchesProject(rec.cwd, project)) continue;
+		if (project !== null && !matchesProject(projectCwd, project)) continue;
 
 		if (rec.kind === "missed") {
 			// Missed records from meaningful cwds are filter-tuning candidates.
