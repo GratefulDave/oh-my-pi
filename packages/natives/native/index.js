@@ -29,7 +29,7 @@ export const Shell = nativeBindings.Shell;
 
 // functions
 export const __ompInstallTokioRuntime = nativeBindings.__ompInstallTokioRuntime;
-export const __piNativesV17_2_13_lex = nativeBindings.__piNativesV17_2_13_lex;
+export const __piNativesV17_2_14_lex = nativeBindings.__piNativesV17_2_14_lex;
 export const astEdit = nativeBindings.astEdit;
 export const astGrep = nativeBindings.astGrep;
 export const astMatch = nativeBindings.astMatch;
@@ -62,7 +62,6 @@ export const isoProbe = nativeBindings.isoProbe;
 export const isoResolve = nativeBindings.isoResolve;
 export const isoStart = nativeBindings.isoStart;
 export const isoStop = nativeBindings.isoStop;
-export const isShellMinimizerEligible = nativeBindings.isShellMinimizerEligible;
 export const listWorkspace = nativeBindings.listWorkspace;
 export const matchesKey = nativeBindings.matchesKey;
 export const matchesKittySequence = nativeBindings.matchesKittySequence;

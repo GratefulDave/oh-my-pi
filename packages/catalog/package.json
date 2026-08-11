@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/pi-catalog",
-	"version": "17.2.13-lex",
+	"version": "17.2.14-lex",
 	"description": "Model catalog for omp: bundled model database, provider discovery descriptors, model identity, classification, and equivalence",
 	"homepage": "https://omp.sh",
 	"author": "Can Boluk",
@@ -35,11 +35,11 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "catalog:",
-		"@oh-my-pi/omptype": "^17.2.13-lex",
-		"@oh-my-pi/pi-utils": "^17.2.13-lex"
+		"@oh-my-pi/omptype": "^17.2.14-lex",
+		"@oh-my-pi/pi-utils": "^17.2.14-lex"
 	},
 	"devDependencies": {
-		"@oh-my-pi/pi-ai": "^17.2.13-lex",
+		"@oh-my-pi/pi-ai": "^17.2.14-lex",
 		"@types/bun": "catalog:"
 	},
 	"engines": {

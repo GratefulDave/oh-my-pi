@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "@oh-my-pi/pi-tui",
-	"version": "17.2.13-lex",
+	"version": "17.2.14-lex",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"homepage": "https://omp.sh",
 	"author": "Can Boluk",
@@ -37,8 +37,8 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-natives": "^17.2.13-lex",
-		"@oh-my-pi/pi-utils": "^17.2.13-lex"
+		"@oh-my-pi/pi-natives": "^17.2.14-lex",
+		"@oh-my-pi/pi-utils": "^17.2.14-lex"
 	},
 	"devDependencies": {
 		"ghostty-web": "catalog:"

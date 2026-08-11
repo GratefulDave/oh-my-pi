@@ -6,6 +6,12 @@
 - Fixed terminal selection copying leading whitespace into assistant fenced-code rows, which could prevent pasted heredoc terminators from closing.
 - Fixed compiled-binary legacy extensions stalling during host compatibility imports and ensured disabled explicit extension files stay disabled.
 
+## [17.2.14] - 2026-08-11
+
+### Added
+
+- Added `externalThinking` setting for private scratchpad reasoning via the new `think` tool
+
 ## [17.2.13] - 2026-08-11
 
 ### Added
