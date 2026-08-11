@@ -356,6 +356,48 @@ async fn pump_chunks(rx: flume::Receiver<String>, mut forward: impl AsyncFnMut(S
 	}
 }
 
+/// Inputs for [`is_shell_minimizer_eligible`]: a command and the minimizer
+/// configuration that would apply during shell execution.
+#[napi(object)]
+pub struct ShellMinimizerEligibilityOptions {
+	/// The command line to classify for native minimizer ownership.
+	pub command:   String,
+	/// Minimizer configuration; when omitted native minimization is disabled.
+	pub minimizer: Option<MinimizerOptions>,
+}
+
+/// Return whether the native shell minimizer will own a command's output.
+///
+/// This queries the engine's authoritative dispatch semantics before execution,
+/// preserving program/subcommand routing, user pipelines, configuration gates,
+/// and safe-chain analysis. It does not infer ownership from a transformed
+/// output, because an eligible filter may legitimately pass a capture through.
+///
+/// Async (returns a Promise): resolving `settings_path` can read and parse
+/// TOML, so classification runs on the blocking pool rather than the JS event
+/// loop.
+#[napi(ts_return_type = "Promise<boolean>")]
+pub fn is_shell_minimizer_eligible(
+	env: &Env,
+	options: ShellMinimizerEligibilityOptions,
+) -> Result<PromiseRaw<'_, bool>> {
+	task::future(env, "shell.minimizerEligibility", async move {
+		napi::tokio::task::spawn_blocking(move || run_shell_minimizer_eligibility(options))
+			.await
+			.map_err(|err| Error::from_reason(err.to_string()))
+	})
+}
+
+/// Pure, blocking core of [`is_shell_minimizer_eligible`], factored out so it
+/// can be unit-tested without an N-API `Env`.
+fn run_shell_minimizer_eligibility(options: ShellMinimizerEligibilityOptions) -> bool {
+	let Some(minimizer) = options.minimizer else {
+		return false;
+	};
+	let minimizer_options: minimizer::MinimizerOptions = minimizer.into();
+	let config = minimizer::MinimizerConfig::from_options(&minimizer_options);
+	minimizer::engine::should_minimize(&options.command, &config)
+}
 /// Inputs for [`apply_shell_minimizer`]: a captured command's text plus the
 /// minimizer configuration to run against it.
 #[napi(object)]
@@ -437,7 +479,7 @@ fn run_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<MinimizerR
 
 #[cfg(test)]
 mod tests {
-	use std::time::Duration;
+	use std::{fs, time::Duration};
 
 	use flume;
 	use pi_shell::{
@@ -608,6 +650,78 @@ mod tests {
 		);
 	}
 
+	#[test]
+	fn shell_minimizer_eligibility_matches_native_ownership() {
+		let enabled = super::MinimizerOptions { enabled: Some(true), ..Default::default() };
+		assert!(
+			!super::run_shell_minimizer_eligibility(super::ShellMinimizerEligibilityOptions {
+				command:   "git status".to_string(),
+				minimizer: None,
+			}),
+			"omitted minimizer must not own a command"
+		);
+		assert!(
+			!super::run_shell_minimizer_eligibility(super::ShellMinimizerEligibilityOptions {
+				command:   "git status".to_string(),
+				minimizer: Some(super::MinimizerOptions { enabled: Some(false), ..Default::default() }),
+			}),
+			"disabled minimizer must not own a command"
+		);
+		for command in ["git status", "uv run pytest", "uv run --env-file .env pytest"] {
+			assert!(
+				super::run_shell_minimizer_eligibility(super::ShellMinimizerEligibilityOptions {
+					command:   command.to_string(),
+					minimizer: Some(enabled.clone()),
+				}),
+				"{command:?} must be owned by native minimization"
+			);
+		}
+		assert!(!super::run_shell_minimizer_eligibility(super::ShellMinimizerEligibilityOptions {
+			command:   "unsupported-command".to_string(),
+			minimizer: Some(enabled.clone()),
+		}));
+
+		let path = std::env::temp_dir()
+			.join(format!("pi-natives-shell-minimizer-eligibility-{}.toml", std::process::id()));
+		fs::write(
+			&path,
+			r#"
+schema_version = 1
+[filters.user_command]
+match_command = "^user-command$"
+strip_lines_matching = [".*"]
+"#,
+		)
+		.expect("write user minimizer settings");
+		assert!(super::run_shell_minimizer_eligibility(super::ShellMinimizerEligibilityOptions {
+			command:   "user-command value".to_string(),
+			minimizer: Some(super::MinimizerOptions {
+				enabled: Some(true),
+				settings_path: Some(path.to_string_lossy().into_owned()),
+				..Default::default()
+			}),
+		}));
+		fs::remove_file(path).expect("remove user minimizer settings");
+
+		assert!(super::run_shell_minimizer_eligibility(super::ShellMinimizerEligibilityOptions {
+			command:   "git status && git diff".to_string(),
+			minimizer: Some(enabled.clone()),
+		}));
+		for command in [
+			"git status | cat",
+			"git status || git diff",
+			"git status &",
+			"exec > output && git status",
+		] {
+			assert!(
+				!super::run_shell_minimizer_eligibility(super::ShellMinimizerEligibilityOptions {
+					command:   command.to_string(),
+					minimizer: Some(enabled.clone()),
+				}),
+				"{command:?} must not be owned by native minimization"
+			);
+		}
+	}
 	mod child_session_action_tests {
 		use pi_shell::{ChildSessionAction, child_session_action};
 

@@ -109,7 +109,6 @@ describe("executeBash", () => {
 			maxCaptureBytes: 4096,
 			sourceOutlineLevel: "default",
 			legacyFilters: undefined,
-			gainTelemetry: false,
 		};
 		expect(buildMinimizerOptions(group)).toBeUndefined();
 	});
@@ -123,7 +122,6 @@ describe("executeBash", () => {
 			maxCaptureBytes: 1234,
 			sourceOutlineLevel: "aggressive",
 			legacyFilters: true,
-			gainTelemetry: false,
 		};
 		expect(buildMinimizerOptions(group)).toEqual({
 			enabled: true,

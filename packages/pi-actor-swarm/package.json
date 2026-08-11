@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "pi-actor-swarm",
-	"version": "17.2.12-lex",
+	"version": "17.2.13-lex",
 	"description": "OMP extension for mailbox-driven multi-agent swarm coordination",
 	"author": "David Andrews",
 	"license": "MIT",
@@ -22,7 +22,7 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-utils": "^17.2.12-lex"
+		"@oh-my-pi/pi-utils": "^17.2.13-lex"
 	},
 	"peerDependencies": {
 		"@oh-my-pi/pi-coding-agent": "workspace:*",

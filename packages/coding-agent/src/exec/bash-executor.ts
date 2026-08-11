@@ -54,8 +54,6 @@ export interface BashResult {
 	outputLines: number;
 	outputBytes: number;
 	artifactId?: string;
-	/** Whether the native minimizer captured the command without exceeding its cap. */
-	minimizerEligible?: boolean;
 	workingDir?: string;
 }
 
@@ -542,7 +540,6 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 				exitCode: undefined,
 				cancelled: true,
 				timedOut: true,
-				minimizerEligible: false,
 				...(await sink.dump(annotation)),
 			};
 		}
@@ -556,7 +553,6 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 			return {
 				exitCode: undefined,
 				cancelled: true,
-				minimizerEligible: false,
 				...(await sink.dump("Command cancelled")),
 			};
 		}
@@ -586,7 +582,6 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 			exitCode: winner.result.exitCode,
 			cancelled: false,
 			workingDir: winner.result.workingDir,
-			minimizerEligible: winner.result.minimizerEligible,
 			...(await sink.dump()),
 		};
 	} catch (err) {

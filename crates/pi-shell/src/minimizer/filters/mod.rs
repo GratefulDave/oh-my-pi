@@ -377,8 +377,14 @@ fn uv_wrapper_tool<'a>(ctx: &'a MinimizerCtx<'_>) -> Option<&'a str> {
 const WRAPPER_VALUE_OPTIONS: &[&str] = &[
 	// uv run
 	"--extra",
-	"--with",
+	"--group",
+	"--only-group",
+	"--no-group",
+	"--editable",
+	"--no-editable-package",
+	"--env-file",
 	"--with-requirements",
+	"--with",
 	"--with-editable",
 	"--python",
 	"-p",
@@ -394,12 +400,26 @@ const WRAPPER_VALUE_OPTIONS: &[&str] = &[
 	"--cache-dir",
 	"--config-file",
 	"--refresh-package",
+	"--refresh",
+	"--reinstall",
+	"--reinstall-package",
+	"--upgrade",
+	"--upgrade-package",
 	"--resolution",
 	"--prerelease",
 	"--exclude-newer",
+	"--exclude-newer-package",
 	"--link-mode",
 	"--color",
 	"--python-preference",
+	"--python-platform",
+	"--index-strategy",
+	"--keyring-provider",
+	"--fork-strategy",
+	"--no-sources-package",
+	"--inexact",
+	"--no-inexact-package",
+	"--allow-insecure-host",
 	// npx / pnpm dlx
 	"--package",
 	"-c",
@@ -613,6 +633,36 @@ mod tests {
 			uv_wrapper_tool(&ctx("uv", Some("run"), "uv run --with foo python -m pytest", &config)),
 			Some("pytest")
 		);
+	}
+
+	#[test]
+	fn uv_wrapper_skips_uv_run_value_options_before_tool() {
+		let config = MinimizerConfig::default();
+		for command in [
+			"uv run --env-file .env pytest",
+			"uv run --group test pytest",
+			"uv run --python-platform linux pytest",
+			"uv run --index-strategy first-index pytest",
+			"uv run --exclude-newer-package foo=2025-01-01 pytest",
+		] {
+			assert_eq!(
+				uv_wrapper_tool(&ctx("uv", Some("run"), command, &config)),
+				Some("pytest"),
+				"{command}"
+			);
+		}
+	}
+
+	#[test]
+	fn uv_wrapper_does_not_treat_uv_run_option_values_as_tools() {
+		let config = MinimizerConfig::default();
+		for command in [
+			"uv run --env-file pytest echo hi",
+			"uv run --group pytest echo hi",
+			"uv run --no-sources-package pytest echo hi",
+		] {
+			assert_eq!(uv_wrapper_tool(&ctx("uv", Some("run"), command, &config)), None, "{command}");
+		}
 	}
 
 	#[test]

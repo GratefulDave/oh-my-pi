@@ -76,9 +76,6 @@ export class BashRunner {
 		let targetTransferred = false;
 		const excludeFromContext = options?.excludeFromContext === true;
 		const cwd = this.#host.sessionManager.getCwd();
-		const gainTelemetry =
-			this.#host.settings.get("shellMinimizer.gainTelemetry") &&
-			this.#host.settings.getShellConfig().prefix === undefined;
 		const savedGain = { info: null as { filter: string; inputBytes: number; outputBytes: number } | null };
 		try {
 			const extensionRunner = this.#host.extensionRunner();
@@ -107,7 +104,7 @@ export class BashRunner {
 					cwd,
 					timeout: clampTimeout("bash", undefined, this.#host.settings.get("tools.maxTimeout")) * 1000,
 					onMinimizedSave: async (originalText, info) => {
-						if (gainTelemetry) savedGain.info = info;
+						savedGain.info = info;
 						return this.#saveOriginalArtifact(target, originalText);
 					},
 					useUserShell: options?.useUserShell,
@@ -115,40 +112,33 @@ export class BashRunner {
 			} finally {
 				this.#abortControllers.delete(abortController);
 			}
-			if (gainTelemetry && this.#host.settings.get("shellMinimizer.enabled")) {
-				if (savedGain.info) {
-					const info = savedGain.info;
-					await appendBashMinimizerGainRecord({
-						command,
-						cwd,
-						sessionCwd: cwd,
-						sessionId: target.sessionId,
-						filter: info.filter,
-						inputBytes: info.inputBytes,
-						outputBytes: info.outputBytes,
-						exitCode: result.exitCode ?? null,
-						kind: "saved",
-						agentDir: this.#host.settings.getAgentDir(),
-					}).catch(() => {});
-				} else if (
-					!result.cancelled &&
-					result.exitCode !== undefined &&
-					result.totalBytes > 0 &&
-					result.minimizerEligible
-				) {
-					await appendBashMinimizerGainRecord({
-						command,
-						cwd,
-						sessionCwd: cwd,
-						sessionId: target.sessionId,
-						filter: "missed",
-						inputBytes: result.totalBytes,
-						outputBytes: result.totalBytes,
-						exitCode: result.exitCode ?? null,
-						kind: "missed",
-						agentDir: this.#host.settings.getAgentDir(),
-					}).catch(() => {});
-				}
+			if (savedGain.info) {
+				const info = savedGain.info;
+				await appendBashMinimizerGainRecord({
+					command,
+					cwd,
+					sessionCwd: cwd,
+					sessionId: target.sessionId,
+					filter: info.filter,
+					inputBytes: info.inputBytes,
+					outputBytes: info.outputBytes,
+					exitCode: result.exitCode ?? null,
+					kind: "saved",
+					agentDir: this.#host.settings.getAgentDir(),
+				}).catch(() => {});
+			} else if (!result.cancelled && result.exitCode !== undefined) {
+				await appendBashMinimizerGainRecord({
+					command,
+					cwd,
+					sessionCwd: cwd,
+					sessionId: target.sessionId,
+					filter: "missed",
+					inputBytes: result.totalBytes,
+					outputBytes: result.totalBytes,
+					exitCode: result.exitCode ?? null,
+					kind: "missed",
+					agentDir: this.#host.settings.getAgentDir(),
+				}).catch(() => {});
 			}
 			targetTransferred = true;
 			await this.#recordResultForTarget(target, command, result, options);
