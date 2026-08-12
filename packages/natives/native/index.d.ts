@@ -2011,3 +2011,23 @@ export interface WorkProfile {
  * Returns UTF-16 lines with active SGR codes carried across line boundaries.
  */
 export declare function wrapTextWithAnsi(text: string, width: number, tabWidth: number): Array<string>
+
+
+export declare function applyShellMinimizer(options: ShellMinimizerApplyOptions): Promise<MinimizerResult | null>
+
+
+export interface ShellMinimizerEligibilityOptions {
+	command: string;
+	minimizer?: MinimizerOptions;
+}
+
+
+export interface ShellMinimizerApplyOptions {
+	command: string;
+	captured: string;
+	exitCode?: number;
+	minimizer?: MinimizerOptions;
+}
+
+
+export declare function isShellMinimizerEligible(options: ShellMinimizerEligibilityOptions): Promise<boolean>

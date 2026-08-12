@@ -82,6 +82,8 @@ export const truncateToWidth = nativeBindings.truncateToWidth;
 export const vectorIndexTopK = nativeBindings.vectorIndexTopK;
 export const visibleWidth = nativeBindings.visibleWidth;
 export const wrapTextWithAnsi = nativeBindings.wrapTextWithAnsi;
+export const applyShellMinimizer = nativeBindings.applyShellMinimizer;
+export const isShellMinimizerEligible = nativeBindings.isShellMinimizerEligible;
 
 // string/numeric enums (napi-rs string_enum produces TS-only const enum)
 export const AstMatchStrictness = {
