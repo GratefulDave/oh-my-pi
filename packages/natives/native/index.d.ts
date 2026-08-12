@@ -279,28 +279,7 @@ export declare function __ompInstallTokioRuntime(): void
  * `packages/natives/native/index.js` (which derives the name from
  * `package.json#version`).
  */
-export declare function __piNativesV17_2_14_lex(): void
-
-/**
- * Run the shell-output minimizer over an already-captured command result,
- * without spawning a shell.
- *
- * This is the one-shot counterpart to the minimization that
- * [`execute_shell`] performs inline: callers that captured a command's output
- * elsewhere can pass it here to obtain the same telemetry.
- *
- * Returns [`MinimizerResult`] **only** when the minimizer actually rewrote the
- * output (`changed == true`) and retained the original buffer, mirroring the
- * persistent-shell path. Returns `null` for every no-op case: when
- * `minimizer` is omitted, when the config is disabled, or when the filter
- * passes the output through unchanged. A missing `exit_code` is treated as
- * success (`0`).
- *
- * Async (returns a Promise): minimization can scan multi-megabyte captured
- * output, so the work runs on a blocking pool to avoid stalling the JS event
- * loop.
- */
-export declare function applyShellMinimizer(options: ShellMinimizerApplyOptions): Promise<MinimizerResult | null>
+export declare function __piNativesV17_2_15(): void
 
 /**
  * Apply ast-grep rewrite rules to matching files; honors `dryRun` and returns
@@ -1330,20 +1309,6 @@ export declare function isoStart(kind: IsoBackendKind | undefined | null, lower:
 /** Tear down a previously started backend at `merged`. */
 export declare function isoStop(kind: IsoBackendKind | undefined | null, merged: string): Promise<void>
 
-/**
- * Return whether the native shell minimizer will own a command's output.
- *
- * This queries the engine's authoritative dispatch semantics before execution,
- * preserving program/subcommand routing, user pipelines, configuration gates,
- * and safe-chain analysis. It does not infer ownership from a transformed
- * output, because an eligible filter may legitimately pass a capture through.
- *
- * Async (returns a Promise): resolving `settings_path` can read and parse
- * TOML, so classification runs on the blocking pool rather than the JS event
- * loop.
- */
-export declare function isShellMinimizerEligible(options: ShellMinimizerEligibilityOptions): Promise<boolean>
-
 /** Event types from Kitty keyboard protocol (flag 2). */
 export declare enum KeyEventType {
   /** Key press event. */
@@ -1807,32 +1772,6 @@ export interface ShellExecuteOptions {
   signal?: unknown
 }
 
-/**
- * Inputs for [`apply_shell_minimizer`]: a captured command's text plus the
- * minimizer configuration to run against it.
- */
-export interface ShellMinimizerApplyOptions {
-  /** The command line that produced `captured` (used to select a filter). */
-  command: string
-  /** The full captured stdout/stderr to minimize. */
-  captured: string
-  /** The command's exit status; omitted is treated as success (`0`). */
-  exitCode?: number
-  /** Minimizer configuration; when omitted the call is a no-op (`null`). */
-  minimizer?: MinimizerOptions
-}
-
-/**
- * Inputs for [`is_shell_minimizer_eligible`]: a command and the minimizer
- * configuration that would apply during shell execution.
- */
-export interface ShellMinimizerEligibilityOptions {
-  /** The command line to classify for native minimizer ownership. */
-  command: string
-  /** Minimizer configuration; when omitted native minimization is disabled. */
-  minimizer?: MinimizerOptions
-}
-
 /** Options for configuring a persistent shell session. */
 export interface ShellOptions {
   /** Environment variables to apply once per session. */
@@ -1872,11 +1811,6 @@ export interface ShellRunResult {
    * minimized text shown to the agent. `None` when nothing was rewritten.
    */
   minimized?: MinimizerResult
-  /**
-   * Whether the native minimizer captured the command without exceeding its
-   * cap.
-   */
-  minimizerEligible?: boolean
   /** Shell working directory after command completion. */
   workingDir?: string
 }

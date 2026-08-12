@@ -212,6 +212,7 @@ import {
 	ReadTool,
 	releaseComputerSessionsForOwner,
 	resolveMountedXdevExecutable,
+	supportsExternalThinking,
 	type Tool,
 	type ToolSession,
 	WebSearchTool,
@@ -3273,7 +3274,9 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 					}
 				}
 				const externalThinking =
-					settings.get("externalThinking") && agent.state.tools.some(tool => tool.name === "think");
+					settings.get("externalThinking") &&
+					agent.state.tools.some(tool => tool.name === "think") &&
+					supportsExternalThinking(streamModel);
 				return settingsAwareStreamFn(streamModel, context, {
 					...streamOptions,
 					forceReasoningOff: externalThinking || streamOptions?.forceReasoningOff,
