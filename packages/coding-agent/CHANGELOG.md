@@ -5,6 +5,7 @@
 ### Fixed
 - Fixed terminal selection copying leading whitespace into assistant fenced-code rows, which could prevent pasted heredoc terminators from closing.
 - Fixed compiled-binary legacy extensions stalling during host compatibility imports and ensured disabled explicit extension files stay disabled.
+- Fixed project-level `disabledProviders` settings re-enabling providers disabled in the user-level Extensions Control Center.
 
 ## [17.3.0] - 2026-08-13
 

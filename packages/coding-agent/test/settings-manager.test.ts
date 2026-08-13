@@ -449,6 +449,18 @@ describe("Settings", () => {
 			expect(settings.get("disabledProviders")).toEqual(["always-provider", "other-provider"]);
 		});
 
+		it("keeps user-disabled providers disabled when a project config adds restrictions", async () => {
+			await writeSettings({ disabledProviders: ["user-disabled"] });
+			await Bun.write(
+				path.join(getProjectAgentDir(projectDir), "config.yml"),
+				YAML.stringify({ disabledProviders: ["project-disabled"] }, null, 2),
+			);
+
+			const settings = await Settings.init({ cwd: projectDir, agentDir });
+
+			expect(settings.get("disabledProviders")).toEqual(["user-disabled", "project-disabled"]);
+		});
+
 		it("migrates legacy snapcompact system prompt booleans to scoped modes", () => {
 			expect(Settings.isolated({ "snapcompact.systemPrompt": true }).get("snapcompact.systemPrompt")).toBe("all");
 			const nestedLegacy = { snapcompact: { systemPrompt: false } } as Partial<Record<SettingPath, unknown>>;
