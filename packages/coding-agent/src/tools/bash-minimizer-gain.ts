@@ -25,8 +25,8 @@ export interface BashMinimizerGainInput {
 	agentDir?: string;
 }
 
-/** Resolves the opt-in local JSONL destination used by telemetry writers and their tests. */
-export function getBashMinimizerGainPath(agentDir = getAgentDir()): string {
+/** Resolves the opt-in local JSONL destination used by telemetry writers. */
+function getBashMinimizerGainPath(agentDir = getAgentDir()): string {
 	return path.join(agentDir, MINIMIZER_GAIN_FILE);
 }
 
