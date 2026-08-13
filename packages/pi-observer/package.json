@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "pi-observer",
-	"version": "17.2.15",
+	"version": "17.3.0",
 	"description": "OMP extension for real-time agent activity monitoring and token tracking",
 	"author": "David Andrews",
 	"license": "MIT",
@@ -22,7 +22,7 @@
 		"fmt": "biome format --write ."
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-utils": "^17.2.15"
+		"@oh-my-pi/pi-utils": "^17.3.0"
 	},
 	"peerDependencies": {
 		"@oh-my-pi/pi-coding-agent": "workspace:*",

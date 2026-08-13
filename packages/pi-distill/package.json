@@ -1,7 +1,7 @@
 {
 	"type": "module",
 	"name": "pi-distill",
-	"version": "17.2.15",
+	"version": "17.3.0",
 	"description": "OMP extension for artifact-backed structured tool output compression",
 	"author": "David Andrews",
 	"license": "MIT",
