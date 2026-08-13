@@ -339,6 +339,43 @@ describe("InteractiveMode subagent observer UI sync", () => {
 		expect(convertToLlm(session.state.messages)).toEqual([]);
 	});
 
+	it("renders exactly one block and never steers when the parent turn is still streaming", async () => {
+		await mode.init({ suppressWelcomeIntro: true });
+		vi.useFakeTimers();
+		session.agent.state.isStreaming = true;
+		const sendCustomMessage = vi.spyOn(session, "sendCustomMessage");
+		const steer = vi.spyOn(session.agent, "steer");
+		const followUp = vi.spyOn(session.agent, "followUp");
+		const addMessageToChat = vi.spyOn(mode, "addMessageToChat");
+
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, makeLifecycle("StreamingAgent", 0, "quick task", true));
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			...makeLifecycle("StreamingAgent", 0, "quick task", true),
+			status: "completed",
+		});
+		vi.runAllTimers();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		const summaries = session.state.messages.filter(
+			(message): message is CustomMessage<SubagentHudSummaryDetails> =>
+				message.role === "custom" && message.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+		);
+		const summaryRenderCalls = addMessageToChat.mock.calls.filter(
+			([message]) => message.role === "custom" && message.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+		);
+		expect(summaries).toHaveLength(1);
+		expect(summaryRenderCalls).toHaveLength(1);
+		expect(sendCustomMessage).toHaveBeenCalledWith(
+			expect.objectContaining({ customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE }),
+			{ deliverAs: "persist" },
+		);
+		expect(steer).not.toHaveBeenCalled();
+		expect(followUp).not.toHaveBeenCalled();
+		expect(session.agent.peekSteeringQueue()).toEqual([]);
+		expect(convertToLlm(session.state.messages)).toEqual([]);
+	});
+
 	it("persists every retained subagent lifecycle with its latest description", async () => {
 		await mode.init({ suppressWelcomeIntro: true });
 		vi.useFakeTimers();
