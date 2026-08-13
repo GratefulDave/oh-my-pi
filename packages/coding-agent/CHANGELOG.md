@@ -157,6 +157,7 @@
 - Fixed LSP `diagnostics` incorrectly reporting success when all language servers failed.
 - Fixed Hindsight memory scoping splitting repositories across multiple scopes on case-sensitive filesystems by lowercasing the project label.
 - Fixed the CLI crashing at startup with a raw `AuthBrokerError` when the configured auth broker is unreachable, replacing it with an actionable error message.
+- Fixed extension tools registering external Zod v3 schemas being rejected: `registerTool`'s parameter type accepts `@oh-my-pi/pi-ai`'s `TSchema` (Zod v4/ArkType/JSON Schema, plus a structural Zod v3 marker), and the wire/validation pipeline now serializes and validates real Zod v3 schema objects instead of only schemas built through the bundled `omptype`-backed Zod facade.
 - Fixed various resource and process leaks, including idle launch brokers staying alive indefinitely, stale MCP connections leaving child processes open, and undrained stdout in DAP `runInTerminal` requests.
 - Fixed custom STB-backed vision providers failing to decode WebP images by automatically detecting image formats from bytes and normalizing WebP blocks.
 - Fixed command-backed provider API keys (`!command`) staying pinned to cached values after receiving an HTTP 401 error.
@@ -355,14 +356,6 @@
 - Fixed parsing of POSIX `$EDITOR` commands that contain quoted arguments or executable paths with spaces.
 - Fixed persisted Agent Hub rows losing the explicit caller model role when a subagent used a model override, preserving role provenance across restarts.
 - Fixed unobserved promise rejections in browser helpers (such as `tab.waitForResponse()`) causing tab workers to hang or crash.
-
-### Fixed
-
-- Fixed extensions using external Zod v3 schemas being rejected when registering tools.
-
-### Fixed
-
-- Fixed extensions using external Zod v3 schemas being rejected when registering tools.
 
 ## [17.2.9] - 2026-08-05
 
