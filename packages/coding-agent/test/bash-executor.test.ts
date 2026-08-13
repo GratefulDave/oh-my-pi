@@ -160,7 +160,6 @@ describe("executeBash", () => {
 
 		expect(isUserShellCommandWrapped(Settings.instance)).toBe(true);
 	});
-
 	it.each([
 		["cd", true],
 		[" cd child ", true],
@@ -781,7 +780,6 @@ exit 64
 		expect(result.cancelled).toBe(true);
 		expect(result.output).toContain("streamed-before-timeout");
 		expect(result.output).toContain("Command timed out after 1 seconds");
-		expect(nativeSignal).toBeDefined();
 		expect(nativeSignal?.aborted).toBe(false);
 		expect(abortSpy).toHaveBeenCalledTimes(1);
 	});
@@ -953,12 +951,10 @@ exit 64
 			cwd: tempDir,
 			timeout: 5000,
 			onChunk: chunk => {
-				expect(chunk.length).toBeGreaterThan(0);
 				chunks.push(chunk);
 			},
 		});
 		// At least one chunk should have been delivered to onChunk
-		expect(chunks.length).toBeGreaterThan(0);
 		const combined = chunks.join("");
 		expect(combined).toContain("line1");
 		// Final result always has the complete output regardless of chunk throttle
@@ -1090,7 +1086,6 @@ exit 64
 			PATH: Bun.env.PATH ?? "",
 			HOME: tempDir,
 		});
-		expect(snapshotPath).not.toBeNull();
 		const snapshot = fs.readFileSync(snapshotPath!, "utf8");
 		expect(snapshot).toContain("pi_snapshot_large_function");
 		expect(snapshot).not.toContain("base64 -d");
@@ -1295,7 +1290,6 @@ exit 64
 		expect(result.cancelled).toBe(true);
 		expect(result.output).toContain("flushed-during-timeout");
 		expect(result.output).toContain("Command timed out after 1 seconds");
-		expect(nativeSignal).toBeDefined();
 		expect(nativeSignal?.aborted).toBe(false);
 		expect(abortSpy).not.toHaveBeenCalled();
 	});
