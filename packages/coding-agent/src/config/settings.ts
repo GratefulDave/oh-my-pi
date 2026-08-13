@@ -2224,16 +2224,26 @@ export class Settings {
 
 	#projectSettingsForMerge(): RawSettings {
 		const projectRoles = getByPath(this.#project, ["modelRoles"]);
-		if (!isRecord(projectRoles)) return this.#project;
-
-		let filteredRoles: Record<string, unknown> | undefined;
-		for (const role in projectRoles) {
-			if (!Object.hasOwn(projectRoles, role) || modelRoleValueFromUnknown(projectRoles[role]) !== undefined)
-				continue;
-			filteredRoles ??= { ...projectRoles };
-			delete filteredRoles[role];
+		let projectSettings = this.#project;
+		if (isRecord(projectRoles)) {
+			let filteredRoles: Record<string, unknown> | undefined;
+			for (const role in projectRoles) {
+				if (!Object.hasOwn(projectRoles, role) || modelRoleValueFromUnknown(projectRoles[role]) !== undefined)
+					continue;
+				filteredRoles ??= { ...projectRoles };
+				delete filteredRoles[role];
+			}
+			if (filteredRoles) projectSettings = { ...projectSettings, modelRoles: filteredRoles };
 		}
-		return filteredRoles ? { ...this.#project, modelRoles: filteredRoles } : this.#project;
+
+		// A project can add provider restrictions but must not silently re-enable
+		// providers the user disabled in the extension control center.
+		const globalDisabled = this.#global.disabledProviders;
+		const projectDisabled = projectSettings.disabledProviders;
+		if (Array.isArray(globalDisabled) && Array.isArray(projectDisabled)) {
+			return { ...projectSettings, disabledProviders: [...globalDisabled, ...projectDisabled] };
+		}
+		return projectSettings;
 	}
 
 	#rebuildMerged(): void {

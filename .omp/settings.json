@@ -7,7 +7,6 @@
     "packages/pi-omnidelegate/dist/omnidelegate.bundle.js",
     ".omp/extensions/profile-manager/dist/index.js"
   ],
-  "disabledProviders": [],
   "activeModelProfile": "antigravity",
   "cycleOrder": [
     "smol",
