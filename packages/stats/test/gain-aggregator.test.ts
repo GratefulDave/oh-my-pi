@@ -290,6 +290,61 @@ describe("getGainDashboardStats", () => {
 		expect(stats.missedCommands).toEqual([]);
 	});
 
+	it("skips minimizer records with a literal NaN timestamp without crashing", async () => {
+		// NaN is not valid JSON, so a writer bug that serialized a bare NaN token
+		// (rather than JSON.stringify's usual NaN -> null coercion) must still be
+		// dropped as a malformed line rather than throwing or bucketing garbage.
+		const now = new Date().toISOString();
+		const validLine = JSON.stringify({
+			timestamp: now,
+			filter: "git-status",
+			inputBytes: 1000,
+			outputBytes: 200,
+			savedBytes: 800,
+			savedTokens: 200,
+			kind: "saved",
+			cwd: "/Users/x/myrepo",
+		});
+		const nanLine = JSON.stringify({
+			filter: "nan-timestamp",
+			inputBytes: 500,
+			outputBytes: 100,
+			savedBytes: 400,
+			savedTokens: 100,
+			kind: "saved",
+			cwd: "/Users/x/myrepo",
+		}).replace('"filter"', '"timestamp":NaN,"filter"');
+
+		const agentDir = getAgentDir();
+		await fs.mkdir(agentDir, { recursive: true });
+		await Bun.write(path.join(agentDir, "minimizer-gain.jsonl"), `${validLine}\n${nanLine}\n`);
+
+		const stats = await getGainDashboardStats();
+		expect(stats.bySource.minimizer.hits).toBe(1);
+		expect(stats.topFilters).toEqual([expect.objectContaining({ filter: "git-status", hits: 1 })]);
+	});
+
+	it("rejects a calendar-invalid timestamp that Date rolls over to a different day", async () => {
+		// Feb 30 doesn't exist; JS Date silently rolls it to Mar 2. The writer
+		// never produces this shape, but the round-trip check must reject it
+		// rather than bucket the record under the wrong day.
+		await writeMinimizerJSONL([
+			{
+				timestamp: "2026-02-30T00:00:00.000Z",
+				filter: "rollover-timestamp",
+				inputBytes: 500,
+				outputBytes: 100,
+				savedBytes: 400,
+				savedTokens: 100,
+				kind: "saved",
+				cwd: "/Users/x/myrepo",
+			},
+		]);
+
+		const stats = await getGainDashboardStats();
+		expect(stats.bySource.minimizer.hits).toBe(0);
+	});
+
 	it("project filter scopes minimizer records", async () => {
 		const now = new Date().toISOString();
 		await writeMinimizerJSONL([

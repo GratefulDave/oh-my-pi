@@ -4,6 +4,7 @@ import { logger } from "@oh-my-pi/pi-utils";
 import type { Settings } from "../config/settings";
 import { type BashResult, executeBash as executeBashCommand } from "../exec/bash-executor";
 import type { ExtensionRunner } from "../extensibility/extensions";
+import type { MinimizedSaveInfo } from "../tools/bash";
 import { appendBashMinimizerGainRecord } from "../tools/bash-minimizer-gain";
 import { outputMeta } from "../tools/output-meta";
 import { clampTimeout } from "../tools/tool-timeouts";
@@ -95,7 +96,7 @@ export class BashRunner {
 
 			const settings = this.#host.settings;
 			const gainTelemetry = settings.get("shellMinimizer.gainTelemetry");
-			const savedGain = { info: null as { filter: string; inputBytes: number; outputBytes: number } | null };
+			const savedGain: { info: MinimizedSaveInfo | null } = { info: null };
 			const abortController = new AbortController();
 			this.#abortControllers.add(abortController);
 			let result: BashResult;

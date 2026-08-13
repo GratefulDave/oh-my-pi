@@ -306,6 +306,21 @@ export interface MinimizedSaveHandlerSession {
 	allocateOutputArtifact?: (toolType: string) => Promise<{ id?: string; path?: string }>;
 }
 
+/** Byte counts for a completed minimizer save, captured before the command's exit code is known. */
+export interface MinimizedSaveInfo {
+	filter: string;
+	inputBytes: number;
+	outputBytes: number;
+}
+
+/** Callbacks returned by `makeMinimizedSaveHandler` to drive the save/telemetry lifecycle of one bash execution. */
+export interface MinimizedSaveHandler {
+	onMinimizedSave: (originalText: string, info: MinimizedSaveInfo) => Promise<string | undefined>;
+	didSave: () => boolean;
+	/** Call after executeBash resolves to write the saved record with its final output byte count and exitCode. */
+	flushSaved: (exitCode: number | null, outputBytes: number) => Promise<void>;
+}
+
 async function saveBashOriginalArtifact(
 	session: MinimizedSaveHandlerSession,
 	originalText: string,
@@ -332,17 +347,9 @@ export function makeMinimizedSaveHandler(
 	session: MinimizedSaveHandlerSession,
 	command: string,
 	commandCwd: string,
-): {
-	onMinimizedSave: (
-		originalText: string,
-		info: { filter: string; inputBytes: number; outputBytes: number },
-	) => Promise<string | undefined>;
-	didSave: () => boolean;
-	/** Call after executeBash resolves to write the saved record with its final output byte count and exitCode. */
-	flushSaved: (exitCode: number | null, outputBytes: number) => Promise<void>;
-} {
+): MinimizedSaveHandler {
 	let saved = false;
-	let pendingSaved: { filter: string; inputBytes: number; outputBytes: number } | null = null;
+	let pendingSaved: MinimizedSaveInfo | null = null;
 	const gainTelemetry =
 		session.settings.get("shellMinimizer.gainTelemetry") && !hasBashMinimizerCommandPrefix(session);
 	return {

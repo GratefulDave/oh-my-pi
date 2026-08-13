@@ -6,10 +6,11 @@ import type { BashResult } from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
 import * as bashExecutor from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
 import { BashRunner, type BashRunnerHost } from "@oh-my-pi/pi-coding-agent/session/bash-runner";
 import { type MinimizedSaveHandlerSession, makeMinimizedSaveHandler } from "@oh-my-pi/pi-coding-agent/tools/bash";
-import {
-	appendBashMinimizerGainRecord,
-	getBashMinimizerGainPath,
-} from "@oh-my-pi/pi-coding-agent/tools/bash-minimizer-gain";
+import { appendBashMinimizerGainRecord } from "@oh-my-pi/pi-coding-agent/tools/bash-minimizer-gain";
+
+function gainPath(agentDir: string): string {
+	return path.join(agentDir, "minimizer-gain.jsonl");
+}
 
 interface GainRecord {
 	timestamp: string;
@@ -43,7 +44,7 @@ describe("bash minimizer gain writer", () => {
 	});
 
 	async function records(): Promise<GainRecord[]> {
-		const text = await Bun.file(getBashMinimizerGainPath(agentDir)).text();
+		const text = await Bun.file(gainPath(agentDir)).text();
 		return text
 			.trim()
 			.split("\n")
@@ -104,7 +105,7 @@ describe("bash minimizer gain writer", () => {
 			kind: "missed",
 		});
 
-		expect(await Bun.file(getBashMinimizerGainPath(agentDir)).exists()).toBe(false);
+		expect(await Bun.file(gainPath(agentDir)).exists()).toBe(false);
 	});
 
 	test("writes eligible unchanged output as a missed record", async () => {
@@ -163,7 +164,7 @@ describe("makeMinimizedSaveHandler", () => {
 		await handler.onMinimizedSave("original output", { filter: "bun-test", inputBytes: 4000, outputBytes: 1000 });
 		await handler.flushSaved(1, 1000);
 
-		const [line] = (await Bun.file(getBashMinimizerGainPath(agentDir)).text()).trim().split("\n");
+		const [line] = (await Bun.file(gainPath(agentDir)).text()).trim().split("\n");
 		const record = JSON.parse(line!) as GainRecord;
 		expect(handler.didSave()).toBe(true);
 		expect(record).toEqual(expect.objectContaining({ kind: "saved", filter: "bun-test", exitCode: 1 }));
@@ -175,7 +176,7 @@ describe("makeMinimizedSaveHandler", () => {
 		await handler.onMinimizedSave("original output", { filter: "bun-test", inputBytes: 4000, outputBytes: 17 });
 		await handler.flushSaved(0, Buffer.byteLength(visibleOutput));
 
-		const [line] = (await Bun.file(getBashMinimizerGainPath(agentDir)).text()).trim().split("\n");
+		const [line] = (await Bun.file(gainPath(agentDir)).text()).trim().split("\n");
 		const record = JSON.parse(line!) as GainRecord;
 		expect(record).toEqual(
 			expect.objectContaining({
@@ -194,7 +195,7 @@ describe("makeMinimizedSaveHandler", () => {
 			await handler.flushSaved(0, 500);
 		}
 
-		expect(await Bun.file(getBashMinimizerGainPath(agentDir)).exists()).toBe(false);
+		expect(await Bun.file(gainPath(agentDir)).exists()).toBe(false);
 	});
 });
 
@@ -258,7 +259,7 @@ describe("BashRunner gain telemetry", () => {
 		await runner.executeBash("bun test noisy.test.ts");
 
 		expect(execute).toHaveBeenCalledTimes(1);
-		const [line] = (await Bun.file(getBashMinimizerGainPath(agentDir)).text()).trim().split("\n");
+		const [line] = (await Bun.file(gainPath(agentDir)).text()).trim().split("\n");
 		expect(JSON.parse(line!)).toEqual(
 			expect.objectContaining({
 				outputBytes: Buffer.byteLength(visibleOutput),
