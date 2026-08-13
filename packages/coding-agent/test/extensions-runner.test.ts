@@ -11,7 +11,7 @@ import type { ImageContent, TextContent } from "@oh-my-pi/pi-ai";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { discoverAndLoadExtensions, ExtensionRuntime } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
+import { ExtensionRuntime, loadExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 import {
 	EXTENSION_HANDLER_TIMEOUT_MS,
 	ExtensionRunner,
@@ -69,7 +69,13 @@ describe("ExtensionRunner", () => {
 	});
 
 	const loadTestExtensions = async (configuredPaths: string[] = []) => {
-		const result = await discoverAndLoadExtensions([extensionsDir, ...configuredPaths], tempDir.path());
+		const discoveredPaths = fs
+			.readdirSync(extensionsDir, { withFileTypes: true })
+			.filter(entry => entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".js")))
+			.map(entry => path.join(extensionsDir, entry.name))
+			.sort();
+		const explicitPaths = configuredPaths.map(configuredPath => path.resolve(tempDir.path(), configuredPath));
+		const result = await loadExtensions([...discoveredPaths, ...explicitPaths], tempDir.path());
 		const testRoots = [
 			extensionsDir,
 			...configuredPaths.map(configuredPath => path.resolve(tempDir.path(), configuredPath)),
@@ -126,6 +132,55 @@ describe("ExtensionRunner", () => {
 		const disabled = createContext(Settings.isolated({ "shellMinimizer.enabled": false }));
 		expect(await disabled.isBashMinimizerEligible("git status")).toBe(false);
 	}, 15_000);
+	it("exposes the initialized host mode to extension contexts", async () => {
+		const result = await loadTestExtensions();
+		const runner = new ExtensionRunner(
+			result.extensions,
+			result.runtime,
+			tempDir.path(),
+			sessionManager,
+			modelRegistry,
+		);
+		const actions = {
+			sendMessage: () => {},
+			sendUserMessage: () => {},
+			appendEntry: () => {},
+			setLabel: () => {},
+			getActiveTools: () => [],
+			getAllTools: () => [],
+			setActiveTools: async () => {},
+			getCommands: () => [],
+			setModel: async () => false,
+			getThinkingLevel: () => undefined,
+			setThinkingLevel: () => {},
+			getSessionName: () => undefined,
+			overrideModelRoles: () => {},
+			replaceModelRoles: () => {},
+			overrideEnabledModels: () => {},
+			setSessionName: async () => {},
+		};
+		const contextActions = {
+			getModel: () => undefined,
+			isIdle: () => true,
+			abort: () => {},
+			hasPendingMessages: () => false,
+			shutdown: () => {},
+			getContextUsage: () => undefined,
+			compact: async () => {},
+			getSystemPrompt: () => [],
+		};
+
+		expect(runner.createContext().mode).toBe("print");
+
+		runner.initialize(actions, contextActions, undefined, undefined, "rpc");
+		expect(runner.createContext().mode).toBe("rpc");
+
+		runner.initialize(actions, contextActions, undefined, undefined, "json");
+		expect(runner.createContext().mode).toBe("json");
+
+		runner.initialize(actions, contextActions, undefined, undefined, "tui");
+		expect(runner.createContext().mode).toBe("tui");
+	});
 	describe("shortcut conflicts", () => {
 		it("warns when extension shortcut conflicts with built-in", async () => {
 			const extCode = `

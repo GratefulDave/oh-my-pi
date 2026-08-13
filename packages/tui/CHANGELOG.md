@@ -5,6 +5,12 @@
 ### Fixed
 - Fixed terminal selection copying leading whitespace into fenced-code rows in coding-agent assistant messages, which could prevent pasted heredoc terminators from closing.
 
+## [17.3.1] - 2026-08-13
+
+### Fixed
+
+- Fixed screen flashing in Herdr panes during transcript streaming.
+
 ## [17.3.0] - 2026-08-13
 
 ### Fixed
