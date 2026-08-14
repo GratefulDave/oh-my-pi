@@ -337,6 +337,17 @@ describe("InteractiveMode subagent observer UI sync", () => {
 		expect(summaries[0]).toMatchObject({ content: "1 agent settled" });
 		expect(session.agent.peekSteeringQueue()).toEqual([]);
 		expect(convertToLlm(session.state.messages)).toEqual([]);
+
+		const summaryEntry = session.sessionManager
+			.getEntries()
+			.find(
+				entry =>
+					entry.type === "custom_message" && entry.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+			);
+		if (!summaryEntry) throw new Error("Expected persisted settled summary");
+		const navigation = await session.navigateTree(summaryEntry.id);
+		expect(navigation.editorText).toBeUndefined();
+		expect(session.sessionManager.getLeafId()).toBe(summaryEntry.id);
 	});
 
 	it("renders exactly one block and never steers when the parent turn is still streaming", async () => {

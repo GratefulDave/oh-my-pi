@@ -305,6 +305,7 @@ import {
 	type PythonExecutionMessage,
 	SILENT_ABORT_MARKER,
 	SKILL_PROMPT_MESSAGE_TYPE,
+	SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
 	sanitizeAssistantForReparentedHistory,
 	USER_INTERRUPT_LABEL,
 } from "./messages";
@@ -8496,7 +8497,11 @@ export class AgentSession {
 			editorText = this.#extractUserMessageText(targetEntry.message.content);
 			const targetImages = this.#extractUserMessageImages(targetEntry.message.content);
 			if (targetImages.length > 0) editorImages = targetImages;
-		} else if (targetEntry.type === "custom_message" && targetEntry.customType !== SKILL_PROMPT_MESSAGE_TYPE) {
+		} else if (
+			targetEntry.type === "custom_message" &&
+			targetEntry.customType !== SKILL_PROMPT_MESSAGE_TYPE &&
+			targetEntry.customType !== SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE
+		) {
 			// Custom message: leaf = parent (null if root), text goes to editor
 			newLeafId = targetEntry.parentId;
 			editorText =
@@ -8529,10 +8534,9 @@ export class AgentSession {
 			newLeafId = this.sessionManager.appendMessageToBranch(toolResultMessage, targetEntry.parentId);
 			isAskReanswerCompletion = true;
 		} else {
-			// Non-user message (or a user-invoked skill-prompt injection): land the
-			// leaf on the selected node so it stays on the active branch. Skill
-			// prompts are custom_message entries but must not be re-editable — their
-			// content is a large expanded body, not a user turn (issue #5374).
+			// Non-user message or display-only custom message: land the leaf on
+			// the selected node so it stays on the active branch. These records
+			// are not re-editable user turns (issue #5374).
 			newLeafId = targetId;
 		}
 
