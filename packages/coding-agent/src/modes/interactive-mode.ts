@@ -2190,7 +2190,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	}
 
 	#scheduleObserverUiSync(kind: SessionObserverChangeKind): void {
-		if (kind === "lifecycle") {
+		if (kind === "lifecycle" || kind === "progress") {
 			for (const session of this.#observerRegistry.getSessions()) {
 				if (session.kind !== "subagent" || session.status !== "active" || session.detached !== true) continue;
 				this.#hadActiveSubagents = true;
