@@ -3,6 +3,7 @@ import type { Static, ZodV3Schema } from "@oh-my-pi/pi-ai";
 import type { ExtensionAPI, ToolDefinition } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { z } from "zod";
 import { z as z3 } from "zod/v3";
+import { z as z4Mini } from "zod/v4/mini";
 
 describe("ExtensionAPI Zod v3 schema contract", () => {
 	it("accepts an external Zod v3 schema and infers tool arguments", () => {
@@ -43,6 +44,27 @@ describe("ExtensionAPI Zod v4 schema contract", () => {
 			label: "Zod v4 schema contract",
 			parameters,
 			description: "Validates external Zod v4 typing",
+			async execute(_toolCallId, params) {
+				expectTypeOf(params).toEqualTypeOf<{ message: string }>();
+				return { content: [{ type: "text", text: params.message }] };
+			},
+		} satisfies ToolDefinition<typeof parameters>;
+
+		const register = (api: Pick<ExtensionAPI, "registerTool">): void => api.registerTool(tool);
+		expectTypeOf(register).toBeFunction();
+	});
+});
+
+describe("ExtensionAPI Zod v4 Mini schema contract", () => {
+	it("accepts a Zod v4 core schema and infers tool arguments", () => {
+		const parameters = z4Mini.object({ message: z4Mini.string() });
+		expectTypeOf<Static<typeof parameters>>().toEqualTypeOf<{ message: string }>();
+
+		const tool = {
+			name: "zod_v4_mini_schema_contract",
+			label: "Zod v4 Mini schema contract",
+			parameters,
+			description: "Validates Zod v4 core typing",
 			async execute(_toolCallId, params) {
 				expectTypeOf(params).toEqualTypeOf<{ message: string }>();
 				return { content: [{ type: "text", text: params.message }] };
