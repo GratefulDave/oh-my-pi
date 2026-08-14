@@ -17,6 +17,10 @@ describe("normalizeProjectPath", () => {
 		expect(normalizeProjectPath("/pi-bash-exec/foo")).toBeNull();
 	});
 
+	it("keeps project paths that merely contain a var/folders segment", () => {
+		expect(normalizeProjectPath("/srv/project/var/folders/app")).toBe("/srv/project/var/folders/app");
+	});
+
 	it("returns null for omp internal worktrees", () => {
 		expect(normalizeProjectPath("/Users/x/.omp/wt/3543-abc/packages/stats")).toBeNull();
 	});
@@ -208,6 +212,26 @@ describe("getGainDashboardStats", () => {
 		expect(stats.missedCommands[0]!.hits).toBe(2);
 		expect(stats.missedCommands[1]!.command).toBe("bun run check:types");
 		expect(stats.missedCommands[1]!.hits).toBe(1);
+	});
+
+	it("retains a project containing var/folders in dashboard selections and missed-command tuning", async () => {
+		const project = "/srv/project/var/folders/app";
+		await writeMinimizerJSONL([
+			{
+				timestamp: new Date().toISOString(),
+				filter: "missed",
+				command: "git status --short",
+				inputBytes: 500,
+				outputBytes: 500,
+				savedBytes: 0,
+				kind: "missed",
+				cwd: project,
+			},
+		]);
+
+		const stats = await getGainDashboardStats();
+		expect(stats.projects).toEqual([project]);
+		expect(stats.missedCommands).toEqual([expect.objectContaining({ command: "git status --short", hits: 1 })]);
 	});
 
 	it("skips minimizer records with invalid timestamps", async () => {

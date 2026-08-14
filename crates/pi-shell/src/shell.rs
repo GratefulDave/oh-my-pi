@@ -895,10 +895,11 @@ async fn run_shell_command_single(
 					minimizer::MinimizerOutput::passthrough(&buffered.text)
 				},
 			};
-			// A pipeline gated off by `only_on_exit` / `except_on_exit` never had
-			// an opportunity to minimize this result. Do not report it as an
-			// eligible no-op to the gain telemetry consumer.
-			if minimized.filter == "exit-skip" {
+			// Output below the minimum threshold and a pipeline gated off by
+			// `only_on_exit` / `except_on_exit` never had an opportunity to
+			// minimize this result. Do not report either as an eligible no-op to
+			// the gain telemetry consumer.
+			if matches!(minimized.filter, "exit-skip" | "too-short") {
 				minimizer_eligible = false;
 			}
 			// Surface telemetry only when the filter actually rewrote the output
@@ -1020,7 +1021,8 @@ async fn run_shell_command_segmented_chain(
 					let filter_backed_segment =
 						minimizer::engine::should_minimize(&segment.command, config);
 					let minimized = minimizer::apply(&segment.command, &buffered.text, exit, config);
-					ran_exit_eligible_filter |= filter_backed_segment && minimized.filter != "exit-skip";
+					ran_exit_eligible_filter |=
+						filter_backed_segment && !matches!(minimized.filter, "exit-skip" | "too-short");
 					capture.push(
 						&buffered.text,
 						buffered.input_bytes,
@@ -4784,6 +4786,22 @@ except_on_exit = [0]
 			assert_eq!(output, "prep\n");
 			assert!(result.minimized.is_none());
 			assert!(!result.minimizer_eligible, "{command} exit gate must not emit a missed record");
+		}
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	#[cfg(unix)]
+	#[tokio::test(flavor = "multi_thread")]
+	async fn below_threshold_filter_output_is_not_minimizer_eligible() {
+		let root = unique_temp_dir("too-short-minimizer");
+		let minimizer = printf_minimizer(&root.join("minimizer.toml"), None);
+
+		for (command, expected_len) in [("printf '%500s' x", 500), ("echo prep; printf '%500s' x", 505)] {
+			let (result, output) =
+				run_command_capture(command, None, Some(minimizer.clone()), CancelToken::default()).await;
+			assert_eq!(output.len(), expected_len);
+			assert!(result.minimized.is_none());
+			assert!(!result.minimizer_eligible, "{command} below-threshold output must not emit a missed record");
 		}
 		let _ = std::fs::remove_dir_all(&root);
 	}
