@@ -46,7 +46,7 @@ interface MinimizerRecord {
 
 // Paths that carry no tuning signal — temp/internal locations.
 const TEMP_PATH_RE =
-	/\/T(?:\/|$)|\/tmp(?:\/|$)|\/pi-bash-exec(?:\/|$)|\/omp-bash-exec(?:\/|$)|\/pi-bash-detach(?:\/|$)|\/var\/folders(?:\/|$)/;
+	/\/T(?:\/|$)|\/tmp(?:\/|$)|\/pi-bash-exec(?:\/|$)|\/omp-bash-exec(?:\/|$)|\/pi-bash-detach(?:\/|$)|^\/var\/folders(?:\/|$)/;
 
 // ---------------------------------------------------------------------------
 // Project-match helper
