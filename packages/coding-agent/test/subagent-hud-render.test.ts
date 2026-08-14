@@ -350,6 +350,33 @@ describe("InteractiveMode subagent observer UI sync", () => {
 		expect(session.sessionManager.getLeafId()).toBe(summaryEntry.id);
 	});
 
+	it("persists a settlement first observed through a detached progress update", async () => {
+		await mode.init({ suppressWelcomeIntro: true });
+		vi.useFakeTimers();
+
+		eventBus.emit(
+			TASK_SUBAGENT_PROGRESS_CHANNEL,
+			makeProgressPayload("ProgressOnly", 0, "resumed background work", true),
+		);
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			...makeLifecycle("ProgressOnly", 0, "resumed background work", true),
+			status: "completed",
+		});
+		vi.runAllTimers();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		const summaries = session.state.messages.filter(
+			(message): message is CustomMessage<SubagentHudSummaryDetails> =>
+				message.role === "custom" && message.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+		);
+		expect(summaries).toHaveLength(1);
+		expect(summaries[0]).toMatchObject({
+			content: "1 agent settled",
+			details: { rows: [expect.objectContaining({ id: "ProgressOnly", label: "resumed background work" })] },
+		});
+	});
+
 	it("renders exactly one block and never steers when the parent turn is still streaming", async () => {
 		await mode.init({ suppressWelcomeIntro: true });
 		vi.useFakeTimers();
