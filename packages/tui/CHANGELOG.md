@@ -5,6 +5,12 @@
 ### Fixed
 - Fixed terminal selection copying leading whitespace into fenced-code rows in coding-agent assistant messages, which could prevent pasted heredoc terminators from closing.
 
+## [17.3.4] - 2026-08-14
+
+### Fixed
+
+- Fixed a terminal Device-Attributes reply leaking into the composer as literal text (e.g. `1;22;…;52c`) when it arrived after the startup capability-probe sentinel FIFO drained, a race made observable by the added latency of an SSH/zmx PTY chain. DA1 replies (`CSI ? … c`) and split private-CSI responses are now consumed for the whole session lifetime, not only while a probe sentinel is outstanding ([#8542](https://github.com/can1357/oh-my-pi/issues/8542)).
+
 ## [17.3.3] - 2026-08-14
 
 ### Fixed
