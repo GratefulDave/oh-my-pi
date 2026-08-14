@@ -4,6 +4,7 @@ import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import { validateToolArguments } from "@oh-my-pi/pi-ai/utils/validation";
 import { z } from "zod/v3";
 import { z as z4 } from "zod/v4";
+import { z as z4Mini } from "zod/v4/mini";
 
 const parameters = z.object({ message: z.string().default("hello") });
 const tool: Tool<typeof parameters> = { name: "zod-v3", description: "", parameters };
@@ -64,6 +65,28 @@ describe("Zod v4 tool schemas", () => {
 			id: "zod-v4-default",
 			name: v4Tool.name,
 			arguments: {},
+		});
+		expect(arguments_).toEqual({ message: "hello" });
+	});
+});
+
+describe("Zod v4 Mini tool schemas", () => {
+	it("serializes and validates a Zod v4 core schema", () => {
+		const parameters = z4Mini.object({ message: z4Mini.string() });
+		const tool: Tool<typeof parameters> = { name: "zod-v4-mini", description: "", parameters };
+
+		const wire = toolWireSchema(tool);
+		expect(wire).toMatchObject({
+			type: "object",
+			properties: { message: { type: "string" } },
+			required: ["message"],
+		});
+
+		const arguments_ = validateToolArguments(tool, {
+			type: "toolCall",
+			id: "zod-v4-mini",
+			name: tool.name,
+			arguments: { message: "hello" },
 		});
 		expect(arguments_).toEqual({ message: "hello" });
 	});

@@ -25,7 +25,6 @@
 
 import { type Type, type } from "@oh-my-pi/omptype";
 import { structuredCloneJSON } from "@oh-my-pi/pi-utils";
-import type { ZodType } from "zod/v4";
 import * as AIError from "../error";
 import type { Tool, ToolCall } from "../types";
 import { upgradeJsonSchemaTo202012 } from "./schema/draft";
@@ -41,6 +40,7 @@ import {
 	isZodSchema,
 	isZodV3Schema,
 	type ZodV3RuntimeSchema,
+	type ZodV4RuntimeSchema,
 	zodToWireSchema,
 	zodV3ToWireSchema,
 } from "./schema/wire";
@@ -1610,7 +1610,7 @@ function coerceArgsFromIssues(args: unknown, issues: FlatIssue[]): { value: unkn
 type ValidationContext =
 	| {
 			kind: "zod";
-			zod: ZodType;
+			zod: ZodV4RuntimeSchema;
 			json: Record<string, unknown>;
 	  }
 	| {

@@ -157,7 +157,7 @@
 - Fixed LSP `diagnostics` incorrectly reporting success when all language servers failed.
 - Fixed Hindsight memory scoping splitting repositories across multiple scopes on case-sensitive filesystems by lowercasing the project label.
 - Fixed the CLI crashing at startup with a raw `AuthBrokerError` when the configured auth broker is unreachable, replacing it with an actionable error message.
-- Fixed extension tools registering external Zod v3 schemas being rejected: `registerTool`'s parameter type accepts `@oh-my-pi/pi-ai`'s `TSchema` (Zod v4/ArkType/JSON Schema, plus a structural Zod v3 marker), and the wire/validation pipeline now serializes and validates real Zod v3 schema objects instead of only schemas built through the bundled `omptype`-backed Zod facade.
+- Fixed extension tools registering external Zod schemas being rejected: `registerTool`'s parameter type accepts `@oh-my-pi/pi-ai`'s `TSchema` for Zod v4 core schemas (including `zod/v4/mini`) alongside ArkType, JSON Schema, and structural Zod v3; the wire/validation pipeline serializes and validates those live Zod instances instead of only schemas built through the bundled `omptype`-backed Zod facade.
 - Fixed various resource and process leaks, including idle launch brokers staying alive indefinitely, stale MCP connections leaving child processes open, and undrained stdout in DAP `runInTerminal` requests.
 - Fixed custom STB-backed vision providers failing to decode WebP images by automatically detecting image formats from bytes and normalizing WebP blocks.
 - Fixed command-backed provider API keys (`!command`) staying pinned to cached values after receiving an HTTP 401 error.

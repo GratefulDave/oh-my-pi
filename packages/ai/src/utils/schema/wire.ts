@@ -15,7 +15,8 @@ import type { Type } from "@oh-my-pi/omptype";
 import type { ZodType as ZodV3Type } from "zod/v3";
 // We import the Zod *value* (z) for runtime APIs. Marker checks rely on the
 // `_zod` symbol that every Zod v4 schema instance carries.
-import { type ZodType, z } from "zod/v4";
+import { z } from "zod/v4";
+import type { $ZodType as ZodCoreType } from "zod/v4/core";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { Tool, TSchema, ZodV3Schema } from "../../types";
 import { upgradeJsonSchemaTo202012 } from "./draft";
@@ -31,10 +32,15 @@ import { stamp } from "./stamps";
  * resulting plain object then explodes `z.toJSONSchema` because the prototype
  * (and every Zod parsing method) is gone.
  *
- * Live Zod instances always carry a `.parse` function on the prototype;
+ * Live Zod instances always carry callable `.parse` and `.safeParse` methods;
  * impostors do not.
  */
-export function isZodSchema(value: unknown): value is ZodType {
+export interface ZodV4RuntimeSchema extends ZodCoreType {
+	parse(input: unknown): unknown;
+	safeParse(input: unknown): { success: true; data: unknown } | { success: false; error: { issues: unknown[] } };
+}
+
+export function isZodSchema(value: unknown): value is ZodV4RuntimeSchema {
 	return (
 		typeof value === "object" &&
 		value !== null &&
@@ -45,11 +51,17 @@ export function isZodSchema(value: unknown): value is ZodType {
 		// (`ZodObject`, `ZodOptional`, etc.) and a tagged-union style check would
 		// have to enumerate them all.
 		"_zod" in value &&
+		value._zod !== null &&
 		typeof value._zod === "object" &&
+		"def" in value._zod &&
+		typeof value._zod.def === "object" &&
 		// Reject JSON-roundtripped objects that kept the `_zod` key but lost the
-		// prototype. Real instances have `.parse` on the prototype chain.
+		// live parser API. Real instances expose both methods, whether they are
+		// own properties (Zod Mini) or inherited (Zod Classic).
 		"parse" in value &&
-		typeof value.parse === "function"
+		typeof value.parse === "function" &&
+		"safeParse" in value &&
+		typeof value.safeParse === "function"
 	);
 }
 export interface ZodV3RuntimeSchema extends ZodV3Schema {
@@ -597,7 +609,7 @@ export function normalizeEmptySchemas(node: unknown): void {
 }
 
 /** Convert a Zod schema into the JSON Schema shape providers consume. */
-export function zodToWireSchema(schema: ZodType): Record<string, unknown> {
+export function zodToWireSchema(schema: ZodCoreType): Record<string, unknown> {
 	return stamp(schema, kZodWireSchema, s => {
 		// `target: "draft-2020-12"` matches what Anthropic's `input_schema` validator
 		// requires out of the box; our other provider sanitizers (OpenAI strict,
