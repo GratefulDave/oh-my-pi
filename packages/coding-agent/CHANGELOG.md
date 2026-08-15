@@ -90,6 +90,10 @@
 - Fixed external thinking being offered on xAI reasoning-only Responses models (grok-4 family) that reject `reasoning.effort`, where the private scratchpad ran alongside native reasoning instead of replacing it.
 - Fixed the extension tool-call handler timeout rendering outside a titled section in `/settings` by registering its Extensions group on the Tools tab.
 
+### Fixed
+
+- Fixed extension tools registering external Zod schemas being rejected: `registerTool`'s parameter type accepts `@oh-my-pi/pi-ai`'s `TSchema` for Zod v4 core schemas (including `zod/v4/mini`) alongside ArkType, JSON Schema, and structural Zod v3; the wire/validation pipeline serializes and validates those live Zod instances instead of only schemas built through the bundled `omptype`-backed Zod facade ([#7681](https://github.com/can1357/oh-my-pi/pull/7681) by [@GratefulDave](https://github.com/GratefulDave)).
+
 ## [17.3.4] - 2026-08-14
 
 ### Changed
@@ -157,7 +161,6 @@
 - Fixed LSP `diagnostics` incorrectly reporting success when all language servers failed.
 - Fixed Hindsight memory scoping splitting repositories across multiple scopes on case-sensitive filesystems by lowercasing the project label.
 - Fixed the CLI crashing at startup with a raw `AuthBrokerError` when the configured auth broker is unreachable, replacing it with an actionable error message.
-- Fixed extension tools registering external Zod schemas being rejected: `registerTool`'s parameter type accepts `@oh-my-pi/pi-ai`'s `TSchema` for Zod v4 core schemas (including `zod/v4/mini`) alongside ArkType, JSON Schema, and structural Zod v3; the wire/validation pipeline serializes and validates those live Zod instances instead of only schemas built through the bundled `omptype`-backed Zod facade.
 - Fixed various resource and process leaks, including idle launch brokers staying alive indefinitely, stale MCP connections leaving child processes open, and undrained stdout in DAP `runInTerminal` requests.
 - Fixed custom STB-backed vision providers failing to decode WebP images by automatically detecting image formats from bytes and normalizing WebP blocks.
 - Fixed command-backed provider API keys (`!command`) staying pinned to cached values after receiving an HTTP 401 error.

@@ -1,13 +1,21 @@
 import { describe, expectTypeOf, it } from "bun:test";
-import type { Static, ZodV3Schema } from "@oh-my-pi/pi-ai";
+import type { Type } from "@oh-my-pi/omptype";
+import type { Static, TJsonSchema, TSchema, ZodV3Schema } from "@oh-my-pi/pi-ai";
 import type { ExtensionAPI, ToolDefinition } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { z } from "zod";
 import { z as z3 } from "zod/v3";
 import { z as z4Mini } from "zod/v4/mini";
 
+/** Pre-#7681 `TSchema` / `Static` — Zod must fail this pair and pass the widened one. */
+type BaseTSchema = Type | TJsonSchema;
+type BaseStatic<S> = S extends Type ? S["infer"] : S extends { static: infer T } ? T : unknown;
+
 describe("ExtensionAPI Zod v3 schema contract", () => {
 	it("accepts an external Zod v3 schema and infers tool arguments", () => {
 		const parameters = z3.object({ message: z3.string() });
+		expectTypeOf(parameters).not.toExtend<BaseTSchema>();
+		expectTypeOf(parameters).toExtend<TSchema>();
+		expectTypeOf<BaseStatic<typeof parameters>>().toEqualTypeOf<unknown>();
 		const accepted: ZodV3Schema = parameters;
 		expectTypeOf(accepted).toMatchTypeOf<ZodV3Schema>();
 		expectTypeOf<Static<typeof parameters>>().toEqualTypeOf<{ message: string }>();
@@ -37,6 +45,9 @@ describe("ExtensionAPI Zod v4 schema contract", () => {
 	// own doc comment — must type-check here without widening to `any`/`unknown`.
 	it("accepts a real external Zod v4 schema and infers tool arguments", () => {
 		const parameters = z.object({ message: z.string() });
+		expectTypeOf(parameters).not.toExtend<BaseTSchema>();
+		expectTypeOf(parameters).toExtend<TSchema>();
+		expectTypeOf<BaseStatic<typeof parameters>>().toEqualTypeOf<unknown>();
 		expectTypeOf<Static<typeof parameters>>().toEqualTypeOf<{ message: string }>();
 
 		const tool = {
@@ -58,6 +69,9 @@ describe("ExtensionAPI Zod v4 schema contract", () => {
 describe("ExtensionAPI Zod v4 Mini schema contract", () => {
 	it("accepts a Zod v4 core schema and infers tool arguments", () => {
 		const parameters = z4Mini.object({ message: z4Mini.string() });
+		expectTypeOf(parameters).not.toExtend<BaseTSchema>();
+		expectTypeOf(parameters).toExtend<TSchema>();
+		expectTypeOf<BaseStatic<typeof parameters>>().toEqualTypeOf<unknown>();
 		expectTypeOf<Static<typeof parameters>>().toEqualTypeOf<{ message: string }>();
 
 		const tool = {

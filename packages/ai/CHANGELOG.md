@@ -32,6 +32,10 @@
 - Fixed Anthropic-compatible streams dropping thinking content, which broke replay of prior reasoning.
 - Updated the Alibaba Coding Plan China login flow to point to the current Bailian API-key management console.
 
+### Fixed
+
+- Fixed tool `parameters` rejecting live external Zod v3, Zod v4, and Zod v4 Mini schemas: `TSchema` now includes `zod/v4/core` `$ZodType` and a structural Zod v3 marker, and `Static<T>` infers their output types so extension tools keep typed `execute` params.
+
 ## [17.3.4] - 2026-08-14
 
 ### Fixed
