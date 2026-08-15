@@ -4,6 +4,8 @@ import { getAgentDir } from "@oh-my-pi/pi-utils";
 
 const MINIMIZER_GAIN_FILE = "minimizer-gain.jsonl";
 const BYTES_PER_TOKEN_ESTIMATE = 4;
+const TELEMETRY_FILE_MODE = 0o600;
+const TELEMETRY_DIR_MODE = 0o700;
 
 /** Classification persisted for a completed eligible bash execution; consumed by the Stats Gain dashboard. */
 export type BashMinimizerGainKind = "saved" | "missed";
@@ -66,6 +68,23 @@ export async function appendBashMinimizerGainRecord(input: BashMinimizerGainInpu
 		kind,
 	};
 
-	await fs.mkdir(path.dirname(recordsPath), { recursive: true });
-	await fs.appendFile(recordsPath, `${JSON.stringify(record)}\n`, "utf8");
+	await appendPrivateTelemetryLine(recordsPath, `${JSON.stringify(record)}\n`);
+}
+
+/** Creates the JSONL file `0600` and its parent `0700` so umask cannot leave it world-readable. */
+async function appendPrivateTelemetryLine(recordsPath: string, line: string): Promise<void> {
+	const dir = path.dirname(recordsPath);
+	await fs.mkdir(dir, { recursive: true, mode: TELEMETRY_DIR_MODE });
+	if (process.platform !== "win32") {
+		await fs.chmod(dir, TELEMETRY_DIR_MODE);
+	}
+	const handle = await fs.open(recordsPath, "a", TELEMETRY_FILE_MODE);
+	try {
+		await handle.appendFile(line, "utf8");
+		if (process.platform !== "win32") {
+			await handle.chmod(TELEMETRY_FILE_MODE);
+		}
+	} finally {
+		await handle.close();
+	}
 }

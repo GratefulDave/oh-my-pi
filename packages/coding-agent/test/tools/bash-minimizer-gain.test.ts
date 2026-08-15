@@ -132,6 +132,54 @@ describe("bash minimizer gain writer", () => {
 		);
 		expect(record!.savedTokens).toBeUndefined();
 	});
+
+	test("creates the telemetry file 0600 and its directory 0700 even under a permissive umask", async () => {
+		if (process.platform === "win32") return;
+
+		const previousUmask = process.umask(0);
+		try {
+			await appendBashMinimizerGainRecord({
+				agentDir,
+				command: "git status",
+				cwd,
+				filter: "missed",
+				inputBytes: 200,
+				outputBytes: 200,
+				exitCode: 0,
+				kind: "missed",
+			});
+		} finally {
+			process.umask(previousUmask);
+		}
+
+		const fileStat = await fs.stat(gainPath(agentDir));
+		const dirStat = await fs.stat(agentDir);
+		expect(fileStat.mode & 0o777).toBe(0o600);
+		expect(dirStat.mode & 0o777).toBe(0o700);
+	});
+
+	test("tightens an existing world-readable telemetry file to 0600", async () => {
+		if (process.platform === "win32") return;
+
+		await fs.mkdir(agentDir, { recursive: true, mode: 0o755 });
+		await fs.writeFile(gainPath(agentDir), "", { mode: 0o644 });
+		await fs.chmod(gainPath(agentDir), 0o644);
+		await fs.chmod(agentDir, 0o755);
+
+		await appendBashMinimizerGainRecord({
+			agentDir,
+			command: "git status",
+			cwd,
+			filter: "missed",
+			inputBytes: 200,
+			outputBytes: 200,
+			exitCode: 0,
+			kind: "missed",
+		});
+
+		expect((await fs.stat(gainPath(agentDir))).mode & 0o777).toBe(0o600);
+		expect((await fs.stat(agentDir)).mode & 0o777).toBe(0o700);
+	});
 });
 
 describe("makeMinimizedSaveHandler", () => {
@@ -264,8 +312,47 @@ describe("BashRunner gain telemetry", () => {
 			expect.objectContaining({
 				outputBytes: Buffer.byteLength(visibleOutput),
 				savedBytes: 4000 - Buffer.byteLength(visibleOutput),
-				sessionCwd: tempDir,
+				sessionCwd: await fs.realpath(tempDir),
 			}),
 		);
+	});
+
+	test("does not record below-threshold output as a missed gain", async () => {
+		const execute = vi.spyOn(bashExecutor, "executeBash").mockResolvedValue({
+			output: "short status",
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+			totalLines: 1,
+			totalBytes: 12,
+			outputLines: 1,
+			outputBytes: 12,
+			minimizerEligible: false,
+		} satisfies BashResult);
+		const runner = new BashRunner({
+			agent: { appendMessage: vi.fn() },
+			sessionManager: {
+				getSessionId: () => "test-session",
+				getCwd: () => tempDir,
+				appendMessage: vi.fn(),
+			},
+			settings: {
+				get: (key: string) =>
+					key === "shellMinimizer.gainTelemetry" || key === "shellMinimizer.enabled"
+						? true
+						: key === "tools.maxTimeout"
+							? 300
+							: undefined,
+				getShellConfig: () => ({}),
+				getAgentDir: () => agentDir,
+			},
+			extensionRunner: () => undefined,
+			isStreaming: () => false,
+		} as unknown as BashRunnerHost);
+
+		await runner.executeBash("git status");
+
+		expect(execute).toHaveBeenCalledTimes(1);
+		expect(await Bun.file(gainPath(agentDir)).exists()).toBe(false);
 	});
 });

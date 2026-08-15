@@ -8,12 +8,15 @@
 
 - Fixed the stats dashboard being unreachable from container hosts by accepting an explicit `--host` bind address while preserving loopback-only binding and same-origin API access by default.
 
+### Added
+
+- Bash Minimizer gain dashboard in `omp stats` — shows bash minimizer token-savings alongside existing snapcompact savings with stacked time series, top-filter breakdown, project selector, and missed-command tuning table ([#5795](https://github.com/can1357/oh-my-pi/pull/5795)).
+
 ## [17.3.0] - 2026-08-13
 
 ### Added
 
 - Added cost-weighted `cacheSavings` metric alongside `cacheRate`, accounting for cache-read discounts and write premiums against equivalent uncached prompt costs.
-- Bash Minimizer gain dashboard in `omp stats` — shows bash minimizer token-savings alongside existing snapcompact savings with stacked time series, top-filter breakdown, project selector, and missed-command tuning table ([#5795](https://github.com/can1357/oh-my-pi/pull/5795)).
 
 ### Fixed
 

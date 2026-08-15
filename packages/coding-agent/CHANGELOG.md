@@ -90,6 +90,14 @@
 - Fixed external thinking being offered on xAI reasoning-only Responses models (grok-4 family) that reject `reasoning.effort`, where the private scratchpad ran alongside native reasoning instead of replacing it.
 - Fixed the extension tool-call handler timeout rendering outside a titled section in `/settings` by registering its Extensions group on the Tools tab.
 
+### Added
+
+- Added opt-in bash minimizer gain telemetry (`shellMinimizer.gainTelemetry`): when enabled (default **off**), appends JSONL records to `~/.omp/agent/minimizer-gain.jsonl` only for eligible native bash-minimizer outcomes — `kind:"saved"` when the shell minimizer compressed output, `kind:"missed"` when an eligible filter produced unchanged output. Records include `sessionId`, `cwd`, `command`, `filter`, `inputBytes`, `outputBytes`, `exitCode`, and `timestamp`. The setting description documents that the raw command string is recorded verbatim and may contain credentials ([#5795](https://github.com/can1357/oh-my-pi/pull/5795)).
+
+### Fixed
+
+- Created the opt-in bash minimizer gain telemetry file with mode `0600` and locked its containing directory to `0700`, so other local users cannot read recorded commands ([#5795](https://github.com/can1357/oh-my-pi/pull/5795)).
+
 ## [17.3.4] - 2026-08-14
 
 ### Changed
@@ -144,7 +152,6 @@
 - Added support for per-agent advisors configured via the `advisor` frontmatter field or the `task.agentAdvisor` settings, allowing different agents to be advised by different models.
 - Redesigned the `/agents` interface as a fullscreen hub featuring a scope sidebar, type-to-filter search, a pinned detail pane, mouse support, and interactive property chips for configuring agent settings.
 - Prepared for the upcoming npm package rename by updating `omp update` and startup version checks to follow the `omp.rename` pointer in the published manifest.
-- Added opt-in bash minimizer gain telemetry (`shellMinimizer.gainTelemetry`): when enabled (default **off**), appends JSONL records to `~/.omp/agent/minimizer-gain.jsonl` only for eligible native bash-minimizer outcomes — `kind:"saved"` when the shell minimizer compressed output, `kind:"missed"` when an eligible filter produced unchanged output. Records include `sessionId`, `cwd`, `command`, `filter`, `inputBytes`, `outputBytes`, `exitCode`, and `timestamp`. The setting description documents that the raw command string is recorded verbatim and may contain credentials ([#5795](https://github.com/can1357/oh-my-pi/pull/5795)).
 
 ### Changed
 
