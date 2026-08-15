@@ -340,10 +340,7 @@ describe("InteractiveMode subagent observer UI sync", () => {
 
 		const summaryEntry = session.sessionManager
 			.getEntries()
-			.find(
-				entry =>
-					entry.type === "custom_message" && entry.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
-			);
+			.find(entry => entry.type === "custom_message" && entry.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE);
 		if (!summaryEntry) throw new Error("Expected persisted settled summary");
 		const navigation = await session.navigateTree(summaryEntry.id);
 		expect(navigation.editorText).toBeUndefined();
@@ -440,5 +437,50 @@ describe("InteractiveMode subagent observer UI sync", () => {
 			)
 			.map(message => message.details?.rows[0]?.label);
 		expect(labels).toEqual(["first task", "follow-up task"]);
+	});
+
+	it("persists a settlement while another detached subagent is still active", async () => {
+		await mode.init({ suppressWelcomeIntro: true });
+		vi.useFakeTimers();
+
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, makeLifecycle("AgentA", 0, "first task", true));
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, makeLifecycle("AgentB", 1, "other task", true));
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			...makeLifecycle("AgentA", 0, "first task", true),
+			status: "completed",
+		});
+		vi.runAllTimers();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		const firstWave = session.state.messages.filter(
+			(message): message is CustomMessage<SubagentHudSummaryDetails> =>
+				message.role === "custom" && message.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+		);
+		expect(firstWave).toHaveLength(1);
+		expect(firstWave[0]?.details?.rows.map(row => ({ id: row.id, label: row.label }))).toEqual([
+			{ id: "AgentA", label: "first task" },
+		]);
+		expect(convertToLlm(session.state.messages)).toEqual([]);
+
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			...makeLifecycle("AgentB", 1, "other task", true),
+			status: "completed",
+		});
+		vi.runAllTimers();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		const labels = session.state.messages
+			.filter(
+				(message): message is CustomMessage<SubagentHudSummaryDetails> =>
+					message.role === "custom" && message.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+			)
+			.flatMap(message => message.details?.rows ?? [])
+			.map(row => ({ id: row.id, label: row.label }));
+		expect(labels).toEqual([
+			{ id: "AgentA", label: "first task" },
+			{ id: "AgentB", label: "other task" },
+		]);
 	});
 });

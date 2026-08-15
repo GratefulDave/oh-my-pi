@@ -512,7 +512,11 @@ function toSubagentHudSummaryRow(session: ObservableSession): SubagentHudSummary
 	return {
 		id: session.id,
 		roleLabel: session.agent ?? "task",
-		label: session.description || session.label || formatTaskId(session.id),
+		label:
+			session.description?.trim() ||
+			session.progress?.description?.trim() ||
+			session.label ||
+			formatTaskId(session.id),
 		status: session.status as "completed" | "failed" | "aborted",
 		toolCount: session.progress?.toolCount ?? 0,
 		tokenLabel,
@@ -752,8 +756,8 @@ export class InteractiveMode implements InteractiveModeContext {
 	#voicePreviousUseTerminalCursor: boolean | null = null;
 	#resizeHandler?: () => void;
 	#observerRegistry: SessionObserverRegistry;
-	#hadActiveSubagents = false;
-	#emittedSubagentSummaryIds = new Set<string>();
+	#pendingSubagentSummaryRows: SubagentHudSummaryRow[] = [];
+	#subagentSummaryLifecycle = new Map<string, "active" | "summarized">();
 	#eventBus?: EventBus;
 	#eventBusUnsubscribers: Array<() => void> = [];
 	#observerUiSyncTimer?: NodeJS.Timeout;
@@ -2191,11 +2195,7 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	#scheduleObserverUiSync(kind: SessionObserverChangeKind): void {
 		if (kind === "lifecycle" || kind === "progress") {
-			for (const session of this.#observerRegistry.getSessions()) {
-				if (session.kind !== "subagent" || session.status !== "active" || session.detached !== true) continue;
-				this.#hadActiveSubagents = true;
-				this.#emittedSubagentSummaryIds.delete(session.id);
-			}
+			this.#collectSettledSubagentSummaries();
 		}
 		if (kind !== "progress") {
 			this.#observerUiSyncNeedsTodoReconcile = true;
@@ -2220,28 +2220,23 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#emitSubagentSummaryIfSettled();
 		this.ui.requestRender();
 	}
-	#emitSubagentSummaryIfSettled(): void {
-		const sessions = this.#observerRegistry.getSessions();
-		const hasActiveDetached = sessions.some(
-			session => session.kind === "subagent" && session.status === "active" && session.detached === true,
-		);
-		if (!this.#hadActiveSubagents || hasActiveDetached) {
-			this.#hadActiveSubagents = hasActiveDetached;
-			return;
+	#collectSettledSubagentSummaries(): void {
+		for (const session of this.#observerRegistry.getSessions()) {
+			if (session.kind !== "subagent" || session.detached !== true) continue;
+			if (session.status === "active") {
+				this.#subagentSummaryLifecycle.set(session.id, "active");
+				continue;
+			}
+			if (this.#subagentSummaryLifecycle.get(session.id) === "summarized") continue;
+			this.#pendingSubagentSummaryRows.push(toSubagentHudSummaryRow(session));
+			this.#subagentSummaryLifecycle.set(session.id, "summarized");
 		}
+	}
 
-		const settled = sessions.filter(
-			session =>
-				session.kind === "subagent" &&
-				session.detached === true &&
-				session.status !== "active" &&
-				!this.#emittedSubagentSummaryIds.has(session.id),
-		);
-		this.#hadActiveSubagents = false;
-		if (settled.length === 0) return;
+	#emitSubagentSummaryIfSettled(): void {
+		if (this.#pendingSubagentSummaryRows.length === 0) return;
 
-		const rows = settled.map(toSubagentHudSummaryRow);
-		for (const session of settled) this.#emittedSubagentSummaryIds.add(session.id);
+		const rows = this.#pendingSubagentSummaryRows.splice(0);
 		const content = `${rows.length} agent${rows.length === 1 ? "" : "s"} settled`;
 		const details: SubagentHudSummaryDetails = { emittedAt: Date.now(), rows };
 		void this.session
@@ -4963,8 +4958,8 @@ export class InteractiveMode implements InteractiveModeContext {
 	resetObserverRegistry(): void {
 		this.#observerRegistry.resetSessions();
 		this.#observerRegistry.setMainSession(this.sessionManager.getSessionFile() ?? undefined);
-		this.#hadActiveSubagents = false;
-		this.#emittedSubagentSummaryIds.clear();
+		this.#pendingSubagentSummaryRows = [];
+		this.#subagentSummaryLifecycle.clear();
 	}
 
 	handleBashCommand(command: string, excludeFromContext?: boolean): Promise<void> {

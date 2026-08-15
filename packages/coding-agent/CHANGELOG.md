@@ -90,6 +90,10 @@
 - Fixed external thinking being offered on xAI reasoning-only Responses models (grok-4 family) that reject `reasoning.effort`, where the private scratchpad ran alongside native reasoning instead of replacing it.
 - Fixed the extension tool-call handler timeout rendering outside a titled section in `/settings` by registering its Extensions group on the Tools tab.
 
+### Added
+
+- Added a persistent transcript summary when detached subagents settle, preserving their outcome, role, tool usage, token usage, and duration across transcript rebuilds.
+
 ## [17.3.4] - 2026-08-14
 
 ### Changed
@@ -411,10 +415,6 @@
 ### Changed
 
 - Upgraded the bundled omptype schema engine: intersection and pipe operators, bigint and RegExp literals in the string DSL, Standard Schema V1 interop, JSON Schema import via fromJsonSchema(), and richer union/collection error reporting.
-
-### Added
-
-- Added a persistent transcript summary when detached subagents settle, preserving their outcome, role, tool usage, token usage, and duration across transcript rebuilds.
 
 ## [17.2.7] - 2026-08-03
 
