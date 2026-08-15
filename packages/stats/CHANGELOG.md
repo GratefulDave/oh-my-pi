@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Recorded `write`/`read` calls against `xd://<tool>` under the inner tool name so MCP, codemap, and LSP no longer vanish from `omp stats` as `write`.
+
+
 ### Added
 
 - Bash Minimizer gain dashboard in `omp stats` — shows bash minimizer token-savings alongside existing snapcompact savings with stacked time series, top-filter breakdown, project selector, and missed-command tuning table ([#3691](https://github.com/can1357/oh-my-pi/pull/3691)).

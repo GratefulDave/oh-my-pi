@@ -324,6 +324,38 @@ describe("tool usage stats pipeline", () => {
 		expect(read.totalTokensShare).toBeCloseTo(50, 6);
 	});
 
+	it("records write xd://mcp__* as the inner MCP tool, not write", async () => {
+		await writeSessionFile("xd-mcp.jsonl", { id: "sessxd01" }, [
+			buildAssistantEntry({
+				entryId: "asst-xd",
+				timestamp: TS1,
+				toolCalls: [
+					{
+						id: "call-xd",
+						name: "write",
+						arguments: { path: "xd://mcp__codemap_codemap", content: "{}" },
+					},
+				],
+				totalTokens: 20,
+				outputTokens: 4,
+				costTotal: 0.001,
+			}),
+			buildToolResultEntry({
+				entryId: "tr-xd",
+				parentId: "asst-xd",
+				timestamp: TS1,
+				toolCallId: "call-xd",
+				toolName: "write",
+				text: "ok",
+			}),
+		]);
+		await syncAllSessions({ workers: 1 });
+		const stats = getToolStats();
+		expect(stats.some(row => row.tool === "write")).toBe(false);
+		expect(toolRow(stats, "mcp__codemap_codemap").calls).toBe(1);
+	});
+
+
 	it("keeps tool aggregates stable across repeated syncs of unchanged data", async () => {
 		const sessionFile = await writeSessionFile("session.jsonl", { id: "sess0003" }, buildStandardEntries());
 		await syncAllSessions({ workers: 1 });

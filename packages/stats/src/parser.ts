@@ -48,6 +48,24 @@ export function classifyAgentType(sessionPath: string): AgentType {
 }
 
 /**
+ * Persist the inner device when the model called `write`/`read` against
+ * `xd://<tool>`. Otherwise MCP/codemap/lsp disappear from `omp stats` as `write`.
+ */
+export function resolveRecordedToolName(toolName: string, args: unknown): string {
+	if (toolName !== "write" && toolName !== "read") return toolName;
+	if (!args || typeof args !== "object" || !("path" in args)) return toolName;
+	const rawPath = args.path;
+	if (typeof rawPath !== "string") return toolName;
+	let target = rawPath.trim();
+	if (target.startsWith("[") && target.endsWith("]")) {
+		target = target.slice(1, -1).replace(/#[0-9a-fA-F]+$/, "").trim();
+	}
+	const match = /^xd:\/\/([^/?#]+)/i.exec(target);
+	const name = match?.[1];
+	return name && name.length > 0 ? name : toolName;
+}
+
+/**
  * Extract folder name from session filename.
  * Session files are named like: --work--pi--/timestamp_uuid.jsonl
  * The folder part uses -- as path separator.
@@ -260,7 +278,7 @@ function extractToolCalls(
 			entryId: entry.id,
 			toolCallId: block.id,
 			folder,
-			toolName: block.name,
+			toolName: resolveRecordedToolName(block.name, block.arguments),
 			model: msg.model,
 			provider: msg.provider,
 			timestamp: coerceEntryTimestamp(msg.timestamp, entry),
@@ -269,6 +287,7 @@ function extractToolCalls(
 			argsChars,
 		};
 	});
+
 }
 
 /**
