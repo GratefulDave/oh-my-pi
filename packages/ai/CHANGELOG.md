@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed OpenAI Responses / Completions and xAI tool conversion 400ing the whole turn on MCP schemas whose root is an object plus a typeless exclusive-required `anyOf` (e.g. codebase-memory `check_index_coverage`). Those fragments now flatten in `toolWireSchema` so every other tool stays callable.
+
 ## [17.3.4] - 2026-08-14
 
 ### Fixed
