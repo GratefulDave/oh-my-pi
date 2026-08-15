@@ -6,10 +6,12 @@
 // surfaces the failure.
 import { describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
+import * as net from "node:net";
 import * as path from "node:path";
 import { TempDir } from "@oh-my-pi/pi-utils";
 import { startDaemonBrokerFromEnvironment } from "../../src/launch/broker";
 import { createDaemonBrokerClient } from "../../src/launch/client";
+import { daemonBrokerEndpoint } from "../../src/launch/paths";
 import { DAEMON_IDLE_GRACE_ENV, DAEMON_PROJECT_DIR_ENV, DAEMON_RUNTIME_DIR_ENV } from "../../src/launch/protocol";
 
 function restoreEnv(name: string, value: string | undefined): void {
@@ -31,6 +33,34 @@ function startBroker(projectDir: string, runtimeDir: string, idleGraceMs: number
 	return broker;
 }
 
+// Wait for listen(), not a guessed duration. The 10ms retry is only the connect
+// backoff while the broker is still binding the unix socket.
+async function waitForBrokerEndpoint(endpoint: string, timeoutMs = 5_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	let lastError: Error | undefined;
+	while (Date.now() < deadline) {
+		try {
+			await new Promise<void>((resolve, reject) => {
+				const socket = net.createConnection({ path: endpoint });
+				const fail = (error: Error): void => {
+					socket.destroy();
+					reject(error);
+				};
+				socket.once("connect", () => {
+					socket.end();
+					resolve();
+				});
+				socket.once("error", fail);
+			});
+			return;
+		} catch (error) {
+			lastError = error instanceof Error ? error : new Error(String(error));
+			await Bun.sleep(10);
+		}
+	}
+	throw new Error(`Daemon broker never listened on ${endpoint}: ${lastError?.message ?? "unknown error"}`);
+}
+
 describe("daemon broker idle shutdown", () => {
 	it("shuts down after its last persistent daemon exits with no clients", async () => {
 		using tempDir = TempDir.createSync("@omp-launch-idle-");
@@ -43,6 +73,11 @@ describe("daemon broker idle shutdown", () => {
 		const client = await createDaemonBrokerClient(projectDir, { runtimeDir, idleGraceMs: 100 });
 		const broker = startBroker(projectDir, runtimeDir, 100);
 		try {
+			await waitForBrokerEndpoint(daemonBrokerEndpoint(projectDir, runtimeDir));
+			// Hold the idle timer before start. First request used to race listen() and
+			// get "Daemon broker connection closed" when the 100ms idle fired first.
+			await client.request({ op: "ping" });
+
 			// A persistent daemon that outlives the first idle-shutdown timer (100ms) and then
 			// self-exits (~300ms). restart:"no" so its exit is terminal.
 			const started = await client.request({
