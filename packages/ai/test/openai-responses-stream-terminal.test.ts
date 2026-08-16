@@ -13,13 +13,13 @@ import { processResponsesStream } from "@oh-my-pi/pi-ai/providers/openai-shared"
 import type { AssistantMessage, Model } from "@oh-my-pi/pi-ai/types";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
 
-function makeModel(): Model<"openai-responses"> {
+function makeModel(provider: "openai" | "xai-oauth" = "openai"): Model<"openai-responses"> {
 	return buildModel({
 		api: "openai-responses",
-		name: "GPT Test",
-		id: "gpt-test",
-		provider: "openai",
-		baseUrl: "https://api.openai.com/v1",
+		name: provider === "xai-oauth" ? "Grok 4.6" : "GPT Test",
+		id: provider === "xai-oauth" ? "grok-4.6" : "gpt-test",
+		provider,
+		baseUrl: provider === "xai-oauth" ? "https://api.x.ai/v1" : "https://api.openai.com/v1",
 		contextWindow: 8192,
 		maxTokens: 2048,
 		input: ["text"],
@@ -224,6 +224,107 @@ describe("processResponsesStream: terminal events", () => {
 		expect(output.stopReason).toBe("toolUse");
 		const calls = output.content.filter(block => block.type === "toolCall");
 		expect(calls.map(block => (block.type === "toolCall" ? block.name : ""))).toEqual(["read", "bash"]);
+		expect(calls[1]?.type === "toolCall" && calls[1].arguments).toEqual({ command: "echo TOOL_OK" });
+	});
+
+	test("ingests Completions-shaped tool_calls on an xai-oauth Responses stream", async () => {
+		const output = makeOutput();
+		const stream = { push: () => {}, end: () => {} } as never;
+
+		await processResponsesStream(
+			makeStream([
+				{
+					object: "chat.completion.chunk",
+					choices: [
+						{
+							index: 0,
+							delta: {
+								tool_calls: [
+									{
+										index: 0,
+										id: "call_a",
+										function: { name: "read", arguments: '{"path":' },
+									},
+									{
+										index: 1,
+										id: "call_b",
+										function: { name: "bash", arguments: '{"command":' },
+									},
+								],
+							},
+						},
+					],
+				},
+				{
+					object: "chat.completion.chunk",
+					choices: [
+						{
+							index: 0,
+							delta: {
+								tool_calls: [
+									{ index: 0, function: { arguments: '"a.ts"}' } },
+									{ index: 1, function: { arguments: '"echo TOOL_OK"}' } },
+								],
+							},
+						},
+					],
+				},
+				{
+					type: "response.completed",
+					response: { id: "resp_xai_compat", status: "completed" },
+				},
+			]),
+			output,
+			stream,
+			makeModel("xai-oauth"),
+		);
+
+		expect(output.stopReason).toBe("toolUse");
+		const calls = output.content.filter(block => block.type === "toolCall");
+		expect(calls.map(block => (block.type === "toolCall" ? block.name : ""))).toEqual(["read", "bash"]);
+		expect(calls[0]?.type === "toolCall" && calls[0].arguments).toEqual({ path: "a.ts" });
+		expect(calls[1]?.type === "toolCall" && calls[1].arguments).toEqual({ command: "echo TOOL_OK" });
+	});
+
+	test("finalizes Completions-shaped xai-oauth tool_calls when the stream has no Responses terminal frame", async () => {
+		const output = makeOutput();
+		const stream = { push: () => {}, end: () => {} } as never;
+
+		await processResponsesStream(
+			makeStream([
+				{
+					object: "chat.completion.chunk",
+					choices: [
+						{
+							index: 0,
+							delta: {
+								tool_calls: [
+									{
+										index: 0,
+										id: "call_a",
+										function: { name: "read", arguments: '{"path":"a.ts"}' },
+									},
+									{
+										index: 1,
+										id: "call_b",
+										function: { name: "bash", arguments: '{"command":"echo TOOL_OK"}' },
+									},
+								],
+							},
+							finish_reason: "tool_calls",
+						},
+					],
+				},
+			]),
+			output,
+			stream,
+			makeModel("xai-oauth"),
+		);
+
+		expect(output.stopReason).toBe("toolUse");
+		const calls = output.content.filter(block => block.type === "toolCall");
+		expect(calls.map(block => (block.type === "toolCall" ? block.name : ""))).toEqual(["read", "bash"]);
+		expect(calls[0]?.type === "toolCall" && calls[0].arguments).toEqual({ path: "a.ts" });
 		expect(calls[1]?.type === "toolCall" && calls[1].arguments).toEqual({ command: "echo TOOL_OK" });
 	});
 

@@ -2775,6 +2775,8 @@ export async function processResponsesStream<TApi extends Api>(
 	const contentIndexOf = (block: ThinkingContent | TextContent | StreamingToolCallBlock): number =>
 		output.content.indexOf(block);
 
+	const xaiOauthCompletionsToolBlocks = new Map<number, StreamingToolCallBlock>();
+
 	let sawFirstToken = false;
 	// Whether the current stream produced a completed native `web_search_call`
 	// output item. A provider-hosted search that finishes without yield is
@@ -3141,6 +3143,18 @@ export async function processResponsesStream<TApi extends Api>(
 			// Breaking unwinds the iterator chain (the consumer's `.return()`
 			// reaches the SDK stream), actively releasing the connection.
 			break;
+		} else if (model.provider === "xai-oauth" && isXaiOauthCompletionsShapedChunk(event)) {
+			if (!sawFirstToken) {
+				sawFirstToken = true;
+				options?.onFirstToken?.();
+			}
+			ingestXaiOauthCompletionsShapedToolCalls(
+				event,
+				output,
+				stream,
+				xaiOauthCompletionsToolBlocks,
+				contentIndexOf,
+			);
 		} else if (event.type === "error") {
 			const err = (event as any).error ?? event;
 			const code = err.code ?? "unknown";
@@ -3160,6 +3174,13 @@ export async function processResponsesStream<TApi extends Api>(
 					: "Unknown error (no error details in response)";
 			throw new AIError.ProviderResponseError(message, { provider: model.provider, kind: "output" });
 		}
+	}
+
+	// Completions-shaped SuperGrok streams may close without a Responses
+	// terminal frame. Finalize leftover argument buffers so those calls run.
+	if (model.provider === "xai-oauth") {
+		finalizePendingResponsesToolCalls(output);
+		promoteResponsesToolUseStopReason(output, undefined);
 	}
 }
 
@@ -3221,6 +3242,69 @@ export function hasExecutableIncompleteResponsesToolCalls(output: AssistantMessa
  * and the Codex decoder. Closed blocks already cleared these fields, so walking
  * the full content list leaves them untouched.
  */
+function isXaiOauthCompletionsShapedChunk(event: unknown): event is {
+	choices?: Array<{
+		delta?: {
+			tool_calls?: Array<{
+				index?: number;
+				id?: string;
+				function?: { name?: string; arguments?: string };
+			}>;
+		};
+		finish_reason?: string | null;
+	}>;
+} {
+	if (!event || typeof event !== "object") return false;
+	const rec = event as { type?: unknown; object?: unknown; choices?: unknown };
+	if (typeof rec.type === "string" && rec.type.startsWith("response.")) return false;
+	return rec.object === "chat.completion.chunk" || Array.isArray(rec.choices);
+}
+
+function ingestXaiOauthCompletionsShapedToolCalls(
+	event: {
+		choices?: Array<{
+			delta?: {
+				tool_calls?: Array<{
+					index?: number;
+					id?: string;
+					function?: { name?: string; arguments?: string };
+				}>;
+			};
+			finish_reason?: string | null;
+		}>;
+	},
+	output: AssistantMessage,
+	stream: AssistantMessageEventStream,
+	blocksByIndex: Map<number, ResponsesToolCallBlock>,
+	contentIndexOf: (block: ThinkingContent | TextContent | ToolCall) => number,
+): void {
+	const deltaCalls = event.choices?.[0]?.delta?.tool_calls;
+	if (!deltaCalls?.length) return;
+	for (const [offset, toolCall] of deltaCalls.entries()) {
+		const index = typeof toolCall.index === "number" ? toolCall.index : offset;
+		let block = blocksByIndex.get(index);
+		if (!block) {
+			block = {
+				type: "toolCall",
+				id: toolCall.id || `xai-oauth-fc-${index}`,
+				name: toolCall.function?.name || "",
+				arguments: {},
+				[kStreamingPartialJson]: "",
+			};
+			blocksByIndex.set(index, block);
+			output.content.push(block);
+			stream.push({ type: "toolcall_start", contentIndex: contentIndexOf(block), partial: output });
+		} else {
+			if (toolCall.id && !block.id) block.id = toolCall.id;
+			if (toolCall.function?.name) block.name = toolCall.function.name;
+		}
+		const argsDelta = toolCall.function?.arguments;
+		if (argsDelta) {
+			accumulateToolCallArgumentsDelta(block, argsDelta, stream, output, contentIndexOf(block));
+		}
+	}
+}
+
 function alreadyHasResponsesToolCall(output: AssistantMessage, callId: string, itemId?: string): boolean {
 	const encoded = encodeResponsesToolCallId(callId, itemId);
 	const prefix = `${callId}|`;

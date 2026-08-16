@@ -330,6 +330,21 @@ describe("buildParams tool_choice reconciliation (#2652)", () => {
 		expect(params.tool_choice).toEqual({ type: "function", name: "read_file" });
 	});
 
+	test("xai-oauth Responses sets parallel_tool_calls so SuperGrok emits every function_call", () => {
+		const { params } = buildParams(makeModel("xai-oauth"), ctx([goodTool]), {}, undefined);
+		expect(params.parallel_tool_calls).toBe(true);
+	});
+
+	test("OpenAI Responses leaves parallel_tool_calls unset", () => {
+		const { params } = buildParams(makeModel(), ctx([goodTool]), {}, undefined);
+		expect(params.parallel_tool_calls).toBeUndefined();
+	});
+
+	test("API-key xai Responses leaves parallel_tool_calls unset", () => {
+		const { params } = buildParams(makeModel("xai"), ctx([goodTool]), {}, undefined);
+		expect(params.parallel_tool_calls).toBeUndefined();
+	});
+
 	test("keeps a forced native computer choice when only a sibling tool is quarantined", () => {
 		const nativeModel = { ...makeModel(), supportsComputerUse: true };
 		const { params } = buildParams(

@@ -1241,6 +1241,11 @@ export function buildParams(
 		const strictMode = !disableStrictTools && model.compat.supportsStrictMode !== false;
 		params.tools = convertTools(context.tools, strictMode, model);
 		strictToolsApplied = params.tools.some(t => (t as { strict?: boolean }).strict === true);
+		// xAI OAuth defaults parallel tool calling off (unlike OpenAI). Without
+		// this, Grok emits several function_calls and only the first is honored.
+		if (model.provider === "xai-oauth" && params.tools.length > 0) {
+			params.parallel_tool_calls = true;
+		}
 		if (options?.toolChoice) {
 			// Map tool_choice against the tools that survived quarantine, not the
 			// original list: a forced choice for a dropped tool — or "required" when
