@@ -152,7 +152,6 @@ export const TAB_GROUPS: Record<SettingTab, readonly string[]> = {
 		"Output Limits",
 		"Execution",
 		"Discovery & MCP",
-		"Extensions",
 		"Developer",
 	],
 	tasks: ["Modes", "Subagents", "Isolation", "Commands & Skills"],
@@ -3562,6 +3561,17 @@ export const SETTINGS_SCHEMA = {
 		type: "boolean",
 		default: undefined,
 	},
+	"shellMinimizer.gainTelemetry": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "shell",
+			group: "Bash",
+			label: "Shell Minimizer Gain Telemetry",
+			description:
+				"Record bash minimizer hit/miss gain data to ~/.omp/agent/minimizer-gain.jsonl. Disabled by default; enable only when explicitly needed. Note: records the raw command string verbatim.",
+		},
+	},
 
 	// Eval (per-backend toggles; add more as new backends ship, e.g. eval.ts)
 	"eval.py": {
@@ -5495,18 +5505,6 @@ export const SETTINGS_SCHEMA = {
 
 	"commit.changelogMaxDiffChars": { type: "number", default: 120000 },
 
-	"extensionHandlers.toolCallTimeoutMs": {
-		type: "number",
-		default: 30_000,
-		ui: {
-			tab: "tools",
-			group: "Extensions",
-			label: "Tool Call Handler Timeout (ms)",
-			description:
-				"Positive finite active-work timeout for extension tool_call handlers; invalid values use 30000ms, and time awaiting OMP-owned dialogs does not count",
-		},
-	},
-
 	"dev.autoqa": {
 		type: "boolean",
 		default: true,
@@ -5834,6 +5832,7 @@ export interface ShellMinimizerSettings {
 	maxCaptureBytes: number;
 	sourceOutlineLevel: "default" | "aggressive";
 	legacyFilters: boolean | undefined;
+	gainTelemetry: boolean;
 }
 export type CodexAutoRedeemMode = "unset" | "yes" | "no";
 

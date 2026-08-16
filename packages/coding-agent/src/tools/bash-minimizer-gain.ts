@@ -38,6 +38,21 @@ export function getBashMinimizerGainPath(agentDir = getAgentDir()): string {
 	return path.join(agentDir, MINIMIZER_GAIN_FILE);
 }
 
+/**
+ * Gain telemetry is opt-in. A missing/unreadable setting must stay disabled so
+ * an upstream merge cannot silently re-enable command capture.
+ */
+export function isBashMinimizerGainTelemetryEnabled(
+	settings: { get(path: "shellMinimizer.gainTelemetry"): boolean } | { get(path: string): unknown } | undefined,
+): boolean {
+	if (!settings) return false;
+	try {
+		return settings.get("shellMinimizer.gainTelemetry") === true;
+	} catch {
+		return false;
+	}
+}
+
 export async function appendBashMinimizerGainRecord(input: BashMinimizerGainInput): Promise<void> {
 	const kind = input.kind ?? "saved";
 	const savedBytes = kind === "saved" ? input.inputBytes - input.outputBytes : 0;

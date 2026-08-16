@@ -9,8 +9,28 @@ import {
 	hasBashMinimizerFilter,
 	inferBashMinimizerMissedFilter,
 	isBashCommandMinimizerEligible,
+	isBashMinimizerGainTelemetryEnabled,
 	resolveBashMinimizerEligibilityConfig,
 } from "@oh-my-pi/pi-coding-agent/tools/bash-minimizer-gain";
+
+describe("isBashMinimizerGainTelemetryEnabled", () => {
+	test("defaults off when settings are missing or the key cannot be read", () => {
+		expect(isBashMinimizerGainTelemetryEnabled(undefined)).toBe(false);
+		expect(
+			isBashMinimizerGainTelemetryEnabled({
+				get: () => {
+					throw new Error("not a SettingPath");
+				},
+			}),
+		).toBe(false);
+		expect(isBashMinimizerGainTelemetryEnabled({ get: () => undefined })).toBe(false);
+	});
+
+	test("honors an explicit true only when capture is explicitly enabled", () => {
+		expect(isBashMinimizerGainTelemetryEnabled({ get: () => false })).toBe(false);
+		expect(isBashMinimizerGainTelemetryEnabled({ get: () => true })).toBe(true);
+	});
+});
 
 describe("bash minimizer gain writer", () => {
 	let tempDir: string;
@@ -599,26 +619,35 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 		expect((JSON.parse(lines[0]!) as { kind: string }).kind).toBe("saved");
 	});
 
-	test("telemetry suppressed when shellMinimizer.gainTelemetry is false (default)", async () => {
+	test("telemetry suppressed when shellMinimizer.gainTelemetry is explicitly false", async () => {
 		const session = mockSession(false, agentDir) as Parameters<typeof makeMinimizedSaveHandler>[0];
 
 		const handler = makeMinimizedSaveHandler(session, "npm install", tempDir);
 		await handler.onMinimizedSave("install output", { filter: "npm", inputBytes: 2000, outputBytes: 500 });
-		handler.flushSaved(0);
-		await Bun.sleep(10);
+		await handler.flushSaved(0);
 
-		// No JSONL written — telemetry is off by default
 		expect(fs.existsSync(getBashMinimizerGainPath(agentDir))).toBe(false);
 	});
 
-	test("suppresses saved telemetry when the shell command has a prefix", async () => {
-		const session = mockSession(true, agentDir, "time") as Parameters<typeof makeMinimizedSaveHandler>[0];
-		const handler = makeMinimizedSaveHandler(session, "git status", tempDir);
+	test("telemetry stays off when the gainTelemetry setting is missing", async () => {
+		const session = {
+			cwd: tempDir,
+			hasUI: false,
+			getSessionId: () => "test-session",
+			getSessionFile: () => null,
+			settings: {
+				get: () => {
+					throw new Error("shellMinimizer.gainTelemetry is not a SettingPath");
+				},
+				getAgentDir: () => agentDir,
+				getShellConfig: () => ({}),
+			},
+		} as unknown as Parameters<typeof makeMinimizedSaveHandler>[0];
 
+		const handler = makeMinimizedSaveHandler(session, "git status", tempDir);
 		await handler.onMinimizedSave("status output", { filter: "git", inputBytes: 2000, outputBytes: 500 });
 		await handler.flushSaved(0);
 
-		expect(handler.didSave()).toBe(true);
 		expect(fs.existsSync(getBashMinimizerGainPath(agentDir))).toBe(false);
 	});
 });

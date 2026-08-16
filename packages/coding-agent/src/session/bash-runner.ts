@@ -4,7 +4,7 @@ import { logger } from "@oh-my-pi/pi-utils";
 import type { Settings } from "../config/settings";
 import { type BashResult, executeBash as executeBashCommand } from "../exec/bash-executor";
 import type { ExtensionRunner } from "../extensibility/extensions";
-import { appendBashMinimizerGainRecord } from "../tools/bash-minimizer-gain";
+import { appendBashMinimizerGainRecord, isBashMinimizerGainTelemetryEnabled } from "../tools/bash-minimizer-gain";
 import { outputMeta } from "../tools/output-meta";
 import { clampTimeout } from "../tools/tool-timeouts";
 import type { BashExecutionMessage } from "./messages";
@@ -112,33 +112,35 @@ export class BashRunner {
 			} finally {
 				this.#abortControllers.delete(abortController);
 			}
-			if (savedGain.info) {
-				const info = savedGain.info;
-				await appendBashMinimizerGainRecord({
-					command,
-					cwd,
-					sessionCwd: cwd,
-					sessionId: target.sessionId,
-					filter: info.filter,
-					inputBytes: info.inputBytes,
-					outputBytes: info.outputBytes,
-					exitCode: result.exitCode ?? null,
-					kind: "saved",
-					agentDir: this.#host.settings.getAgentDir(),
-				}).catch(() => {});
-			} else if (!result.cancelled && result.exitCode !== undefined) {
-				await appendBashMinimizerGainRecord({
-					command,
-					cwd,
-					sessionCwd: cwd,
-					sessionId: target.sessionId,
-					filter: "missed",
-					inputBytes: result.totalBytes,
-					outputBytes: result.totalBytes,
-					exitCode: result.exitCode ?? null,
-					kind: "missed",
-					agentDir: this.#host.settings.getAgentDir(),
-				}).catch(() => {});
+			if (isBashMinimizerGainTelemetryEnabled(this.#host.settings)) {
+				if (savedGain.info) {
+					const info = savedGain.info;
+					await appendBashMinimizerGainRecord({
+						command,
+						cwd,
+						sessionCwd: cwd,
+						sessionId: target.sessionId,
+						filter: info.filter,
+						inputBytes: info.inputBytes,
+						outputBytes: info.outputBytes,
+						exitCode: result.exitCode ?? null,
+						kind: "saved",
+						agentDir: this.#host.settings.getAgentDir(),
+					}).catch(() => {});
+				} else if (!result.cancelled && result.exitCode !== undefined) {
+					await appendBashMinimizerGainRecord({
+						command,
+						cwd,
+						sessionCwd: cwd,
+						sessionId: target.sessionId,
+						filter: "missed",
+						inputBytes: result.totalBytes,
+						outputBytes: result.totalBytes,
+						exitCode: result.exitCode ?? null,
+						kind: "missed",
+						agentDir: this.#host.settings.getAgentDir(),
+					}).catch(() => {});
+				}
 			}
 			targetTransferred = true;
 			await this.#recordResultForTarget(target, command, result, options);

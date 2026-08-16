@@ -30,7 +30,7 @@ import type { ToolSession } from ".";
 import { truncateForPrompt } from "./approval";
 import { type BashInteractiveResult, runInteractiveBashPty } from "./bash-interactive";
 import { checkBashInterception } from "./bash-interceptor";
-import { appendBashMinimizerGainRecord } from "./bash-minimizer-gain";
+import { appendBashMinimizerGainRecord, isBashMinimizerGainTelemetryEnabled } from "./bash-minimizer-gain";
 import { canUseInteractiveBashPty } from "./bash-pty-selection";
 import { expandInternalUrls, type InternalUrlExpansionOptions } from "./bash-skill-urls";
 import { resolveEvalBackends } from "./eval-backends";
@@ -327,6 +327,7 @@ export function makeMinimizedSaveHandler(
 			if (!pendingSaved) return;
 			const info = pendingSaved;
 			pendingSaved = null;
+			if (!isBashMinimizerGainTelemetryEnabled(session.settings)) return;
 			await appendBashMinimizerGainRecord({
 				command,
 				cwd: commandCwd,
@@ -349,6 +350,7 @@ async function recordBashMinimizerGain(input: {
 	commandCwd: string;
 	result: BashResult | BashInteractiveResult;
 }): Promise<void> {
+	if (!isBashMinimizerGainTelemetryEnabled(input.session.settings)) return;
 	try {
 		await appendBashMinimizerGainRecord({
 			command: input.command,
