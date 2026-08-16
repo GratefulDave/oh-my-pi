@@ -3,8 +3,15 @@
 ## [Unreleased]
 
 ### Fixed
+- Fixed default-export plugins that only type-import the host (the standard `export default function` contract, including `pi-voice-stt`) being dropped with `Extension module import timed out after 30000ms`. Type-only `@earendil-works`/`@mariozechner` imports now rewrite to an empty stub so compiled startup does not cold-load the host-compat shim.
 - Fixed terminal selection copying leading whitespace into assistant fenced-code rows, which could prevent pasted heredoc terminators from closing.
 - Fixed compiled-binary legacy extensions stalling during host compatibility imports and ensured disabled explicit extension files stay disabled.
+- Fixed startup hanging indefinitely while loading an extension whose module import or async factory never settles; each phase now times out after thirty seconds, skips that extension, and identifies its basename in startup diagnostics.
+- Fixed compiled binaries rejecting legitimate legacy-extension imports before their compatibility modules finish cold loading.
+- Fixed transient terminal input delivery gaps ending held-Space speech-to-text recordings prematurely.
+- Fixed RTK taking over native-eligible Bash commands after a fork rebuild; gain telemetry now records every completed Bash execution.
+- Fixed `shellMinimizer.gainTelemetry` being dropped from the settings schema, so the Shell tab toggle vanished and the config value was ignored. Telemetry is enabled by default and can now be disabled to prevent raw Bash command capture.
+- Fixed project-level `disabledProviders` settings re-enabling providers disabled in the user-level Extensions Control Center.
 
 ## [17.3.4] - 2026-08-14
 

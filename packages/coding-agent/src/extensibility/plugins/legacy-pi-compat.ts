@@ -30,6 +30,9 @@ const BUNDLED_VIRTUAL_SCHEME = "omp-legacy-pi-bundled:";
 const BUNDLED_VIRTUAL_NAMESPACE = "omp-legacy-pi-bundled";
 const BUNDLED_MODULES_GLOBAL = "__ompLegacyPiBundledModules";
 const TYPEBOX_BUNDLED_MODULE_KEY = "typebox";
+/** Type-only host imports rewrite here so Bun never cold-loads the real shim. */
+const ERASED_LEGACY_PI_SPECIFIER = "omp-legacy-pi-erased:host";
+const ERASED_LEGACY_PI_NAMESPACE = "omp-legacy-pi-erased";
 
 type BundledModule = Readonly<Record<string, unknown>>;
 type BundledModules = Readonly<Record<string, BundledModule>>;
@@ -46,7 +49,7 @@ interface BundledVirtualResolveResult {
 }
 
 interface ExtensionSpecifierReference {
-	readonly kind: "import" | "require";
+	readonly kind: "import" | "require" | "type-import";
 	readonly specifier: string;
 	readonly start: number;
 	readonly end: number;
@@ -521,7 +524,22 @@ function collectExtensionSpecifierReferences(
 			(node.type === "ImportDeclaration" ||
 				node.type === "ExportNamedDeclaration" ||
 				node.type === "ExportAllDeclaration") &&
-			!isTypeOnlyModuleDeclaration(node)
+			isTypeOnlyModuleDeclaration(node)
+		) {
+			const specifier = asAstNode(node.source);
+			if (
+				specifier?.type === "StringLiteral" &&
+				typeof specifier.value === "string" &&
+				(remapLegacyPiSpecifier(specifier.value) ||
+					specifier.value === "typebox" ||
+					specifier.value === "@sinclair/typebox")
+			) {
+				record("type-import", node.source);
+			}
+		} else if (
+			node.type === "ImportDeclaration" ||
+			node.type === "ExportNamedDeclaration" ||
+			node.type === "ExportAllDeclaration"
 		) {
 			record("import", node.source);
 		} else if (node.type === "ImportExpression") {
@@ -1021,6 +1039,10 @@ async function rewriteLegacyExtensionSource(
 	const references = collectExtensionSpecifierReferences(source, importerPath);
 	const replacements: Array<ExtensionSpecifierReference & { replacement: string }> = [];
 	for (const reference of references) {
+		if (reference.kind === "type-import") {
+			replacements.push({ ...reference, replacement: ERASED_LEGACY_PI_SPECIFIER });
+			continue;
+		}
 		if (reference.kind !== "import") continue;
 
 		const specifier = reference.specifier;
@@ -2639,6 +2661,14 @@ export function installLegacyPiSpecifierShim(): void {
 		setup(build) {
 			build.onResolve({ filter: LEGACY_PI_SPECIFIER_FILTER, namespace: "file" }, resolveLegacyPiSpecifier);
 			build.onResolve({ filter: TYPEBOX_SPECIFIER_FILTER, namespace: "file" }, resolveTypeBoxSpecifier);
+			build.onResolve({ filter: /^omp-legacy-pi-erased:/, namespace: "file" }, () => ({
+				path: "host",
+				namespace: ERASED_LEGACY_PI_NAMESPACE,
+			}));
+			build.onLoad({ filter: /.*/, namespace: ERASED_LEGACY_PI_NAMESPACE }, () => ({
+				contents: "export {}",
+				loader: "js",
+			}));
 			build.onResolve({ filter: /^omp-legacy-pi-bundled:.+$/, namespace: "file" }, args =>
 				resolveBundledVirtualSpecifier(args.path),
 			);
