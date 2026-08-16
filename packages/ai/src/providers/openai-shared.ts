@@ -3075,6 +3075,10 @@ export async function processResponsesStream<TApi extends Api>(
 			}
 		} else if (terminalEvent) {
 			const response = terminalEvent.response;
+			// Lossy / xAI-compat hosts may omit `output_item.added`/`done` for
+			// later parallel function_calls and only list them on the terminal
+			// `response.output`. Harvest those so every call executes.
+			harvestResponsesTerminalOutputToolCalls(output, stream, response?.output);
 			const shouldPromoteIncompleteToolUse =
 				response?.status === "incomplete" &&
 				response.incomplete_details?.reason === "max_output_tokens" &&
@@ -3217,6 +3221,85 @@ export function hasExecutableIncompleteResponsesToolCalls(output: AssistantMessa
  * and the Codex decoder. Closed blocks already cleared these fields, so walking
  * the full content list leaves them untouched.
  */
+function alreadyHasResponsesToolCall(output: AssistantMessage, callId: string, itemId?: string): boolean {
+	const encoded = encodeResponsesToolCallId(callId, itemId);
+	const prefix = `${callId}|`;
+	for (const block of output.content) {
+		if (block.type !== "toolCall") continue;
+		if (block.id === encoded || block.id.startsWith(prefix)) return true;
+	}
+	return false;
+}
+
+/**
+ * Promote `function_call` / `custom_tool_call` / `computer_call` items that
+ * exist only on the terminal `response.output` (no streamed added/done).
+ * xAI's OpenAI-compat Responses path often streams the first call and dumps
+ * the rest on `response.completed` — without this those calls never run.
+ */
+export function harvestResponsesTerminalOutputToolCalls(
+	output: AssistantMessage,
+	stream: AssistantMessageEventStream,
+	items: ResponseOutputItem[] | undefined,
+): void {
+	if (!items?.length) return;
+	for (const item of items) {
+		if (item.type === "function_call") {
+			if (!item.call_id || alreadyHasResponsesToolCall(output, item.call_id, item.id)) continue;
+			const args = item.arguments ? parseStreamingJson(item.arguments) : parseStreamingJson("{}");
+			const toolCall: ToolCall = {
+				type: "toolCall",
+				id: encodeResponsesToolCallId(item.call_id, item.id),
+				name: item.name,
+				arguments: args,
+			};
+			output.content.push(toolCall);
+			stream.push({
+				type: "toolcall_end",
+				contentIndex: output.content.length - 1,
+				toolCall,
+				partial: output,
+			});
+			continue;
+		}
+		if (item.type === "custom_tool_call") {
+			if (!item.call_id || alreadyHasResponsesToolCall(output, item.call_id, item.id)) continue;
+			const toolCall: ToolCall = {
+				type: "toolCall",
+				id: encodeResponsesToolCallId(item.call_id, item.id),
+				name: item.name,
+				arguments: { input: item.input ?? "" },
+				customWireName: item.name,
+			};
+			output.content.push(toolCall);
+			stream.push({
+				type: "toolcall_end",
+				contentIndex: output.content.length - 1,
+				toolCall,
+				partial: output,
+			});
+			continue;
+		}
+		if (item.type === "computer_call") {
+			if (!item.call_id || alreadyHasResponsesToolCall(output, item.call_id, item.id)) continue;
+			const toolCall: ToolCall = {
+				type: "toolCall",
+				id: encodeResponsesToolCallId(item.call_id, item.id),
+				name: "computer",
+				arguments: {},
+				providerMetadata: computerCallMetadata(item),
+			};
+			output.content.push(toolCall);
+			stream.push({
+				type: "toolcall_end",
+				contentIndex: output.content.length - 1,
+				toolCall,
+				partial: output,
+			});
+		}
+	}
+}
+
 export function finalizePendingResponsesToolCalls(output: AssistantMessage): void {
 	for (const block of output.content) {
 		if (block.type !== "toolCall") continue;

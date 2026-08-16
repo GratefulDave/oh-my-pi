@@ -164,6 +164,69 @@ describe("processResponsesStream: terminal events", () => {
 		expect(block.arguments).toEqual({ path: "complete.txt" });
 	});
 
+	test("harvests parallel function_calls that exist only on response.completed.output", async () => {
+		const output = makeOutput();
+		const stream = { push: () => {}, end: () => {} } as never;
+
+		await processResponsesStream(
+			makeStream([
+				{
+					type: "response.output_item.added",
+					output_index: 0,
+					item: {
+						type: "function_call",
+						id: "fc_first",
+						call_id: "call_first",
+						name: "read",
+						arguments: '{"path":"a.ts"}',
+					},
+				},
+				{
+					type: "response.output_item.done",
+					output_index: 0,
+					item: {
+						type: "function_call",
+						id: "fc_first",
+						call_id: "call_first",
+						name: "read",
+						arguments: '{"path":"a.ts"}',
+					},
+				},
+				{
+					type: "response.completed",
+					response: {
+						id: "resp_parallel",
+						status: "completed",
+						output: [
+							{
+								type: "function_call",
+								id: "fc_first",
+								call_id: "call_first",
+								name: "read",
+								arguments: '{"path":"a.ts"}',
+							},
+							{
+								type: "function_call",
+								id: "fc_second",
+								call_id: "call_second",
+								name: "bash",
+								arguments: '{"command":"echo TOOL_OK"}',
+							},
+						],
+					},
+				},
+			]),
+			output,
+			stream,
+			makeModel(),
+		);
+
+		expect(output.stopReason).toBe("toolUse");
+		const calls = output.content.filter(block => block.type === "toolCall");
+		expect(calls.map(block => (block.type === "toolCall" ? block.name : ""))).toEqual(["read", "bash"]);
+		expect(calls[1]?.type === "toolCall" && calls[1].arguments).toEqual({ command: "echo TOOL_OK" });
+	});
+
 	test("keeps max-output incomplete function calls at length when only output_item.done closes arguments", async () => {
 		const output = makeOutput();
 		const stream = { push: () => {}, end: () => {} } as never;
