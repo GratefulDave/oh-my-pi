@@ -43,13 +43,7 @@ function createToolSession(options: {
 }
 
 function registerRunningSub(registry: AgentRegistry, id: string, parentId = "Main"): void {
-	registry.register({
-		id,
-		displayName: id,
-		kind: "sub",
-		parentId,
-		session: { isStreaming: true } as never,
-	});
+	registry.register({ id, displayName: id, kind: "sub", parentId, session: null });
 }
 
 function resultText(result: { content: Array<{ type: string; text?: string }> }): string {

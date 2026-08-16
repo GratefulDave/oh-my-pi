@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- SuperGrok (`xai-oauth` only): force `parallel_tool_calls: true` (xAI defaults this off), harvest extra `function_call`s that appear only on `response.completed.output`, and ingest Completions-shaped `tool_calls` on a Responses stream, including streams that never send a Responses terminal frame. OpenAI / Azure / Codex / OpenRouter / paid `xai` unchanged.
+
 ## [17.3.5] - 2026-08-16
 
 ### Added
@@ -10,25 +14,6 @@
 
 ### Fixed
 
-- SuperGrok (`xai-oauth` only): force `parallel_tool_calls: true` (xAI defaults this off), harvest extra `function_call`s that appear only on `response.completed.output`, and ingest Completions-shaped `tool_calls` on a Responses stream, including streams that never send a Responses terminal frame. OpenAI / Azure / Codex / OpenRouter / paid `xai` unchanged.
-- Stopped treating `XAI_API_KEY` as SuperGrok (`xai-oauth`) sign-in for availability, so paid-key-only setups default to `xai/grok-4.5` instead of the zero-cost SuperGrok catalog path. Explicit `xai-oauth/…` selectors still accept the paid key via the existing env fallback.
-- Omitted unsupported `reasoning.summary` on paid xAI Responses requests (`xai/grok-4.5`), matching SuperGrok, so a thinking level no longer serializes `summary: "auto"`.
-- Omitted presence/frequency penalties on all first-party xAI Responses models, including non-reasoning ids such as `xai/grok-2`.
-- Fixed Umans usage reporting computing utilization from raw request counts instead of the model-weighted "effective requests", falsely reporting the quota as exhausted while the account still had weighted headroom. The request limit is now split into a weighted soft-cap row (warns, never exhausts) and a raw burst-ceiling row (exhausted only where throttling actually starts), and the rolling 5h window's absolute `resets_at` is surfaced as a countdown ([#7858](https://github.com/can1357/oh-my-pi/issues/7858)). Payloads without a reported burst ceiling collapse to a single weighted `umans:requests` row that can exhaust, so request exhaustion is never unreportable.
-- Fixed `omp usage invalidate` to discard stale OAuth and API-key usage snapshots, then force a cache-bypassing, per-provider serialized refresh so upgraded subscriptions do not silently retain pre-change quota data.
-- Classified Cursor HTTP/2 `NGHTTP2_INTERNAL_ERROR` / `NGHTTP2_REFUSED_STREAM` stream closes as transient so session recovery can continue instead of treating the RST as a hard stop.
-- Fixed OpenAI-compatible streams that close without a `finish_reason` chunk (connection dropped mid-generation, e.g. DeepSeek's `insufficient_system_resource` interruption) being silently finalized as a clean `stop`; the truncated turn now surfaces as a retryable incomplete-stream error instead of halting mid-sentence.
-- Fixed DeepSeek's `insufficient_system_resource` finish reason mapping to a non-retryable error; it now matches the session retry classifier's transient-transport pattern so the turn is auto-retried.
-- Preserved opaque Chat Completions tool-call IDs during same-model replay so custom gateways retain provider correlation state ([#8641](https://github.com/can1357/oh-my-pi/issues/8641)).
-- Fixed Kimi Code multi-account routing to rank OAuth credentials by 5-hour and 7-day quota headroom, retain usage-limit blocks until reset, and preserve JWT account identity across token refreshes for stable usage labels and history ([#8630](https://github.com/can1357/oh-my-pi/issues/8630)).
-- Fixed Anthropic custom signing-proxy continuations dropping native tool-search call/result blocks from signed assistant history, preserving interleaved thinking for byte-identical replay ([#8559](https://github.com/can1357/oh-my-pi/issues/8559)).
-- Stopped runaway exact response cycles across model providers and kept persistent loops fail-closed after bounded guarded retries ([#8669](https://github.com/can1357/oh-my-pi/pull/8669) by [@pstarkgit](https://github.com/pstarkgit)).
-- Fixed xAI 400ing the whole turn on MCP schemas whose tool root is an object plus a typeless exclusive-required `anyOf` (e.g. codebase-memory `check_index_coverage`). Flatten only that root fragment — nested unions and branch property/`additionalProperties` constraints stay intact. Leftover object-root unions quarantine that one tool on paid xAI Completions and xAI OAuth Responses, not on OpenAI/Azure/Codex.
-
-### Removed
-
-- Fixed Alibaba DashScope/Bailian per-minute token throttle (`429 Throttling.AllocationQuota`, "You exceeded your current quota, please check your plan and billing details. … error-code#token-limit", `type=insufficient_quota`) being misclassified as `QUOTA_EXHAUSTED`. The OpenAI-compatible billing wording (and the `insufficient_quota` payload code) matched the usage-limit classifier, so a transient TPM/TPS cap — which Bailian's docs document as clearing within the minute window — blocked the credential and stalled the session for the 30-minute quota backoff instead of retrying with a short backoff on the same credential. Bodies linking the `error-code#token-limit` anchor now classify as `RATE_LIMIT_EXCEEDED` and stay in the transient lane; the identical wording without the anchor (OpenAI's real account-quota error) is unchanged.
-- Fixed Anthropic-compatible streams dropping thinking bytes supplied by `content_block_start`, which invalidated signed-thinking replay ([#8319](https://github.com/can1357/oh-my-pi/pull/8319) by [@max12525k](https://github.com/max12525k)).
 - Fixed xAI availability detection so paid-key-only setups correctly default to `xai/grok-4.5` instead of the free SuperGrok catalog; explicit `xai-oauth/…` selectors still work as before.
 - Fixed xAI Responses requests sending unsupported parameters (reasoning summary, presence/frequency penalties) that some models rejected.
 - Fixed Umans usage reporting incorrectly marking quota as exhausted based on raw request counts instead of actual weighted usage, and improved the usage display to show both a soft-cap warning and a hard exhaustion limit with an accurate countdown to reset.

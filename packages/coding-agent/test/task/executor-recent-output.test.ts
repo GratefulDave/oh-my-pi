@@ -87,7 +87,6 @@ interface ScenarioResult {
 	/** Snapshot arrays captured by reference + a deep copy taken at observation time. */
 	immutability: Array<{ live: string[]; copy: string[] }>;
 	exitCode: number;
-	stderr: string;
 	finalWant: string[];
 }
 
@@ -264,7 +263,7 @@ async function runScenario(ops: Op[], options?: { abortAfterOps?: boolean }): Pr
 		},
 	});
 
-	return { observations, immutability, exitCode: result.exitCode, stderr: result.stderr, finalWant: ref.expected() };
+	return { observations, immutability, exitCode: result.exitCode, finalWant: ref.expected() };
 }
 
 function expectAllMatch(result: ScenarioResult, minObservations: number): void {

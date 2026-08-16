@@ -54,7 +54,6 @@ function createRevivedSession(activeToolNames: string[][]): RevivedSessionHandle
 			activeToolNames.push(names);
 		},
 		subscribe: (_listener: (event: AgentSessionEvent) => void) => () => {},
-		subscribeRunState: () => () => {},
 		setIrcWakeTurnObserver: (next: IrcWakeObserver | undefined) => {
 			observer = next;
 		},

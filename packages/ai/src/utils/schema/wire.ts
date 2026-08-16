@@ -234,6 +234,7 @@ export function flattenExclusiveRequiredRootUnion(schema: Record<string, unknown
 	delete flattened[unionKey];
 	return flattened;
 }
+
 /** Keys whose values are a single JSON Schema (not an array or map). */
 const SCHEMA_VALUE_KEYS = [
 	"additionalProperties",

@@ -1291,12 +1291,11 @@ export function buildParams(
 		filterReasoningHistory: options?.filterReasoningHistory,
 		omitReasoningEffort: options?.omitReasoningEffort,
 	});
-	const reasoningSummary =
-		model.compat.supportsReasoningSummary === false
-			? options?.reasoning === undefined
-				? undefined
-				: null
-			: options?.reasoningSummary;
+	const reasoningSummary = model.compat.supportsReasoningSummary
+		? options?.reasoningSummary
+		: options?.reasoning === undefined
+			? undefined
+			: null;
 	applyResponsesCompatPolicy(params, reasoningPolicy, {
 		reasoningSummary,
 		forceReasoningOff: options?.forceReasoningOff,

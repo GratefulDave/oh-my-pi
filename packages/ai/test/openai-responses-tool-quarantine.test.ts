@@ -144,45 +144,6 @@ describe("convertTools quarantine (#2652)", () => {
 		expect(out[0]?.parameters.anyOf).toBeUndefined();
 	});
 
-	test("flattens exclusive-required root anyOf on paid xAI Responses", () => {
-		const out = convertTools([coverageTool, goodTool], true, makeModel("xai")) as Array<{
-			name: string;
-			parameters: { anyOf?: unknown };
-		}>;
-		expect(out.map(t => t.name)).toEqual(["mcp__codebase_memory_check_index_coverage", "read_file"]);
-		expect(out[0]?.parameters.anyOf).toBeUndefined();
-	});
-
-	test("keeps nested exclusive-required anyOf on xAI Responses convertTools", () => {
-		const nestedTool: Tool = {
-			name: "task",
-			description: "task",
-			parameters: {
-				type: "object",
-				properties: {
-					outputSchema: {
-						type: "object",
-						properties: {
-							paths: { type: "array", items: { type: "string" } },
-							scopes: { type: "array", items: { type: "string" } },
-						},
-						anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
-					},
-				},
-				required: ["outputSchema"],
-			} as unknown as Tool["parameters"],
-		};
-		const out = convertTools([nestedTool, goodTool], true, makeModel("xai")) as Array<{
-			name: string;
-			parameters: { properties?: { outputSchema?: { anyOf?: unknown } } };
-		}>;
-		expect(out.map(t => t.name)).toEqual(["task", "read_file"]);
-		expect(out[0]?.parameters.properties?.outputSchema?.anyOf).toEqual([
-			{ required: ["paths"] },
-			{ required: ["scopes"] },
-		]);
-	});
-
 	test("preserves an exclusive-required MCP tool on OpenAI Responses", () => {
 		const out = convertTools([coverageTool, goodTool], true, makeModel()) as Array<{
 			name: string;
@@ -226,14 +187,8 @@ describe("convertTools quarantine (#2652)", () => {
 				],
 			} as unknown as Tool["parameters"],
 		};
-		expect(
-			(convertTools([leftoverTool, goodTool], true, makeModel("xai-oauth")) as Array<{ name: string }>).map(
-				t => t.name,
-			),
-		).toEqual(["read_file"]);
-		expect(
-			(convertTools([leftoverTool, goodTool], true, makeModel("xai")) as Array<{ name: string }>).map(t => t.name),
-		).toEqual(["read_file"]);
+		const out = convertTools([leftoverTool, goodTool], true, makeModel("xai-oauth")) as Array<{ name: string }>;
+		expect(out.map(t => t.name)).toEqual(["read_file"]);
 	});
 	test("reports the hidden tool name and the offending schema path", () => {
 		const dropped: Array<{ name: string; path: string }> = [];

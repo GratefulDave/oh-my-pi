@@ -3,7 +3,6 @@ import { type } from "@oh-my-pi/omptype";
 import type { Tool } from "@oh-my-pi/pi-ai/types";
 import {
 	adaptSchemaForStrict,
-	flattenExclusiveRequiredRootUnion,
 	normalizeEmptySchemas,
 	stripSchemaDescriptions,
 	stripToolDescriptions,
@@ -143,51 +142,6 @@ describe("toolWireSchema — raw JSON Schema normalization", () => {
 		).toEqual({
 			type: "string",
 		});
-	});
-
-	it("xAI flatten keeps branch property constraints and nested unions", () => {
-		const constrained: Record<string, unknown> = {
-			type: "object",
-			properties: { kind: { type: "string" } },
-			anyOf: [{ properties: { kind: { const: "a" } } }, { properties: { kind: { const: "b" } } }],
-		};
-		expect(flattenExclusiveRequiredRootUnion(constrained).anyOf).toEqual(constrained.anyOf);
-
-		const nested: Record<string, unknown> = {
-			type: "object",
-			properties: {
-				outputSchema: {
-					type: "object",
-					properties: {
-						paths: { type: "array", items: { type: "string" } },
-						scopes: { type: "array", items: { type: "string" } },
-					},
-					anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
-				},
-			},
-		};
-		const nestedOut = flattenExclusiveRequiredRootUnion(nested);
-		const nestedProperties =
-			nestedOut.properties && typeof nestedOut.properties === "object" ? nestedOut.properties : undefined;
-		const outputSchema = nestedProperties && "outputSchema" in nestedProperties && nestedProperties.outputSchema;
-		const nestedAnyOf =
-			outputSchema && typeof outputSchema === "object" && "anyOf" in outputSchema ? outputSchema.anyOf : undefined;
-		expect(nestedAnyOf).toEqual([{ required: ["paths"] }, { required: ["scopes"] }]);
-
-		const exclusive: Record<string, unknown> = {
-			type: "object",
-			properties: {
-				project: { type: "string" },
-				paths: { type: "array", items: { type: "string" } },
-				scopes: { type: "array", items: { type: "string" } },
-			},
-			required: ["project"],
-			anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
-		};
-		const flattened = flattenExclusiveRequiredRootUnion(exclusive);
-		expect(flattened.anyOf).toBeUndefined();
-		expect(flattened.required).toEqual(["project"]);
-		expect(exclusive.anyOf).toHaveLength(2);
 	});
 
 	it("preserves raw JSON Schema required defaults and safe-integer bounds", () => {

@@ -141,7 +141,6 @@ function createMockSession(
 		dispose: async () => {
 			disposeCount += 1;
 		},
-		subscribeRunState: () => () => {},
 	};
 
 	return {

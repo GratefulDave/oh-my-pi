@@ -2333,6 +2333,7 @@ function convertTools(
 					? "all_strict"
 					: "none"
 				: "mixed";
+
 	const wireTools: ChatCompletionTool[] = [];
 	let anyStrictEmitted = false;
 	for (const { tool, baseParameters, parameters, strict } of adaptedTools) {
