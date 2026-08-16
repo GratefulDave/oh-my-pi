@@ -96,6 +96,20 @@ const badTool: Tool = {
 		additionalProperties: false,
 	} as unknown as Tool["parameters"],
 };
+const coverageTool: Tool = {
+	name: "mcp__codebase_memory_check_index_coverage",
+	description: "coverage",
+	parameters: {
+		type: "object",
+		properties: {
+			project: { type: "string" },
+			paths: { type: "array", items: { type: "string" } },
+			scopes: { type: "array", items: { type: "string" } },
+		},
+		required: ["project"],
+		anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
+	} as unknown as Tool["parameters"],
+};
 const goodTool: Tool = {
 	name: "read_file",
 	description: "read a file",
@@ -121,44 +135,7 @@ describe("convertTools quarantine (#2652)", () => {
 		expect(convertTools([goodTool], true, makeModel())).toHaveLength(1);
 	});
 
-	test("keeps exclusive-required root anyOf on OpenAI Responses", () => {
-		const coverageTool: Tool = {
-			name: "mcp__codebase_memory_check_index_coverage",
-			description: "coverage",
-			parameters: {
-				type: "object",
-				properties: {
-					project: { type: "string" },
-					paths: { type: "array", items: { type: "string" } },
-					scopes: { type: "array", items: { type: "string" } },
-				},
-				required: ["project"],
-				anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
-			} as unknown as Tool["parameters"],
-		};
-		const out = convertTools([coverageTool, goodTool], true, makeModel()) as Array<{
-			name: string;
-			parameters: { anyOf?: unknown };
-		}>;
-		expect(out.map(t => t.name)).toEqual(["mcp__codebase_memory_check_index_coverage", "read_file"]);
-		expect(out[0]?.parameters.anyOf).toEqual([{ required: ["paths"] }, { required: ["scopes"] }]);
-	});
-
-	test("flattens exclusive-required CBM coverage on xai-oauth and keeps every tool", () => {
-		const coverageTool: Tool = {
-			name: "mcp__codebase_memory_check_index_coverage",
-			description: "coverage",
-			parameters: {
-				type: "object",
-				properties: {
-					project: { type: "string" },
-					paths: { type: "array", items: { type: "string" } },
-					scopes: { type: "array", items: { type: "string" } },
-				},
-				required: ["project"],
-				anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
-			} as unknown as Tool["parameters"],
-		};
+	test("flattens an exclusive-required MCP tool on xAI Responses", () => {
 		const out = convertTools([coverageTool, goodTool], true, makeModel("xai-oauth")) as Array<{
 			name: string;
 			parameters: { anyOf?: unknown };
@@ -167,21 +144,7 @@ describe("convertTools quarantine (#2652)", () => {
 		expect(out[0]?.parameters.anyOf).toBeUndefined();
 	});
 
-	test("flattens exclusive-required CBM coverage on paid xAI Responses", () => {
-		const coverageTool: Tool = {
-			name: "mcp__codebase_memory_check_index_coverage",
-			description: "coverage",
-			parameters: {
-				type: "object",
-				properties: {
-					project: { type: "string" },
-					paths: { type: "array", items: { type: "string" } },
-					scopes: { type: "array", items: { type: "string" } },
-				},
-				required: ["project"],
-				anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
-			} as unknown as Tool["parameters"],
-		};
+	test("flattens exclusive-required root anyOf on paid xAI Responses", () => {
 		const out = convertTools([coverageTool, goodTool], true, makeModel("xai")) as Array<{
 			name: string;
 			parameters: { anyOf?: unknown };
@@ -220,32 +183,13 @@ describe("convertTools quarantine (#2652)", () => {
 		]);
 	});
 
-	test("does not flatten branch property constraints on OpenAI or xAI Responses", () => {
-		const constrainedTool: Tool = {
-			name: "mcp__kind_union",
-			description: "kind",
-			parameters: {
-				type: "object",
-				properties: { kind: { type: "string" } },
-				anyOf: [{ properties: { kind: { const: "a" } } }, { properties: { kind: { const: "b" } } }],
-			} as unknown as Tool["parameters"],
-		};
-		const openai = convertTools([constrainedTool, goodTool], true, makeModel()) as Array<{
+	test("preserves an exclusive-required MCP tool on OpenAI Responses", () => {
+		const out = convertTools([coverageTool, goodTool], true, makeModel()) as Array<{
 			name: string;
-			parameters: { anyOf?: unknown[]; properties?: { kind?: unknown } };
+			parameters: { anyOf?: unknown };
 		}>;
-		expect(openai.map(t => t.name)).toEqual(["mcp__kind_union", "read_file"]);
-		expect(openai[0]?.parameters.anyOf).toHaveLength(2);
-
-		// Flatten refuses branch property constraints. Responses sanitizer then
-		// types those branches as objects, so leftover-union quarantine keeps
-		// the tool instead of dropping a valid discriminator.
-		const xai = convertTools([constrainedTool, goodTool], true, makeModel("xai")) as Array<{
-			name: string;
-			parameters: { anyOf?: unknown[] };
-		}>;
-		expect(xai.map(t => t.name)).toEqual(["mcp__kind_union", "read_file"]);
-		expect(xai[0]?.parameters.anyOf).toHaveLength(2);
+		expect(out.map(t => t.name)).toEqual(["mcp__codebase_memory_check_index_coverage", "read_file"]);
+		expect(out[0]?.parameters.anyOf).toHaveLength(2);
 	});
 
 	test("keeps a leftover object-root union on OpenAI Responses", () => {

@@ -39,7 +39,7 @@ import { callWithCopilotModelRetry } from "../utils/retry";
 import {
 	adaptSchemaForStrict,
 	findStrictToolSchemaViolation,
-	flattenXaiExclusiveRequiredRoot,
+	flattenExclusiveRequiredRootUnion,
 	NO_STRICT,
 	normalizeSchemaForMoonshot,
 	sanitizeSchemaForOpenAIResponses,
@@ -1394,6 +1394,7 @@ export function convertTools(
 		),
 ): OpenAITool[] {
 	const allowFreeform = supportsFreeformApplyPatch(model);
+	const rejectXaiRootObjectUnion = model.provider === "xai" || model.provider === "xai-oauth";
 	const out: OpenAITool[] = [];
 	for (const tool of tools) {
 		if (tool.native?.type === "computer" && model.supportsComputerUse === true) {
@@ -1426,26 +1427,18 @@ export function convertTools(
 		// subschemas ("property schema … must be an object"), so the Moonshot
 		// pass re-coerces them last.
 		const sanitized = sanitizeSchemaForOpenAIResponses(baseParameters);
+		const providerParameters = rejectXaiRootObjectUnion ? flattenExclusiveRequiredRootUnion(sanitized) : sanitized;
 		const responseParameters =
 			model.compat.toolSchemaFlavor === "moonshot-mfjs"
-				? (normalizeSchemaForMoonshot(sanitized) as Record<string, unknown>)
-				: sanitized;
+				? (normalizeSchemaForMoonshot(providerParameters) as Record<string, unknown>)
+				: providerParameters;
 		const { schema: parameters, strict: effectiveStrict } = adaptSchemaForStrict(responseParameters, strict);
 		// Quarantine a tool whose emitted schema carries a provider-rejecting
 		// enum/const-vs-type contradiction: dropping just that tool keeps the rest
 		// of the request valid instead of letting one bad MCP schema 400 the whole
 		// turn (#2652). Other tools and built-ins are unaffected. Leftover
 		// object-root unions are an xAI-only 400; OpenAI/Azure/Codex keep them.
-		// xAI 400s exclusive-required tool-root anyOf. Flatten a clone so the
-		// tool stays callable. Shared wire cache / other providers stay intact.
-		let wireParameters = parameters;
-		if (model.provider === "xai" || model.provider === "xai-oauth") {
-			wireParameters = structuredClone(parameters);
-			flattenXaiExclusiveRequiredRoot(wireParameters);
-		}
-		const violation = findStrictToolSchemaViolation(wireParameters, "#", {
-			rejectXaiRootObjectUnion: model.provider === "xai" || model.provider === "xai-oauth",
-		});
+		const violation = findStrictToolSchemaViolation(parameters, "#", { rejectXaiRootObjectUnion });
 		if (violation) {
 			onQuarantine(tool.name, violation);
 			continue;
@@ -1454,7 +1447,7 @@ export function convertTools(
 			type: "function",
 			name: tool.name,
 			description: tool.description || "",
-			parameters: wireParameters,
+			parameters,
 			// `strict: false` and an omitted `strict` are NOT equivalent for every
 			// OpenAI-compat backend — some over-fill optional args when the flag is
 			// absent (#4336). Preserve the author's explicit `false` unless the

@@ -217,29 +217,23 @@ function isExclusiveRequiredBranch(branch: unknown): boolean {
 	return true;
 }
 
-function flattenExclusiveRequiredUnion(schema: Record<string, unknown>): void {
-	const unionKey = Array.isArray(schema.anyOf) ? "anyOf" : Array.isArray(schema.oneOf) ? "oneOf" : undefined;
-	if (!unionKey) return;
-	const union = schema[unionKey];
-	if (!Array.isArray(union) || union.length === 0) return;
-	const typedObject = schema.type === "object" || (Array.isArray(schema.type) && schema.type.includes("object"));
-	if (!typedObject && !isSchemaRecord(schema.properties)) return;
-	if (!union.every(isExclusiveRequiredBranch)) return;
-	delete schema[unionKey];
-}
-
 /**
- * xAI (`xai` + `xai-oauth` Responses; Completions fallback) 400s when the
- * *tool root* is `type: object` plus a typeless exclusive-required
- * `anyOf`/`oneOf` (`[{required:["paths"]},{required:["scopes"]}]`).
- * Nested unions and branches that constrain properties stay intact.
- * Call this only on a per-request clone — never on the stamped
- * `toolWireSchema` cache — and only for those providers.
+ * Return an xAI-compatible copy of an object-root schema whose union consists
+ * only of typeless required-key fragments. Other providers must retain the
+ * union because it is a real model-facing constraint.
  */
-export function flattenXaiExclusiveRequiredRoot(schema: Record<string, unknown>): void {
-	flattenExclusiveRequiredUnion(schema);
+export function flattenExclusiveRequiredRootUnion(schema: Record<string, unknown>): Record<string, unknown> {
+	const unionKey = Array.isArray(schema.anyOf) ? "anyOf" : Array.isArray(schema.oneOf) ? "oneOf" : undefined;
+	if (!unionKey) return schema;
+	const union = schema[unionKey];
+	if (!Array.isArray(union) || union.length === 0) return schema;
+	const typedObject = schema.type === "object" || (Array.isArray(schema.type) && schema.type.includes("object"));
+	if (!typedObject && !isSchemaRecord(schema.properties)) return schema;
+	if (!union.every(isExclusiveRequiredBranch)) return schema;
+	const flattened = { ...schema };
+	delete flattened[unionKey];
+	return flattened;
 }
-
 /** Keys whose values are a single JSON Schema (not an array or map). */
 const SCHEMA_VALUE_KEYS = [
 	"additionalProperties",

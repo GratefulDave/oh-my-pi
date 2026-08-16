@@ -607,7 +607,7 @@ describe("sanitizeSchemaForOpenAIResponses", () => {
 		expect((sanitized as { type: unknown }).type).toBe("object");
 	});
 
-	it("leaves exclusive-required root anyOf intact (flatten is xAI convertTools only)", () => {
+	it("preserves exclusive-required anyOf for provider-specific handling", () => {
 		const schema = {
 			type: "object",
 			properties: {
@@ -619,7 +619,16 @@ describe("sanitizeSchemaForOpenAIResponses", () => {
 			anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
 		};
 
-		expect(sanitizeSchemaForOpenAIResponses(schema)).toEqual(schema);
+		expect(sanitizeSchemaForOpenAIResponses(schema)).toEqual({
+			type: "object",
+			properties: {
+				project: { type: "string" },
+				paths: { type: "array", items: { type: "string" } },
+				scopes: { type: "array", items: { type: "string" } },
+			},
+			required: ["project"],
+			anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
+		});
 	});
 
 	it("does not flatten nested exclusive-required anyOf (xAI only rejects the tool root)", () => {

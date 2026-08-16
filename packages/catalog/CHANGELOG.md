@@ -5,6 +5,7 @@
 ### Added
 
 - Added support for GLM-5.3 on the z.AI provider. GLM-5.3 introduces a uniform wire-exact `low`/`high`/`max` reasoning-effort ladder on every host (replacing GLM-5.2's host-specific dialects), makes thinking mandatory (`thinking.type` must always be `enabled`; disabling is no longer supported), and defaults to `max` effort. The model is pinned to 1M context and set as the z.AI provider default.
+
 ### Changed
 
 - Switched the paid xAI provider (`xai` / `XAI_API_KEY`) from Chat Completions to the OpenAI Responses API (`POST https://api.x.ai/v1/responses`), matching SuperGrok `xai-oauth`. Prompt-cache affinity (`x-grok-conv-id`), reasoning-effort allowlisting, and encrypted-reasoning replay rules are now shared across both first-party xAI hosts.
@@ -15,6 +16,8 @@
 
 ### Fixed
 
+- Fixed Codex Daybreak Blue and Red model discovery reporting zero token prices, which made the model picker label the models as free.
+- Fixed Baseten's `moonshotai/Kimi-K3` catalog metadata so its `low`/`high`/`max` thinking levels are available.
 - Invalidated stale paid-xAI model-cache rows written under Chat Completions so the Responses migration takes effect immediately instead of waiting for TTL expiry.
 - Clamped paid xAI Responses `minimal` reasoning effort to `low` (same wire map as SuperGrok) so `xai/grok-4.5` does not 400.
 - Suppressed presence/frequency penalties and stop sequences on xAI reasoning models so a configured `presencePenalty` does not 400 after the `grok-4.5` default change.
@@ -24,6 +27,7 @@
 - Stopped baking `reasoningEffortMap` on first-party xAI catalog rows that omit `reasoning.effort` (`omitReasoningEffort: true`).
 - Suppressed presence/frequency penalties on every first-party xAI Responses model, including non-reasoning ids such as `grok-2`; xAI's `/v1/responses` marks those fields unsupported.
 - Routed `grok-4.6` (added on main) through first-party xAI Responses and advertised its documented `xhigh` effort tier (4.5 stays 4-tier).
+- Fixed `opencode-go/deepseek-v4-flash` Responses requests sending forced named `tool_choice` selectors that Console Go rejects while thinking mode is active.
 
 ## [17.3.4] - 2026-08-14
 

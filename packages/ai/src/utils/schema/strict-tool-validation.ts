@@ -8,11 +8,10 @@
  * schema instead of its `items`). One such tool 400s the entire turn, so
  * callers quarantine just the offending tool. See issue #2652.
  *
- * Exclusive-required root-union flattening lives in
- * {@link flattenXaiExclusiveRequiredRoot} and runs only at xAI convertTools.
- * Leftover *root* `anyOf`/`oneOf` whose branches are not objects is opt-in
- * via {@link FindStrictToolSchemaViolationOptions.rejectXaiRootObjectUnion}
- * so OpenAI/Azure/Codex keep those unions.
+ * xAI additionally rejects a leftover *root* `anyOf`/`oneOf` whose branches
+ * are not objects ("tool parameter root must be an object type"). That class
+ * is opt-in via {@link FindStrictToolSchemaViolationOptions.rejectXaiRootObjectUnion}
+ * so OpenAI/Azure/Codex keep valid object-root unions.
  */
 
 export interface FindStrictToolSchemaViolationOptions {

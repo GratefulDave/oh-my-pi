@@ -3,7 +3,7 @@ import { type } from "@oh-my-pi/omptype";
 import type { Tool } from "@oh-my-pi/pi-ai/types";
 import {
 	adaptSchemaForStrict,
-	flattenXaiExclusiveRequiredRoot,
+	flattenExclusiveRequiredRootUnion,
 	normalizeEmptySchemas,
 	stripSchemaDescriptions,
 	stripToolDescriptions,
@@ -88,7 +88,7 @@ describe("toolWireSchema — raw JSON Schema normalization", () => {
 		});
 	});
 
-	it("leaves exclusive-required root anyOf intact (flatten is xAI convertTools only)", () => {
+	it("preserves exclusive-required anyOf for provider-specific handling", () => {
 		const wire = toolWireSchema(
 			jsonTool({
 				type: "object",
@@ -145,17 +145,13 @@ describe("toolWireSchema — raw JSON Schema normalization", () => {
 		});
 	});
 
-	it("xAI convertTools flatten keeps branch property constraints and nested unions", () => {
+	it("xAI flatten keeps branch property constraints and nested unions", () => {
 		const constrained: Record<string, unknown> = {
 			type: "object",
 			properties: { kind: { type: "string" } },
 			anyOf: [{ properties: { kind: { const: "a" } } }, { properties: { kind: { const: "b" } } }],
 		};
-		flattenXaiExclusiveRequiredRoot(constrained);
-		expect(constrained.anyOf).toEqual([
-			{ properties: { kind: { const: "a" } } },
-			{ properties: { kind: { const: "b" } } },
-		]);
+		expect(flattenExclusiveRequiredRootUnion(constrained).anyOf).toEqual(constrained.anyOf);
 
 		const nested: Record<string, unknown> = {
 			type: "object",
@@ -170,11 +166,13 @@ describe("toolWireSchema — raw JSON Schema normalization", () => {
 				},
 			},
 		};
-		flattenXaiExclusiveRequiredRoot(nested);
-		expect((nested.properties as { outputSchema: { anyOf: unknown } }).outputSchema.anyOf).toEqual([
-			{ required: ["paths"] },
-			{ required: ["scopes"] },
-		]);
+		const nestedOut = flattenExclusiveRequiredRootUnion(nested);
+		const nestedProperties =
+			nestedOut.properties && typeof nestedOut.properties === "object" ? nestedOut.properties : undefined;
+		const outputSchema = nestedProperties && "outputSchema" in nestedProperties && nestedProperties.outputSchema;
+		const nestedAnyOf =
+			outputSchema && typeof outputSchema === "object" && "anyOf" in outputSchema ? outputSchema.anyOf : undefined;
+		expect(nestedAnyOf).toEqual([{ required: ["paths"] }, { required: ["scopes"] }]);
 
 		const exclusive: Record<string, unknown> = {
 			type: "object",
@@ -186,9 +184,10 @@ describe("toolWireSchema — raw JSON Schema normalization", () => {
 			required: ["project"],
 			anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
 		};
-		flattenXaiExclusiveRequiredRoot(exclusive);
-		expect(exclusive.anyOf).toBeUndefined();
-		expect(exclusive.required).toEqual(["project"]);
+		const flattened = flattenExclusiveRequiredRootUnion(exclusive);
+		expect(flattened.anyOf).toBeUndefined();
+		expect(flattened.required).toEqual(["project"]);
+		expect(exclusive.anyOf).toHaveLength(2);
 	});
 
 	it("preserves raw JSON Schema required defaults and safe-integer bounds", () => {
