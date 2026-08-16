@@ -41,6 +41,7 @@ function makeFakeSession(): FakeSession {
 	const eventBus = new EventBus();
 	const session = {
 		eventBus,
+		isStreaming: true,
 		deliverIrcMessage: async (msg: IrcMessage) => {
 			if (nextError) {
 				const err = nextError;

@@ -607,7 +607,7 @@ describe("sanitizeSchemaForOpenAIResponses", () => {
 		expect((sanitized as { type: unknown }).type).toBe("object");
 	});
 
-	it("flattens exclusive-required anyOf into the parent object (xAI root-union 400)", () => {
+	it("preserves exclusive-required anyOf for provider-specific handling", () => {
 		const schema = {
 			type: "object",
 			properties: {
@@ -627,6 +627,7 @@ describe("sanitizeSchemaForOpenAIResponses", () => {
 				scopes: { type: "array", items: { type: "string" } },
 			},
 			required: ["project"],
+			anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
 		});
 	});
 
@@ -651,7 +652,17 @@ describe("sanitizeSchemaForOpenAIResponses", () => {
 		expect(outputSchema.anyOf).toEqual([{ required: ["paths"] }, { required: ["scopes"] }]);
 	});
 
-
+	it("does not flatten a root union that constrains existing properties", () => {
+		const schema = {
+			type: "object",
+			properties: { kind: { type: "string" } },
+			anyOf: [{ properties: { kind: { const: "a" } } }, { properties: { kind: { const: "b" } } }],
+		};
+		expect(sanitizeSchemaForOpenAIResponses(schema).anyOf).toEqual([
+			{ properties: { kind: { const: "a" } } },
+			{ properties: { kind: { const: "b" } } },
+		]);
+	});
 });
 
 // ---------------------------------------------------------------------------

@@ -114,9 +114,6 @@ const kStrippedSchema = Symbol("pi.schema.descriptions.stripped");
 
 function postProcessJsonSchema(schema: Record<string, unknown>): Record<string, unknown> {
 	walk(schema);
-	// xAI 400s only when the *tool root* is object + typeless exclusive-required
-	// anyOf. Nested unions (task.outputSchema, etc.) must stay intact.
-	flattenExclusiveRequiredUnion(schema);
 	normalizeArkPropertyComments(schema);
 	normalizeEmptySchemas(schema);
 	return schema;
@@ -207,52 +204,36 @@ function rewriteNullableScalarAnyOf(schema: Record<string, unknown>): void {
 	schema.type = [scalarType, "null"];
 }
 
-function isTypelessObjectConstraintBranch(branch: unknown): boolean {
+function isExclusiveRequiredBranch(branch: unknown): boolean {
 	if (!isSchemaRecord(branch)) return false;
 	if (Object.hasOwn(branch, "type")) return false;
+	if (!Array.isArray(branch.required) || branch.required.length === 0) return false;
+	if (!branch.required.every(name => typeof name === "string" && name.length > 0)) return false;
 	for (const key in branch) {
 		if (!Object.hasOwn(branch, key)) continue;
-		if (
-			key === "required" ||
-			key === "properties" ||
-			key === "additionalProperties" ||
-			key === "description" ||
-			key === "title"
-		) {
-			continue;
-		}
+		if (key === "required" || key === "description" || key === "title") continue;
 		return false;
 	}
-	return (
-		Object.hasOwn(branch, "required") ||
-		Object.hasOwn(branch, "properties") ||
-		Object.hasOwn(branch, "additionalProperties")
-	);
+	return true;
 }
 
-function flattenExclusiveRequiredUnion(schema: Record<string, unknown>): void {
+/**
+ * Return an xAI-compatible copy of an object-root schema whose union consists
+ * only of typeless required-key fragments. Other providers must retain the
+ * union because it is a real model-facing constraint.
+ */
+export function flattenExclusiveRequiredRootUnion(schema: Record<string, unknown>): Record<string, unknown> {
 	const unionKey = Array.isArray(schema.anyOf) ? "anyOf" : Array.isArray(schema.oneOf) ? "oneOf" : undefined;
-	if (!unionKey) return;
+	if (!unionKey) return schema;
 	const union = schema[unionKey];
-	if (!Array.isArray(union) || union.length === 0) return;
+	if (!Array.isArray(union) || union.length === 0) return schema;
 	const typedObject = schema.type === "object" || (Array.isArray(schema.type) && schema.type.includes("object"));
-	if (!typedObject && !isSchemaRecord(schema.properties)) return;
-	if (!union.every(isTypelessObjectConstraintBranch)) return;
-
-	const properties = isSchemaRecord(schema.properties) ? schema.properties : {};
-	for (const branch of union) {
-		if (!isSchemaRecord(branch) || !isSchemaRecord(branch.properties)) continue;
-		for (const name in branch.properties) {
-			if (!Object.hasOwn(branch.properties, name)) continue;
-			if (!Object.hasOwn(properties, name)) properties[name] = branch.properties[name];
-		}
-	}
-	if (!isSchemaRecord(schema.properties) && Object.keys(properties).length > 0) {
-		schema.properties = properties;
-	}
-	delete schema[unionKey];
+	if (!typedObject && !isSchemaRecord(schema.properties)) return schema;
+	if (!union.every(isExclusiveRequiredBranch)) return schema;
+	const flattened = { ...schema };
+	delete flattened[unionKey];
+	return flattened;
 }
-
 
 /** Keys whose values are a single JSON Schema (not an array or map). */
 const SCHEMA_VALUE_KEYS = [

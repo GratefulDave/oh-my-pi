@@ -87,7 +87,7 @@ describe("toolWireSchema — raw JSON Schema normalization", () => {
 		});
 	});
 
-	it("flattens exclusive-required anyOf so xAI completions accept the tool", () => {
+	it("preserves exclusive-required anyOf for provider-specific handling", () => {
 		const wire = toolWireSchema(
 			jsonTool({
 				type: "object",
@@ -100,7 +100,7 @@ describe("toolWireSchema — raw JSON Schema normalization", () => {
 				anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
 			}),
 		);
-		expect(wire.anyOf).toBeUndefined();
+		expect(wire.anyOf).toEqual([{ required: ["paths"] }, { required: ["scopes"] }]);
 		expect(wire.type).toBe("object");
 		expect(wire.required).toEqual(["project"]);
 	});
@@ -127,7 +127,22 @@ describe("toolWireSchema — raw JSON Schema normalization", () => {
 		expect(outputSchema.anyOf).toEqual([{ required: ["paths"] }, { required: ["scopes"] }]);
 	});
 
-
+	it("does not flatten a root union that constrains existing properties", () => {
+		const wire = toolWireSchema(
+			jsonTool({
+				type: "object",
+				properties: { kind: { type: "string" } },
+				anyOf: [{ properties: { kind: { const: "a" } } }, { properties: { kind: { const: "b" } } }],
+			}),
+		);
+		expect(wire.anyOf).toEqual([{ properties: { kind: { const: "a" } } }, { properties: { kind: { const: "b" } } }]);
+		const properties = wire.properties;
+		expect(
+			properties && typeof properties === "object" && "kind" in properties ? properties.kind : undefined,
+		).toEqual({
+			type: "string",
+		});
+	});
 
 	it("preserves raw JSON Schema required defaults and safe-integer bounds", () => {
 		const wire = toolWireSchema(
