@@ -2237,11 +2237,39 @@ export class Settings {
 	}
 
 	#rebuildMerged(): void {
-		this.#merged = this.#deepMerge(this.#deepMerge({}, this.#global), this.#projectSettingsForMerge());
+		const withProject = this.#deepMerge(this.#deepMerge({}, this.#global), this.#projectSettingsForMerge());
+		this.#merged = this.#unionDisabledProviders(this.#global, withProject);
 		this.#merged = this.#deepMerge(this.#merged, this.#configOverlay);
 		this.#merged = this.#deepMerge(this.#merged, this.#overrides);
 		this.#resolvedCache.clear();
 		this.#editVariantCache = undefined;
+	}
+
+	/**
+	 * Project overlays replace arrays. An empty project `disabledProviders: []`
+	 * must not re-enable providers the user disabled in the agent config.
+	 */
+	#unionDisabledProviders(globalLayer: RawSettings, merged: RawSettings): RawSettings {
+		const globalIds = Array.isArray(globalLayer.disabledProviders)
+			? globalLayer.disabledProviders.filter((item): item is string => typeof item === "string")
+			: [];
+		if (globalIds.length === 0) return merged;
+		const mergedList = Array.isArray(merged.disabledProviders) ? merged.disabledProviders : [];
+		const seen = new Set<string>();
+		const next: unknown[] = [];
+		for (const item of mergedList) {
+			if (typeof item === "string") {
+				if (seen.has(item)) continue;
+				seen.add(item);
+			}
+			next.push(item);
+		}
+		for (const id of globalIds) {
+			if (seen.has(id)) continue;
+			seen.add(id);
+			next.push(id);
+		}
+		return { ...merged, disabledProviders: next };
 	}
 
 	#fireAllHooks(): void {

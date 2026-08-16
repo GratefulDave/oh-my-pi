@@ -152,6 +152,7 @@ export const TAB_GROUPS: Record<SettingTab, readonly string[]> = {
 		"Output Limits",
 		"Execution",
 		"Discovery & MCP",
+		"Extensions",
 		"Developer",
 	],
 	tasks: ["Modes", "Subagents", "Isolation", "Commands & Skills"],
@@ -4228,6 +4229,24 @@ export const SETTINGS_SCHEMA = {
 				{ value: "120", label: "120 seconds" },
 				{ value: "300", label: "5 minutes" },
 				{ value: "600", label: "10 minutes" },
+			],
+		},
+	},
+
+	"extensionHandlers.toolCallTimeoutMs": {
+		type: "number",
+		default: 30_000,
+		ui: {
+			tab: "tools",
+			group: "Extensions",
+			label: "Tool Call Handler Timeout (ms)",
+			description:
+				"Positive finite active-work timeout for extension tool_call handlers; invalid values use 30000ms, and time awaiting OMP-owned dialogs does not count",
+			options: [
+				{ value: "5000", label: "5 seconds" },
+				{ value: "10000", label: "10 seconds" },
+				{ value: "30000", label: "30 seconds" },
+				{ value: "60000", label: "1 minute" },
 			],
 		},
 	},

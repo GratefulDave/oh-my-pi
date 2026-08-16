@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Fixed
+- Fixed every tool call failing with `undefined is not an object (evaluating 'segments')` when any extension subscribed to `tool_call`. Restoring `shellMinimizer.gainTelemetry` had dropped `extensionHandlers.toolCallTimeoutMs` from the settings schema, so settings lookup crashed before the tool ran.
+- Fixed a project `.omp/settings.json` with `disabledProviders: []` replacing the user-level disable list, which re-enabled Claude Code, Codex, OpenCode, and Gemini CLI discovery in that repo.
 - Fixed default-export plugins that only type-import the host (the standard `export default function` contract, including `pi-voice-stt`) being dropped with `Extension module import timed out after 30000ms`. Type-only `@earendil-works`/`@mariozechner` imports now rewrite to an empty stub so compiled startup does not cold-load the host-compat shim.
 - Fixed terminal selection copying leading whitespace into assistant fenced-code rows, which could prevent pasted heredoc terminators from closing.
 - Fixed compiled-binary legacy extensions stalling during host compatibility imports and ensured disabled explicit extension files stay disabled.
