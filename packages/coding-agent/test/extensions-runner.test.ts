@@ -1419,6 +1419,42 @@ describe("ExtensionRunner", () => {
 			});
 		});
 
+		it("executes a tool when a tool_call handler is registered and the timeout setting is default", async () => {
+			const extensionPath = path.join(tempDir.path(), "passthrough-tool-call.ts");
+			fs.writeFileSync(
+				extensionPath,
+				`
+					export default function(pi) {
+						pi.on("tool_call", () => undefined);
+					}
+				`,
+			);
+
+			const result = await loadTestExtensions([extensionPath]);
+			const runner = new ExtensionRunner(
+				result.extensions,
+				result.runtime,
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+				undefined,
+				Settings.isolated(),
+			);
+			const tool: AgentTool = {
+				name: "echo",
+				label: "Echo",
+				description: "returns ok",
+				parameters: Type.Object({}),
+				strict: true,
+				execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+			};
+			const wrapped = new ExtensionToolWrapper(tool, runner);
+
+			await expect(wrapped.execute("tool-call-id", {})).resolves.toEqual({
+				content: [{ type: "text", text: "ok" }],
+			});
+		});
+
 		it("uses the configured tool_call timeout and fails closed so a hung extension cannot block execution (#3948)", async () => {
 			const hangExtensionPath = path.join(tempDir.path(), "hang-tool-call.ts");
 			fs.writeFileSync(
