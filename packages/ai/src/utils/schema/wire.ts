@@ -229,11 +229,12 @@ function flattenExclusiveRequiredUnion(schema: Record<string, unknown>): void {
 }
 
 /**
- * xAI (`xai` Completions + `xai-oauth` Responses) 400s when the *tool root*
- * is `type: object` plus a typeless exclusive-required `anyOf`/`oneOf`
- * (`[{required:["paths"]},{required:["scopes"]}]`). Nested unions stay intact.
- * Call this only on a per-request clone — never on the stamped `toolWireSchema`
- * cache — and only for those two providers.
+ * xAI (`xai` + `xai-oauth` Responses; Completions fallback) 400s when the
+ * *tool root* is `type: object` plus a typeless exclusive-required
+ * `anyOf`/`oneOf` (`[{required:["paths"]},{required:["scopes"]}]`).
+ * Nested unions and branches that constrain properties stay intact.
+ * Call this only on a per-request clone — never on the stamped
+ * `toolWireSchema` cache — and only for those providers.
  */
 export function flattenXaiExclusiveRequiredRoot(schema: Record<string, unknown>): void {
 	flattenExclusiveRequiredUnion(schema);

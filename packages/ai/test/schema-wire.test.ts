@@ -3,6 +3,7 @@ import { type } from "@oh-my-pi/omptype";
 import type { Tool } from "@oh-my-pi/pi-ai/types";
 import {
 	adaptSchemaForStrict,
+	flattenXaiExclusiveRequiredRoot,
 	normalizeEmptySchemas,
 	stripSchemaDescriptions,
 	stripToolDescriptions,
@@ -142,6 +143,52 @@ describe("toolWireSchema — raw JSON Schema normalization", () => {
 		).toEqual({
 			type: "string",
 		});
+	});
+
+	it("xAI convertTools flatten keeps branch property constraints and nested unions", () => {
+		const constrained: Record<string, unknown> = {
+			type: "object",
+			properties: { kind: { type: "string" } },
+			anyOf: [{ properties: { kind: { const: "a" } } }, { properties: { kind: { const: "b" } } }],
+		};
+		flattenXaiExclusiveRequiredRoot(constrained);
+		expect(constrained.anyOf).toEqual([
+			{ properties: { kind: { const: "a" } } },
+			{ properties: { kind: { const: "b" } } },
+		]);
+
+		const nested: Record<string, unknown> = {
+			type: "object",
+			properties: {
+				outputSchema: {
+					type: "object",
+					properties: {
+						paths: { type: "array", items: { type: "string" } },
+						scopes: { type: "array", items: { type: "string" } },
+					},
+					anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
+				},
+			},
+		};
+		flattenXaiExclusiveRequiredRoot(nested);
+		expect((nested.properties as { outputSchema: { anyOf: unknown } }).outputSchema.anyOf).toEqual([
+			{ required: ["paths"] },
+			{ required: ["scopes"] },
+		]);
+
+		const exclusive: Record<string, unknown> = {
+			type: "object",
+			properties: {
+				project: { type: "string" },
+				paths: { type: "array", items: { type: "string" } },
+				scopes: { type: "array", items: { type: "string" } },
+			},
+			required: ["project"],
+			anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
+		};
+		flattenXaiExclusiveRequiredRoot(exclusive);
+		expect(exclusive.anyOf).toBeUndefined();
+		expect(exclusive.required).toEqual(["project"]);
 	});
 
 	it("preserves raw JSON Schema required defaults and safe-integer bounds", () => {
