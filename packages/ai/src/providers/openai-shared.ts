@@ -3273,7 +3273,7 @@ function ingestXaiOauthCompletionsShapedToolCalls(
 	output: AssistantMessage,
 	stream: AssistantMessageEventStream,
 	blocksByIndex: Map<number, ResponsesToolCallBlock>,
-	contentIndexOf: (block: ThinkingContent | TextContent | ToolCall) => number,
+	contentIndexOf: (block: ThinkingContent | TextContent | ResponsesToolCallBlock) => number,
 ): void {
 	const deltaCalls = event.choices?.[0]?.delta?.tool_calls;
 	if (!deltaCalls?.length) return;

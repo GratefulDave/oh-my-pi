@@ -109,7 +109,7 @@ describe("createAgentSession defaultInactive tool activation", () => {
 		workspaceTree: { rootPath: tempDir, rendered: "", truncated: false, totalLines: 0, agentsMdFiles: [] },
 	});
 
-	const requireBundledModel = (provider: "anthropic" | "google" | "openai" | "xai", id: string): Model => {
+	const requireBundledModel = (provider: "anthropic" | "google" | "openai" | "xai" | "groq", id: string): Model => {
 		const bundled = getBundledModel(provider, id);
 		if (!bundled) throw new Error(`Expected ${provider}/${id} model to exist`);
 		return bundled;
@@ -184,7 +184,7 @@ describe("createAgentSession defaultInactive tool activation", () => {
 	it("exposes the private think tool only on transports that can disable native reasoning", async () => {
 		const tempDir = makeTempDir();
 		const settings = Settings.isolated({ externalThinking: true });
-		const unsupported = requireBundledModel("xai", "grok-4");
+		const unsupported = requireBundledModel("groq", "llama-3.3-70b-versatile");
 		const fable = requireBundledModel("anthropic", "claude-fable-5");
 		const responses = requireBundledModel("openai", "gpt-5");
 		const gemini = requireBundledModel("google", "gemini-2.5-flash");
@@ -199,6 +199,7 @@ describe("createAgentSession defaultInactive tool activation", () => {
 		authStorage.setRuntimeApiKey("openai", "test-key");
 		authStorage.setRuntimeApiKey("google", "test-key");
 		authStorage.setRuntimeApiKey("xai", "test-key");
+		authStorage.setRuntimeApiKey("groq", "test-key");
 
 		try {
 			expect(session.getActiveToolNames()).not.toContain("think");
