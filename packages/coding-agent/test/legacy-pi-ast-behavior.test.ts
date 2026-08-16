@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as url from "node:url";
 import {
+	__collectLegacyPiExtensionSourcesForTests,
 	__rewriteLegacyExtensionSourceForTests,
 	loadLegacyPiModule,
 } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/legacy-pi-compat";
@@ -399,6 +400,34 @@ describe("legacy Pi Babel AST behavior baseline", () => {
 			const actual = await __rewriteLegacyExtensionSourceForTests(testCase.source, rewriteImporter);
 			expect(actual, testCase.name).toBe(testCase.expected(importTarget, requireTarget));
 		}
+	});
+
+	test("loads a default-export factory that only type-imports the legacy host", async () => {
+		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-legacy-default-export-"));
+		tempRoots.push(dir);
+		const entry = path.join(dir, "index.ts");
+		await fs.writeFile(
+			entry,
+			[
+				'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
+				"export default function piVoiceSttExtension(pi: ExtensionAPI) {",
+				"	void pi;",
+				"}",
+				"",
+			].join("\n"),
+			"utf8",
+		);
+
+		const source = await fs.readFile(entry, "utf8");
+		const rewritten = await __rewriteLegacyExtensionSourceForTests(source, entry);
+		expect(rewritten).toContain("omp-legacy-pi-erased:host");
+		expect(rewritten).not.toContain("@earendil-works/pi-coding-agent");
+
+		const graph = await __collectLegacyPiExtensionSourcesForTests(entry);
+		expect([...graph.keys()].some(modulePath => modulePath.includes("pi-coding-agent"))).toBe(false);
+
+		const loaded = (await loadLegacyPiModule(entry)) as { default: unknown };
+		expect(typeof loaded.default).toBe("function");
 	});
 
 	test("leaves type-only module references unresolved", async () => {

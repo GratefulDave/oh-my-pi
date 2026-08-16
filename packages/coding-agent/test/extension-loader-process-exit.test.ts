@@ -153,6 +153,31 @@ void withHostGuard(async () => {
 		expect(result.extensions.map(extension => path.basename(extension.path))).toEqual(["good-extension.ts"]);
 	});
 
+	it("loads a later default-export extension after a prior import times out", async () => {
+		testSetExtensionLoadTimeoutMs(80);
+		const hung = writeModule(
+			"hung-import-extension.ts",
+			"const pending = Promise.withResolvers<void>(); await pending.promise; export default function() {}\n",
+		);
+		const good = writeModule(
+			"good-default-export.ts",
+			[
+				'import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";',
+				"export default function(pi: ExtensionAPI) {",
+				"	pi.registerCommand('ok', { handler: async () => {} });",
+				"}",
+				"",
+			].join("\n"),
+		);
+
+		const result = await loadExtensions([hung, good], project!.path());
+
+		expect(result.errors).toHaveLength(1);
+		expect(result.errors[0].path).toBe(hung);
+		expect(result.errors[0].error).toContain("module import timed out after 80ms");
+		expect(result.extensions.map(extension => path.basename(extension.path))).toEqual(["good-default-export.ts"]);
+	});
+
 	it("skips an extension whose module import never settles", async () => {
 		testSetExtensionLoadTimeoutMs(250);
 		const hung = writeModule(
