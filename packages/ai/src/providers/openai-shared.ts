@@ -3077,10 +3077,13 @@ export async function processResponsesStream<TApi extends Api>(
 			}
 		} else if (terminalEvent) {
 			const response = terminalEvent.response;
-			// Lossy / xAI-compat hosts may omit `output_item.added`/`done` for
-			// later parallel function_calls and only list them on the terminal
+			// SuperGrok (`xai-oauth`) often omits `output_item.added`/`done` for
+			// later parallel function_calls and only lists them on the terminal
 			// `response.output`. Harvest those so every call executes.
-			harvestResponsesTerminalOutputToolCalls(output, stream, response?.output);
+			// OpenAI / Azure / Codex / OpenRouter / paid `xai` stay untouched.
+			if (model.provider === "xai-oauth") {
+				harvestResponsesTerminalOutputToolCalls(output, stream, response?.output);
+			}
 			const shouldPromoteIncompleteToolUse =
 				response?.status === "incomplete" &&
 				response.incomplete_details?.reason === "max_output_tokens" &&
@@ -3148,13 +3151,7 @@ export async function processResponsesStream<TApi extends Api>(
 				sawFirstToken = true;
 				options?.onFirstToken?.();
 			}
-			ingestXaiOauthCompletionsShapedToolCalls(
-				event,
-				output,
-				stream,
-				xaiOauthCompletionsToolBlocks,
-				contentIndexOf,
-			);
+			ingestXaiOauthCompletionsShapedToolCalls(event, output, stream, xaiOauthCompletionsToolBlocks, contentIndexOf);
 		} else if (event.type === "error") {
 			const err = (event as any).error ?? event;
 			const code = err.code ?? "unknown";
@@ -3318,8 +3315,8 @@ function alreadyHasResponsesToolCall(output: AssistantMessage, callId: string, i
 /**
  * Promote `function_call` / `custom_tool_call` / `computer_call` items that
  * exist only on the terminal `response.output` (no streamed added/done).
- * xAI's OpenAI-compat Responses path often streams the first call and dumps
- * the rest on `response.completed` — without this those calls never run.
+ * SuperGrok (`xai-oauth`) often streams the first call and dumps the rest
+ * on `response.completed` — without this those calls never run.
  */
 export function harvestResponsesTerminalOutputToolCalls(
 	output: AssistantMessage,

@@ -345,6 +345,27 @@ describe("buildParams tool_choice reconciliation (#2652)", () => {
 		expect(params.parallel_tool_calls).toBeUndefined();
 	});
 
+	test("OpenRouter Responses leaves parallel_tool_calls unset", () => {
+		const { params } = buildParams(
+			buildModel({
+				id: "x-ai/grok-4.6",
+				name: "OpenRouter Grok 4.6",
+				api: "openai-responses",
+				provider: "openrouter",
+				baseUrl: "https://openrouter.ai/api/v1",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 256000,
+				maxTokens: 64000,
+			} as ModelSpec<"openai-responses">),
+			ctx([goodTool]),
+			{},
+			undefined,
+		);
+		expect(params.parallel_tool_calls).toBeUndefined();
+	});
+
 	test("keeps a forced native computer choice when only a sibling tool is quarantined", () => {
 		const nativeModel = { ...makeModel(), supportsComputerUse: true };
 		const { params } = buildParams(

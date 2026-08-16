@@ -13,13 +13,25 @@ import { processResponsesStream } from "@oh-my-pi/pi-ai/providers/openai-shared"
 import type { AssistantMessage, Model } from "@oh-my-pi/pi-ai/types";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
 
-function makeModel(provider: "openai" | "xai-oauth" = "openai"): Model<"openai-responses"> {
+function makeModel(provider: "openai" | "xai" | "xai-oauth" | "openrouter" = "openai"): Model<"openai-responses"> {
 	return buildModel({
 		api: "openai-responses",
-		name: provider === "xai-oauth" ? "Grok 4.6" : "GPT Test",
-		id: provider === "xai-oauth" ? "grok-4.6" : "gpt-test",
+		name:
+			provider === "xai-oauth"
+				? "Grok 4.6"
+				: provider === "xai"
+					? "Paid Grok 4.6"
+					: provider === "openrouter"
+						? "OpenRouter Grok 4.6"
+						: "GPT Test",
+		id: provider === "openai" ? "gpt-test" : "grok-4.6",
 		provider,
-		baseUrl: provider === "xai-oauth" ? "https://api.x.ai/v1" : "https://api.openai.com/v1",
+		baseUrl:
+			provider === "xai-oauth" || provider === "xai"
+				? "https://api.x.ai/v1"
+				: provider === "openrouter"
+					? "https://openrouter.ai/api/v1"
+					: "https://api.openai.com/v1",
 		contextWindow: 8192,
 		maxTokens: 2048,
 		input: ["text"],
@@ -218,13 +230,196 @@ describe("processResponsesStream: terminal events", () => {
 			]),
 			output,
 			stream,
-			makeModel(),
+			makeModel("xai-oauth"),
 		);
 
 		expect(output.stopReason).toBe("toolUse");
 		const calls = output.content.filter(block => block.type === "toolCall");
 		expect(calls.map(block => (block.type === "toolCall" ? block.name : ""))).toEqual(["read", "bash"]);
 		expect(calls[1]?.type === "toolCall" && calls[1].arguments).toEqual({ command: "echo TOOL_OK" });
+	});
+
+	test("does not harvest terminal-only extra function_calls for OpenAI", async () => {
+		const output = makeOutput();
+		const stream = { push: () => {}, end: () => {} } as never;
+
+		await processResponsesStream(
+			makeStream([
+				{
+					type: "response.output_item.added",
+					output_index: 0,
+					item: {
+						type: "function_call",
+						id: "fc_first",
+						call_id: "call_first",
+						name: "read",
+						arguments: '{"path":"a.ts"}',
+					},
+				},
+				{
+					type: "response.output_item.done",
+					output_index: 0,
+					item: {
+						type: "function_call",
+						id: "fc_first",
+						call_id: "call_first",
+						name: "read",
+						arguments: '{"path":"a.ts"}',
+					},
+				},
+				{
+					type: "response.completed",
+					response: {
+						id: "resp_openai",
+						status: "completed",
+						output: [
+							{
+								type: "function_call",
+								id: "fc_first",
+								call_id: "call_first",
+								name: "read",
+								arguments: '{"path":"a.ts"}',
+							},
+							{
+								type: "function_call",
+								id: "fc_second",
+								call_id: "call_second",
+								name: "bash",
+								arguments: '{"command":"echo NO"}',
+							},
+						],
+					},
+				},
+			]),
+			output,
+			stream,
+			makeModel("openai"),
+		);
+
+		const calls = output.content.filter(block => block.type === "toolCall");
+		expect(calls.map(block => (block.type === "toolCall" ? block.name : ""))).toEqual(["read"]);
+	});
+
+	test("does not harvest terminal-only extra function_calls for OpenRouter", async () => {
+		const output = makeOutput();
+		const stream = { push: () => {}, end: () => {} } as never;
+
+		await processResponsesStream(
+			makeStream([
+				{
+					type: "response.output_item.added",
+					output_index: 0,
+					item: {
+						type: "function_call",
+						id: "fc_first",
+						call_id: "call_first",
+						name: "read",
+						arguments: '{"path":"a.ts"}',
+					},
+				},
+				{
+					type: "response.output_item.done",
+					output_index: 0,
+					item: {
+						type: "function_call",
+						id: "fc_first",
+						call_id: "call_first",
+						name: "read",
+						arguments: '{"path":"a.ts"}',
+					},
+				},
+				{
+					type: "response.completed",
+					response: {
+						id: "resp_openrouter",
+						status: "completed",
+						output: [
+							{
+								type: "function_call",
+								id: "fc_first",
+								call_id: "call_first",
+								name: "read",
+								arguments: '{"path":"a.ts"}',
+							},
+							{
+								type: "function_call",
+								id: "fc_second",
+								call_id: "call_second",
+								name: "bash",
+								arguments: '{"command":"echo NO"}',
+							},
+						],
+					},
+				},
+			]),
+			output,
+			stream,
+			makeModel("openrouter"),
+		);
+
+		const calls = output.content.filter(block => block.type === "toolCall");
+		expect(calls.map(block => (block.type === "toolCall" ? block.name : ""))).toEqual(["read"]);
+	});
+
+	test("does not harvest terminal-only extra function_calls for paid xAI", async () => {
+		const output = makeOutput();
+		const stream = { push: () => {}, end: () => {} } as never;
+
+		await processResponsesStream(
+			makeStream([
+				{
+					type: "response.output_item.added",
+					output_index: 0,
+					item: {
+						type: "function_call",
+						id: "fc_first",
+						call_id: "call_first",
+						name: "read",
+						arguments: '{"path":"a.ts"}',
+					},
+				},
+				{
+					type: "response.output_item.done",
+					output_index: 0,
+					item: {
+						type: "function_call",
+						id: "fc_first",
+						call_id: "call_first",
+						name: "read",
+						arguments: '{"path":"a.ts"}',
+					},
+				},
+				{
+					type: "response.completed",
+					response: {
+						id: "resp_xai",
+						status: "completed",
+						output: [
+							{
+								type: "function_call",
+								id: "fc_first",
+								call_id: "call_first",
+								name: "read",
+								arguments: '{"path":"a.ts"}',
+							},
+							{
+								type: "function_call",
+								id: "fc_second",
+								call_id: "call_second",
+								name: "bash",
+								arguments: '{"command":"echo NO"}',
+							},
+						],
+					},
+				},
+			]),
+			output,
+			stream,
+			makeModel("xai"),
+		);
+
+		const calls = output.content.filter(block => block.type === "toolCall");
+		expect(calls.map(block => (block.type === "toolCall" ? block.name : ""))).toEqual(["read"]);
 	});
 
 	test("ingests Completions-shaped tool_calls on an xai-oauth Responses stream", async () => {
