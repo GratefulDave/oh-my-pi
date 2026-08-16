@@ -92,6 +92,7 @@ describe("InteractiveMode vibe mode toggle", () => {
 		await initTheme();
 		tempDir = TempDir.createSync("@pi-vibe-toggle-");
 		authStorage = createInMemoryAuthStorage();
+		authStorage.setRuntimeApiKey("anthropic", "test-key");
 		modelRegistry = new ModelRegistry(authStorage);
 	});
 

@@ -87,6 +87,7 @@ interface ScenarioResult {
 	/** Snapshot arrays captured by reference + a deep copy taken at observation time. */
 	immutability: Array<{ live: string[]; copy: string[] }>;
 	exitCode: number;
+	stderr: string;
 	finalWant: string[];
 }
 
@@ -193,6 +194,7 @@ function createScriptedSession(
 		isAborted: () => aborted,
 		dispose: async () => {},
 		setIrcWakeTurnObserver: () => {},
+		subscribeRunState: () => () => {},
 	};
 	// AgentSession is a concrete class; the executor consumes only this
 	// structural subset. Deliberate documented test-double escape hatch,
@@ -262,7 +264,7 @@ async function runScenario(ops: Op[], options?: { abortAfterOps?: boolean }): Pr
 		},
 	});
 
-	return { observations, immutability, exitCode: result.exitCode, finalWant: ref.expected() };
+	return { observations, immutability, exitCode: result.exitCode, stderr: result.stderr, finalWant: ref.expected() };
 }
 
 function expectAllMatch(result: ScenarioResult, minObservations: number): void {

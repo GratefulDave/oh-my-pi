@@ -10,7 +10,10 @@ describe("hub list", () => {
 		const sessionFile = path.join(tempDir.path(), "main.jsonl");
 		const workerSessionFile = path.join(tempDir.path(), "main", "Worker.jsonl");
 		await Bun.write(sessionFile, "");
-		await Bun.write(workerSessionFile, "");
+		await Bun.write(
+			workerSessionFile,
+			`${JSON.stringify({ type: "session_init", timestamp: "2026-08-16T00:00:00.000Z" })}\n`,
+		);
 
 		const registry = new AgentRegistry();
 		registry.register({
