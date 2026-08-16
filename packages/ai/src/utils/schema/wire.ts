@@ -114,9 +114,6 @@ const kStrippedSchema = Symbol("pi.schema.descriptions.stripped");
 
 function postProcessJsonSchema(schema: Record<string, unknown>): Record<string, unknown> {
 	walk(schema);
-	// xAI 400s only when the *tool root* is object + typeless exclusive-required
-	// anyOf. Nested unions (task.outputSchema, etc.) must stay intact.
-	flattenExclusiveRequiredUnion(schema);
 	normalizeArkPropertyComments(schema);
 	normalizeEmptySchemas(schema);
 	return schema;
@@ -229,6 +226,17 @@ function flattenExclusiveRequiredUnion(schema: Record<string, unknown>): void {
 	if (!typedObject && !isSchemaRecord(schema.properties)) return;
 	if (!union.every(isExclusiveRequiredBranch)) return;
 	delete schema[unionKey];
+}
+
+/**
+ * xAI (`xai` Completions + `xai-oauth` Responses) 400s when the *tool root*
+ * is `type: object` plus a typeless exclusive-required `anyOf`/`oneOf`
+ * (`[{required:["paths"]},{required:["scopes"]}]`). Nested unions stay intact.
+ * Call this only on a per-request clone — never on the stamped `toolWireSchema`
+ * cache — and only for those two providers.
+ */
+export function flattenXaiExclusiveRequiredRoot(schema: Record<string, unknown>): void {
+	flattenExclusiveRequiredUnion(schema);
 }
 
 /** Keys whose values are a single JSON Schema (not an array or map). */

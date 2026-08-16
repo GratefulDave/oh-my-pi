@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Fixed xAI 400ing the whole turn on MCP schemas whose tool root is an object plus a typeless exclusive-required `anyOf` (e.g. codebase-memory `check_index_coverage`). Flatten only that root fragment — nested unions and branch property/`additionalProperties` constraints stay intact. Leftover object-root unions quarantine that one tool on paid xAI Completions and xAI OAuth Responses, not on OpenAI/Azure/Codex.
+- Fixed xAI (`xai` Completions + `xai-oauth` Responses) 400ing the whole turn on MCP schemas whose root is an object plus a typeless exclusive-required `anyOf` (e.g. codebase-memory `check_index_coverage`). Flatten that **tool-root** union on a per-request clone for those two providers only. Shared `toolWireSchema` / OpenAI / Azure / Codex / nested unions (e.g. `task.outputSchema`) are unchanged. Leftover object-root unions still quarantine that one tool on xAI only.
 
 
 ## [17.3.4] - 2026-08-14

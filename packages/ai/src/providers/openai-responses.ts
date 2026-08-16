@@ -39,6 +39,7 @@ import { callWithCopilotModelRetry } from "../utils/retry";
 import {
 	adaptSchemaForStrict,
 	findStrictToolSchemaViolation,
+	flattenXaiExclusiveRequiredRoot,
 	NO_STRICT,
 	normalizeSchemaForMoonshot,
 	sanitizeSchemaForOpenAIResponses,
@@ -1430,7 +1431,14 @@ export function convertTools(
 		// of the request valid instead of letting one bad MCP schema 400 the whole
 		// turn (#2652). Other tools and built-ins are unaffected. Leftover
 		// object-root unions are an xAI-only 400; OpenAI/Azure/Codex keep them.
-		const violation = findStrictToolSchemaViolation(parameters, "#", {
+		// xAI 400s exclusive-required tool-root anyOf. Flatten a clone so the
+		// tool stays callable. Shared wire cache / other providers stay intact.
+		let wireParameters = parameters;
+		if (model.provider === "xai" || model.provider === "xai-oauth") {
+			wireParameters = structuredClone(parameters);
+			flattenXaiExclusiveRequiredRoot(wireParameters);
+		}
+		const violation = findStrictToolSchemaViolation(wireParameters, "#", {
 			rejectXaiRootObjectUnion: model.provider === "xai" || model.provider === "xai-oauth",
 		});
 		if (violation) {
@@ -1441,7 +1449,7 @@ export function convertTools(
 			type: "function",
 			name: tool.name,
 			description: tool.description || "",
-			parameters,
+			parameters: wireParameters,
 			// `strict: false` and an omitted `strict` are NOT equivalent for every
 			// OpenAI-compat backend — some over-fill optional args when the flag is
 			// absent (#4336). Preserve the author's explicit `false` unless the

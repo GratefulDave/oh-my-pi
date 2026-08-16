@@ -607,7 +607,7 @@ describe("sanitizeSchemaForOpenAIResponses", () => {
 		expect((sanitized as { type: unknown }).type).toBe("object");
 	});
 
-	it("flattens exclusive-required anyOf into the parent object (xAI root-union 400)", () => {
+	it("leaves exclusive-required root anyOf intact (flatten is xAI convertTools only)", () => {
 		const schema = {
 			type: "object",
 			properties: {
@@ -619,15 +619,7 @@ describe("sanitizeSchemaForOpenAIResponses", () => {
 			anyOf: [{ required: ["paths"] }, { required: ["scopes"] }],
 		};
 
-		expect(sanitizeSchemaForOpenAIResponses(schema)).toEqual({
-			type: "object",
-			properties: {
-				project: { type: "string" },
-				paths: { type: "array", items: { type: "string" } },
-				scopes: { type: "array", items: { type: "string" } },
-			},
-			required: ["project"],
-		});
+		expect(sanitizeSchemaForOpenAIResponses(schema)).toEqual(schema);
 	});
 
 	it("does not flatten nested exclusive-required anyOf (xAI only rejects the tool root)", () => {

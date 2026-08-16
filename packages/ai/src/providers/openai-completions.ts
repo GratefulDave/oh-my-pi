@@ -45,6 +45,7 @@ import { callWithCopilotModelRetry } from "../utils/retry";
 import {
 	adaptSchemaForStrict,
 	findStrictToolSchemaViolation,
+	flattenXaiExclusiveRequiredRoot,
 	NO_STRICT,
 	normalizeSchemaForMoonshot,
 	sanitizeSchemaForGrammar,
@@ -2314,7 +2315,7 @@ function convertTools(
 					? "all_strict"
 					: "none"
 				: "mixed";
-	const rejectXaiRootObjectUnion = provider === "xai" || provider === "xai-oauth";
+	const flattenForXai = provider === "xai" || provider === "xai-oauth";
 
 	const wireTools: ChatCompletionTool[] = [];
 	let anyStrictEmitted = false;
@@ -2328,7 +2329,11 @@ function convertTools(
 		// false` paths deliberately keep the wire flag uniformly absent.
 		const includeExplicitFalse =
 			!includeStrict && tool.strict === false && toolStrictMode === "mixed" && compat.supportsStrictMode !== false;
-		const wireParameters = includeStrict ? parameters : baseParameters;
+		let wireParameters = includeStrict ? parameters : baseParameters;
+		if (flattenForXai) {
+			wireParameters = structuredClone(wireParameters);
+			flattenXaiExclusiveRequiredRoot(wireParameters);
+		}
 		// Moonshot/Kimi native hosts validate against the stricter MFJS subset
 		// (const→enum, typed enums, no validators) and 400 otherwise.
 		// Grammar-constrained local backends (llama.cpp, LM Studio, vLLM)
@@ -2341,7 +2346,9 @@ function convertTools(
 				: compat.toolSchemaFlavor === "grammar"
 					? sanitizeSchemaForGrammar(wireParameters)
 					: wireParameters;
-		const violation = findStrictToolSchemaViolation(emittedParameters, "#", { rejectXaiRootObjectUnion });
+		const violation = findStrictToolSchemaViolation(emittedParameters, "#", {
+			rejectXaiRootObjectUnion: flattenForXai,
+		});
 		if (violation) {
 			logger.warn(
 				`Tool "${tool.name}" omitted from the openai-completions request: its parameter schema is invalid for this provider at ${violation} (an enum/const value cannot match its declared type, or leftover xAI object-root union). Other tools are unaffected.`,
