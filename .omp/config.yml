@@ -81,3 +81,21 @@ disabledExtensions:
 - skill:write-a-skill
 - skill:zoom-out
 - extension-module:herdr-omp-agent-state
+skills:
+  includeSkills:
+  - caveman
+  - caveman-help
+  - caveman-review
+  - caveman-compress
+  - cavecrew
+  - caveman-stats
+  - caveman-commit
+  - codebase-memory
+  - compact-json
+  - rehydrate
+  - deep-interview
+  - library
+  - linear-cli
+  - deepinit
+  - omp-fork-upstream-sync
+  - lex-fork-maintainability
