@@ -94,3 +94,6 @@ omp-session-*.html
 /bazel-pi
 /bazel-oh-my-pi
 /.bazelrc.user
+
+.agent_memory.json
+.agent_memory/
