@@ -2,14 +2,13 @@
 # `just` finds this file in the cwd or any parent, so any subdir of the repo works too.
 #
 #   just                 # list recipes
-#   just install         # build every extension bundle + rebuild & install the lex binary
+#   just install         # rebuild and install the lex binary
 #   just rebase          # pull upstream and rebase the current branch
 #
 set shell := ["bash", "-uc"]
 
-# Extensions that have a build step (bundle -> packages/<name>/dist/*.bundle.js).
-# swarm-extension is pre-bundled; profile-manager / semantic-search are not bundled.
-BUILDABLE_EXTS := "pi-minimizer-gain pi-distill pi-observer pi-omnidelegate pi-software-factory"
+# Profile-manager provides `/pm`; other fork-managed extensions are disabled.
+BUILDABLE_EXTS := ""
 
 # Show all recipes.
 default:
@@ -19,30 +18,23 @@ default:
 # EXTENSIONS
 # ----------------------------------------------------------------------------
 
-# Build ONE extension bundle.  e.g. `just build-ext pi-observer`
+# Build ONE extension bundle.  e.g. `just build-ext pi-distill`
 build-ext name:
     bun --cwd=packages/{{name}} run build
 
-# Build ALL buildable extension bundles.
+# Build the sole fork-managed extension, then leave package extensions disabled.
 build-exts:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    for ext in {{BUILDABLE_EXTS}}; do
-        echo "==> building $ext"
-        bun --cwd=packages/"$ext" run build
-    done
-    echo "==> done. registered extensions:"
-    just ext-list
+    bun build .omp/extensions/profile-manager/index.ts --outfile .omp/extensions/profile-manager/dist/index.js --target bun --format esm
 
 # Print the extensions currently registered in .omp/settings.json.
 ext-list:
     @node -e "console.log(require('./.omp/settings.json').extensions.join('\n'))"
 
-# Run an extension's unit tests.  e.g. `just test-ext pi-observer`
+# Run an extension's unit tests.  e.g. `just test-ext pi-distill`
 test-ext name:
     bun --cwd=packages/{{name}} run test
 
-# Lint/typecheck one extension.  e.g. `just check-ext pi-observer`
+# Lint/typecheck one extension.  e.g. `just check-ext pi-distill`
 check-ext name:
     bun --cwd=packages/{{name}} run check
 

@@ -22,6 +22,7 @@ import { type Theme, theme } from "../../modes/theme/theme";
 import type { AsyncJobSnapshot } from "../../session/agent-session";
 import type { SessionManager } from "../../session/session-manager";
 import type { BranchHandler, NavigateTreeHandler, NewSessionHandler } from "../session-handler-types";
+import type { SessionShutdownEvent } from "../shared-events";
 import { ManagedTimers } from "./managed-timers";
 import { createExtensionModelQuery } from "./model-api";
 import type {
@@ -382,12 +383,16 @@ export type ShutdownHandler = () => void;
  * Returns whether any shutdown handlers were present. Timer cleanup runs even
  * when a handler fails so extension background work cannot outlive its host.
  */
-export async function emitSessionShutdownEvent(extensionRunner: ExtensionRunner | undefined): Promise<boolean> {
+export async function emitSessionShutdownEvent(
+	extensionRunner: ExtensionRunner | undefined,
+	reason: SessionShutdownEvent["reason"] = "dispose",
+): Promise<boolean> {
 	if (!extensionRunner) return false;
 	try {
 		if (!extensionRunner.hasHandlers("session_shutdown")) return false;
 		await extensionRunner.emit({
 			type: "session_shutdown",
+			reason,
 		});
 		return true;
 	} finally {

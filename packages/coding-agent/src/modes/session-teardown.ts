@@ -28,18 +28,16 @@ export interface SessionTeardownDeps {
 	saveDraft: (text: string) => Promise<void>;
 	/**
 	 * Dispose the session — emits `session_shutdown`, drains async jobs, closes
-	 * the manager. Receives the postmortem reason that triggered the teardown
-	 * (undefined on the keypress/`/exit` path) so `AgentSession.dispose()` can
-	 * persist the real exit reason instead of the generic `"dispose"`.
+	 * the manager. Receives the postmortem reason that triggered teardown so
+	 * `AgentSession.dispose()` can persist the real exit reason.
 	 */
 	disposeSession: (reason?: postmortem.Reason) => Promise<void>;
 }
 
 /**
  * Idempotent teardown: concurrent/repeat invocations share one settled
- * promise. The optional `reason` is the postmortem reason that triggered the
- * teardown (`sigterm`, `sighup`, `uncaught_exception`, …); only the FIRST
- * call's reason is used — later callers await the same settled promise.
+ * promise. The optional reason is the postmortem trigger (`sigterm`, `sighup`,
+ * `uncaught_exception`, …); only the FIRST call wins.
  */
 export type SessionTeardown = (reason?: postmortem.Reason) => Promise<void>;
 

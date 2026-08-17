@@ -30,6 +30,7 @@ import type { TtsrManager } from "../export/ttsr";
 import type { LoadedCustomCommand } from "../extensibility/custom-commands";
 import type { ExtensionRunner } from "../extensibility/extensions";
 import type { ContextUsage } from "../extensibility/extensions/types";
+import type { SessionShutdownReason } from "../extensibility/shared-events";
 import type { Skill, SkillWarning } from "../extensibility/skills";
 import type { FileSlashCommand } from "../extensibility/slash-commands";
 import type { SecretObfuscator } from "../secrets/obfuscator";
@@ -50,6 +51,11 @@ export interface AgentSessionDisposeOptions {
 	 * shorten it; late event handlers are still finalized after they settle.
 	 */
 	drainTimeoutMs?: number;
+	/**
+	 * Reason exposed to `session_shutdown` handlers. Explicit terminal exit uses
+	 * `"quit"`; programmatic disposal defaults to `"dispose"`.
+	 */
+	shutdownReason?: SessionShutdownReason;
 	/**
 	 * Postmortem reason that triggered this dispose (signal/fatal teardown
 	 * paths). When set, the persisted `session_exit` diagnostic records it

@@ -19,11 +19,6 @@ interface RepoSettings {
 	extensions?: string[];
 }
 
-interface PackageJson {
-	omp?: {
-		extensions?: unknown;
-	};
-}
 
 const REPO = path.resolve(import.meta.dir, "..");
 const HOME = homedir();
@@ -32,9 +27,12 @@ const EXT_DIR = path.join(USER_DIR, "extensions");
 const USER_SETTINGS = path.join(USER_DIR, "settings.json");
 const DRY = process.argv.includes("--dry-run");
 const PRESERVE_SETTINGS = process.argv.includes("--preserve-settings");
+// Profile-manager owns `/pm` model/profile switching. Other fork extensions
+// remain disabled and must not be rediscovered from package manifests.
+const ENABLED_EXTENSION_NAMES: Record<string, true> = { "profile-manager": true };
 
 // Derive a stable folder name from a source bundle path.
-//   packages/pi-observer/dist/observer.bundle.js   -> pi-observer
+//   packages/<extension>/dist/<bundle>.js   -> <extension>
 //   .omp/extensions/profile-manager/dist/index.js  -> profile-manager
 function extName(rel: string): string {
 	const parts = rel.split("/");
@@ -118,38 +116,15 @@ export async function removeStaleManagedDiscoveryFiles(destDir: string, entryFil
 	await Promise.all(stale.map(file => fs.rm(path.join(destDir, file), { force: true })));
 }
 
-async function discoverPackageExtensionSources(): Promise<string[]> {
-	const packagesDir = path.join(REPO, "packages");
-	const entries = await fs.readdir(packagesDir, { withFileTypes: true }).catch(() => []);
-	const sources: string[] = [];
-	for (const entry of entries) {
-		if (!entry.isDirectory()) continue;
-		const packageDir = path.join(packagesDir, entry.name);
-		const manifest = await readJson<PackageJson>(path.join(packageDir, "package.json"));
-		const extensions = manifest?.omp?.extensions;
-		if (!Array.isArray(extensions)) continue;
-		for (const extension of extensions) {
-			if (typeof extension !== "string") continue;
-			const rel = path.relative(REPO, path.resolve(packageDir, extension)).split(path.sep).join("/");
-			sources.push(rel);
-		}
-	}
-	return sources;
-}
 
 async function main(): Promise<void> {
 	const repoSettings = await readJson<RepoSettings>(path.join(REPO, ".omp", "settings.json"));
-	const configuredSources = repoSettings?.extensions ?? [];
-	const configuredNames = new Set(configuredSources.map(extName));
-	const manifestSources = await discoverPackageExtensionSources();
-	const sources = [...configuredSources];
-	for (const rel of manifestSources) {
-		if (configuredNames.has(extName(rel))) continue;
-		sources.push(rel);
-	}
+	const sources = (repoSettings?.extensions ?? []).filter(
+		extensionPath => Boolean(ENABLED_EXTENSION_NAMES[extName(extensionPath)]),
+	);
 	if (sources.length === 0) {
-		console.error("No extensions found in repo .omp/settings.json#extensions or package manifests");
-		process.exit(1);
+		console.log("No fork-managed extensions enabled.");
+		return;
 	}
 
 	const registered: string[] = [];
