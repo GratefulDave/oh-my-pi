@@ -18,9 +18,6 @@ default:
 # EXTENSIONS
 # ----------------------------------------------------------------------------
 
-# Build ONE extension bundle.  e.g. `just build-ext pi-distill`
-build-ext name:
-    bun --cwd=packages/{{name}} run build
 
 # Build the sole fork-managed extension, then leave package extensions disabled.
 build-exts:
@@ -30,13 +27,6 @@ build-exts:
 ext-list:
     @node -e "console.log(require('./.omp/settings.json').extensions.join('\n'))"
 
-# Run an extension's unit tests.  e.g. `just test-ext pi-distill`
-test-ext name:
-    bun --cwd=packages/{{name}} run test
-
-# Lint/typecheck one extension.  e.g. `just check-ext pi-distill`
-check-ext name:
-    bun --cwd=packages/{{name}} run check
 
 # Build every extension, then rebuild + install the lex binary that loads them.
 # This is the "install the extensions into omp" recipe.
