@@ -3672,43 +3672,50 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 
 		{
 			const originalDispose = session.dispose.bind(session);
-			session.dispose = async () => {
-				try {
-					// Reject new session work (eval starts) the moment disposal
-					// begins — the lifecycle await below opens an async gap before
-					// AgentSession.dispose() would otherwise set its guards.
-					session.beginDispose();
-					if (agentKind === "main") {
-						// Top-level teardown owns the global agent lifecycle: park timers,
-						// adopted subagent sessions, revivers. Tear it down while shared
-						// resources (kernels, MCP, LSP) are still live. Subagent disposal
-						// must NOT touch the global lifecycle.
-						const vibeRegistry = VibeSessionRegistry.global();
-						const vibeParentSession = {
-							getAgentId: () => resolvedAgentId,
-							getSessionId: () => sessionManager.getSessionId(),
-							getSessionFile: () => sessionManager.getSessionFile() ?? null,
-							sessionManager,
-							asyncJobManager: scopedAsyncJobManager,
-							settings,
-							getActiveModelString,
-						};
-						await vibeRegistry.suspendScope(vibeRegistry.ownerScope(vibeParentSession), scopedAsyncJobManager);
-						await AgentLifecycleManager.global().dispose();
+			let disposeCall: Promise<void> | undefined;
+			session.dispose = (disposeOptions = {}) => {
+				if (disposeCall) return disposeCall;
+				disposeCall = (async () => {
+					try {
+						// Reject new session work (eval starts) the moment disposal
+						// begins — the lifecycle await below opens an async gap before
+						// AgentSession.dispose() would otherwise set its guards.
+						session.beginDispose();
+						if (agentKind === "main") {
+							// Top-level teardown owns the global agent lifecycle: park timers,
+							// adopted subagent sessions, revivers. Tear it down while shared
+							// resources (kernels, MCP, LSP) are still live. Subagent disposal
+							// must NOT touch the global lifecycle.
+							const vibeRegistry = VibeSessionRegistry.global();
+							const vibeParentSession = {
+								getAgentId: () => resolvedAgentId,
+								getSessionId: () => sessionManager.getSessionId(),
+								getSessionFile: () => sessionManager.getSessionFile() ?? null,
+								sessionManager,
+								asyncJobManager: scopedAsyncJobManager,
+								settings,
+								getActiveModelString,
+							};
+							await Promise.all([
+								vibeRegistry.suspendScope(vibeRegistry.ownerScope(vibeParentSession), scopedAsyncJobManager),
+								AgentLifecycleManager.global().dispose(),
+							]);
+						}
+						await originalDispose(disposeOptions);
+					} finally {
+						unregisterUnlessParked();
+						unsubscribeCredentialDisabled?.();
+						unsubscribeMcpNotifications?.();
+						unregisterMcpPostmortem?.();
+						for (const callback of disposeCallbacks) callback();
+						disposeCallbacks.clear();
+						// Drop refs so the process-global postmortem list doesn't retain
+						// the bridge closure past explicit dispose.
+						unsubscribeMcpNotifications = undefined;
+						unregisterMcpPostmortem = undefined;
 					}
-					await originalDispose();
-				} finally {
-					unregisterUnlessParked();
-					unsubscribeCredentialDisabled?.();
-					unsubscribeMcpNotifications?.();
-					unregisterMcpPostmortem?.();
-					for (const callback of disposeCallbacks) callback();
-					disposeCallbacks.clear();
-					// Drop refs so the process-global postmortem list doesn't retain
-					// the bridge closure past explicit dispose.
-					unsubscribeMcpNotifications = undefined;
-					unregisterMcpPostmortem = undefined;
-				}
+				})();
+				return disposeCall;
 			};
 		}
 

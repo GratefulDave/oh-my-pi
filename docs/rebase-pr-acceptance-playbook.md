@@ -133,28 +133,12 @@ Then run the binary-only rebuild:
 ```
 
 `rebuild-lex.zsh` builds the native addon and `packages/coding-agent/dist/omp`, links it to
-`~/.local/bin/lex`/`omp`, and preserves all existing extension bundles, registrations, profiles,
-and user settings. Extension rebuild/install requires explicit opt-in:
-```bash
-LEX_REBUILD_EXTENSIONS=1 LEX_ALLOW_EXTENSION_STATE_CHANGE=1 ./rebuild-lex.zsh
-```
+`~/.local/bin/lex`/`omp`, and preserves Herdr plus all other user settings.
 
-## 8. Intentional extension rebuilds
+## 8. Extension policy
 
-Extensions survive upstream binary replacement because they load from existing bundles in settings.
-Do not rebuild or reinstall them during routine sync. If extension source changed intentionally:
-
-```bash
-LEX_REBUILD_EXTENSIONS=1 LEX_ALLOW_EXTENSION_STATE_CHANGE=1 ./rebuild-lex.zsh
-```
-
-Restart `lex` / `omp`; extensions load at startup.
-
-Verify:
-
-- `/observe` or Ctrl-S opens observer.
-- `/gain view` loads minimizer gain data.
-- startup logs contain no extension load errors.
+`profile-manager` is retained for `/pm`. Other fork-managed extensions are disabled and removed.
+Herdr remains externally managed and does not rebuild or install from this checkout.
 
 ## 9. Verification after sync
 
@@ -163,13 +147,8 @@ Minimum checks depend on touched areas:
 ```bash
 cargo check -p pi-shell
 cargo check -p pi-natives
-bun --cwd=packages/pi-observer run check
-bun --cwd=packages/pi-minimizer-gain run check
 ./rebuild-lex.zsh
 ```
-
-The default rebuild must report unchanged extension bundles and registrations. Use the explicit
-extension opt-in command only when extension source changes are part of the requested work.
 
 For #1750/native minimizer fixes, run focused Rust regressions for the changed behavior before broader checks.
 

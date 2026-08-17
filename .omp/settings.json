@@ -1,11 +1,6 @@
 {
  "extensions": [
- "packages/pi-minimizer-gain/dist/gaing.bundle.js",
- "packages/pi-distill/dist/distill.bundle.js",
- "packages/pi-actor-swarm/dist/swarm.bundle.js",
- "packages/pi-omnidelegate/dist/omnidelegate.bundle.js",
- "packages/pi-herdr/dist/herdr.bundle.js",
- ".omp/extensions/profile-manager/dist/index.js"
+  ".omp/extensions/profile-manager/dist/index.js"
  ],
   "activeModelProfile": "antigravity",
   "cycleOrder": [

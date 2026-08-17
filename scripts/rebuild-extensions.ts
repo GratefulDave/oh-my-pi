@@ -6,6 +6,7 @@ import * as path from "node:path";
 const REPO = path.resolve(import.meta.dir, "..");
 const NATIVES_DIR = path.join(REPO, "packages", "natives");
 const SETTINGS_PATH = path.join(REPO, ".omp", "settings.json");
+const ENABLED_EXTENSION_NAMES: Record<string, true> = {};
 
 interface RepoSettings {
 	extensions?: unknown;
@@ -116,12 +117,15 @@ async function verifyNativeMinimizer(): Promise<void> {
 
 const settings = await readJson<RepoSettings>(SETTINGS_PATH);
 const extensionPaths = Array.isArray(settings?.extensions)
-	? settings.extensions.filter((value): value is string => typeof value === "string")
+	? settings.extensions.filter(
+			(value): value is string =>
+				typeof value === "string" && Boolean(ENABLED_EXTENSION_NAMES[path.basename(path.dirname(path.dirname(value)))]),
+		)
 	: [];
 
 if (extensionPaths.length === 0) {
-	console.error("No extension paths found in .omp/settings.json#extensions");
-	process.exit(1);
+	console.log("No fork-managed extensions enabled.");
+	process.exit(0);
 }
 
 const allTargets = groupTargets(extensionPaths);

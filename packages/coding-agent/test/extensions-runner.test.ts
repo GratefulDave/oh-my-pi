@@ -1407,7 +1407,7 @@ describe("ExtensionRunner", () => {
 			testSetSessionShutdownHandlerTimeoutMs(10);
 
 			const startedAt = performance.now();
-			await runner.emit({ type: "session_shutdown" });
+			await runner.emit({ type: "session_shutdown", reason: "dispose" });
 			const elapsedMs = performance.now() - startedAt;
 
 			expect(elapsedMs).toBeGreaterThanOrEqual(8);
