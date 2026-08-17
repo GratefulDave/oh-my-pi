@@ -119,7 +119,8 @@ const settings = await readJson<RepoSettings>(SETTINGS_PATH);
 const extensionPaths = Array.isArray(settings?.extensions)
 	? settings.extensions.filter(
 			(value): value is string =>
-				typeof value === "string" && Boolean(ENABLED_EXTENSION_NAMES[path.basename(path.dirname(path.dirname(value)))]),
+				typeof value === "string" &&
+				Boolean(ENABLED_EXTENSION_NAMES[path.basename(path.dirname(path.dirname(value)))]),
 		)
 	: [];
 

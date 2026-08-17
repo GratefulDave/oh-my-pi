@@ -19,7 +19,6 @@ interface RepoSettings {
 	extensions?: string[];
 }
 
-
 const REPO = path.resolve(import.meta.dir, "..");
 const HOME = homedir();
 const USER_DIR = path.join(HOME, ".omp", "agent");
@@ -116,11 +115,10 @@ export async function removeStaleManagedDiscoveryFiles(destDir: string, entryFil
 	await Promise.all(stale.map(file => fs.rm(path.join(destDir, file), { force: true })));
 }
 
-
 async function main(): Promise<void> {
 	const repoSettings = await readJson<RepoSettings>(path.join(REPO, ".omp", "settings.json"));
-	const sources = (repoSettings?.extensions ?? []).filter(
-		extensionPath => Boolean(ENABLED_EXTENSION_NAMES[extName(extensionPath)]),
+	const sources = (repoSettings?.extensions ?? []).filter(extensionPath =>
+		Boolean(ENABLED_EXTENSION_NAMES[extName(extensionPath)]),
 	);
 	if (sources.length === 0) {
 		console.log("No fork-managed extensions enabled.");
