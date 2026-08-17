@@ -44,6 +44,8 @@
         "uvx",
         "--from",
         "git+https://github.com/ast-grep/ast-grep-mcp",
+        "--with",
+        "mcp<2",
         "ast-grep-server"
       ],
       "enabled": true,
