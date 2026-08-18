@@ -6,6 +6,12 @@
 
 - SuperGrok (`xai-oauth` only): force `parallel_tool_calls: true` (xAI defaults this off), harvest extra `function_call`s that appear only on `response.completed.output`, and ingest Completions-shaped `tool_calls` on a Responses stream, including streams that never send a Responses terminal frame. OpenAI / Azure / Codex / OpenRouter / paid `xai` unchanged.
 
+## [17.3.7] - 2026-08-17
+
+### Changed
+
+- Send the `omp/<version>` User-Agent on xAI chat (`xai` and `xai-oauth`) unless the request already set its own.
+
 ## [17.3.5] - 2026-08-16
 
 ### Added
