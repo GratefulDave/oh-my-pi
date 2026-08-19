@@ -834,6 +834,9 @@ describe("ExtensionRunner", () => {
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
 					getSessionName: () => undefined,
+					overrideModelRoles: () => {},
+					replaceModelRoles: () => {},
+					overrideEnabledModels: () => {},
 					setSessionName: async () => {},
 				},
 				{

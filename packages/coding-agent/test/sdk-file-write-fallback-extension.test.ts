@@ -57,6 +57,9 @@ function initializeRunnerForTest(runner: ExtensionRunner | undefined): void {
 		getThinkingLevel: () => undefined,
 		setThinkingLevel: () => {},
 		getSessionName: () => undefined,
+		overrideModelRoles: () => {},
+		replaceModelRoles: () => {},
+		overrideEnabledModels: () => {},
 		setSessionName: async () => {},
 	};
 	const contextActions: ExtensionContextActions = {

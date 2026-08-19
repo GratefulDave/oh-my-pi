@@ -654,19 +654,10 @@ describe("Settings", () => {
 				disabledProviders: ["claude", "claude-plugins", "codex", "gemini", "opencode"],
 			});
 			fs.mkdirSync(path.join(projectDir, ".omp"), { recursive: true });
-			await Bun.write(
-				path.join(projectDir, ".omp", "settings.json"),
-				JSON.stringify({ disabledProviders: [] }),
-			);
+			await Bun.write(path.join(projectDir, ".omp", "settings.json"), JSON.stringify({ disabledProviders: [] }));
 
 			const settings = await Settings.init({ cwd: projectDir, agentDir });
-			expect(settings.get("disabledProviders")).toEqual([
-				"claude",
-				"claude-plugins",
-				"codex",
-				"gemini",
-				"opencode",
-			]);
+			expect(settings.get("disabledProviders")).toEqual(["claude", "claude-plugins", "codex", "gemini", "opencode"]);
 		});
 
 		it("filters model allow-list and disabled providers by current path prefix", async () => {

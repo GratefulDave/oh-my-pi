@@ -1579,7 +1579,6 @@ function normalizeOpenAIResponsesSchemaNode(value: unknown, cache: WeakMap<JsonO
 		changed = true;
 	}
 
-
 	// Safe to overwrite the seed: any cyclic re-entry above already observed
 	// the seeded partial and set `changed = true` for that node, so a node
 	// that finishes with `changed === false` is provably non-cyclic and
@@ -1588,7 +1587,6 @@ function normalizeOpenAIResponsesSchemaNode(value: unknown, cache: WeakMap<JsonO
 	cache.set(value, result);
 	return result;
 }
-
 
 /**
  * xAI (and some OpenAI-compat hosts) reject a tool whose *root* schema is an
@@ -1604,7 +1602,13 @@ function isTypelessObjectConstraintBranch(branch: unknown): boolean {
 	if (Object.hasOwn(branch, "type")) return false;
 	for (const key in branch) {
 		if (!Object.hasOwn(branch, key)) continue;
-		if (key === "required" || key === "properties" || key === "additionalProperties" || key === "description" || key === "title") {
+		if (
+			key === "required" ||
+			key === "properties" ||
+			key === "additionalProperties" ||
+			key === "description" ||
+			key === "title"
+		) {
 			continue;
 		}
 		return false;

@@ -58,7 +58,10 @@ export function resolveRecordedToolName(toolName: string, args: unknown): string
 	if (typeof rawPath !== "string") return toolName;
 	let target = rawPath.trim();
 	if (target.startsWith("[") && target.endsWith("]")) {
-		target = target.slice(1, -1).replace(/#[0-9a-fA-F]+$/, "").trim();
+		target = target
+			.slice(1, -1)
+			.replace(/#[0-9a-fA-F]+$/, "")
+			.trim();
 	}
 	const match = /^xd:\/\/([^/?#]+)/i.exec(target);
 	const name = match?.[1];
@@ -287,7 +290,6 @@ function extractToolCalls(
 			argsChars,
 		};
 	});
-
 }
 
 /**

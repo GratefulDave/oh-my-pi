@@ -355,7 +355,6 @@ describe("tool usage stats pipeline", () => {
 		expect(toolRow(stats, "mcp__codemap_codemap").calls).toBe(1);
 	});
 
-
 	it("keeps tool aggregates stable across repeated syncs of unchanged data", async () => {
 		const sessionFile = await writeSessionFile("session.jsonl", { id: "sess0003" }, buildStandardEntries());
 		await syncAllSessions({ workers: 1 });

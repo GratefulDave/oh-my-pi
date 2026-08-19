@@ -165,7 +165,12 @@ import type { HookInputComponent } from "./components/hook-input";
 import type { HookSelectorComponent, HookSelectorSlider } from "./components/hook-selector";
 import { type PlanReviewAnnotationState, PlanReviewOverlay } from "./components/plan-review-overlay";
 import { StatusLineComponent } from "./components/status-line";
-import { SPINNER_RENDER_INTERVAL_MS, sharedSpinnerFrame, stopSharedSpinnerTicker, type ToolExecutionHandle } from "./components/tool-execution";
+import {
+	SPINNER_RENDER_INTERVAL_MS,
+	sharedSpinnerFrame,
+	stopSharedSpinnerTicker,
+	type ToolExecutionHandle,
+} from "./components/tool-execution";
 import { TranscriptContainer } from "./components/transcript-container";
 import { WelcomeComponent, type LspServerInfo as WelcomeLspServerInfo } from "./components/welcome";
 import { BtwController } from "./controllers/btw-controller";
