@@ -165,7 +165,7 @@ import type { HookInputComponent } from "./components/hook-input";
 import type { HookSelectorComponent, HookSelectorSlider } from "./components/hook-selector";
 import { type PlanReviewAnnotationState, PlanReviewOverlay } from "./components/plan-review-overlay";
 import { StatusLineComponent } from "./components/status-line";
-import { SPINNER_RENDER_INTERVAL_MS, sharedSpinnerFrame, type ToolExecutionHandle } from "./components/tool-execution";
+import { SPINNER_RENDER_INTERVAL_MS, sharedSpinnerFrame, stopSharedSpinnerTicker, type ToolExecutionHandle } from "./components/tool-execution";
 import { TranscriptContainer } from "./components/transcript-container";
 import { WelcomeComponent, type LspServerInfo as WelcomeLspServerInfo } from "./components/welcome";
 import { BtwController } from "./controllers/btw-controller";
@@ -734,6 +734,10 @@ export class InteractiveMode implements InteractiveModeContext {
 	#pendingSubmissionDispose: (() => void) | undefined;
 	#pendingSubmissionPreservesDraft = false;
 	#optimisticUserMessageComponents: Component[] = [];
+	#optimisticSkillMessageComponents: Component[] = [];
+	/** True while an optimistically-rendered `/skill:` row awaits its canonical
+	 *  `message_start`. Read by the event controller to reconcile the row. */
+	optimisticSkillMessagePending = false;
 	lastSigintTime = 0;
 	lastEscapeTime = 0;
 	lastLeftTapTime = 0;
@@ -1030,6 +1034,9 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#selectorController = new SelectorController(this);
 		this.#focusController = new SessionFocusController(this);
 		this.#inputController = new InputController(this);
+		this.session.setTitleGenerationStart?.(() => {
+			this.#inputController.notifyTitleGenerationStart();
+		});
 		this.#observerRegistry = new SessionObserverRegistry();
 	}
 
@@ -1818,6 +1825,51 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 		this.#optimisticUserMessageComponents = [];
 		this.addMessageToChat(message, options);
+	}
+
+	/**
+	 * Optimistically render a user-invoked `/skill:` row before its awaited
+	 * dispatch so a slow preflight (memory recall, `before_agent_start` hooks,
+	 * auto-thinking classification, pre-prompt compaction) does not leave the
+	 * submission invisible — normal prompts paint their row via
+	 * {@link startPendingSubmission} the same way (issue #8895). The canonical
+	 * skill `message_start` swaps this row in place via
+	 * {@link reconcileOptimisticSkillMessage}; a failed or bailed dispatch drops
+	 * it via {@link clearOptimisticSkillMessage}.
+	 */
+	renderOptimisticSkillMessage(
+		message: AgentMessage,
+		options?: { imageLinks?: readonly (string | undefined)[] },
+	): void {
+		this.clearOptimisticSkillMessage();
+		this.optimisticSkillMessagePending = true;
+		this.#optimisticSkillMessageComponents = this.#captureAddedChatComponents(() => {
+			this.addMessageToChat(message, options);
+		});
+		this.ensureLoadingAnimation();
+		this.ui.requestRender();
+	}
+
+	/** Replace the optimistic `/skill:` row with the canonical message emitted by
+	 *  the session, mirroring {@link replaceOptimisticUserMessage} for skills. */
+	reconcileOptimisticSkillMessage(message: AgentMessage): void {
+		this.optimisticSkillMessagePending = false;
+		for (const component of this.#optimisticSkillMessageComponents) {
+			this.chatContainer.removeChild(component);
+		}
+		this.#optimisticSkillMessageComponents = [];
+		this.addMessageToChat(message);
+	}
+
+	/** Drop the optimistic `/skill:` row when dispatch fails or bails before the
+	 *  message reaches the agent (aborted preflight, streaming-race requeue). */
+	clearOptimisticSkillMessage(): void {
+		this.optimisticSkillMessagePending = false;
+		if (this.#optimisticSkillMessageComponents.length === 0) return;
+		for (const component of this.#optimisticSkillMessageComponents) {
+			this.chatContainer.removeChild(component);
+		}
+		this.#optimisticSkillMessageComponents = [];
 	}
 
 	startPendingSubmission(
@@ -4381,6 +4433,9 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 		this.#cleanupMicAnimation();
 		this.#stopSubagentSpinner();
+		// Stop the shared tool-spinner ticker: a live block missed by per-component
+		// stopAnimation would otherwise keep an 80ms interval pinning the process.
+		stopSharedSpinnerTicker();
 		this.#liveCommandController.dispose();
 		this.#cancelTodoAutoClearTimer();
 		this.#cancelObserverUiSyncTimer();
@@ -4474,10 +4529,15 @@ export class InteractiveMode implements InteractiveModeContext {
 		popTerminalTitle();
 		this.stop();
 
-		// Print resumption hint if this is a persisted session
+		// Print resumption hint only if the session was actually materialized to
+		// durable storage. Persistence is lazy — a session that exits before its
+		// first assistant message (or dies early to an auth error, a mid-flight
+		// Ctrl+C, or a launch-then-quit) never wrote its JSONL, so the path is
+		// allocated but the file does not exist and `--resume <id>` would fail
+		// (issue #8860).
 		const sessionId = this.sessionManager.getSessionId();
 		const sessionFile = this.sessionManager.getSessionFile();
-		if (sessionId && sessionFile) {
+		if (sessionId && sessionFile && this.sessionManager.isSessionOnDisk()) {
 			process.stderr.write(`\n${chalk.dim(`Resume this session with ${APP_NAME} --resume ${sessionId}`)}\n`);
 		}
 
