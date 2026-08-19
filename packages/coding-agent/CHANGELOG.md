@@ -10,6 +10,10 @@
 
 - `/settings` rows can now carry a risk note: a warning glyph on the row plus a warning-colored line above the description. `External Thinking` (`externalThinking`, `--external-thinking`) is the first user — providers have flagged the request shape it produces as abuse, up to account-level enforcement, so both the settings entry and `--help` now say so.
 
+### Fixed
+
+- Fixed extension tools registering external Zod schemas being rejected: `registerTool`'s parameter type accepts `@oh-my-pi/pi-ai`'s `TSchema` for Zod v4 core schemas (including `zod/v4/mini`) alongside ArkType, JSON Schema, and structural Zod v3; the wire/validation pipeline serializes and validates those live Zod instances instead of only schemas built through the bundled `omptype`-backed Zod facade ([#7681](https://github.com/can1357/oh-my-pi/pull/7681) by [@GratefulDave](https://github.com/GratefulDave)).
+
 ## [17.3.8] - 2026-08-19
 
 ### Added
@@ -158,9 +162,6 @@
 - Fixed external thinking being offered on xAI reasoning-only Responses models (grok-4 family) that reject `reasoning.effort`, where the private scratchpad ran alongside native reasoning instead of replacing it.
 - Fixed the extension tool-call handler timeout rendering outside a titled section in `/settings` by registering its Extensions group on the Tools tab.
 
-### Fixed
-
-- Fixed extension tools registering external Zod schemas being rejected: `registerTool`'s parameter type accepts `@oh-my-pi/pi-ai`'s `TSchema` for Zod v4 core schemas (including `zod/v4/mini`) alongside ArkType, JSON Schema, and structural Zod v3; the wire/validation pipeline serializes and validates those live Zod instances instead of only schemas built through the bundled `omptype`-backed Zod facade ([#7681](https://github.com/can1357/oh-my-pi/pull/7681) by [@GratefulDave](https://github.com/GratefulDave)).
 
 ## [17.3.4] - 2026-08-14
 

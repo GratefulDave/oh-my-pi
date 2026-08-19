@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed local OpenAI-compatible servers with strict `chat_template_kwargs` whitelists (e.g. NInfer) failing every Qwen 3.8+ turn with `400 chat_template_kwargs.reasoning_effort is not supported` after the effort routing fix: the reasoning-effort fallback now recognizes a rejection of the kwargs spelling itself, retries with the kwarg stripped while keeping the effort on the standard top-level `reasoning_effort` field (hoisting it there for the kwargs-only vLLM dialect), and remembers the shape for the rest of the session. Value-level rejections and drops now also update the `chat_template_kwargs.reasoning_effort` twin instead of leaving a stale effort for kwargs-reading renderers, and unknown-parameter 400s naming `reasoning_effort` are recognized as effort rejections.
+- Fixed tool `parameters` rejecting live external Zod v3, Zod v4, and Zod v4 Mini schemas: `TSchema` now includes `zod/v4/core` `$ZodType` and a structural Zod v3 marker, and `Static<T>` infers their output types so extension tools keep typed `execute` params.
 
 ## [17.3.8] - 2026-08-19
 
@@ -59,9 +60,6 @@
 - Fixed Anthropic-compatible streams dropping thinking content, which broke replay of prior reasoning.
 - Updated the Alibaba Coding Plan China login flow to point to the current Bailian API-key management console.
 
-### Fixed
-
-- Fixed tool `parameters` rejecting live external Zod v3, Zod v4, and Zod v4 Mini schemas: `TSchema` now includes `zod/v4/core` `$ZodType` and a structural Zod v3 marker, and `Static<T>` infers their output types so extension tools keep typed `execute` params.
 
 ## [17.3.4] - 2026-08-14
 
