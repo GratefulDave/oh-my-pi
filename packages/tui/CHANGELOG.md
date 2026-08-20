@@ -5,6 +5,13 @@
 ### Fixed
 - Fixed terminal selection copying leading whitespace into fenced-code rows in coding-agent assistant messages, which could prevent pasted heredoc terminators from closing.
 
+## [17.4.0] - 2026-08-20
+
+### Added
+
+- Added composer border styles (`box`, `claude`, `pi`, `borderless`) via `ComposerStyle` objects and `getComposerStyle`, unifying chrome geometry and rendering across the editor and previews.
+- Added support for warning risk notes and row markers in settings lists.
+
 ## [17.3.8] - 2026-08-19
 
 ### Fixed

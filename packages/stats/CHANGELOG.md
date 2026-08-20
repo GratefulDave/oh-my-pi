@@ -11,6 +11,16 @@
 
 - Bash Minimizer gain dashboard in `omp stats` — shows bash minimizer token-savings alongside existing snapcompact savings with stacked time series, top-filter breakdown, project selector, and missed-command tuning table ([#3691](https://github.com/can1357/oh-my-pi/pull/3691)).
 
+## [17.4.0] - 2026-08-20
+
+### Changed
+
+- Window token estimates now incorporate broker-reported fleet token burn when an auth broker is configured, accurately tracking fleet-wide usage instead of undercounting with local-only statistics.
+
+### Fixed
+
+- Fixed an issue in subscription-window insights where distinct limits sharing a duration label (such as Anthropic overall vs. model-scoped 7-day windows) were incorrectly merged, which inflated window-equivalents and skewed tokens-per-window estimates. Windows are now grouped by provider limit ID.
+
 ## [17.3.6] - 2026-08-17
 
 ### Fixed
