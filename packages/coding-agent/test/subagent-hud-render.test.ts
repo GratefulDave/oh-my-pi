@@ -611,4 +611,59 @@ describe("InteractiveMode subagent observer UI sync", () => {
 			),
 		).toHaveLength(0);
 	});
+
+	it("does not persist queued summaries after the parent session id changes", async () => {
+		await mode.init({ suppressWelcomeIntro: true });
+		vi.useFakeTimers();
+		mode.streamingComponent = { render: () => [] } as typeof mode.streamingComponent;
+		const sendCustomMessage = vi.spyOn(session, "sendCustomMessage");
+
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, makeLifecycle("QueuedAgent", 0, "queued task", true));
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			...makeLifecycle("QueuedAgent", 0, "queued task", true),
+			status: "completed",
+		});
+		vi.runAllTimers();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(sendCustomMessage).not.toHaveBeenCalled();
+
+		vi.spyOn(mode.sessionManager, "getSessionId").mockReturnValue("switched-session");
+		mode.streamingComponent = undefined;
+		mode.flushDeferredHudSummary();
+
+		expect(sendCustomMessage).not.toHaveBeenCalled();
+		expect(
+			session.state.messages.filter(
+				message => message.role === "custom" && message.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+			),
+		).toHaveLength(0);
+	});
+
+	it("persists a deferred summary after the live message component is cleared", async () => {
+		await mode.init({ suppressWelcomeIntro: true });
+		vi.useFakeTimers();
+		mode.streamingComponent = { render: () => [] } as typeof mode.streamingComponent;
+		const sendCustomMessage = vi.spyOn(session, "sendCustomMessage");
+
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, makeLifecycle("LiveAgent", 0, "live task", true));
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			...makeLifecycle("LiveAgent", 0, "live task", true),
+			status: "completed",
+		});
+		vi.runAllTimers();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(sendCustomMessage).not.toHaveBeenCalled();
+
+		mode.streamingComponent = undefined;
+		mode.flushDeferredHudSummary();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(sendCustomMessage).toHaveBeenCalledWith(
+			expect.objectContaining({ customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE }),
+			{ deliverAs: "persist" },
+		);
+	});
 });

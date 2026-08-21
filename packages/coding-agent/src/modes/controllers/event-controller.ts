@@ -1356,6 +1356,7 @@ export class EventController {
 			this.ctx.ui.requestRender();
 		}
 		this.ctx.ui.requestRender();
+		this.ctx.flushDeferredHudSummary();
 	}
 
 	async #handleToolExecutionStart(event: Extract<AgentSessionEvent, { type: "tool_execution_start" }>): Promise<void> {
@@ -1787,6 +1788,7 @@ export class EventController {
 		this.#resolveDisplaceablePoll();
 		this.#resolveDisplaceableTodo();
 		this.ctx.flushPendingCommandOutput();
+		this.ctx.flushDeferredHudSummary();
 		this.#lastAssistantComponent = undefined;
 		this.ctx.ui.requestRender();
 		this.#scheduleIdleCompaction();
