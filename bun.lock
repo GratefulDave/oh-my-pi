@@ -53,7 +53,7 @@
     },
     "packages/browser-relay": {
       "name": "@oh-my-pi/browser-relay",
-      "version": "17.3.0",
+      "version": "0.1.0",
       "devDependencies": {
         "@types/bun": "catalog:",
         "puppeteer-core": "catalog:",
@@ -114,7 +114,7 @@
     },
     "packages/collab-web": {
       "name": "@oh-my-pi/collab-web",
-      "version": "17.3.0",
+      "version": "16.3.6",
       "dependencies": {
         "@oh-my-pi/pi-utils": "catalog:",
         "@oh-my-pi/pi-wire": "catalog:",
@@ -141,7 +141,7 @@
     },
     "packages/metaharness": {
       "name": "@oh-my-pi/pi-metaharness",
-      "version": "17.3.0",
+      "version": "0.0.1",
       "bin": {
         "metaharness": "src/server.ts",
       },
@@ -230,8 +230,8 @@
       "name": "pi-herdr",
       "version": "16.1.12-lex",
       "peerDependencies": {
-        "@oh-my-pi/pi-coding-agent": "workspace:*"
-      }
+        "@oh-my-pi/pi-coding-agent": "workspace:*",
+      },
     },
     "packages/snapcompact": {
       "name": "@oh-my-pi/snapcompact",
@@ -285,7 +285,7 @@
     },
     "packages/typescript-edit-benchmark": {
       "name": "@oh-my-pi/typescript-edit-benchmark",
-      "version": "17.3.0",
+      "version": "0.0.1",
       "dependencies": {
         "@babel/generator": "catalog:",
         "@babel/parser": "catalog:",
@@ -1249,6 +1249,7 @@
     "path-browserify": ["path-browserify@1.0.1", "", {}, "sha512-b7uo2UCUOYZcnF/3ID0lulOJi/bafxa1xPe7ZPsammBSpjSWQkjNxlt635YGS2MiR9GjvuXCtz2emr3jbsz98g=="],
 
     "pi-herdr": ["pi-herdr@workspace:packages/pi-herdr"],
+
     "picocolors": ["picocolors@1.1.1", "", {}, "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="],
 
     "picomatch": ["picomatch@4.0.5", "", {}, "sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A=="],
