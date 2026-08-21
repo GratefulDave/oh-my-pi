@@ -80,10 +80,10 @@ async function appendPrivateTelemetryLine(recordsPath: string, line: string): Pr
 	}
 	const handle = await fs.open(recordsPath, "a", TELEMETRY_FILE_MODE);
 	try {
-		await handle.appendFile(line, "utf8");
 		if (process.platform !== "win32") {
 			await handle.chmod(TELEMETRY_FILE_MODE);
 		}
+		await handle.appendFile(line, "utf8");
 	} finally {
 		await handle.close();
 	}
