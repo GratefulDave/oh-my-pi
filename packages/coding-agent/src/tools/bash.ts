@@ -361,6 +361,8 @@ export function makeMinimizedSaveHandler(
 ): MinimizedSaveHandler {
 	let saved = false;
 	let pendingSaved: MinimizedSaveInfo | null = null;
+	const sessionCwd = session.cwd;
+	const sessionId = session.getSessionId?.() ?? undefined;
 	const gainTelemetry =
 		session.settings.get("shellMinimizer.gainTelemetry") && !hasBashMinimizerCommandPrefix(session);
 	return {
@@ -377,8 +379,8 @@ export function makeMinimizedSaveHandler(
 			await appendBashMinimizerGainRecord({
 				command,
 				cwd: commandCwd,
-				sessionCwd: session.cwd,
-				sessionId: session.getSessionId?.() ?? undefined,
+				sessionCwd,
+				sessionId,
 				filter: info.filter,
 				inputBytes: info.inputBytes,
 				outputBytes,
@@ -395,6 +397,8 @@ async function recordBashMinimizerGain(input: {
 	command: string;
 	commandCwd: string;
 	result: BashResult | BashInteractiveResult;
+	sessionCwd: string;
+	sessionId?: string;
 }): Promise<void> {
 	if (!input.session.settings.get("shellMinimizer.gainTelemetry")) return;
 	if (!input.session.settings.get("shellMinimizer.enabled")) return;
@@ -406,8 +410,8 @@ async function recordBashMinimizerGain(input: {
 		await appendBashMinimizerGainRecord({
 			command: input.command,
 			cwd: input.commandCwd,
-			sessionCwd: input.session.cwd,
-			sessionId: input.session.getSessionId?.() ?? undefined,
+			sessionCwd: input.sessionCwd,
+			sessionId: input.sessionId,
 			filter: "missed",
 			inputBytes: input.result.totalBytes,
 			outputBytes: input.result.totalBytes,
@@ -937,10 +941,12 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 				const tailBuffer = new TailBuffer(DEFAULT_MAX_BYTES);
 				const wallTimeStart = performance.now();
 				try {
+					const sessionCwd = this.session.cwd;
+					const sessionId = this.session.getSessionId?.() ?? undefined;
 					const minimizedSave = makeMinimizedSaveHandler(this.session, options.command, options.commandCwd);
 					const result = await executeBash(options.command, {
 						cwd: options.commandCwd,
-						sessionKey: `${this.session.getSessionId?.() ?? ""}:async:${jobId}`,
+						sessionKey: `${sessionId ?? ""}:async:${jobId}`,
 						timeout: options.timeoutMs ?? 0,
 						signal: runSignal,
 						env: options.resolvedEnv,
@@ -960,6 +966,8 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 							command: options.command,
 							commandCwd: options.commandCwd,
 							result,
+							sessionCwd,
+							sessionId,
 						});
 					}
 					const wallTimeMs = performance.now() - wallTimeStart;
@@ -1509,6 +1517,8 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 			pendingNotices.push("pty requested but unavailable in this environment; ran without a terminal");
 		}
 		const wallTimeStart = performance.now();
+		const sessionCwd = this.session.cwd;
+		const sessionId = this.session.getSessionId?.() ?? undefined;
 		const minimizedSave = makeMinimizedSaveHandler(this.session, command, commandCwd);
 		const result: BashResult | BashInteractiveResult = interactiveUi
 			? await runInteractiveBashPty(interactiveUi, {
@@ -1528,7 +1538,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 				// applied twice.
 				await executeBash(command, {
 					cwd: commandCwd,
-					sessionKey: this.session.getSessionId?.() ?? undefined,
+					sessionKey: sessionId,
 					timeout: timeoutMs ?? 0,
 					signal,
 					env: resolvedEnv,
@@ -1571,6 +1581,8 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 					command,
 					commandCwd,
 					result,
+					sessionCwd,
+					sessionId,
 				});
 			}
 		}
