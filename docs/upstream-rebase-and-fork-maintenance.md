@@ -154,21 +154,24 @@ utility guards the filter to always pass `task` through.
 
 ---
 
-### Patch 7: `natives/scripts/build-native.ts` — macOS Homebrew rustc PATH fix
+### Patch 7: natives host build — macOS Homebrew rustc PATH fix
 
 **Why**: Homebrew installs its own `rustc`/`cargo` (stable channel) at `/opt/homebrew/bin/` which
 appears before `~/.cargo/bin` in the default macOS PATH. Rustup shims are bypassed — the nightly
 toolchain in `rust-toolchain.toml` is never activated — causing `E0554` (feature on stable).
+Host builds now enter through `build-bindings.ts` via `scripts/bazel-natives.ts`.
 Fix: at script startup, read `rust-toolchain.toml`, find the matching nightly toolchain bin dir,
 and prepend it to `process.env.PATH` so all child spawns (cargo metadata, napi build) use nightly.
 
 **Files**:
-- `packages/natives/scripts/build-native.ts`
+- `packages/natives/scripts/build-bindings.ts` — live host-build path
+- `packages/natives/scripts/build-native.ts` — kept in lockstep
 
-**Verify**: `grep -c 'toolchainBin\|rustup' packages/natives/scripts/build-native.ts` → ≥ 4.
+**Verify**: `grep -c 'toolchainBin\|rustup' packages/natives/scripts/build-bindings.ts` → ≥ 4.
 
-**Conflict risk**: low — upstream is unlikely to touch this script's preamble. If upstream replaces
-this script, re-apply the nightly PATH prepend block at the top of the new version.
+**Conflict risk**: medium — upstream replaced the host-build entry with `build-bindings.ts`.
+If that script is replaced again, re-apply the nightly PATH prepend block at the top of the new version.
+
 
 ---
 

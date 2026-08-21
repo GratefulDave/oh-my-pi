@@ -64,6 +64,35 @@ const rustDir = path.join(repoRoot, "crates/pi-natives");
 const nativeDir = path.join(import.meta.dir, "../native");
 const packageJsonPath = path.join(import.meta.dir, "../package.json");
 
+// On macOS, Homebrew often installs its own rustc/cargo ahead of ~/.cargo/bin
+// in PATH, so the rustup shim is bypassed and rust-toolchain.toml is never
+// reached — causing E0554 (feature on stable channel). Host builds now enter
+// through this script, so the same PATH pin used by build-native.ts must live
+// here too.
+if (process.platform === "darwin") {
+	const toolchainToml = Bun.file(path.join(repoRoot, "rust-toolchain.toml"));
+	if (await toolchainToml.exists()) {
+		const tomlText = await toolchainToml.text();
+		const channelMatch = /^\s*channel\s*=\s*"([^"]+)"/m.exec(tomlText);
+		if (channelMatch) {
+			const channel = channelMatch[1];
+			const rustupHome = process.env.RUSTUP_HOME ?? path.join(process.env.HOME ?? "~", ".rustup");
+			const hostTriple = process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+			const toolchainBin = path.join(rustupHome, "toolchains", `${channel}-${hostTriple}`, "bin");
+			const toolchainBinAlt = path.join(rustupHome, "toolchains", `nightly-${hostTriple}`, "bin");
+			const targetBin = (await Bun.file(path.join(toolchainBin, "rustc")).exists())
+				? toolchainBin
+				: (await Bun.file(path.join(toolchainBinAlt, "rustc")).exists())
+					? toolchainBinAlt
+					: null;
+			if (targetBin) {
+				process.env.PATH = `${targetBin}:${process.env.PATH ?? ""}`;
+			}
+		}
+	}
+}
+
+
 const localAddon = resolveLocalHostAddon({
 	platform: process.platform,
 	arch: process.arch,
