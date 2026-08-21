@@ -135,7 +135,7 @@ export class BashRunner {
 						sessionId: target.sessionId,
 						filter: info.filter,
 						inputBytes: info.inputBytes,
-						outputBytes: result.outputBytes,
+						outputBytes: result.totalBytes,
 						exitCode: result.exitCode ?? null,
 						kind: "saved",
 						agentDir: settings.getAgentDir(),

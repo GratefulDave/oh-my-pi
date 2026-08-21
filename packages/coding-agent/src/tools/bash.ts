@@ -959,7 +959,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 						},
 						onMinimizedSave: minimizedSave.onMinimizedSave,
 					});
-					await minimizedSave.flushSaved(result.exitCode ?? null, result.outputBytes).catch(() => {});
+					await minimizedSave.flushSaved(result.exitCode ?? null, result.totalBytes).catch(() => {});
 					if (!minimizedSave.didSave()) {
 						await recordBashMinimizerGain({
 							session: this.session,
@@ -1574,7 +1574,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 		// Flush the deferred saved record (with real exitCode) or write a missed record.
 		// Skip telemetry for interactive PTY runs — the minimizer never fires there.
 		if (!interactiveUi) {
-			await minimizedSave.flushSaved(result.exitCode ?? null, result.outputBytes).catch(() => {});
+			await minimizedSave.flushSaved(result.exitCode ?? null, result.totalBytes).catch(() => {});
 			if (!minimizedSave.didSave()) {
 				await recordBashMinimizerGain({
 					session: this.session,

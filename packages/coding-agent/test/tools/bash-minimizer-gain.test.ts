@@ -317,6 +317,59 @@ describe("BashRunner gain telemetry", () => {
 		);
 	});
 
+	test("records full minimized output when the sink truncates the inline body", async () => {
+		const fullMinimized = "x".repeat(100_000);
+		const inline = fullMinimized.slice(0, 50);
+		const execute = vi.spyOn(bashExecutor, "executeBash").mockImplementation(async (_command, options) => {
+			await options?.onMinimizedSave?.("original output", {
+				filter: "bun-test",
+				inputBytes: 1_000_000,
+				outputBytes: Buffer.byteLength(fullMinimized),
+			});
+			return {
+				output: inline,
+				exitCode: 0,
+				cancelled: false,
+				truncated: true,
+				totalLines: 1,
+				totalBytes: Buffer.byteLength(fullMinimized),
+				outputLines: 1,
+				outputBytes: Buffer.byteLength(inline),
+			} satisfies BashResult;
+		});
+		const runner = new BashRunner({
+			agent: { appendMessage: vi.fn() },
+			sessionManager: {
+				getSessionId: () => "test-session",
+				getCwd: () => tempDir,
+				appendMessage: vi.fn(),
+				saveArtifact: async () => "artifact-42",
+			},
+			settings: {
+				get: (key: string) =>
+					key === "shellMinimizer.gainTelemetry" || key === "shellMinimizer.enabled"
+						? true
+						: key === "tools.maxTimeout"
+							? 300
+							: undefined,
+				getShellConfig: () => ({}),
+				getAgentDir: () => agentDir,
+			},
+			extensionRunner: () => undefined,
+			isStreaming: () => false,
+		} as unknown as BashRunnerHost);
+
+		await runner.executeBash("bun test noisy.test.ts");
+
+		expect(execute).toHaveBeenCalledTimes(1);
+		const [line] = (await Bun.file(gainPath(agentDir)).text()).trim().split("\n");
+		expect(JSON.parse(line!)).toEqual(
+			expect.objectContaining({
+				outputBytes: Buffer.byteLength(fullMinimized),
+				savedBytes: 1_000_000 - Buffer.byteLength(fullMinimized),
+			}),
+		);
+	});
 	test("does not record below-threshold output as a missed gain", async () => {
 		const execute = vi.spyOn(bashExecutor, "executeBash").mockResolvedValue({
 			output: "short status",
