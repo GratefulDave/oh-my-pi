@@ -782,37 +782,41 @@ export class InteractiveMode implements InteractiveModeContext {
 	#resizeHandler?: () => void;
 	#observerRegistry: SessionObserverRegistry;
 	#pendingSubagentSummaryRows: SubagentHudSummaryRow[] = [];
-	#subagentSummaryLifecycle = new Map<
-		string,
-		{ phase: "active" | "summarized"; parentSessionFile: string | undefined }
-	>();
+	#subagentSummaryLifecycle = new Map<string, { phase: "active" | "summarized"; parentSessionId: string }>();
+	#hudSummaryAwaitingMessageEnd = false;
 	#collectSettledSubagentSummaries(): void {
 		if (this.collabGuest) return;
-		const currentSessionFile = this.sessionManager.getSessionFile() ?? undefined;
+		const currentSessionId = this.sessionManager.getSessionId();
 		for (const session of this.#observerRegistry.getSessions()) {
 			if (session.kind !== "subagent" || session.detached !== true) continue;
 			if (session.status === "active") {
 				const previous = this.#subagentSummaryLifecycle.get(session.id);
 				this.#subagentSummaryLifecycle.set(session.id, {
 					phase: "active",
-					parentSessionFile: previous?.parentSessionFile ?? currentSessionFile,
+					parentSessionId: previous?.parentSessionId ?? currentSessionId,
 				});
 				continue;
 			}
 			const previous = this.#subagentSummaryLifecycle.get(session.id);
-			const parentSessionFile = previous?.parentSessionFile ?? currentSessionFile;
-			if (parentSessionFile !== currentSessionFile) continue;
+			const parentSessionId = previous?.parentSessionId ?? currentSessionId;
+			if (parentSessionId !== currentSessionId) continue;
 			if (previous?.phase === "summarized") continue;
 			this.#pendingSubagentSummaryRows.push(toSubagentHudSummaryRow(session));
-			this.#subagentSummaryLifecycle.set(session.id, { phase: "summarized", parentSessionFile });
+			this.#subagentSummaryLifecycle.set(session.id, { phase: "summarized", parentSessionId });
 		}
 	}
 	#emitSubagentSummaryIfSettled(): void {
 		if (this.collabGuest) {
 			this.#pendingSubagentSummaryRows = [];
+			this.#hudSummaryAwaitingMessageEnd = false;
 			return;
 		}
 		if (this.#pendingSubagentSummaryRows.length === 0) return;
+		if (this.streamingComponent) {
+			this.#hudSummaryAwaitingMessageEnd = true;
+			return;
+		}
+		this.#hudSummaryAwaitingMessageEnd = false;
 
 		const rows = this.#pendingSubagentSummaryRows.splice(0);
 		const content = `${rows.length} agent${rows.length === 1 ? "" : "s"} settled`;
@@ -1320,6 +1324,9 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.session.subscribe(event => {
 				if (event.type === "model_changed") {
 					this.#updateWelcomeModel();
+				}
+				if (this.#hudSummaryAwaitingMessageEnd && (event.type === "message_end" || event.type === "agent_end")) {
+					this.#emitSubagentSummaryIfSettled();
 				}
 				void this.#handleGoalSessionEvent(event);
 			}),
