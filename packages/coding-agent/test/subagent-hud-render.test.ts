@@ -8,6 +8,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as path from "node:path";
 import { Agent } from "@oh-my-pi/pi-agent-core";
+import type { CollabGuestLink } from "@oh-my-pi/pi-coding-agent/collab/guest";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { InteractiveMode, renderSubagentHudLines } from "@oh-my-pi/pi-coding-agent/modes/interactive-mode";
@@ -558,5 +559,56 @@ describe("InteractiveMode subagent observer UI sync", () => {
 			{ id: "AgentA", label: "first task" },
 			{ id: "AgentB", label: "other task" },
 		]);
+	});
+
+	it("does not persist HUD summaries on a collaboration guest", async () => {
+		await mode.init({ suppressWelcomeIntro: true });
+		mode.collabGuest = {} as unknown as CollabGuestLink;
+		vi.useFakeTimers();
+		const sendCustomMessage = vi.spyOn(session, "sendCustomMessage");
+
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, makeLifecycle("GuestAgent", 0, "guest task", true));
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			...makeLifecycle("GuestAgent", 0, "guest task", true),
+			status: "completed",
+		});
+		vi.runAllTimers();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(sendCustomMessage).not.toHaveBeenCalled();
+		expect(
+			session.state.messages.filter(
+				message => message.role === "custom" && message.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+			),
+		).toHaveLength(0);
+	});
+
+	it("does not persist a previous session's settlement after resume", async () => {
+		await mode.init({ suppressWelcomeIntro: true });
+		vi.useFakeTimers();
+
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, makeLifecycle("OldSessionAgent", 0, "old task", true));
+		vi.runAllTimers();
+		await Promise.resolve();
+
+		mode.resetObserverRegistry();
+		await session.newSession();
+		const sendCustomMessage = vi.spyOn(session, "sendCustomMessage");
+
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, {
+			...makeLifecycle("OldSessionAgent", 0, "old task", true),
+			status: "completed",
+		});
+		vi.runAllTimers();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(sendCustomMessage).not.toHaveBeenCalled();
+		expect(
+			session.state.messages.filter(
+				message => message.role === "custom" && message.customType === SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+			),
+		).toHaveLength(0);
 	});
 });

@@ -782,7 +782,71 @@ export class InteractiveMode implements InteractiveModeContext {
 	#resizeHandler?: () => void;
 	#observerRegistry: SessionObserverRegistry;
 	#pendingSubagentSummaryRows: SubagentHudSummaryRow[] = [];
-	#subagentSummaryLifecycle = new Map<string, "active" | "summarized">();
+	#subagentSummaryLifecycle = new Map<
+		string,
+		{ phase: "active" | "summarized"; parentSessionFile: string | undefined }
+	>();
+	#collectSettledSubagentSummaries(): void {
+		if (this.collabGuest) return;
+		const currentSessionFile = this.sessionManager.getSessionFile() ?? undefined;
+		for (const session of this.#observerRegistry.getSessions()) {
+			if (session.kind !== "subagent" || session.detached !== true) continue;
+			if (session.status === "active") {
+				const previous = this.#subagentSummaryLifecycle.get(session.id);
+				this.#subagentSummaryLifecycle.set(session.id, {
+					phase: "active",
+					parentSessionFile: previous?.parentSessionFile ?? currentSessionFile,
+				});
+				continue;
+			}
+			const previous = this.#subagentSummaryLifecycle.get(session.id);
+			const parentSessionFile = previous?.parentSessionFile ?? currentSessionFile;
+			if (parentSessionFile !== currentSessionFile) continue;
+			if (previous?.phase === "summarized") continue;
+			this.#pendingSubagentSummaryRows.push(toSubagentHudSummaryRow(session));
+			this.#subagentSummaryLifecycle.set(session.id, { phase: "summarized", parentSessionFile });
+		}
+	}
+	#emitSubagentSummaryIfSettled(): void {
+		if (this.collabGuest) {
+			this.#pendingSubagentSummaryRows = [];
+			return;
+		}
+		if (this.#pendingSubagentSummaryRows.length === 0) return;
+
+		const rows = this.#pendingSubagentSummaryRows.splice(0);
+		const content = `${rows.length} agent${rows.length === 1 ? "" : "s"} settled`;
+		const details: SubagentHudSummaryDetails = { emittedAt: Date.now(), rows };
+		void this.session
+			.sendCustomMessage<SubagentHudSummaryDetails>(
+				{
+					customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+					content,
+					display: true,
+					details,
+					attribution: "agent",
+				},
+				{ deliverAs: "persist" },
+			)
+			.catch(err => logger.debug("subagent HUD summary delivery failed", { err: String(err) }));
+		this.addMessageToChat({
+			role: "custom",
+			customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
+			content,
+			display: true,
+			details,
+			attribution: "agent",
+			timestamp: Date.now(),
+		});
+	}
+	resetObserverRegistry(): void {
+		this.#observerRegistry.resetSessions();
+		this.#observerRegistry.setMainSession(this.sessionManager.getSessionFile() ?? undefined);
+		this.#pendingSubagentSummaryRows = [];
+		for (const [id, state] of this.#subagentSummaryLifecycle) {
+			if (state.phase !== "active") this.#subagentSummaryLifecycle.delete(id);
+		}
+	}
 	#eventBus?: EventBus;
 	#eventBusUnsubscribers: Array<() => void> = [];
 	#observerUiSyncTimer?: NodeJS.Timeout;
@@ -2350,47 +2414,6 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#renderSubagentList();
 		this.#emitSubagentSummaryIfSettled();
 		this.ui.requestRender();
-	}
-	#collectSettledSubagentSummaries(): void {
-		for (const session of this.#observerRegistry.getSessions()) {
-			if (session.kind !== "subagent" || session.detached !== true) continue;
-			if (session.status === "active") {
-				this.#subagentSummaryLifecycle.set(session.id, "active");
-				continue;
-			}
-			if (this.#subagentSummaryLifecycle.get(session.id) === "summarized") continue;
-			this.#pendingSubagentSummaryRows.push(toSubagentHudSummaryRow(session));
-			this.#subagentSummaryLifecycle.set(session.id, "summarized");
-		}
-	}
-
-	#emitSubagentSummaryIfSettled(): void {
-		if (this.#pendingSubagentSummaryRows.length === 0) return;
-
-		const rows = this.#pendingSubagentSummaryRows.splice(0);
-		const content = `${rows.length} agent${rows.length === 1 ? "" : "s"} settled`;
-		const details: SubagentHudSummaryDetails = { emittedAt: Date.now(), rows };
-		void this.session
-			.sendCustomMessage<SubagentHudSummaryDetails>(
-				{
-					customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
-					content,
-					display: true,
-					details,
-					attribution: "agent",
-				},
-				{ deliverAs: "persist" },
-			)
-			.catch(err => logger.debug("subagent HUD summary delivery failed", { err: String(err) }));
-		this.addMessageToChat({
-			role: "custom",
-			customType: SUBAGENT_HUD_SUMMARY_MESSAGE_TYPE,
-			content,
-			display: true,
-			details,
-			attribution: "agent",
-			timestamp: Date.now(),
-		});
 	}
 
 	#cancelObserverUiSyncTimer(): void {
@@ -5100,13 +5123,6 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	showAgentHub(options?: { requireContent?: boolean; armCloseTap?: boolean }): void {
 		this.#selectorController.showAgentHub(this.#observerRegistry, options);
-	}
-
-	resetObserverRegistry(): void {
-		this.#observerRegistry.resetSessions();
-		this.#observerRegistry.setMainSession(this.sessionManager.getSessionFile() ?? undefined);
-		this.#pendingSubagentSummaryRows = [];
-		this.#subagentSummaryLifecycle.clear();
 	}
 
 	handleBashCommand(command: string, excludeFromContext?: boolean): Promise<void> {
