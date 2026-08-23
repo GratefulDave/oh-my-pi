@@ -6,6 +6,12 @@
 
 - Fixed OpenAI Responses / Completions and xAI tool conversion 400ing the whole turn on MCP schemas whose root is an object plus a typeless exclusive-required `anyOf` (e.g. codebase-memory `check_index_coverage`). Flatten only the **tool root** — nested unions (e.g. `task.outputSchema`) stay intact so Grok still sees valid `task`/`edit` schemas.
 
+## [18.0.2] - 2026-08-23
+
+### Fixed
+
+- Fixed OpenAI-compatible completions hosts that stream content then terminate with the `[DONE]` sentinel while omitting (or `null`ing) `finish_reason` failing every turn with `OpenAI completions stream closed before a finish_reason was received`; a `[DONE]`-terminated stream now finalizes as a clean stop and only a genuine transport EOF (no `[DONE]`, no finish reason) surfaces the incomplete-stream error ([#9433](https://github.com/can1357/oh-my-pi/issues/9433)).
+
 ## [18.0.1] - 2026-08-23
 
 ### Changed
@@ -33,7 +39,6 @@
 
 - Added Amazon Bedrock Converse guardrail configuration with provider-scoped identifier, version, and trace settings.
 
-### Changed
 ## [18.0.0] - 2026-08-22
 
 ### Added
