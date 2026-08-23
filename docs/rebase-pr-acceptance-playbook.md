@@ -124,42 +124,21 @@ After native changes or a version restamp, keep package versions and N-API senti
 Use:
 
 ```bash
-bun scripts/sync-versions.ts <version>
+bun "${LEX_MAINTENANCE_HOME:-../lex-maintenance}/scripts/sync-versions.ts" <version>
 ```
 
-Then rebuild:
-
+Then run the binary-only rebuild:
 ```bash
 ./rebuild-lex.zsh
 ```
 
-`rebuild-lex.zsh` runs install/build, creates `packages/coding-agent/dist/omp`, links it to `~/.local/bin/lex`, and prints `lex --version`.
+`rebuild-lex.zsh` builds the native addon and `packages/coding-agent/dist/omp`, links it to
+`~/.local/bin/lex`/`omp`, and preserves Herdr plus all other user settings.
 
-## 8. Extension rebuilds after sync
+## 8. Extension policy
 
-Extensions survive upstream binary replacement because they load from bundles in settings. Source edits still require rebundling and a process restart.
-
-Rebuild touched extensions:
-
-```bash
-bun --cwd=packages/pi-observer run build
-bun --cwd=packages/pi-minimizer-gain run build
-```
-
-Install globally if you want `lex` to load them from any cwd:
-
-```bash
-bun scripts/install-user-extensions.ts --dry-run
-bun scripts/install-user-extensions.ts
-```
-
-Restart `lex` / `omp`; extensions load at startup.
-
-Verify:
-
-- `/observe` or Ctrl-S opens observer.
-- `/gain view` loads minimizer gain data.
-- startup logs contain no extension load errors.
+`profile-manager` is retained for `/pm`. Other fork-managed extensions are disabled and removed.
+Herdr remains externally managed and does not rebuild or install from this checkout.
 
 ## 9. Verification after sync
 
@@ -168,13 +147,11 @@ Minimum checks depend on touched areas:
 ```bash
 cargo check -p pi-shell
 cargo check -p pi-natives
-bun --cwd=packages/pi-observer run check
-bun --cwd=packages/pi-minimizer-gain run check
 ./rebuild-lex.zsh
 ```
 
 For #1750/native minimizer fixes, run focused Rust regressions for the changed behavior before broader checks.
 
-## 10. Known doc drift
+## 10. Maintenance tool location
 
-`docs/upstream-rebase-and-fork-maintenance.md` mentions `scripts/update-from-upstream.sh`, but that script is absent in this checkout. Use the explicit fetch/classify/fresh-branch flow above unless the script is restored and verified.
+`update-from-upstream.sh` lives in the sibling `../lex-maintenance` repository. Run `just rebase`, or invoke it with `--repo "$PWD"`.

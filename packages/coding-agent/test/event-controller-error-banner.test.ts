@@ -60,11 +60,15 @@ function createFixture(streamingMessage?: AssistantMessage) {
 		markTranscriptBlockFinalized: vi.fn(),
 		setErrorPinned: vi.fn(),
 		setHideThinkingBlock: vi.fn((hide: boolean) => componentCalls.push(`hide:${hide}`)),
+		messagePersistenceKey: vi.fn(() => "test-persistence-key"),
+		applyRetryRecovery: vi.fn(),
 	};
 	const showPinnedError = vi.fn();
 	const clearPinnedError = vi.fn();
+	const showError = vi.fn();
 	const statusContainer = {
 		clear: vi.fn(),
+		disposeChildren: vi.fn(),
 		addChild: vi.fn(),
 	};
 
@@ -107,11 +111,13 @@ function createFixture(streamingMessage?: AssistantMessage) {
 		streamingMessage,
 		chatContainer,
 		proseOnlyThinking: true,
+		toolOutputExpanded: false,
+		transcriptMessageComponents: new WeakMap(),
 		pendingTools: new Map(),
 		flushCompactionQueue: vi.fn(async () => {}),
 		showPinnedError,
 		clearPinnedError,
-		showError: vi.fn(),
+		showError,
 		showStatus: vi.fn(),
 		noteDisplayableThinkingContent,
 		get hasDisplayableThinkingContent() {
@@ -129,7 +135,7 @@ function createFixture(streamingMessage?: AssistantMessage) {
 	} as unknown as InteractiveModeContext;
 
 	const controller = new EventController(ctx);
-	return { controller, ctx, showPinnedError, clearPinnedError, streamingComponent, componentCalls };
+	return { controller, ctx, showPinnedError, clearPinnedError, showError, streamingComponent, componentCalls };
 }
 
 describe("EventController error banner", () => {
@@ -148,6 +154,143 @@ describe("EventController error banner", () => {
 		// The same error is mirrored in the banner, so the transcript's inline
 		// `Error: …` line is suppressed to avoid a duplicate render.
 		expect(streamingComponent.setErrorPinned).toHaveBeenCalledWith(true);
+	});
+
+	it("suppresses a recoverable empty-output error while session continuation starts", async () => {
+		const message = makeAssistantMessage({
+			content: [{ type: "thinking", thinking: "Reasoning finished without final output." }],
+			stopReason: "error",
+			errorId: AIError.create(AIError.Flag.Transient, AIError.Flag.EmptyResponse),
+			errorMessage: "Cloud Code Assist API returned a thought-only response without final output",
+		});
+		const { controller, showPinnedError, streamingComponent } = createFixture(message);
+
+		await controller.handleEvent({ type: "message_end", message } as Extract<
+			AgentSessionEvent,
+			{ type: "message_end" }
+		>);
+
+		expect(streamingComponent.setErrorPinned).toHaveBeenCalledWith(true);
+		expect(showPinnedError).not.toHaveBeenCalled();
+		streamingComponent.setErrorPinned.mockClear();
+
+		await controller.handleEvent({ type: "agent_start" } as Extract<AgentSessionEvent, { type: "agent_start" }>);
+
+		expect(streamingComponent.setErrorPinned).not.toHaveBeenCalled();
+	});
+
+	it("keeps a terminal empty-output error pinned without adding a duplicate failure banner", async () => {
+		const message = makeAssistantMessage({
+			content: [{ type: "thinking", thinking: "Reasoning finished without final output." }],
+			stopReason: "error",
+			errorId: AIError.create(AIError.Flag.Transient, AIError.Flag.EmptyResponse),
+			errorMessage: "Cloud Code Assist API returned a thought-only response without final output",
+		});
+		const { controller, showPinnedError, clearPinnedError, showError } = createFixture(message);
+
+		await controller.handleEvent({ type: "message_end", message } as Extract<
+			AgentSessionEvent,
+			{ type: "message_end" }
+		>);
+		expect(showPinnedError).not.toHaveBeenCalled();
+
+		const finalError = "Assistant returned no final output after retry cap; try switching models";
+		message.errorId = AIError.create();
+		message.errorMessage = finalError;
+		clearPinnedError.mockClear();
+		showPinnedError.mockClear();
+
+		await controller.handleEvent({
+			type: "auto_retry_end",
+			success: false,
+			attempt: 3,
+			finalError,
+		} as Extract<AgentSessionEvent, { type: "auto_retry_end" }>);
+
+		expect(clearPinnedError).not.toHaveBeenCalled();
+		expect(showError).not.toHaveBeenCalled();
+		expect(showPinnedError).toHaveBeenCalledWith(finalError);
+	});
+
+	it("keeps retry-attempt context when a terminal provider error is pinned", async () => {
+		const errorMessage = "Service unavailable";
+		const message = makeAssistantMessage({
+			stopReason: "error",
+			errorId: AIError.create(AIError.Flag.Transient),
+			errorMessage,
+		});
+		const { controller, showPinnedError, showError } = createFixture(message);
+
+		await controller.handleEvent({ type: "message_end", message } as Extract<
+			AgentSessionEvent,
+			{ type: "message_end" }
+		>);
+		showPinnedError.mockClear();
+
+		await controller.handleEvent({
+			type: "auto_retry_end",
+			success: false,
+			attempt: 3,
+			finalError: errorMessage,
+		} as Extract<AgentSessionEvent, { type: "auto_retry_end" }>);
+
+		expect(showError).not.toHaveBeenCalled();
+		expect(showPinnedError).toHaveBeenCalledWith("Retry failed after 3 attempts: Service unavailable");
+	});
+
+	it("surfaces a local continuation failure instead of the stale pinned provider error", async () => {
+		const providerError = "Service unavailable";
+		const message = makeAssistantMessage({
+			stopReason: "error",
+			errorId: AIError.create(AIError.Flag.Transient),
+			errorMessage: providerError,
+		});
+		const { controller, showPinnedError, clearPinnedError, showError, streamingComponent } = createFixture(message);
+
+		await controller.handleEvent({ type: "message_end", message } as Extract<
+			AgentSessionEvent,
+			{ type: "message_end" }
+		>);
+		await controller.handleEvent({
+			type: "auto_retry_start",
+			attempt: 1,
+			maxAttempts: 2,
+			delayMs: 0,
+			errorMessage: providerError,
+			errorId: message.errorId,
+		} as Extract<AgentSessionEvent, { type: "auto_retry_start" }>);
+		showPinnedError.mockClear();
+		clearPinnedError.mockClear();
+		showError.mockClear();
+		streamingComponent.setErrorPinned.mockClear();
+
+		const finalError = `Retry continuation failed locally: local hook failed. Original error: ${providerError}`;
+		await controller.handleEvent({
+			type: "auto_retry_end",
+			success: false,
+			attempt: 1,
+			finalError,
+		} as Extract<AgentSessionEvent, { type: "auto_retry_end" }>);
+
+		expect(showPinnedError).not.toHaveBeenCalled();
+		expect(clearPinnedError).toHaveBeenCalledTimes(1);
+		expect(streamingComponent.setErrorPinned).toHaveBeenCalledWith(false);
+		expect(showError).toHaveBeenCalledWith(`Retry failed after 1 attempts: ${finalError}`);
+	});
+
+	it("shows a failed retry banner when no terminal assistant error exists", async () => {
+		const { controller, showError } = createFixture();
+
+		await controller.handleEvent({
+			type: "auto_retry_end",
+			success: false,
+			attempt: 3,
+			finalError: "Assistant returned empty stop after retry cap",
+		} as Extract<AgentSessionEvent, { type: "auto_retry_end" }>);
+
+		expect(showError).toHaveBeenCalledWith(
+			"Retry failed after 3 attempts: Assistant returned empty stop after retry cap",
+		);
 	});
 
 	it("restores the transcript inline error when the next turn starts", async () => {
@@ -231,6 +374,33 @@ describe("EventController error banner", () => {
 
 		expect(clearPinnedError).toHaveBeenCalledTimes(1);
 	});
+
+	it("initializes a new provider error from the active expanded mode", async () => {
+		const initial = makeAssistantMessage({ content: [] });
+		const errorMessage = Array.from({ length: 30 }, (_, i) => `provider error detail line ${i}`).join("\n");
+		const { controller, ctx } = createFixture();
+		ctx.toolOutputExpanded = true;
+
+		await controller.handleEvent({
+			type: "message_start",
+			message: initial,
+		} as Extract<AgentSessionEvent, { type: "message_start" }>);
+		const component = ctx.streamingComponent;
+		if (!(component instanceof AssistantMessageComponent)) {
+			throw new Error("Expected streaming assistant component");
+		}
+
+		component.updateContent(
+			makeAssistantMessage({
+				content: [],
+				stopReason: "error",
+				errorMessage,
+			}),
+		);
+		const rendered = Bun.stripANSI(component.render(120).join("\n"));
+		expect(rendered).toContain("provider error detail line 29");
+		expect(rendered).not.toContain("more lines");
+	});
 });
 
 describe("EventController thinking visibility", () => {
@@ -281,7 +451,7 @@ describe("EventController working loader reconciliation", () => {
 		} as Extract<AgentSessionEvent, { type: "auto_compaction_end" }>);
 
 		expect(loader?.stop).toHaveBeenCalledTimes(1);
-		expect(ctx.statusContainer.clear).toHaveBeenCalledTimes(1);
+		expect(ctx.statusContainer.disposeChildren).toHaveBeenCalledTimes(1);
 		expect(ctx.flushCompactionQueue).toHaveBeenCalledWith({ willRetry: false });
 		expect(ctx.ensureLoadingAnimation).toHaveBeenCalledTimes(1);
 	});
@@ -297,6 +467,47 @@ describe("EventController working loader reconciliation", () => {
 		} as Extract<AgentSessionEvent, { type: "tool_execution_update" }>);
 
 		expect(ctx.ensureLoadingAnimation).toHaveBeenCalledTimes(1);
+	});
+
+	it("self-heals missing working loader when a task subagent finishes mid-turn (#3858)", async () => {
+		// `task` subagents run inside the parent's streaming turn. While the task is
+		// running a transient overlay (auto-compaction / auto-retry) can drop the
+		// working loader by clearing the status container, and the overlay's end
+		// handler is the only restorer keyed off the missing loader. If the task
+		// finishes between the overlay's start and end (or any other branch where
+		// the loader was nulled without a follow-up overlay-end), `tool_execution_end`
+		// is the next streaming event that lands and must heal the loader, mirroring
+		// the `tool_execution_update` reconciler. Without this the spinner stays
+		// gone for the remainder of the parent turn even though the agent keeps
+		// streaming (the user-visible regression in #3858).
+		const { controller, ctx } = createFixture();
+		(ctx.viewSession as unknown as { isStreaming: boolean }).isStreaming = true;
+
+		await controller.handleEvent({
+			type: "tool_execution_end",
+			toolCallId: "task-1",
+			toolName: "task",
+			isError: false,
+			result: { content: [{ type: "text", text: "ok" }], details: {} },
+		} as Extract<AgentSessionEvent, { type: "tool_execution_end" }>);
+
+		expect(ctx.ensureLoadingAnimation).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not restore the working loader while an overlay loader (auto-retry) owns the status container at tool_execution_end", async () => {
+		const { controller, ctx } = createFixture();
+		ctx.retryLoader = { stop: vi.fn() } as unknown as InteractiveModeContext["retryLoader"];
+		(ctx.viewSession as unknown as { isStreaming: boolean }).isStreaming = true;
+
+		await controller.handleEvent({
+			type: "tool_execution_end",
+			toolCallId: "task-2",
+			toolName: "task",
+			isError: false,
+			result: { content: [{ type: "text", text: "ok" }], details: {} },
+		} as Extract<AgentSessionEvent, { type: "tool_execution_end" }>);
+
+		expect(ctx.ensureLoadingAnimation).not.toHaveBeenCalled();
 	});
 
 	it("keeps transient retry status exclusive while a retry loader is visible", async () => {

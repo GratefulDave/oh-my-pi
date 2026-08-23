@@ -4,6 +4,15 @@ import { $ } from "bun";
 import { detectHostAvx2Support } from "../../../scripts/host-detect";
 import { generateEnumExports } from "./gen-enums";
 
+// pcre2-sys prefers a system libpcre2 when pkg-config finds one. Release addons
+// must not retain host Homebrew paths such as /opt/homebrew/opt/pcre2/*.dylib.
+process.env.PCRE2_SYS_STATIC ??= "1";
+
+// audiopus_sys builds its bundled opus via CMake; that opus tree declares a
+// cmake_minimum_required below 3.5, which CMake 4.x refuses without this
+// policy override.
+process.env.CMAKE_POLICY_VERSION_MINIMUM ??= "3.5";
+
 const repoRoot = path.join(import.meta.dir, "../../..");
 const rustDir = path.join(repoRoot, "crates/pi-natives");
 const nativeDir = path.join(import.meta.dir, "../native");
@@ -32,9 +41,9 @@ if (!crossTarget && process.platform === "darwin") {
 			const hostTriple = process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
 			const toolchainBin = path.join(rustupHome, "toolchains", `${channel}-${hostTriple}`, "bin");
 			const toolchainBinAlt = path.join(rustupHome, "toolchains", `nightly-${hostTriple}`, "bin");
-			const targetBin = await Bun.file(path.join(toolchainBin, "rustc")).exists()
+			const targetBin = (await Bun.file(path.join(toolchainBin, "rustc")).exists())
 				? toolchainBin
-				: await Bun.file(path.join(toolchainBinAlt, "rustc")).exists()
+				: (await Bun.file(path.join(toolchainBinAlt, "rustc")).exists())
 					? toolchainBinAlt
 					: null;
 			if (targetBin) {
@@ -69,14 +78,15 @@ const effectiveVariant = resolveEffectiveVariant();
 const variantSuffix = effectiveVariant ? `-${effectiveVariant}` : "";
 
 // Pin Rust target-cpu so x64 baseline/modern variants get a reproducible ISA floor
-// instead of inheriting the host CPU when RUSTFLAGS is unset.
+// instead of inheriting the host CPU when RUSTFLAGS is unset. Non-x64 builds keep
+// the target's default CPU features: `-C target-cpu=native` would bake the build
+// host's CPU features into shipped artifacts and trips ring 0.17's aarch64-apple
+// const assertion (CAPS_STATIC == MIN_STATIC_FEATURES).
 if (!isCrossCompile && !Bun.env.RUSTFLAGS) {
 	if (effectiveVariant === "modern") {
 		Bun.env.RUSTFLAGS = "-C target-cpu=x86-64-v3";
 	} else if (effectiveVariant === "baseline") {
 		Bun.env.RUSTFLAGS = "-C target-cpu=x86-64-v2";
-	} else {
-		Bun.env.RUSTFLAGS = "-C target-cpu=native";
 	}
 }
 
@@ -391,6 +401,20 @@ if (crossTarget) {
 		const existing = process.env[envKey] ?? "";
 		process.env[envKey] = existing ? `${existing} -UNDEBUG` : "-UNDEBUG";
 	}
+	// MSVC cross builds compile C deps with clang-cl, which — unlike real MSVC —
+	// enforces per-function target features: opus' silk/x86 SSE4.1 units fail to
+	// build without the feature enabled globally. The win32 x64 addon floor is
+	// x86-64-v2 (SSE4.2 inclusive), so enabling it for all C deps is safe.
+	// cargo-xwin overwrites `CFLAGS_<target>` on the cargo it spawns but appends
+	// the plain `CFLAGS`/`CXXFLAGS` values into it, so those are the only knobs
+	// that survive.
+	if (crossTarget.endsWith("-msvc") && targetArch === "x64") {
+		for (const envKey of ["CFLAGS", "CXXFLAGS"]) {
+			const existing = process.env[envKey] ?? "";
+			const sseFlags = "-msse4.1 -msse4.2";
+			process.env[envKey] = existing ? `${existing} ${sseFlags}` : sseFlags;
+		}
+	}
 	// napi 3.7.0 resolves the built artifact from the FULL `--target` directory,
 	// but cargo-zigbuild writes under the bare triple; bridge the two so napi's
 	// postBuild copyArtifact succeeds for glibc-pinned targets.
@@ -411,14 +435,21 @@ napiArgs[10] = buildOutputDir;
 // Resolve napi bin directly: `bunx @napi-rs/cli` can pick up the wrong bin on
 // systems where `cli` exists on PATH (e.g. Mono's /usr/bin/cli on Ubuntu).
 const napiBin = Bun.which("napi", {
-	PATH: `${path.join(import.meta.dir, "..", "node_modules", ".bin")}:${path.join(repoRoot, "node_modules", ".bin")}:${process.env.PATH ?? ""}`,
+	PATH: [
+		path.join(import.meta.dir, "..", "node_modules", ".bin"),
+		path.join(repoRoot, "node_modules", ".bin"),
+		process.env.PATH ?? "",
+	].join(path.delimiter),
 });
 if (!napiBin) {
 	throw new Error("Could not locate @napi-rs/cli `napi` binary in node_modules/.bin");
 }
 
+// The package declares Bun as its build runtime. Invoke napi's JavaScript entry
+// through this Bun process instead of its `#!/usr/bin/env node` shim so an old
+// host Node installation cannot make an otherwise supported Bun build fail.
 async function runNapiBuildWithSccacheFallback() {
-	let buildResult = await $`${napiBin} ${napiArgs}`.nothrow();
+	let buildResult = await $`${process.execPath} ${napiBin} ${napiArgs}`.nothrow();
 	let stderr = buildResult.stderr?.toString("utf-8") ?? "";
 	if (
 		buildResult.exitCode !== 0 &&
@@ -434,7 +465,7 @@ async function runNapiBuildWithSccacheFallback() {
 		delete retryEnv.AWS_ACCESS_KEY_ID;
 		delete retryEnv.AWS_SECRET_ACCESS_KEY;
 		console.log("sccache storage unavailable; retrying native build without RUSTC_WRAPPER");
-		buildResult = await $`${napiBin} ${napiArgs}`.env(retryEnv).nothrow();
+		buildResult = await $`${process.execPath} ${napiBin} ${napiArgs}`.env(retryEnv).nothrow();
 		stderr = buildResult.stderr?.toString("utf-8") ?? "";
 	}
 	return { buildResult, stderr };

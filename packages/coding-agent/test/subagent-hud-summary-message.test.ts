@@ -61,11 +61,12 @@ describe("subagent HUD summary message", () => {
 		const raw = buildSubagentHudSummaryBlock(message).render(120).join("\n");
 		const stripped = Bun.stripANSI(raw);
 
-		expect(stripped).toContain("2 agents settled");
+		expect(stripped).toContain("Agents");
+		expect(stripped).not.toContain("agents settled");
 		expect(raw).toContain(`${ansi.accent}[task]\x1b[39m`);
-		expect(raw).toContain(`${ansi.accent}Done worker\x1b[39m`);
-		expect(raw).toContain(`${ansi.success}2 tool use(s)\x1b[39m`);
-		expect(raw).toContain(`${ansi.error}3 tool use(s)\x1b[39m`);
+		expect(stripped).toContain("Done worker");
+		expect(raw).toContain(`${ansi.success}2 tool uses\x1b[39m`);
+		expect(raw).toContain(`${ansi.error}3 tool uses\x1b[39m`);
 		expect(raw).toContain(`${ansi.accent}[reviewer]\x1b[39m`);
 		expect(stripped).toContain("boom");
 	});

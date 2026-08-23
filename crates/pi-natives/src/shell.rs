@@ -5,17 +5,14 @@ use std::{collections::HashMap, sync::Arc};
 use napi::{
 	Env, Result,
 	bindgen_prelude::*,
-	threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode},
-	tokio::sync::mpsc,
+	threadsafe_function::{ThreadsafeFunction, UnknownReturnValue},
 };
 use napi_derive::napi;
 use pi_shell::{
 	MinimizerResult as CoreMinimizerResult, Shell as CoreShell,
 	ShellExecuteOptions as CoreShellExecuteOptions, ShellOptions as CoreShellOptions,
 	ShellRunOptions as CoreShellRunOptions, ShellRunResult as CoreShellRunResult,
-	execute_shell as core_execute_shell,
-	fixup::{BashFixupResult as CoreBashFixupResult, apply_bash_fixups as core_apply_bash_fixups},
-	minimizer,
+	execute_shell as core_execute_shell, minimizer,
 };
 
 use crate::task;
@@ -168,20 +165,28 @@ pub struct ShellRunResult {
 	pub cancelled: bool,
 	/// Whether the command timed out before completion.
 	pub timed_out: bool,
+
 	/// When the minimizer rewrote the captured output, this carries the
 	/// original buffer + telemetry so the session layer can persist it as
 	/// an artifact and splice an `artifact://<id>` reference into the
 	/// minimized text shown to the agent. `None` when nothing was rewritten.
-	pub minimized: Option<MinimizerResult>,
+	pub minimized:          Option<MinimizerResult>,
+	/// Whether the native minimizer captured the command without exceeding its
+	/// cap.
+	pub minimizer_eligible: Option<bool>,
+	/// Shell working directory after command completion.
+	pub working_dir:        Option<String>,
 }
 
 impl From<CoreShellRunResult> for ShellRunResult {
 	fn from(value: CoreShellRunResult) -> Self {
 		Self {
-			exit_code: value.exit_code,
-			cancelled: value.cancelled,
-			timed_out: value.timed_out,
-			minimized: value.minimized.map(Into::into),
+			exit_code:          value.exit_code,
+			cancelled:          value.cancelled,
+			timed_out:          value.timed_out,
+			minimized:          value.minimized.map(Into::into),
+			minimizer_eligible: Some(value.minimizer_eligible),
+			working_dir:        value.working_dir,
 		}
 	}
 }
@@ -213,7 +218,7 @@ impl Shell {
 		env: &'env Env,
 		options: ShellRunOptions<'env>,
 		#[napi(ts_arg_type = "((error: Error | null, chunk: string) => void) | undefined | null")]
-		on_chunk: Option<ThreadsafeFunction<String>>,
+		on_chunk: Option<ThreadsafeFunction<String, UnknownReturnValue>>,
 	) -> Result<PromiseRaw<'env, ShellRunResult>> {
 		let cancel_token = task::CancelToken::new(options.timeout_ms, options.signal);
 		let inner = Arc::clone(&self.inner);
@@ -266,7 +271,7 @@ pub fn execute_shell<'env>(
 	env: &'env Env,
 	options: ShellExecuteOptions<'env>,
 	#[napi(ts_arg_type = "((error: Error | null, chunk: string) => void) | undefined | null")]
-	on_chunk: Option<ThreadsafeFunction<String>>,
+	on_chunk: Option<ThreadsafeFunction<String, UnknownReturnValue>>,
 ) -> Result<PromiseRaw<'env, ShellRunResult>> {
 	let cancel_token = task::CancelToken::new(options.timeout_ms, options.signal);
 	let exec_options = CoreShellExecuteOptions {
@@ -291,68 +296,108 @@ pub fn execute_shell<'env>(
 	})
 }
 
+/// Capacity (in chunks) of the queue between the pipe readers and the JS
+/// forwarding pump. One queued chunk is at most one pipe read (≤64 KiB), so
+/// the Rust side of the bridge holds ~4 MiB worst case before the readers'
+/// `send_async` parks — which in turn parks the child on its stdout/stderr
+/// pipe (ordinary pipe backpressure) instead of buffering the surplus in
+/// process memory (#4078).
+const BRIDGE_QUEUE_CHUNKS: usize = 64;
+
 fn bridge_chunks(
-	on_chunk: Option<ThreadsafeFunction<String>>,
-) -> (Option<mpsc::UnboundedSender<String>>, Option<napi::tokio::task::JoinHandle<()>>) {
+	on_chunk: Option<ThreadsafeFunction<String, UnknownReturnValue>>,
+) -> (Option<flume::Sender<String>>, Option<napi::tokio::task::JoinHandle<()>>) {
 	let Some(on_chunk) = on_chunk else {
 		return (None, None);
 	};
-	let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-	let handle = napi::tokio::spawn(async move {
-		// Hard cap on one coalesced batch so the JS main thread never sees a
-		// multi-MB napi callback (a giant single string would stall sanitize +
-		// tail-buffer maintenance for the whole copy).
-		const MAX_BATCH_BYTES: usize = 64 * 1024;
-		// Initial capacity sized for typical bursty pipe output. Re-allocated
-		// each batch because `String` ownership is moved into the napi call.
-		const INITIAL_BATCH_CAP: usize = 8 * 1024;
-		let mut batch = String::with_capacity(INITIAL_BATCH_CAP);
-		while let Some(first) = rx.recv().await {
-			batch.push_str(&first);
-			// Greedily drain everything already queued. Child processes that
-			// write byte-at-a-time (printf-style progress, llama-cli token
-			// streams) otherwise produce one napi callback per `write(2)`,
-			// saturating the JS main thread (~200% CPU observed) and leaving
-			// the queue draining long after the child exits.
-			while batch.len() < MAX_BATCH_BYTES {
-				match rx.try_recv() {
-					Ok(more) => batch.push_str(&more),
-					Err(_) => break,
-				}
-			}
-			let payload = std::mem::replace(&mut batch, String::with_capacity(INITIAL_BATCH_CAP));
-			on_chunk.call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
-		}
-	});
+	let (tx, rx) = flume::bounded::<String>(BRIDGE_QUEUE_CHUNKS);
+	let handle = napi::tokio::spawn(pump_chunks(rx, async move |payload: String| {
+		// `call_async` resolves only after the JS callback ran, so at most
+		// one batch sits in the napi queue at a time and the JS event loop's
+		// actual consumption rate backpressures the whole pipeline. An error
+		// means the JS side is gone (env teardown) — stop forwarding.
+		on_chunk.call_async(Ok(payload)).await.is_ok()
+	}));
 	(Some(tx), Some(handle))
 }
 
-/// Result of [`apply_bash_fixups`]: a possibly-rewritten command plus the
-/// substrings that were removed (in source order).
-#[napi(object)]
-pub struct BashFixupResult {
-	/// Possibly-rewritten command. Equal to the input when no fixup fired.
-	pub command:  String,
-	/// Substrings removed, in source order — suitable for a user-facing notice.
-	pub stripped: Vec<String>,
-}
-
-impl From<CoreBashFixupResult> for BashFixupResult {
-	fn from(value: CoreBashFixupResult) -> Self {
-		Self { command: value.command, stripped: value.stripped }
+/// Drain `rx`, greedily coalescing queued chunks into ≤64 KiB batches, and
+/// feed each batch to `forward`, awaiting its completion before pulling more.
+/// Returns when `rx` disconnects (all senders dropped) or `forward` reports
+/// the consumer is gone; dropping `rx` then disconnects the channel so
+/// parked/future senders fail fast and the pipe readers keep draining the
+/// child instead of wedging it.
+async fn pump_chunks(rx: flume::Receiver<String>, mut forward: impl AsyncFnMut(String) -> bool) {
+	// Hard cap on one coalesced batch so the JS main thread never sees a
+	// multi-MB napi callback (a giant single string would stall sanitize +
+	// tail-buffer maintenance for the whole copy).
+	const MAX_BATCH_BYTES: usize = 64 * 1024;
+	// Initial capacity sized for typical bursty pipe output. Re-allocated
+	// each batch because `String` ownership is moved into the napi call.
+	const INITIAL_BATCH_CAP: usize = 8 * 1024;
+	let mut batch = String::with_capacity(INITIAL_BATCH_CAP);
+	while let Ok(first) = rx.recv_async().await {
+		batch.push_str(&first);
+		// Greedily drain everything already queued. Child processes that
+		// write byte-at-a-time (printf-style progress, llama-cli token
+		// streams) otherwise produce one napi callback per `write(2)`,
+		// saturating the JS main thread (~200% CPU observed) and leaving
+		// the queue draining long after the child exits.
+		while batch.len() < MAX_BATCH_BYTES {
+			match rx.try_recv() {
+				Ok(more) => batch.push_str(&more),
+				Err(_) => break,
+			}
+		}
+		let payload = std::mem::replace(&mut batch, String::with_capacity(INITIAL_BATCH_CAP));
+		if !forward(payload).await {
+			return;
+		}
 	}
 }
 
-/// Apply conservative pre-execution rewrites to a bash command.
-///
-/// Strips trailing `| head|tail [safe-args]` and redundant trailing `2>&1`
-/// from each top-level pipeline. The full rules and bail conditions live in
-/// `pi_shell::fixup`. Synchronous and cheap (one parse pass over the input).
-#[napi]
-pub fn apply_bash_fixups(command: String) -> BashFixupResult {
-	core_apply_bash_fixups(&command).into()
+/// Inputs for [`is_shell_minimizer_eligible`]: a command and the minimizer
+/// configuration that would apply during shell execution.
+#[napi(object)]
+pub struct ShellMinimizerEligibilityOptions {
+	/// The command line to classify for native minimizer ownership.
+	pub command:   String,
+	/// Minimizer configuration; when omitted native minimization is disabled.
+	pub minimizer: Option<MinimizerOptions>,
 }
 
+/// Return whether the native shell minimizer will own a command's output.
+///
+/// This queries the engine's authoritative dispatch semantics before execution,
+/// preserving program/subcommand routing, user pipelines, configuration gates,
+/// and safe-chain analysis. It does not infer ownership from a transformed
+/// output, because an eligible filter may legitimately pass a capture through.
+///
+/// Async (returns a Promise): resolving `settings_path` can read and parse
+/// TOML, so classification runs on the blocking pool rather than the JS event
+/// loop.
+#[napi(ts_return_type = "Promise<boolean>")]
+pub fn is_shell_minimizer_eligible(
+	env: &Env,
+	options: ShellMinimizerEligibilityOptions,
+) -> Result<PromiseRaw<'_, bool>> {
+	task::future(env, "shell.minimizerEligibility", async move {
+		napi::tokio::task::spawn_blocking(move || run_shell_minimizer_eligibility(options))
+			.await
+			.map_err(|err| Error::from_reason(err.to_string()))
+	})
+}
+
+/// Pure, blocking core of [`is_shell_minimizer_eligible`], factored out so it
+/// can be unit-tested without an N-API `Env`.
+fn run_shell_minimizer_eligibility(options: ShellMinimizerEligibilityOptions) -> bool {
+	let Some(minimizer) = options.minimizer else {
+		return false;
+	};
+	let minimizer_options: minimizer::MinimizerOptions = minimizer.into();
+	let config = minimizer::MinimizerConfig::from_options(&minimizer_options);
+	minimizer::engine::should_minimize(&options.command, &config)
+}
 /// Inputs for [`apply_shell_minimizer`]: a captured command's text plus the
 /// minimizer configuration to run against it.
 #[napi(object)]
@@ -434,17 +479,92 @@ fn run_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<MinimizerR
 
 #[cfg(test)]
 mod tests {
-	use std::time::Duration;
+	use std::{fs, time::Duration};
 
+	use flume;
 	use pi_shell::{
 		ShellRunOptions as CoreShellRunOptions,
 		cancel::{AbortReason, CancelToken},
 	};
-	#[cfg(unix)]
-	use tokio::sync::mpsc;
 	use tokio::time;
 
-	use super::CoreShell;
+	use super::{BRIDGE_QUEUE_CHUNKS, CoreShell, pump_chunks};
+
+	/// Regression for #4078: the reader→JS bridge queue must stay bounded when
+	/// the JS side (here: a deliberately slow `forward`) cannot keep up with a
+	/// fast producer, and backpressure must never drop or reorder chunks. On
+	/// the pre-fix bridge (`flume::unbounded` + fire-and-forget
+	/// `ThreadsafeFunctionCallMode::NonBlocking`) the same harness accumulates
+	/// the producer's entire surplus in the queue (measured: a 32 MiB stream
+	/// queued all `33_554_432` bytes while the consumer stalled).
+	#[tokio::test(flavor = "multi_thread")]
+	async fn bridge_pump_bounds_queue_and_delivers_all_bytes() {
+		const CHUNKS: usize = 512;
+		const CHUNK_BYTES: usize = 4096;
+		let (tx, rx) = flume::bounded::<String>(BRIDGE_QUEUE_CHUNKS);
+		let producer = tokio::spawn(async move {
+			let mut expected = String::with_capacity(CHUNKS * CHUNK_BYTES);
+			let mut max_queued = 0usize;
+			for i in 0..CHUNKS {
+				let chunk = format!("[{i:06}]{}", "x".repeat(CHUNK_BYTES - 8));
+				expected.push_str(&chunk);
+				tx.send_async(chunk)
+					.await
+					.expect("pump should outlive the producer");
+				max_queued = max_queued.max(tx.len());
+			}
+			(expected, max_queued)
+		});
+
+		let mut received = String::with_capacity(CHUNKS * CHUNK_BYTES);
+		time::timeout(
+			Duration::from_secs(30),
+			pump_chunks(rx, async |payload: String| {
+				received.push_str(&payload);
+				// Emulate a busy JS event loop: each napi callback takes a while.
+				time::sleep(Duration::from_micros(500)).await;
+				true
+			}),
+		)
+		.await
+		.expect("pump should finish once the producer hangs up");
+
+		let (expected, max_queued) = producer.await.expect("producer task");
+		assert!(
+			max_queued <= BRIDGE_QUEUE_CHUNKS,
+			"bridge queue grew past its bound: {max_queued} chunks",
+		);
+		assert_eq!(received.len(), expected.len(), "bytes were dropped or duplicated");
+		assert_eq!(received, expected, "chunks must arrive losslessly and in order");
+	}
+
+	/// When the JS side dies (`forward` fails: threadsafe function aborted on
+	/// env teardown), the pump must drop its receiver so parked and future
+	/// sends fail fast — the pipe readers keep draining the child instead of
+	/// wedging it on a full bridge queue.
+	#[tokio::test(flavor = "multi_thread")]
+	async fn bridge_pump_death_disconnects_channel_without_blocking_senders() {
+		let (tx, rx) = flume::bounded::<String>(4);
+		let pump = tokio::spawn(pump_chunks(rx, async |_payload: String| false));
+		let producer = tokio::spawn(async move {
+			let mut disconnected = 0usize;
+			for _ in 0..64 {
+				if tx.send_async("x".repeat(1024)).await.is_err() {
+					disconnected += 1;
+				}
+			}
+			disconnected
+		});
+		let disconnected = time::timeout(Duration::from_secs(5), producer)
+			.await
+			.expect("sends must not park once the consumer died")
+			.expect("producer task");
+		assert!(disconnected > 0, "channel should disconnect after the pump stops");
+		time::timeout(Duration::from_secs(5), pump)
+			.await
+			.expect("pump should exit after forward fails")
+			.expect("pump task");
+	}
 
 	#[test]
 	fn apply_shell_minimizer_surfaces_rewrite_with_original() {
@@ -488,6 +608,120 @@ mod tests {
 		);
 	}
 
+	#[test]
+	fn apply_shell_minimizer_surfaces_rewrite_with_original() {
+		let captured = "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n";
+		let result = super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
+			command:   "git diff".to_string(),
+			captured:  captured.to_string(),
+			exit_code: Some(0),
+			minimizer: Some(super::MinimizerOptions { enabled: Some(true), ..Default::default() }),
+		})
+		.expect("an enabled, supported command should surface a rewrite");
+		assert_eq!(result.filter, "git");
+		// A genuine rewrite carries the untouched capture in `original_text`
+		// and a strictly different minimized `text`.
+		assert_eq!(result.original_text, captured);
+		assert_ne!(result.text, result.original_text);
+		assert_eq!(result.input_bytes as usize, captured.len());
+	}
+
+	#[test]
+	fn apply_shell_minimizer_returns_none_when_disabled() {
+		// `enabled: false` keeps the engine in passthrough — no telemetry.
+		assert!(
+			super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
+				command:   "git diff".to_string(),
+				captured:  "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n".to_string(),
+				exit_code: Some(0),
+				minimizer: Some(super::MinimizerOptions { enabled: Some(false), ..Default::default() }),
+			})
+			.is_none()
+		);
+		// A missing minimizer handle is also a no-op.
+		assert!(
+			super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
+				command:   "git diff".to_string(),
+				captured:  "diff --git a/file.rs b/file.rs\n".to_string(),
+				exit_code: Some(0),
+				minimizer: None,
+			})
+			.is_none()
+		);
+	}
+
+	#[test]
+	fn shell_minimizer_eligibility_matches_native_ownership() {
+		let enabled = super::MinimizerOptions { enabled: Some(true), ..Default::default() };
+		assert!(
+			!super::run_shell_minimizer_eligibility(super::ShellMinimizerEligibilityOptions {
+				command:   "git status".to_string(),
+				minimizer: None,
+			}),
+			"omitted minimizer must not own a command"
+		);
+		assert!(
+			!super::run_shell_minimizer_eligibility(super::ShellMinimizerEligibilityOptions {
+				command:   "git status".to_string(),
+				minimizer: Some(super::MinimizerOptions { enabled: Some(false), ..Default::default() }),
+			}),
+			"disabled minimizer must not own a command"
+		);
+		for command in ["git status", "uv run pytest", "uv run --env-file .env pytest"] {
+			assert!(
+				super::run_shell_minimizer_eligibility(super::ShellMinimizerEligibilityOptions {
+					command:   command.to_string(),
+					minimizer: Some(enabled.clone()),
+				}),
+				"{command:?} must be owned by native minimization"
+			);
+		}
+		assert!(!super::run_shell_minimizer_eligibility(super::ShellMinimizerEligibilityOptions {
+			command:   "unsupported-command".to_string(),
+			minimizer: Some(enabled.clone()),
+		}));
+
+		let path = std::env::temp_dir()
+			.join(format!("pi-natives-shell-minimizer-eligibility-{}.toml", std::process::id()));
+		fs::write(
+			&path,
+			r#"
+schema_version = 1
+[filters.user_command]
+match_command = "^user-command$"
+strip_lines_matching = [".*"]
+"#,
+		)
+		.expect("write user minimizer settings");
+		assert!(super::run_shell_minimizer_eligibility(super::ShellMinimizerEligibilityOptions {
+			command:   "user-command value".to_string(),
+			minimizer: Some(super::MinimizerOptions {
+				enabled: Some(true),
+				settings_path: Some(path.to_string_lossy().into_owned()),
+				..Default::default()
+			}),
+		}));
+		fs::remove_file(path).expect("remove user minimizer settings");
+
+		assert!(super::run_shell_minimizer_eligibility(super::ShellMinimizerEligibilityOptions {
+			command:   "git status && git diff".to_string(),
+			minimizer: Some(enabled.clone()),
+		}));
+		for command in [
+			"git status | cat",
+			"git status || git diff",
+			"git status &",
+			"exec > output && git status",
+		] {
+			assert!(
+				!super::run_shell_minimizer_eligibility(super::ShellMinimizerEligibilityOptions {
+					command:   command.to_string(),
+					minimizer: Some(enabled.clone()),
+				}),
+				"{command:?} must not be owned by native minimization"
+			);
+		}
+	}
 	mod child_session_action_tests {
 		use pi_shell::{ChildSessionAction, child_session_action};
 
@@ -533,12 +767,12 @@ mod tests {
 	#[tokio::test(flavor = "multi_thread")]
 	async fn embedded_external_command_runs_in_its_own_session() {
 		let shell = CoreShell::new(None);
-		let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+		let (tx, rx) = flume::unbounded::<String>();
 		let handle = tokio::spawn(async move {
 			shell
 				.run(
 					CoreShellRunOptions {
-						command:    "/bin/sh -c 'printf \"%d\\n\" \"$$\"; sleep 0.5'".to_string(),
+						command:    "sh -c 'printf \"%d\\n\" \"$$\"; sleep 0.5'".to_string(),
 						cwd:        None,
 						env:        None,
 						timeout_ms: None,
@@ -548,7 +782,7 @@ mod tests {
 				)
 				.await
 		});
-		let child_pid = time::timeout(Duration::from_secs(5), rx.recv())
+		let child_pid = time::timeout(Duration::from_secs(5), rx.recv_async())
 			.await
 			.expect("timed out waiting for child pid")
 			.expect("missing child pid chunk")
@@ -604,5 +838,39 @@ mod tests {
 			.expect("shell task should not panic")
 			.expect("shell run should return");
 		assert!(result.cancelled);
+	}
+
+	#[tokio::test(flavor = "multi_thread")]
+	async fn timeout_drains_pipeline_output_before_stopping_reader() {
+		let shell = CoreShell::new(None);
+		let (tx, rx) = flume::unbounded::<String>();
+		// `tail` runs as an in-process builtin, so cancellation kills only the
+		// external `yes`; tail then sees EOF and flushes its final 5 lines into
+		// the post-cancel reader grace window. The deadline must be generous
+		// enough that `yes` has demonstrably spawned and produced before the
+		// timeout fires — a 50ms budget lost that race on cold CI runners and
+		// tail flushed an empty ring buffer.
+		const TIMEOUT_MS: u32 = 750;
+		let result = shell
+			.run(
+				CoreShellRunOptions {
+					command:    "yes x | tail -5".to_string(),
+					cwd:        None,
+					env:        None,
+					timeout_ms: Some(TIMEOUT_MS),
+				},
+				Some(tx),
+				CancelToken::new(Some(TIMEOUT_MS)),
+			)
+			.await
+			.expect("shell run");
+
+		let mut output = String::new();
+		while let Ok(chunk) = rx.recv_async().await {
+			output.push_str(&chunk);
+		}
+
+		assert!(result.timed_out);
+		assert_eq!(output.lines().filter(|line| *line == "x").count(), 5);
 	}
 }

@@ -1,12 +1,29 @@
 import { fileURLToPath } from "node:url";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
-import { addKeyAliases, canonicalKeyId, Editor, type KeyId, parseKey, parseKittySequence } from "@oh-my-pi/pi-tui";
+import {
+	addKeyAliases,
+	canonicalKeyId,
+	Editor,
+	type EditorTextDecorationContext,
+	type EditorTheme,
+	type KeyId,
+	parseKey,
+	parseKittySequence,
+	TUI,
+} from "@oh-my-pi/pi-tui";
 import { BracketedPasteHandler } from "@oh-my-pi/pi-tui/bracketed-paste";
 import type { AppKeybinding } from "../../config/keybindings";
-import { isSettingsInitialized, settings } from "../../config/settings";
-import { imageReferenceHyperlink, PLACEHOLDER_REGEX, renderPlaceholders } from "../image-references";
+import {
+	attachmentSgr,
+	COMPOSER_TOKEN_REGEX,
+	chipLabel,
+	collapseImageMarkers,
+	renderPlaceholders,
+} from "../composer-attachments";
+import { MacOSSpellingProvider, type SpellingFeatures } from "../macos-spelling";
 import { hasMagicKeyword, highlightMagicKeywords } from "../magic-keywords";
-import { fgOrPlain } from "../theme/theme";
+import { isQueuedMessageList, parseQueueShorthand, QUEUE_LIST_MARKER_RE } from "../queue-input";
+import { fgOrPlain, theme } from "../theme/theme";
 
 type ConfigurableEditorAction = Extract<
 	AppKeybinding,
@@ -20,7 +37,7 @@ type ConfigurableEditorAction = Extract<
 	| "app.model.cycleBackward"
 	| "app.model.select"
 	| "app.model.selectTemporary"
-	| "app.tools.expand"
+	| "app.tools.toggleVisibility"
 	| "app.thinking.toggle"
 	| "app.editor.external"
 	| "app.history.search"
@@ -36,17 +53,17 @@ const DEFAULT_ACTION_KEYS: Record<ConfigurableEditorAction, KeyId[]> = {
 	"app.clear": ["ctrl+c"],
 	"app.exit": ["ctrl+d"],
 	"app.suspend": ["ctrl+z"],
-	"app.display.reset": ["ctrl+l"],
+	"app.display.reset": ["alt+l"],
 	"app.thinking.cycle": ["shift+tab"],
 	"app.model.cycleForward": ["ctrl+p"],
 	"app.model.cycleBackward": ["shift+ctrl+p"],
 	"app.model.select": ["alt+m"],
 	"app.model.selectTemporary": ["alt+p"],
-	"app.tools.expand": ["ctrl+o"],
+	"app.tools.toggleVisibility": ["ctrl+shift+o"],
 	"app.thinking.toggle": ["ctrl+t"],
 	"app.editor.external": ["ctrl+g"],
 	"app.history.search": ["ctrl+r"],
-	"app.message.dequeue": ["alt+up"],
+	"app.message.dequeue": ["alt+up", "shift+up"],
 	"app.retry": ["alt+r"],
 	"app.clipboard.pasteImage": ["ctrl+v"],
 	"app.clipboard.pasteTextRaw": ["ctrl+shift+v", "alt+shift+v"],
@@ -61,6 +78,14 @@ function buildMatchKeys(keys: readonly KeyId[]): Set<string> {
 	return matchKeys;
 }
 
+function unionOfMatchKeys(matchKeys: ReadonlyMap<ConfigurableEditorAction, ReadonlySet<string>>): Set<string> {
+	const union = new Set<string>();
+	for (const keys of matchKeys.values()) {
+		for (const key of keys) union.add(key);
+	}
+	return union;
+}
+
 const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
 const BRACKETED_IMAGE_PATH_REGEX = /\.(?:png|jpe?g|gif|webp)$/i;
@@ -69,13 +94,34 @@ const URI_SCHEME_REGEX = /^[a-z][a-z0-9+.-]*:/i;
 const FILE_URI_REGEX = /^file:\/\//i;
 const WINDOWS_DRIVE_PATH_REGEX = /^[a-z]:[\\/]/i;
 /**
- * Whole-string anchor for paths that are unambiguously absolute. Restricts the
- * "treat the entire clipboard text as one path" branch of
- * {@link extractImagePathFromText} to inputs that start with a clearly-anchored
- * filesystem prefix, so prose containing a path-shaped fragment (e.g.
- * "see /tmp/x.png") never hijacks the smart fallback.
+ * Alternation of the filesystem prefixes that make a path unambiguously
+ * absolute (POSIX root, home, `file://`, UNC, Windows drive). Shared by
+ * {@link ABSOLUTE_PATH_PREFIX_REGEX} and {@link INTERIOR_PATH_ANCHOR_REGEX} so
+ * the leading-anchor test and the second-anchor test can never disagree about
+ * what counts as the start of a path.
  */
-const ABSOLUTE_PATH_PREFIX_REGEX = /^(?:\/|~\/|file:\/\/|\\\\|[A-Za-z]:[\\/])/;
+const ABSOLUTE_PATH_PREFIX_SOURCE = String.raw`(?:\/|~\/|file:\/\/|\\\\|[A-Za-z]:[\\/])`;
+/**
+ * Whole-string anchor for paths that are unambiguously absolute. Restricts the
+ * "treat the entire text as one path" pass of {@link extractWholeTextImagePath}
+ * to inputs that start with a clearly-anchored filesystem prefix, so prose
+ * containing a path-shaped fragment (e.g. "see /tmp/x.png") never hijacks the
+ * smart fallback.
+ */
+const ABSOLUTE_PATH_PREFIX_REGEX = new RegExp(`^${ABSOLUTE_PATH_PREFIX_SOURCE}`);
+/**
+ * A second path anchor after *unescaped* whitespace — the signature of a
+ * multi-path payload (`/tmp/a.png /tmp/b shot.png`, `/tmp/a.png ./b shot.png`)
+ * rather than of one path whose name merely contains spaces. Anchors are the
+ * absolute prefixes plus dot-relative starts (`./`, `../`, `.\`), which never
+ * begin a component of a single sane path. Bare relatives (`dir/b shot.png`)
+ * are deliberately NOT anchors: an interior `token/` after a space is exactly
+ * the shape of a single path with a spaced directory name
+ * (`/Users/me/My Photos/shot 1.png`), which this fallback exists to recover.
+ * Escaped whitespace (`/tmp/My\ Photos/x.png`) is exempt: the escape is the
+ * terminal asserting the space belongs to the path.
+ */
+const INTERIOR_PATH_ANCHOR_REGEX = new RegExp(String.raw`(?<!\\)\s(?:${ABSOLUTE_PATH_PREFIX_SOURCE}|\.\.?[\\/])`);
 
 /** Max gap (ms) between two spaces for the later one to count as OS key auto-repeat rather than a
  *  deliberate press. OS auto-repeat is fast; a deliberate tap (even a fast one) is slower. */
@@ -218,16 +264,28 @@ export function extractPastePathsFromText(text: string): string[] | undefined {
 	return extractExplicitPathSegments(text);
 }
 
-export function extractBracketedPastePaths(data: string): string[] | undefined {
-	if (!data.startsWith(BRACKETED_PASTE_START)) return undefined;
-	const endIndex = data.indexOf(BRACKETED_PASTE_END, BRACKETED_PASTE_START.length);
-	if (endIndex === -1 || endIndex + BRACKETED_PASTE_END.length !== data.length) return undefined;
-	return extractExplicitPathSegments(data.slice(BRACKETED_PASTE_START.length, endIndex));
-}
-
-export function extractBracketedImagePastePaths(data: string): string[] | undefined {
-	const paths = extractBracketedPastePaths(data);
-	return paths?.every(isImagePath) ? paths : undefined;
+/**
+ * Whole-text-as-path pass shared by {@link extractImagePastePathsFromText}
+ * and {@link extractImagePathFromText}: treat the entire text as one path
+ * when it is anchored by {@link ABSOLUTE_PATH_PREFIX_REGEX}, contains no
+ * newlines, and points at a supported image extension. Recovers single paths
+ * whose unescaped spaces defeat the segment splitter (macOS screenshot names).
+ *
+ * Refuses payloads carrying a second {@link INTERIOR_PATH_ANCHOR_REGEX} anchor.
+ * Dragging two files at once emits `/tmp/a.png /tmp/b shot.png`, which the
+ * splitter also refuses (`shot.png` is not explicit); swallowing it as one path
+ * attaches nothing, and `handleImagePathPaste`'s ENOENT branch only surfaces a
+ * status — unlike its other failure branches it never re-pastes the text — so
+ * both paths would vanish. Genuinely ambiguous input lands here too (a
+ * directory whose name ends in a space, as in `/tmp/odd dir /sub/x.png`); a
+ * plain text paste is the losing-nothing outcome, so ambiguity resolves that way.
+ */
+function extractWholeTextImagePath(text: string): string | undefined {
+	const trimmed = text.trim();
+	if (!trimmed || /[\r\n]/.test(trimmed) || !ABSOLUTE_PATH_PREFIX_REGEX.test(trimmed)) return undefined;
+	if (INTERIOR_PATH_ANCHOR_REGEX.test(trimmed)) return undefined;
+	const wholePath = normalizePastedPath(trimmed);
+	return wholePath && isExplicitPastedPath(wholePath) && isImagePath(wholePath) ? wholePath : undefined;
 }
 
 /**
@@ -235,10 +293,35 @@ export function extractBracketedImagePastePaths(data: string): string[] | undefi
  * payload that has already been stripped of the `\x1b[200~` / `\x1b[201~`
  * markers — used by the assembled-paste router in {@link CustomEditor.handleInput}
  * so split bracketed pastes get the same image-path detection as single-chunk ones.
+ *
+ * When the segment splitter fails (an unescaped space in a real path breaks
+ * its every-segment-is-a-path invariant), falls back to
+ * {@link extractWholeTextImagePath}, so a dropped macOS screenshot
+ * (`Screenshot 2026-06-25 at 1.23.45 PM.png`) attaches as an image instead of
+ * degrading to literal text (#6578).
  */
 export function extractImagePastePathsFromText(text: string): string[] | undefined {
 	const paths = extractPastePathsFromText(text);
-	return paths?.every(isImagePath) ? paths : undefined;
+	if (paths !== undefined) return paths.every(isImagePath) ? paths : undefined;
+	const wholePath = extractWholeTextImagePath(text);
+	return wholePath ? [wholePath] : undefined;
+}
+
+function bracketedPastePayload(data: string): string | undefined {
+	if (!data.startsWith(BRACKETED_PASTE_START)) return undefined;
+	const endIndex = data.indexOf(BRACKETED_PASTE_END, BRACKETED_PASTE_START.length);
+	if (endIndex === -1 || endIndex + BRACKETED_PASTE_END.length !== data.length) return undefined;
+	return data.slice(BRACKETED_PASTE_START.length, endIndex);
+}
+
+export function extractBracketedPastePaths(data: string): string[] | undefined {
+	const payload = bracketedPastePayload(data);
+	return payload === undefined ? undefined : extractExplicitPathSegments(payload);
+}
+
+export function extractBracketedImagePastePaths(data: string): string[] | undefined {
+	const payload = bracketedPastePayload(data);
+	return payload === undefined ? undefined : extractImagePastePathsFromText(payload);
 }
 
 export function extractBracketedImagePastePath(data: string): string | undefined {
@@ -262,31 +345,65 @@ export function extractBracketedImagePastePath(data: string): string | undefined
  *    ambiguous multi-path clipboard text like `/tmp/a.png /tmp/b.png`
  *    still falls through to the text fallback instead of being mis-loaded
  *    as one giant path).
- * 2. Whole-text-as-path pass — only reached when the splitter failed
- *    (every segment must look like an explicit path; an unescaped space in
- *    a real path breaks that). Restricted to inputs anchored by
- *    {@link ABSOLUTE_PATH_PREFIX_REGEX} so prose containing a path-shaped
- *    fragment ("see /tmp/x.png") never hijacks the smart fallback. This
- *    is what recovers macOS screenshot filenames like
+ * 2. {@link extractWholeTextImagePath} — only reached when the splitter
+ *    failed (every segment must look like an explicit path; an unescaped
+ *    space in a real path breaks that). This is what recovers macOS
+ *    screenshot filenames like
  *    `/Users/me/Desktop/Screenshot 2026-06-25 at 1.23.45 PM.png`.
  */
 export function extractImagePathFromText(text: string): string | undefined {
 	const paths = extractPastePathsFromText(text);
 	if (paths?.length === 1 && isImagePath(paths[0])) return paths[0];
 	if (paths !== undefined) return undefined;
-	const trimmed = text.trim();
-	if (!trimmed || /[\r\n]/.test(trimmed) || !ABSOLUTE_PATH_PREFIX_REGEX.test(trimmed)) return undefined;
-	const wholePath = normalizePastedPath(trimmed);
-	if (wholePath && isExplicitPastedPath(wholePath) && isImagePath(wholePath)) {
-		return wholePath;
-	}
-	return undefined;
+	return extractWholeTextImagePath(text);
 }
+
+/**
+ * Resolve the {@link EditorTheme} from a `CustomEditor`/`Editor` constructor
+ * argument list, tolerating both the omp `(theme)` and upstream-pi
+ * `(tui, theme, keybindings)` conventions (see {@link CustomEditor}'s
+ * constructor). A real `EditorTheme` is identified structurally — it exposes a
+ * `borderColor` function and a `symbols` object — so a `TUI` passed in the first
+ * slot is skipped rather than mistaken for the theme.
+ */
+function pickEditorTheme(args: readonly unknown[]): EditorTheme {
+	for (const arg of args) {
+		if (isEditorTheme(arg)) return arg;
+	}
+	// Fall back to the first argument so a caller passing a bare theme that
+	// somehow fails the shape probe still reaches the base constructor.
+	return args[0] as EditorTheme;
+}
+
+function isEditorTheme(value: unknown): value is EditorTheme {
+	if (typeof value !== "object" || value === null) return false;
+	const candidate = value as Partial<EditorTheme>;
+	return (
+		typeof candidate.borderColor === "function" && typeof candidate.symbols === "object" && candidate.symbols !== null
+	);
+}
+
+/** A large text paste staged as a composer chip. `content` feeds the band card's snippet and
+ *  captions; the submit-time expansion (verbatim content or a wrapped block) lives in the
+ *  editor's atom table under `label`. */
+export interface TextAttachment {
+	n: number;
+	label: string;
+	content: string;
+	lineCount: number;
+	charCount: number;
+}
+
+/** One visible composer attachment, in band order (images first, then text pastes). */
+export type ComposerChipDescriptor =
+	| { kind: "image"; n: number; image: ImageContent; link: string | undefined }
+	| { kind: "paste"; n: number; text: TextAttachment };
 
 /**
  * Custom editor that handles configurable app-level shortcuts for coding-agent.
  */
 export class CustomEditor extends Editor {
+	#spelling = new MacOSSpellingProvider();
 	imageLinks?: readonly (string | undefined)[];
 
 	/** Draft images pasted into the composer, consumed on submit. Co-located with
@@ -295,6 +412,53 @@ export class CustomEditor extends Editor {
 	/** Per-image source links (file:// targets) parallel to {@link pendingImages};
 	 *  `undefined` entries are images without a backing reference yet. */
 	pendingImageLinks: (string | undefined)[] = [];
+	/** Large text pastes staged as compact chip tokens; expansion lives in the atom table.
+	 *  Numbered by a per-draft monotonic counter so a deleted chip never recycles its number
+	 *  (labels key the atom table). */
+	pendingTexts: TextAttachment[] = [];
+	#textAttachmentCounter = 0;
+	/** Host-wired producer of per-image `file://` links (session blob store); drives clickable
+	 *  chip tokens for restored drafts (esc-esc, `/tree`, branch). */
+	draftImageLinkMaterializer?: (images: readonly ImageContent[]) => Promise<(string | undefined)[] | undefined>;
+
+	/**
+	 * The host {@link TUI}, captured when a plugin constructs this editor through
+	 * the upstream-pi `(tui, theme, keybindings)` convention. Undefined for omp's
+	 * own `new CustomEditor(theme)` callers (they drive repaints through the
+	 * interactive-mode wiring instead). Plugins that call `this.tui.requestRender()`
+	 * in their overrides read it here (issue #4766).
+	 */
+	tui?: TUI;
+
+	/**
+	 * Accept both the omp constructor convention — `new CustomEditor(theme)` —
+	 * and the upstream-pi `Editor` convention — `new Editor(tui, theme, keybindings)`
+	 * — that {@link ExtensionUIContext.setEditorComponent}'s factory contract
+	 * advertises `(tui, theme, keybindings)`. Plugins written against upstream pi
+	 * subclass `CustomEditor`/`Editor` and forward `super(tui, theme, keybindings)`;
+	 * without this shim the `TUI` lands in the `theme` slot and every render throws
+	 * `undefined is not an object (evaluating 'this.#theme.symbols.boxRound')`
+	 * (issue #4766). We locate the real {@link EditorTheme} among the args by shape
+	 * (it carries `symbols`/`borderColor`) rather than by position, and capture a
+	 * leading {@link TUI} so plugin overrides calling `this.tui.requestRender()`
+	 * keep working.
+	 */
+	constructor(...args: readonly unknown[]) {
+		super(pickEditorTheme(args));
+		const requestTextAssistRepaint = (): void => {
+			this.invalidate();
+			this.#requestShimmerRepaint?.();
+		};
+		this.#spelling.onUpdate = requestTextAssistRepaint;
+		this.onTextAssistApplied = requestTextAssistRepaint;
+		this.setTextAssistProvider(this.#spelling);
+		if (args[0] instanceof TUI) this.tui = args[0];
+	}
+
+	/** Independently configure typo detection, word autocomplete, and autocorrect. */
+	setSpellingFeatures(features: SpellingFeatures): void {
+		this.#spelling.setFeatures(features);
+	}
 
 	/** Clear the composer draft: optionally commit `historyText` to history, then
 	 *  reset the editor text and all pending draft-image state. The shared tail of
@@ -302,14 +466,91 @@ export class CustomEditor extends Editor {
 	clearDraft(historyText?: string): void {
 		if (historyText !== undefined) this.addToHistory(historyText);
 		this.setText("");
+		this.clearAtoms();
 		this.imageLinks = undefined;
 		this.pendingImages = [];
 		this.pendingImageLinks = [];
+		this.pendingTexts = [];
+		this.#textAttachmentCounter = 0;
 	}
 
-	/** Treat image/paste markers as indivisible: a stray backspace deletes the whole token
-	 *  instead of corrupting `[Paste #1, +30 lines]` into plain text. */
-	override atomicTokenPattern = PLACEHOLDER_REGEX;
+	/** Replace the composer draft with a restored historical prompt: re-attaches the message's
+	 *  images, collapses stored `[Image #N, WxH]` markers back into compact chip tokens (so the
+	 *  chips band and atomic deletion return), and re-materializes `file://` links so the tokens
+	 *  are clickable again instead of degrading to dead text (esc-esc branch, `/tree`). */
+	setDraft(text: string, images?: readonly ImageContent[]): void {
+		this.clearAtoms();
+		this.pendingTexts = [];
+		this.#textAttachmentCounter = 0;
+		this.imageLinks = undefined;
+		this.pendingImages = images ? [...images] : [];
+		this.pendingImageLinks = images ? images.map(() => undefined) : [];
+		this.setCollapsedText(text);
+		void this.#materializeDraftLinks();
+	}
+
+	/** Set the buffer text with bracketed `[Image #N]` markers collapsed into chip tokens and
+	 *  registered in the atom table (queued-message dequeue, failed-submit restore). Leaves the
+	 *  pending image/text state untouched — callers own that. */
+	setCollapsedText(text: string): void {
+		this.setText(
+			collapseImageMarkers(text, this.pendingImages.length, (label, expansion) =>
+				this.registerAtom(label, expansion),
+			),
+		);
+	}
+
+	/** Stage `content` as a text-attachment chip: inserts the compact token at the cursor and
+	 *  registers `expansion` (default: the content itself) in the atom table for submit. */
+	insertTextAttachment(content: string, expansion: string = content): void {
+		this.#textAttachmentCounter++;
+		const n = this.#textAttachmentCounter;
+		const label = chipLabel("paste", n);
+		this.pendingTexts.push({
+			n,
+			label,
+			content,
+			lineCount: content.split("\n").length,
+			charCount: content.length,
+		});
+		this.insertAtom(label, expansion);
+	}
+
+	/** Attachments whose chip token (or legacy bracketed marker) is still present in the buffer —
+	 *  deleting the inline token hides the chip and drops the attachment from the submission. */
+	composerChips(): ComposerChipDescriptor[] {
+		const text = this.getText();
+		const chips: ComposerChipDescriptor[] = [];
+		for (let i = 0; i < this.pendingImages.length; i++) {
+			const n = i + 1;
+			const visible =
+				text.includes(chipLabel("image", n)) || text.includes(`[Image #${n}]`) || text.includes(`[Image #${n},`);
+			if (!visible) continue;
+			chips.push({ kind: "image", n, image: this.pendingImages[i], link: this.pendingImageLinks[i] });
+		}
+		for (const entry of this.pendingTexts) {
+			if (!text.includes(entry.label)) continue;
+			chips.push({ kind: "paste", n: entry.n, text: entry });
+		}
+		return chips;
+	}
+
+	/** Resolve draft-image links off the render path and repaint when they land; guarded against
+	 *  the draft being replaced while the blob writes were in flight. */
+	async #materializeDraftLinks(): Promise<void> {
+		const materialize = this.draftImageLinkMaterializer;
+		const images = this.pendingImages;
+		if (!materialize || images.length === 0) return;
+		const links = await materialize(images);
+		if (!links || this.pendingImages !== images) return;
+		this.pendingImageLinks = links;
+		this.imageLinks = links;
+		this.#requestShimmerRepaint?.();
+	}
+
+	/** Treat image/paste references — compact chip tokens and bracketed markers alike — as
+	 *  indivisible: a stray backspace deletes the whole token instead of corrupting it. */
+	override atomicTokenPattern = COMPOSER_TOKEN_REGEX;
 
 	/** Magic-keyword shimmer cadence — drives one editor repaint every 70 ms while
 	 *  a keyword is on screen and the prompt is focused. ~14 frames/s is smooth
@@ -326,46 +567,100 @@ export class CustomEditor extends Editor {
 	 *  timer to request the next animation frame. Undefined when nobody is
 	 *  listening (tests, headless callers); the timer chain still self-cleans. */
 	#requestShimmerRepaint: (() => void) | undefined;
+	#queueDecorationText: string | undefined;
+	#decorationLines: readonly string[] = [""];
+	#queueShorthandActive = false;
+	#queueListActive = false;
 
-	/** Gradient-highlight the "ultrathink" / "orchestrate" / "workflowz" keywords as the user types
-	 *  them, skipping any occurrence inside code spans, fenced blocks, or XML sections. Also make
-	 *  pasted image placeholders visually distinct and hyperlink them once their blob file exists.
-	 *  When the editor is focused, the buffer contains a magic keyword, and `magicKeywords.enabled`
-	 *  is on, the gradient shifts every frame to produce a Claude-Code-style shimmer; each render
-	 *  schedules the next frame, so losing focus, deleting the keyword, or flipping the setting
-	 *  stops the animation on its own. The static glow itself runs even when shimmering is gated
-	 *  off, matching existing behavior for the editor and sent bubbles. */
-	decorateText = (text: string): string => {
-		const animated = this.focused && this.#shimmerEnabled() && hasMagicKeyword(this.getText());
+	/** Decorate magic keywords, attachments, and the queue-composer header/list markers.
+	 *  Queue shorthand reserves its first logical line as a dim `Queueing` label; sequential
+	 *  item markers use the accent color so separate follow-ups remain visible while composing. */
+	override decorateText = (text: string, context: EditorTextDecorationContext): string => {
+		const editorText = this.getText();
+		const animated = this.focused && this.#shimmerEnabled() && hasMagicKeyword(editorText);
 		const phase = animated ? (Date.now() % CustomEditor.SHIMMER_PERIOD_MS) / CustomEditor.SHIMMER_PERIOD_MS : 0;
 		if (animated) this.#scheduleShimmerFrame();
+		if (this.#queueDecorationText !== editorText) {
+			this.#queueDecorationText = editorText;
+			this.#decorationLines = this.getLines();
+			const queueBody = parseQueueShorthand(editorText);
+			this.#queueShorthandActive = queueBody !== undefined;
+			this.#queueListActive = queueBody !== undefined && isQueuedMessageList(queueBody);
+		}
+		let sourceSearchOffset = 0;
+		const locateSource = (value: string): number => {
+			const offset = text.indexOf(value, sourceSearchOffset);
+			if (offset === -1) return sourceSearchOffset;
+			sourceSearchOffset = offset + value.length;
+			return offset;
+		};
 		return renderPlaceholders(text, {
-			renderText: value => highlightMagicKeywords(value, undefined, phase),
-			renderReference: (value, kind, index) =>
-				kind === "image"
-					? imageReferenceHyperlink(value, index, this.imageLinks, label =>
+			renderText: value => {
+				const sourceOffset = locateSource(value);
+				const highlighted = this.#spelling.decorateTypos(
+					value,
+					{
+						editorText,
+						lines: this.#decorationLines,
+						line: context.line,
+						startCol: context.startCol + sourceOffset,
+					},
+					span => highlightMagicKeywords(span, undefined, phase),
+				);
+				if (this.#queueShorthandActive && (value.startsWith("->") || value.startsWith("=>"))) {
+					const icon = typeof theme === "undefined" ? "➤" : theme.nav.selected;
+					return `${fgOrPlain("dim", `Queueing ${icon}`)}${highlighted.slice(2)}`;
+				}
+				if (this.#queueListActive) {
+					const markerMatch = QUEUE_LIST_MARKER_RE.exec(value);
+					if (markerMatch) {
+						const indent = markerMatch[1] ?? "";
+						const markerEnd = markerMatch[0].length;
+						return `${indent}${fgOrPlain("accent", value.slice(indent.length, markerEnd))}${highlighted.slice(markerEnd)}`;
+					}
+				}
+				return highlighted;
+			},
+			renderReference: (value, kind, index, form) => {
+				locateSource(value);
+				if (form === "chip") {
+					// Chip tokens carry their attachment identity color (matches the band card).
+					const styled = `${attachmentSgr(kind, index)}\x1b[1m${value}\x1b[22m\x1b[39m`;
+					return kind === "image"
+						? this.imageReferenceHyperlink(value, index, this.imageLinks, () => styled)
+						: styled;
+				}
+				return kind === "image"
+					? this.imageReferenceHyperlink(value, index, this.imageLinks, label =>
 							fgOrPlain("accent", label, `\x1b[1m\x1b[4m${label}\x1b[24m\x1b[22m`),
 						)
-					: fgOrPlain("accent", value, `\x1b[1m${value}\x1b[22m`),
+					: fgOrPlain("accent", value, `\x1b[1m${value}\x1b[22m`);
+			},
 		});
 	};
 
-	/** Optional test/host override for the magic-keyword shimmer gate. When
-	 *  defined, takes precedence over the global `magicKeywords.enabled` setting,
-	 *  letting tests assert the gating behaviour without mutating the
-	 *  process-wide Settings singleton (which races with parallel test files —
-	 *  see issue #2582). Production wires this through the host's Settings
-	 *  reader and updates it on the relevant setting change. */
+	/** Optional test override for the magic-keyword shimmer gate. */
 	magicKeywordsEnabledOverride: boolean | undefined;
 
-	/** Whether the shimmer should advance this frame. Defaults to "on" before
-	 *  settings have initialised (tests, early boot) so the animation does not
-	 *  silently disappear during a race; settings disabling the feature wins
-	 *  once they are loaded. An explicit `magicKeywordsEnabledOverride` overrides
-	 *  both paths. */
+	/**
+	 * Host-owned setting reader. Startup defaults to enabled without loading the
+	 * settings graph; InteractiveMode replaces this with the live session setting.
+	 */
+	magicKeywordsEnabled: () => boolean = () => true;
+
+	/**
+	 * Late-bound OSC hyperlink renderer. Startup stays plain until the full
+	 * interactive graph supplies the settings-aware implementation.
+	 */
+	imageReferenceHyperlink: (
+		label: string,
+		index: number,
+		imageLinks: readonly (string | undefined)[] | undefined,
+		renderLabel: (text: string) => string,
+	) => string = (label, _index, _imageLinks, renderLabel) => renderLabel(label);
+
 	#shimmerEnabled(): boolean {
-		if (this.magicKeywordsEnabledOverride !== undefined) return this.magicKeywordsEnabledOverride;
-		return isSettingsInitialized() ? settings.get("magicKeywords.enabled") : true;
+		return this.magicKeywordsEnabledOverride ?? this.magicKeywordsEnabled();
 	}
 
 	/** Bind the host's render request callback. Idempotent — the host wires this
@@ -398,7 +693,7 @@ export class CustomEditor extends Editor {
 	onCycleModelForward?: () => void;
 	onCycleModelBackward?: () => void;
 	onSelectModel?: () => void;
-	onExpandTools?: () => void;
+	onToggleToolActivity?: () => void;
 	onToggleThinking?: () => void;
 	onExternalEditor?: () => void;
 	onHistorySearch?: () => void;
@@ -468,14 +763,14 @@ export class CustomEditor extends Editor {
 			buildMatchKeys(keys),
 		]),
 	);
+	/** Union of every action's match keys: one probe in `handleInput` decides
+	 *  whether the per-action interception chain can match at all. */
+	#actionMatchKeyUnion = unionOfMatchKeys(this.#actionMatchKeys);
 
 	setActionKeys(action: ConfigurableEditorAction, keys: KeyId[]): void {
 		this.#actionKeys.set(action, [...keys]);
-		this.#rebuildActionMatchKeys(action);
-	}
-
-	#rebuildActionMatchKeys(action: ConfigurableEditorAction): void {
-		this.#actionMatchKeys.set(action, buildMatchKeys(this.#actionKeys.get(action) ?? []));
+		this.#actionMatchKeys.set(action, buildMatchKeys(keys));
+		this.#actionMatchKeyUnion = unionOfMatchKeys(this.#actionMatchKeys);
 	}
 
 	#rebuildCustomMatchKeys(): void {
@@ -621,14 +916,17 @@ export class CustomEditor extends Editor {
 		void promise.then(this.#onPasteSettled, this.#onPasteSettled);
 	}
 
-	handleInput(data: string): void {
+	override handleInput(data: string): void {
 		// Serialize behind any in-flight async paste so a trailing Enter / follow-up key can't
 		// submit before the clipboard image reaches `pendingImages` (Codex PR #3602 review).
 		if (this.#pasteInFlight > 0) {
 			this.#pendingInput.push(data);
 			return;
 		}
-		const kittyParsed = parseKittySequence(data);
+		// textEquals avoids getText()'s O(buffer) join on every keystroke; kitty
+		// sequences always start with ESC, so plain bytes skip the native parse.
+		const hadBareQueuePrefix = this.textEquals("->") || this.textEquals("=>");
+		const kittyParsed = data.charCodeAt(0) === 0x1b ? parseKittySequence(data) : null;
 		if (kittyParsed && (kittyParsed.modifier & 64) !== 0 && this.onCapsLock) {
 			// Caps Lock is modifier bit 64
 			this.onCapsLock();
@@ -690,7 +988,12 @@ export class CustomEditor extends Editor {
 		// Space-hold push-to-talk: a sustained space bar starts/stops STT instead of typing spaces.
 		if (this.#handleSpaceHold(data, canonical)) return;
 
-		if (canonical !== undefined) {
+		// One union probe decides whether any per-action interception below can
+		// match — plain typing then skips the ~20 per-action set lookups per key.
+		if (
+			canonical !== undefined &&
+			(this.#actionMatchKeyUnion.has(canonical) || this.#customMatchKeys.has(canonical))
+		) {
 			// Intercept configured image paste (async - fires and handles result)
 			if (this.#matchesAction(canonical, "app.clipboard.pasteImage") && this.onPasteImage) {
 				void this.onPasteImage();
@@ -745,9 +1048,9 @@ export class CustomEditor extends Editor {
 				return;
 			}
 
-			// Intercept configured tool output expansion shortcut
-			if (this.#matchesAction(canonical, "app.tools.expand") && this.onExpandTools) {
-				this.onExpandTools();
+			// Intercept configured tool activity visibility toggle
+			if (this.#matchesAction(canonical, "app.tools.toggleVisibility") && this.onToggleToolActivity) {
+				this.onToggleToolActivity();
 				return;
 			}
 
@@ -830,6 +1133,39 @@ export class CustomEditor extends Editor {
 		}
 
 		// Pass to parent for normal handling
+		super.handleInput(data);
+		if (!hadBareQueuePrefix && (this.textEquals("->") || this.textEquals("=>"))) {
+			const cursor = this.getCursor();
+			if (cursor.line === 0 && cursor.col === 2) {
+				this.insertText("\n");
+			}
+		}
+	}
+
+	/**
+	 * Route a keystroke through the base text-editor pipeline only, skipping the
+	 * app-level shortcut interception in {@link handleInput} (Agent Hub, model
+	 * selector, history search, external editor, …). Used when the editor is
+	 * mounted for draft editing beneath another focused surface — e.g. an Ask
+	 * dialog opened over a non-empty prompt — so finishing or submitting the
+	 * draft can never fire an editor-slot shortcut that clears `editorContainer`
+	 * and orphans the overlay. Only text editing, cursor movement, submission,
+	 * and the clear action reach the buffer.
+	 */
+	handleDraftEdit(data: string): void {
+		// The base editor reserves Ctrl+C for parent handling and returns without
+		// touching the buffer, so the configured clear action must be dispatched
+		// explicitly here — otherwise the guard's "finish or clear the prompt"
+		// instruction has no working clear key. onClear (Ctrl+C → handleCtrlC)
+		// clears the draft on first press without swapping the editor slot; a
+		// standalone editor with no callback clears its own text.
+		const parsed = parseKey(data);
+		const canonical = parsed !== undefined ? canonicalKeyId(parsed) : undefined;
+		if (canonical !== undefined && this.#matchesAction(canonical, "app.clear")) {
+			if (this.onClear) this.onClear();
+			else this.setText("");
+			return;
+		}
 		super.handleInput(data);
 	}
 }

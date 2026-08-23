@@ -9,6 +9,9 @@
  * ecosystem is mirrored too: agent snapshots populate a local AgentRegistry
  * (Agent Hub), EventBus traffic (observer HUD) is republished, and hub
  * actions (chat/kill/revive/transcript reads) round-trip over the wire.
+ * Host ask dialogs (`ui-request` select/editor) present through the same
+ * hook selector/editor seam and answer with `ui-response`; `ui-request-end`
+ * dismisses a pending presentation without responding.
  * Everything renders through the same components, so ctrl+o, theming, and
  * transcript behavior are native by construction.
  */
@@ -16,7 +19,7 @@ import * as path from "node:path";
 import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { getConfigRootDir, logger } from "@oh-my-pi/pi-utils";
-import type { AgentHubRemote } from "../modes/components/agent-hub";
+import type { AgentHubRemote, AgentHubRemoteTranscript } from "../modes/components/agent-hub";
 import type { InteractiveModeContext } from "../modes/types";
 import { AgentRegistry } from "../registry/agent-registry";
 import type { AgentSessionEvent } from "../session/agent-session";
@@ -30,6 +33,7 @@ import {
 	COLLAB_PROTO,
 	type CollabFrame,
 	type CollabSessionState,
+	type CollabUiRequest,
 	parseCollabLink,
 } from "./protocol";
 import { CollabSocket } from "./relay-client";
@@ -81,14 +85,15 @@ interface PendingSnapshot {
 /** Minimal context surface the idle-state reconciler mutates. */
 export interface GuestIdleReconcilerCtx {
 	statusLine: { markActivityEnd: () => void };
+	statusContainer: Pick<InteractiveModeContext["statusContainer"], "disposeChildren">;
 	loadingAnimation: { stop: () => void } | undefined;
 }
 
 /**
  * Close the guest UI state held open by an earlier `agent_start` whose
  * matching `agent_end` never reached us — most often because a reconnect
- * dropped the event mid-stream. Triggered from {@link CollabGuestLink}'s
- * `state` reconciler when the host reports `isStreaming === false`:
+ * dropped the event mid-stream. Reached via {@link reconcileGuestSnapshotHostState}
+ * (the live `state`-frame and welcome/resync reconciler) when the host reports `isStreaming === false`:
  * folds the in-flight active-time window into the per-session meter (so
  * `time_spent` stops ticking) and stops the `Working…` loader if one is
  * still animating. No-op when the host is still streaming.
@@ -102,17 +107,49 @@ export function reconcileGuestIdleHostState(ctx: GuestIdleReconcilerCtx, isStrea
 	if (ctx.loadingAnimation) {
 		ctx.loadingAnimation.stop();
 		ctx.loadingAnimation = undefined;
+		ctx.statusContainer.disposeChildren();
 	}
 }
 
 /** Reconcile a welcome/resync snapshot's host activity state into the guest meter. */
 export interface GuestSnapshotActivityReconcilerCtx extends GuestIdleReconcilerCtx {
 	statusLine: GuestIdleReconcilerCtx["statusLine"] & { markActivityStart: () => void };
+	/**
+	 * Start (or re-attach) the live "Working…" loader. Mirrors
+	 * `InteractiveModeContext.ensureLoadingAnimation`, which is what
+	 * `EventController` calls on `agent_start`. Required so a guest that
+	 * missed an earlier `agent_start` (a reconnect dropped it mid-stream)
+	 * starts its spinner when the host later reports it is streaming.
+	 */
+	ensureLoadingAnimation: InteractiveModeContext["ensureLoadingAnimation"];
+	autoCompactionLoader: InteractiveModeContext["autoCompactionLoader"];
+	retryLoader: InteractiveModeContext["retryLoader"];
+}
+
+/** Status-area state which cannot outlive removal of its child components. */
+export interface GuestTransientStatusCtx {
+	statusContainer: Pick<InteractiveModeContext["statusContainer"], "clear">;
+	autoCompactionLoader: InteractiveModeContext["autoCompactionLoader"];
+	retryLoader: InteractiveModeContext["retryLoader"];
+}
+
+/** Stop and forget status-area loaders before detaching their components. */
+export function clearGuestTransientStatus(ctx: GuestTransientStatusCtx): void {
+	if (ctx.autoCompactionLoader) {
+		ctx.autoCompactionLoader.stop();
+		ctx.autoCompactionLoader = undefined;
+	}
+	if (ctx.retryLoader) {
+		ctx.retryLoader.stop();
+		ctx.retryLoader = undefined;
+	}
+	ctx.statusContainer.clear();
 }
 
 export function reconcileGuestSnapshotHostState(ctx: GuestSnapshotActivityReconcilerCtx, isStreaming: boolean): void {
 	if (isStreaming) {
 		ctx.statusLine.markActivityStart();
+		if (!ctx.autoCompactionLoader && !ctx.retryLoader) ctx.ensureLoadingAnimation();
 		return;
 	}
 	reconcileGuestIdleHostState(ctx, false);
@@ -155,7 +192,9 @@ export class CollabGuestLink {
 	readonly agentRegistry = new AgentRegistry();
 	/** Per-agent `hasSessionFile` from the last snapshot; gates remote transcript fetches. */
 	#agentHasTranscript = new Map<string, boolean>();
-	#pendingTranscripts = new Map<number, (r: { text: string; newSize: number } | null) => void>();
+	#pendingTranscripts = new Map<number, (r: AgentHubRemoteTranscript | null) => void>();
+	/** Host `ui-request`s presented (or queued) locally, keyed by reqId; aborting dismisses. */
+	#pendingUiRequests = new Map<number, AbortController>();
 	#nextReqId = 1;
 	readonly #hubRemote: AgentHubRemote = {
 		chat: (id, text) => {
@@ -176,7 +215,7 @@ export class CollabGuestLink {
 				return Promise.resolve(null);
 			}
 			const reqId = this.#nextReqId++;
-			const { promise, resolve } = Promise.withResolvers<{ text: string; newSize: number } | null>();
+			const { promise, resolve } = Promise.withResolvers<AgentHubRemoteTranscript | null>();
 			const timer = setTimeout(() => {
 				this.#pendingTranscripts.delete(reqId);
 				resolve(null);
@@ -267,6 +306,16 @@ export class CollabGuestLink {
 							await this.#finalizeSnapshot();
 							finishJoin();
 						}
+						return;
+					}
+					if (frame.t === "error" && !this.#welcomed && !this.#left) {
+						// Pre-welcome errors are the host's targeted reply to our
+						// hello (e.g. protocol mismatch): no welcome will follow.
+						// Fail the join with the host's message instead of hanging
+						// until the welcome timeout.
+						this.#clearWelcomeTimer();
+						if (joined) this.#ctx.showError(`Collab host: ${frame.message}`);
+						else firstWelcome.reject(new Error(frame.message));
 						return;
 					}
 					if (!this.#welcomed || this.#left) return;
@@ -403,7 +452,7 @@ export class CollabGuestLink {
 		this.#assistantStreamSynced = false;
 		setSessionTerminalTitle(pending.state.sessionName ?? pending.header.title, pending.state.cwd);
 		this.#ctx.chatContainer.clear();
-		this.#ctx.renderInitialMessages({ clearTerminalHistory: true });
+		await this.#ctx.renderInitialMessages({ clearTerminalHistory: true });
 		await this.#ctx.reloadTodos();
 		this.#updateStatusSegment();
 		this.#readOnly = pending.readOnly;
@@ -466,7 +515,7 @@ export class CollabGuestLink {
 				this.#applyHostState(frame.state);
 				setSessionTerminalTitle(frame.state.sessionName, frame.state.cwd);
 				this.#updateStatusSegment();
-				reconcileGuestIdleHostState(this.#ctx, frame.state.isStreaming);
+				reconcileGuestSnapshotHostState(this.#ctx, frame.state.isStreaming);
 				this.#ctx.statusLine.invalidate();
 				this.#ctx.ui.requestRender();
 				break;
@@ -480,11 +529,17 @@ export class CollabGuestLink {
 				this.#applyAgentSnapshots(frame.agents);
 				this.#ctx.syncRunningSubagentBadge();
 				break;
+			case "ui-request":
+				this.#presentUiRequest(frame.request);
+				break;
+			case "ui-request-end":
+				this.#endUiRequest(frame.reqId);
+				break;
 			case "transcript": {
 				const resolve = this.#pendingTranscripts.get(frame.reqId);
 				if (resolve) {
 					this.#pendingTranscripts.delete(frame.reqId);
-					resolve(frame.error ? null : { text: frame.text, newSize: frame.newSize });
+					resolve({ text: frame.text, newSize: frame.newSize, error: frame.error });
 				}
 				break;
 			}
@@ -591,8 +646,75 @@ export class CollabGuestLink {
 		this.#pendingTranscripts.clear();
 	}
 
+	/**
+	 * Surface a host `ui-request` (ask select/editor) through the local
+	 * hook-dialog seam. The dialog settles on user submit/cancel — both send a
+	 * `ui-response` (cancel carries `value: undefined`, mirroring the web
+	 * client's Cancel button) — or when {@link #endUiRequest} aborts it because
+	 * the host settled the request elsewhere; that path must NOT respond.
+	 */
+	#presentUiRequest(request: CollabUiRequest): void {
+		// The host only targets writable peers; drop defensively on a read-only link.
+		if (this.#readOnly || this.#pendingUiRequests.has(request.reqId)) return;
+		const abort = new AbortController();
+		this.#pendingUiRequests.set(request.reqId, abort);
+		const dialog =
+			request.kind === "select"
+				? this.#ctx.showHookSelector(request.title, request.options, {
+						signal: abort.signal,
+						initialIndex: request.initialIndex,
+						selectionMarker: request.selectionMarker,
+						checkedIndices: request.checkedIndices,
+						markableCount: request.markableCount,
+						helpText: request.helpText,
+					})
+				: this.#ctx.showHookEditor(request.title, request.prefill, { signal: abort.signal });
+		dialog
+			.then(value => {
+				// Identity check: only the presentation that still owns the reqId
+				// may respond. An abort from #endUiRequest / #clearUiRequests
+				// removes (or replaces, on resync replay) the entry before this
+				// microtask runs, so a dismissed dialog stays silent.
+				if (this.#pendingUiRequests.get(request.reqId) !== abort) return;
+				this.#pendingUiRequests.delete(request.reqId);
+				this.#socket?.send({ t: "ui-response", reqId: request.reqId, value });
+			})
+			.catch(err => {
+				if (this.#pendingUiRequests.get(request.reqId) === abort) {
+					this.#pendingUiRequests.delete(request.reqId);
+				}
+				logger.warn("collab guest ui-request presentation failed", {
+					reqId: request.reqId,
+					error: String(err),
+				});
+			});
+	}
+
+	/** Host settled the request (answered elsewhere or aborted): dismiss without responding. */
+	#endUiRequest(reqId: number): void {
+		const abort = this.#pendingUiRequests.get(reqId);
+		if (!abort) return;
+		this.#pendingUiRequests.delete(reqId);
+		abort.abort();
+	}
+
+	/**
+	 * Dismiss every locally presented `ui-request` without responding: on
+	 * resync the host replays the ones still pending, and on leave they are no
+	 * longer ours to answer. Queued dialogs abort before the presented one
+	 * (reverse insertion order) so settling the active dialog cannot flash the
+	 * next queued one onto the surface first.
+	 */
+	#clearUiRequests(): void {
+		if (this.#pendingUiRequests.size === 0) return;
+		const aborts = [...this.#pendingUiRequests.values()];
+		this.#pendingUiRequests.clear();
+		for (const abort of aborts.reverse()) abort.abort();
+	}
+
 	#clearTransientUi(): void {
-		this.#ctx.statusContainer.clear();
+		this.#clearUiRequests();
+		clearGuestTransientStatus(this.#ctx);
 		this.#ctx.pendingMessagesContainer.clear();
 		this.#ctx.compactionQueuedMessages = [];
 		this.#ctx.streamingComponent = undefined;
@@ -625,9 +747,9 @@ export class CollabGuestLink {
 		setSessionTerminalTitle(this.#ctx.sessionManager.getSessionName(), this.#ctx.sessionManager.getCwd());
 		this.#ctx.statusLine.invalidate();
 		this.#ctx.statusLine.resetActiveTime();
-		this.#ctx.updateEditorTopBorder();
+		this.#ctx.ui.requestRender();
 		this.#ctx.updateEditorBorderColor();
-		this.#ctx.renderInitialMessages({ clearTerminalHistory: true });
+		await this.#ctx.renderInitialMessages({ clearTerminalHistory: true });
 		await this.#ctx.reloadTodos();
 		this.#ctx.ui.requestRender(true, { clearScrollback: true });
 	}

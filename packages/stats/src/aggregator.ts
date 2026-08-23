@@ -1,5 +1,7 @@
 import * as fs from "node:fs";
-import { workerHostEntry } from "@oh-my-pi/pi-utils";
+import * as path from "node:path";
+import { getStatsDbPath, workerHostEntry } from "@oh-my-pi/pi-utils";
+import { withFileLock } from "@oh-my-pi/pi-utils/file-lock";
 import {
 	getRecentErrors as dbGetRecentErrors,
 	getRecentRequests as dbGetRecentRequests,
@@ -13,14 +15,23 @@ import {
 	getModelPerformanceSeries,
 	getModelTimeSeries,
 	getOverallStats,
+	getProviderHourlyBurn,
+	getProviderTimeSeries,
 	getStatsByAgentType,
 	getStatsByFolder,
 	getStatsByModel,
+	getStatsByProvider,
 	getTimeSeries,
+	getToolStats,
+	getToolStatsByModel,
+	getToolTimeSeries,
 	initDb,
 	insertMessageStats,
+	insertToolCalls,
 	insertUserMessageStats,
+	markSessionBackfillsComplete,
 	setFileOffset,
+	updateToolResults,
 	updateUserMessageLinks,
 } from "./db";
 import { getSessionEntry, listAllSessionFiles, type ParseSessionResult, parseSessionFile } from "./parser";
@@ -29,7 +40,33 @@ import type { SyncWorkerRequest, SyncWorkerResponse } from "./sync-worker";
 // hidden argv mode, so the compiled binary and npm bundle only need one
 // JavaScript entry. Standalone source `omp-stats` keeps using this package's
 // own sync-worker source file.
-import type { BehaviorDashboardStats, DashboardStats, MessageStats, RequestDetails } from "./types";
+import type {
+	BehaviorDashboardStats,
+	DashboardStats,
+	MessageStats,
+	ProviderDashboardStats,
+	RequestDetails,
+	ToolDashboardStats,
+} from "./types";
+import { computeUsageWindowStats, fetchUsageData } from "./usage-windows";
+
+const STATS_SYNC_LOCK_RETRY_MS = 25;
+const STATS_SYNC_LOCK_WAIT_MS = 60 * 60 * 1000;
+
+/**
+ * Serialize stats ingestion and archive reconciliation across processes.
+ * The lock covers file discovery, parsing, and the final SQLite write so a
+ * parse result for a session moved by GC can never commit after cleanup.
+ * The native lock is owned by an operating-system primitive, so an interrupted
+ * owner is released automatically and a live owner is never displaced.
+ */
+export async function withStatsSyncLock<T>(dbPath: string, fn: () => Promise<T>): Promise<T> {
+	await fs.promises.mkdir(path.dirname(dbPath), { recursive: true });
+	return await withFileLock(`${dbPath}.sync`, fn, {
+		retryDelayMs: STATS_SYNC_LOCK_RETRY_MS,
+		retries: Math.ceil(STATS_SYNC_LOCK_WAIT_MS / STATS_SYNC_LOCK_RETRY_MS),
+	});
+}
 
 /**
  * Apply a freshly parsed result to the database. Runs entirely on the
@@ -39,6 +76,8 @@ function applyParseResult(sessionFile: string, lastModified: number, result: Par
 	if (result.stats.length > 0) insertMessageStats(result.stats);
 	if (result.userStats.length > 0) insertUserMessageStats(result.userStats);
 	if (result.userLinks.length > 0) updateUserMessageLinks(result.userLinks);
+	if (result.toolCalls.length > 0) insertToolCalls(result.toolCalls);
+	if (result.toolResults.length > 0) updateToolResults(result.toolResults);
 	setFileOffset(sessionFile, result.newOffset, lastModified);
 	return result.stats.length + result.userStats.length;
 }
@@ -199,15 +238,22 @@ export async function smokeTestSyncWorker({ timeoutMs = 5_000 }: { timeoutMs?: n
  * bar walks at a steady rate).
  */
 export async function syncAllSessions(opts?: SyncOptions): Promise<{ processed: number; files: number }> {
+	return withStatsSyncLock(getStatsDbPath(), () => syncAllSessionsLocked(opts));
+}
+
+async function syncAllSessionsLocked(opts?: SyncOptions): Promise<{ processed: number; files: number }> {
 	await initDb();
 
 	const files = await listAllSessionFiles();
-	if (files.length === 0) return { processed: 0, files: 0 };
-
 	let totalProcessed = 0;
 	let filesProcessed = 0;
 	let completed = 0;
 	let cursor = 0;
+	const finish = () => {
+		markSessionBackfillsComplete();
+		return { processed: totalProcessed, files: filesProcessed };
+	};
+	if (files.length === 0) return finish();
 
 	const report = (sessionFile: string) => {
 		completed++;
@@ -252,7 +298,7 @@ export async function syncAllSessions(opts?: SyncOptions): Promise<{ processed: 
 		for (const sessionFile of files) {
 			await processFile(sessionFile, parseSessionFile);
 		}
-		return { processed: totalProcessed, files: filesProcessed };
+		return finish();
 	}
 
 	const poolSize = Math.min(files.length, requestedWorkers);
@@ -275,7 +321,7 @@ export async function syncAllSessions(opts?: SyncOptions): Promise<{ processed: 
 		for (const handle of handles) handle.worker.terminate();
 	}
 
-	return { processed: totalProcessed, files: filesProcessed };
+	return finish();
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -437,9 +483,10 @@ export async function getRecentRequests(limit?: number): Promise<MessageStats[]>
 	return dbGetRecentRequests(limit);
 }
 
-export async function getRecentErrors(limit?: number): Promise<MessageStats[]> {
+export async function getRecentErrors(range?: string | null, limit?: number): Promise<MessageStats[]> {
 	await initDb();
-	return dbGetRecentErrors(limit);
+	const { cutoff } = getTimeRangeConfig(range);
+	return dbGetRecentErrors(limit, cutoff);
 }
 
 export async function getRequestDetails(id: number): Promise<RequestDetails | null> {
@@ -476,5 +523,44 @@ export async function getBehaviorDashboardStats(range?: string | null): Promise<
 		overall: getBehaviorOverall(cutoff),
 		byModel: getBehaviorByModel(cutoff),
 		behaviorSeries: getBehaviorTimeSeries(cutoff),
+	};
+}
+
+/**
+ * Get the tools dashboard payload: per-tool totals, per-(tool, model)
+ * breakdown, and the call time series (bucketed like the model series).
+ */
+export async function getToolDashboardStats(range?: string | null): Promise<ToolDashboardStats> {
+	await initDb();
+	const { modelSeriesDays, modelSeriesBucketMs, cutoff } = getTimeRangeConfig(range);
+	return {
+		byTool: getToolStats(cutoff ?? undefined),
+		byToolModel: getToolStatsByModel(cutoff ?? undefined),
+		series: getToolTimeSeries(modelSeriesDays, cutoff, modelSeriesBucketMs),
+	};
+}
+
+/**
+ * Get the providers dashboard payload: per-provider totals, peak-burn-hours
+ * histogram, provider token time series, and subscription-window analytics
+ * (utilization series + insights) derived from recorded usage-limit snapshots.
+ *
+ * Window token estimates use broker-held fleet token burn when a broker is
+ * configured — the window fractions cover every install sharing the broker's
+ * credentials, so dividing them into local-only tokens would undercount.
+ */
+export async function getProviderDashboardStats(range?: string | null): Promise<ProviderDashboardStats> {
+	await initDb();
+	const { modelSeriesDays, modelSeriesBucketMs, cutoff } = getTimeRangeConfig(range);
+	const providers = getStatsByProvider(cutoff ?? undefined);
+	const usage = await fetchUsageData(cutoff ?? 0);
+	const tokensByProvider = usage.fleetTokensByProvider ?? new Map(providers.map(p => [p.provider, p.totalTokens]));
+	const { usageSeries, windowInsights } = computeUsageWindowStats(usage.rows, tokensByProvider);
+	return {
+		providers,
+		hourly: getProviderHourlyBurn(cutoff ?? undefined),
+		series: getProviderTimeSeries(modelSeriesDays, cutoff, modelSeriesBucketMs),
+		usageSeries,
+		windowInsights,
 	};
 }

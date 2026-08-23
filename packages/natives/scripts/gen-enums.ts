@@ -34,6 +34,33 @@ const CLASS_RE = /^export declare class (\w+)/gm;
 // Match `export declare function name(...)`. Same shape rationale.
 const FUNCTION_RE = /^export declare function (\w+)/gm;
 
+// napi-rs omits PromiseRaw-backed bindings and their object arguments from the
+// generated .d.ts. Keep the runtime, ESM, and type surfaces aligned.
+const REQUIRED_DECLARATIONS = [
+	`export interface ShellMinimizerEligibilityOptions {
+	command: string;
+	minimizer?: MinimizerOptions;
+}`,
+	`export interface ShellMinimizerApplyOptions {
+	command: string;
+	captured: string;
+	exitCode?: number;
+	minimizer?: MinimizerOptions;
+}`,
+	"export declare function isShellMinimizerEligible(options: ShellMinimizerEligibilityOptions): Promise<boolean>",
+	"export declare function applyShellMinimizer(options: ShellMinimizerApplyOptions): Promise<MinimizerResult | null>",
+];
+
+function restoreRequiredDeclarations(dts: string): string {
+	let restored = dts;
+	for (const declaration of REQUIRED_DECLARATIONS) {
+		if (!restored.includes(declaration)) {
+			restored += `\n\n${declaration}\n`;
+		}
+	}
+	return restored;
+}
+
 interface EnumExport {
 	name: string;
 	entries: string[];
@@ -109,7 +136,7 @@ function buildGeneratedBlock(dts: string): string {
 }
 
 export async function generateEnumExports(): Promise<void> {
-	const dts = await Bun.file(dtsPath).text();
+	const dts = restoreRequiredDeclarations(await Bun.file(dtsPath).text());
 	const existing = await Bun.file(jsPath).text();
 	const generatedBlock = buildGeneratedBlock(dts);
 

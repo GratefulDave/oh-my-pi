@@ -763,6 +763,83 @@
       "hits": 3,
       "firstTs": 1782766453095,
       "lastTs": 1782766511337
+    },
+    "019f1f31-d9ea-7000-b59f-8a5a5477f227": {
+      "sessionId": "019f1f31-d9ea-7000-b59f-8a5a5477f227",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Merge pull request",
+      "savedBytes": 155161,
+      "originalBytes": 205187,
+      "replacementBytes": 50026,
+      "hits": 14,
+      "firstTs": 1782936989138,
+      "lastTs": 1782948658753
+    },
+    "019f2036-162c-7000-972b-ca819c7058ae": {
+      "sessionId": "019f2036-162c-7000-972b-ca819c7058ae",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Find native antigravity call sites",
+      "savedBytes": 43038,
+      "originalBytes": 48911,
+      "replacementBytes": 5873,
+      "hits": 2,
+      "firstTs": 1782951909264,
+      "lastTs": 1782951930667
+    },
+    "019f204d-2fd8-7000-a9a3-57fe111ab675": {
+      "sessionId": "019f204d-2fd8-7000-a9a3-57fe111ab675",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Review subagent status widget",
+      "savedBytes": 54226,
+      "originalBytes": 60100,
+      "replacementBytes": 5874,
+      "hits": 4,
+      "firstTs": 1782953454736,
+      "lastTs": 1782954660756
+    },
+    "019f20fd-d089-7000-907d-e5c7032658d9": {
+      "sessionId": "019f20fd-d089-7000-907d-e5c7032658d9",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Build and sync git branches",
+      "savedBytes": 56573,
+      "originalBytes": 59535,
+      "replacementBytes": 2962,
+      "hits": 3,
+      "firstTs": 1782965059278,
+      "lastTs": 1782971627034
+    },
+    "019f24d1-3840-7000-ba26-a3025bc235bb": {
+      "sessionId": "019f24d1-3840-7000-ba26-a3025bc235bb",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 24241,
+      "originalBytes": 27259,
+      "replacementBytes": 3018,
+      "hits": 3,
+      "firstTs": 1783029212846,
+      "lastTs": 1783029372730
+    },
+    "019f24c6-25e5-7000-9d01-149b62e8208e": {
+      "sessionId": "019f24c6-25e5-7000-9d01-149b62e8208e",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 6526,
+      "originalBytes": 8246,
+      "replacementBytes": 1720,
+      "hits": 1,
+      "firstTs": 1783043421426,
+      "lastTs": 1783043421426
+    },
+    "019ff1a0-bf44-7000-b895-63cb1e6dc367": {
+      "sessionId": "019ff1a0-bf44-7000-b895-63cb1e6dc367",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 14999,
+      "originalBytes": 17156,
+      "replacementBytes": 2157,
+      "hits": 2,
+      "firstTs": 1786465512158,
+      "lastTs": 1786465538732
     }
   }
 }

@@ -2,8 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { removeStaleManagedDiscoveryFiles } from "./install-user-extensions";
-
+import { mergeExtensionList, removeStaleManagedDiscoveryFiles } from "./install-user-extensions";
 
 describe("removeStaleManagedDiscoveryFiles", () => {
 	let tempDir = "";
@@ -40,6 +39,54 @@ it("keeps repo settings free of managed .omp extension bundle duplicates", async
 	const settings = (await Bun.file(path.join(repoRoot, ".omp", "settings.json")).json()) as {
 		extensions?: unknown;
 	};
-	const extensions = Array.isArray(settings.extensions) ? settings.extensions.filter((value): value is string => typeof value === "string") : [];
-	expect(extensions.filter(entry => /^\.omp\/extensions\/(?!profile-manager\/)[^/]+\/dist\/index\.js$/.test(entry))).toEqual([]);
+	const extensions = Array.isArray(settings.extensions)
+		? settings.extensions.filter((value): value is string => typeof value === "string")
+		: [];
+	expect(
+		extensions.filter(entry => /^\.omp\/extensions\/(?!profile-manager\/)[^/]+\/dist\/index\.js$/.test(entry)),
+	).toEqual([]);
+});
+
+it("preserves user extension registrations under the managed directory", async () => {
+	const userExtension = "~/.omp/agent/extensions/user-extension/index.js";
+	const registered = "~/.omp/agent/extensions/pi-distill/distill.bundle.js";
+
+	await expect(mergeExtensionList([userExtension], [registered])).resolves.toEqual([userExtension, registered]);
+});
+
+it("preserves registration order while replacing a managed extension", async () => {
+	const staleManaged = "~/.omp/agent/extensions/pi-distill/old.bundle.js";
+	const userExtension = "~/.omp/agent/extensions/user-extension/index.js";
+	const registered = "~/.omp/agent/extensions/pi-distill/distill.bundle.js";
+
+	await expect(mergeExtensionList([staleManaged, userExtension], [registered])).resolves.toEqual([
+		registered,
+		userExtension,
+	]);
+});
+
+it("preserves user settings when requested by the rebuild guard", async () => {
+	const home = await fs.mkdtemp(path.join(os.tmpdir(), "omp-extension-settings-"));
+	const settingsPath = path.join(home, ".omp", "agent", "settings.json");
+	const original = JSON.stringify(
+		{ extensions: ["~/.omp/agent/extensions/custom/index.js"], theme: "custom" },
+		null,
+		2,
+	);
+	try {
+		await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+		await Bun.write(settingsPath, `${original}\n`);
+
+		const child = Bun.spawn(["bun", "scripts/install-user-extensions.ts", "--preserve-settings"], {
+			cwd: path.resolve(import.meta.dir, ".."),
+			env: { ...process.env, HOME: home },
+			stderr: "pipe",
+			stdout: "pipe",
+		});
+
+		expect(await child.exited).toBe(0);
+		expect(await Bun.file(settingsPath).text()).toBe(`${original}\n`);
+	} finally {
+		await fs.rm(home, { recursive: true, force: true });
+	}
 });

@@ -1,17 +1,19 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { type } from "@oh-my-pi/omptype";
 import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
 import type { ToolExample } from "@oh-my-pi/pi-ai";
 import * as natives from "@oh-my-pi/pi-natives";
 import type { Component } from "@oh-my-pi/pi-tui";
 import { Text } from "@oh-my-pi/pi-tui";
-import { formatGroupedPaths, isEnoent, prompt, untilAborted } from "@oh-my-pi/pi-utils";
-import { type } from "arktype";
+import { formatGroupedPaths, hasFsCode, isEnoent, prompt, untilAborted } from "@oh-my-pi/pi-utils";
 import type { RenderResultOptions } from "../extensibility/custom-tools/types";
 import { InternalUrlRouter } from "../internal-urls";
+import { splitMemoryGlobPattern } from "../internal-urls/memory-protocol";
 import type { Theme } from "../modes/theme/theme";
 import globDescription from "../prompts/tools/glob.md" with { type: "text" };
 import { type TruncationResult, truncateHead } from "../session/streaming-output";
+import { isScoutSpawnable } from "../task/spawn-policy";
 import { Ellipsis, fileHyperlink, renderFileList, renderStatusLine, renderTreeList, truncateToWidth } from "../tui";
 import type { ToolSession } from ".";
 import { applyListLimit } from "./list-limit";
@@ -26,6 +28,7 @@ import {
 	partitionExistingPaths,
 	resolveExplicitFindPatterns,
 	resolveToCwd,
+	toPathList,
 } from "./path-utils";
 import {
 	createCachedComponent,
@@ -38,11 +41,9 @@ import { ToolAbortError, ToolError, throwIfAborted } from "./tool-errors";
 import { toolResult } from "./tool-result";
 
 const findSchema = type({
-	paths: type("string")
-		.describe("glob including search path")
-		.array()
-		.atLeastLength(1)
-		.describe("globs including search paths"),
+	"path?": type("string").describe(
+		'glob, file, or directory to search — a single path or a semicolon-delimited list ("src/**/*.ts; test/**/*.ts"). Omitted -> searches the workspace root (".")',
+	),
 	"hidden?": type("boolean").describe("include hidden files"),
 	"gitignore?": type("boolean").describe("respect gitignore"),
 	"limit?": type("number").describe("max results"),
@@ -91,6 +92,8 @@ export interface GlobOperations {
 export interface GlobToolOptions {
 	/** Custom operations for find. Default: local filesystem + rg */
 	operations?: GlobOperations;
+	/** Remap slash-only paths to the session cwd before root-search validation. */
+	rootPathAlias?: boolean;
 }
 
 interface GlobTarget {
@@ -104,37 +107,45 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 	readonly approval = "read" as const;
 	readonly loadMode = "essential";
 	readonly label = "Glob";
-	readonly description: string;
+	get description(): string {
+		return prompt.render(globDescription, {
+			scoutAvailable: isScoutSpawnable(
+				this.session.settings.get("task.disabledAgents") as string[] | undefined,
+				this.session.getSessionSpawns?.() ?? "*",
+			),
+		});
+	}
 	readonly parameters = findSchema;
 
 	readonly examples: readonly ToolExample<typeof findSchema.infer>[] = [
 		{
 			caption: "Glob files",
-			call: { paths: ["src/**/*.ts"] },
+			call: { path: "src/**/*.ts" },
 		},
 		{
-			caption: "Multiple targets — separate array elements",
-			call: { paths: ["src/**/*.ts", "test/**/*.ts"] },
+			caption: "Multiple targets — semicolon-delimited list",
+			call: { path: "src/**/*.ts; test/**/*.ts" },
 		},
 		{
 			caption: "Glob gitignored files like .env",
-			call: { paths: [".env*"], gitignore: false },
+			call: { path: ".env*", gitignore: false },
 		},
 		{
 			caption: "Glob directories matching a name (returns both files and dirs; directories are suffixed with `/`)",
-			call: { paths: ["**/tests"] },
+			call: { path: "**/tests" },
 		},
 	];
 	readonly strict = true;
 
 	readonly #customOps?: GlobOperations;
+	readonly #rootPathAlias: boolean;
 
 	constructor(
 		private readonly session: ToolSession,
 		options?: GlobToolOptions,
 	) {
 		this.#customOps = options?.operations;
-		this.description = prompt.render(globDescription);
+		this.#rootPathAlias = options?.rootPathAlias === true;
 	}
 
 	async execute(
@@ -144,17 +155,25 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 		onUpdate?: AgentToolUpdateCallback<GlobToolDetails>,
 		_context?: AgentToolContext,
 	): Promise<AgentToolResult<GlobToolDetails>> {
-		const { paths, limit, hidden, gitignore } = params;
+		const { path: pathInput, limit, hidden, gitignore } = params;
 
 		return untilAborted(signal, async () => {
 			const formatScopePath = (targetPath: string): string => formatPathRelativeToCwd(targetPath, this.session.cwd);
+			const scopedPaths = toPathList(pathInput);
+			const effectivePaths = scopedPaths.length > 0 ? scopedPaths : ["."];
 			const rawPatternInputs = this.#customOps
-				? paths
-				: await expandDelimitedPathEntries(paths, this.session.cwd, { splitter: parseFindPattern });
+				? effectivePaths
+				: await expandDelimitedPathEntries(effectivePaths, this.session.cwd, { splitter: parseFindPattern });
 			const rawPatterns = rawPatternInputs.map(input => normalizePathLikeInput(input).replace(/\\/g, "/"));
+			const aliasResolvedPatterns = this.#rootPathAlias
+				? rawPatterns.map(pattern => (/^\/+$/.test(pattern) ? "." : pattern))
+				: rawPatterns;
+			if (aliasResolvedPatterns.some(pattern => /^\/+$/.test(pattern))) {
+				throw new ToolError("Searching from root directory '/' is not allowed");
+			}
 			const internalRouter = InternalUrlRouter.instance();
 			const normalizedPatterns: string[] = [];
-			for (const rawPattern of rawPatterns) {
+			for (const rawPattern of aliasResolvedPatterns) {
 				if (!internalRouter.canHandle(rawPattern)) {
 					normalizedPatterns.push(rawPattern);
 					continue;
@@ -165,7 +184,25 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 					);
 				}
 				if (hasGlobPathChars(rawPattern)) {
-					throw new ToolError(`Glob patterns are not supported for internal URLs: ${rawPattern}`);
+					if (!/^memory:\/\//i.test(rawPattern)) {
+						throw new ToolError(`Glob patterns are not supported for internal URLs: ${rawPattern}`);
+					}
+					const memoryGlob = splitMemoryGlobPattern(rawPattern);
+					const resource = await internalRouter.resolve(memoryGlob.baseUrl, {
+						cwd: this.session.cwd,
+						settings: this.session.settings,
+						signal,
+						localProtocolOptions: this.session.localProtocolOptions,
+						skills: this.session.skills,
+						pathOnly: true,
+					});
+					if (!resource.sourcePath) {
+						throw new ToolError(`Cannot find internal URL without a backing file: ${memoryGlob.baseUrl}`);
+					}
+					normalizedPatterns.push(
+						path.join(resource.sourcePath.replace(/[*?[{]/g, "[$&]"), memoryGlob.globPattern),
+					);
+					continue;
 				}
 				const resource = await internalRouter.resolve(rawPattern, {
 					cwd: this.session.cwd,
@@ -173,6 +210,7 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 					signal,
 					localProtocolOptions: this.session.localProtocolOptions,
 					skills: this.session.skills,
+					pathOnly: true,
 				});
 				if (!resource.sourcePath) {
 					throw new ToolError(`Cannot find internal URL without a backing file: ${rawPattern}`);
@@ -180,7 +218,7 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 				normalizedPatterns.push(resource.sourcePath);
 			}
 			if (normalizedPatterns.some(pattern => pattern.length === 0)) {
-				throw new ToolError("`paths` must contain non-empty globs or paths");
+				throw new ToolError("`path` must contain non-empty globs or paths");
 			}
 
 			// Tolerate missing entries in a multi-path call: skip ones whose base
@@ -247,7 +285,7 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 
 			const buildResult = (
 				files: string[],
-				opts?: { notice?: string; forceTruncated?: boolean },
+				opts?: { notice?: string; forceTruncated?: boolean; timedOut?: boolean },
 			): AgentToolResult<GlobToolDetails> => {
 				const notice = opts?.notice;
 				const forceTruncated = opts?.forceTruncated ?? false;
@@ -260,7 +298,10 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 						cwd: this.session.cwd,
 						missingPaths: missingPaths.length > 0 ? missingPaths : undefined,
 					};
-					const parts = ["No files found matching pattern"];
+					// A timed-out empty result is an incomplete scan, not a verified
+					// absence — never emit the definitive "No files found" claim next
+					// to a timeout notice (the two statements contradict each other).
+					const parts = opts?.timedOut ? [] : ["No files found matching pattern"];
 					if (notice) parts.push(notice);
 					if (missingPathsNote) parts.push(missingPathsNote);
 					// Zero results is useless regardless of notices: the follow-up
@@ -374,7 +415,9 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 				try {
 					stat = await fs.promises.stat(target.searchPath);
 				} catch (err) {
-					if (isEnoent(err)) {
+					// ENAMETOOLONG can never name a real target; surface a clean
+					// "Path not found" instead of leaking the raw errno (issue #7597).
+					if (isEnoent(err) || hasFsCode(err, "ENAMETOOLONG")) {
 						if (isSingle) throw new ToolError(`Path not found: ${scopePath}`);
 						return [];
 					}
@@ -441,8 +484,15 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 				partial.sort((a, b) => b.m - a.m);
 				const sortedPaths = partial.map(entry => entry.p);
 				const seconds = timeoutMs % 1000 === 0 ? `${timeoutMs / 1000}` : (timeoutMs / 1000).toFixed(1);
-				const notice = `glob timed out after ${seconds}s; returning ${sortedPaths.length} partial matches — narrow the pattern instead of retrying blindly`;
-				return buildResult(sortedPaths, { notice, forceTruncated: true });
+				// Walk cost tracks directory-tree size, not pattern specificity: a
+				// mtime-ranked scan cannot early-exit, so a "narrow" pattern over a
+				// huge tree still times out. Say so instead of implying the pattern
+				// was too broad.
+				const notice =
+					sortedPaths.length > 0
+						? `glob timed out after ${seconds}s; returning ${sortedPaths.length} partial matches — results are incomplete, scope to a deeper directory instead of retrying blindly`
+						: `Glob timed out after ${seconds}s before finding any matches — the scan is incomplete, NOT proof of absence. The walk is bounded by directory size, not pattern width; scope the search to a deeper directory (e.g. \`sub/dir/*.ext\` instead of \`*.ext\` at a huge root).`;
+				return buildResult(sortedPaths, { notice, forceTruncated: true, timedOut: true });
 			}
 
 			// Merge per-target results: native glob already ranks each target's own
@@ -468,12 +518,15 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 // =============================================================================
 
 interface GlobRenderArgs {
+	path?: string | string[];
+	/** Legacy pre-`path` argument name; kept so historical transcripts still render a scope. */
 	paths?: string | string[];
 	limit?: number;
 }
 
-function formatGlobRenderPaths(paths: GlobRenderArgs["paths"]): string | undefined {
-	return Array.isArray(paths) ? paths.join(", ") : paths;
+function formatGlobRenderPaths(args: GlobRenderArgs | undefined): string | undefined {
+	const list = toPathList(args?.path ?? args?.paths);
+	return list.length > 0 ? list.join(", ") : undefined;
 }
 
 const COLLAPSED_LIST_LIMIT = PREVIEW_LIMITS.COLLAPSED_ITEMS;
@@ -493,7 +546,7 @@ export const globToolRenderer = {
 				icon: "pending",
 				title: "Glob",
 				titleColor: "toolTitle",
-				description: formatGlobRenderPaths(args.paths) || "*",
+				description: formatGlobRenderPaths(args) || "*",
 				meta,
 			},
 			uiTheme,
@@ -533,7 +586,7 @@ export const globToolRenderer = {
 					iconOverride: globStatusIcon(uiTheme),
 					title: "Glob",
 					titleColor: "toolTitle",
-					description: formatGlobRenderPaths(args?.paths),
+					description: formatGlobRenderPaths(args),
 					meta: [formatCount("file", lines.length)],
 				},
 				uiTheme,
@@ -568,17 +621,20 @@ export const globToolRenderer = {
 			missingPaths.length > 0 ? uiTheme.fg("warning", `skipped missing: ${missingPaths.join(", ")}`) : undefined;
 
 		if (fileCount === 0) {
+			// `truncated` on an empty result means the scan timed out mid-walk —
+			// render "incomplete", not a definitive "No files found".
+			const emptyLabel = truncated ? "No matches before timeout (scan incomplete)" : "No files found";
 			const header = renderStatusLine(
 				{
 					icon: "warning",
 					title: "Glob",
 					titleColor: "toolTitle",
-					description: formatGlobRenderPaths(args?.paths),
-					meta: ["0 files"],
+					description: formatGlobRenderPaths(args),
+					meta: truncated ? ["0 files", uiTheme.fg("warning", "timed out")] : ["0 files"],
 				},
 				uiTheme,
 			);
-			const lines = [header, formatEmptyMessage("No files found", uiTheme)];
+			const lines = [header, formatEmptyMessage(emptyLabel, uiTheme)];
 			if (missingNote) lines.push(missingNote);
 			return new Text(lines.join("\n"), 1, 0);
 		}
@@ -590,7 +646,7 @@ export const globToolRenderer = {
 				...(truncated ? { icon: "warning" as const } : { iconOverride: globStatusIcon(uiTheme) }),
 				title: "Glob",
 				titleColor: "toolTitle",
-				description: formatGlobRenderPaths(args?.paths),
+				description: formatGlobRenderPaths(args),
 				meta,
 			},
 			uiTheme,

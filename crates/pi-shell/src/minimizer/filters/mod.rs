@@ -376,8 +376,15 @@ fn uv_wrapper_tool<'a>(ctx: &'a MinimizerCtx<'_>) -> Option<&'a str> {
 /// is already a single flag token and needs no entry here.
 const WRAPPER_VALUE_OPTIONS: &[&str] = &[
 	// uv run
-	"--with",
+	"--extra",
+	"--group",
+	"--only-group",
+	"--no-group",
+	"--editable",
+	"--no-editable-package",
+	"--env-file",
 	"--with-requirements",
+	"--with",
 	"--with-editable",
 	"--python",
 	"-p",
@@ -393,12 +400,26 @@ const WRAPPER_VALUE_OPTIONS: &[&str] = &[
 	"--cache-dir",
 	"--config-file",
 	"--refresh-package",
+	"--refresh",
+	"--reinstall",
+	"--reinstall-package",
+	"--upgrade",
+	"--upgrade-package",
 	"--resolution",
 	"--prerelease",
 	"--exclude-newer",
+	"--exclude-newer-package",
 	"--link-mode",
 	"--color",
 	"--python-preference",
+	"--python-platform",
+	"--index-strategy",
+	"--keyring-provider",
+	"--fork-strategy",
+	"--no-sources-package",
+	"--inexact",
+	"--no-inexact-package",
+	"--allow-insecure-host",
 	// npx / pnpm dlx
 	"--package",
 	"-c",
@@ -487,7 +508,7 @@ fn wrapper_invoked_tool<'a>(ctx: &'a MinimizerCtx<'_>, tools: &[&'a str]) -> Opt
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::minimizer::MinimizerConfig;
+	use crate::minimizer::{MinimizerConfig, engine::MIN_MINIMIZE_CHARS};
 
 	fn ctx<'a>(
 		program: &'a str,
@@ -496,6 +517,14 @@ mod tests {
 		config: &'a MinimizerConfig,
 	) -> MinimizerCtx<'a> {
 		MinimizerCtx { program, subcommand, command, config }
+	}
+
+	fn minimizable_input(input: &str) -> String {
+		let mut output = input.to_string();
+		while output.chars().count() < MIN_MINIMIZE_CHARS {
+			output.push('\n');
+		}
+		output
 	}
 
 	#[test]
@@ -607,6 +636,36 @@ mod tests {
 	}
 
 	#[test]
+	fn uv_wrapper_skips_uv_run_value_options_before_tool() {
+		let config = MinimizerConfig::default();
+		for command in [
+			"uv run --env-file .env pytest",
+			"uv run --group test pytest",
+			"uv run --python-platform linux pytest",
+			"uv run --index-strategy first-index pytest",
+			"uv run --exclude-newer-package foo=2025-01-01 pytest",
+		] {
+			assert_eq!(
+				uv_wrapper_tool(&ctx("uv", Some("run"), command, &config)),
+				Some("pytest"),
+				"{command}"
+			);
+		}
+	}
+
+	#[test]
+	fn uv_wrapper_does_not_treat_uv_run_option_values_as_tools() {
+		let config = MinimizerConfig::default();
+		for command in [
+			"uv run --env-file pytest echo hi",
+			"uv run --group pytest echo hi",
+			"uv run --no-sources-package pytest echo hi",
+		] {
+			assert_eq!(uv_wrapper_tool(&ctx("uv", Some("run"), command, &config)), None, "{command}");
+		}
+	}
+
+	#[test]
 	fn uv_run_with_option_value_is_left_opaque() {
 		let config = MinimizerConfig::default();
 		// `pytest` is the value of `--with`, the invoked command is `echo` — output
@@ -633,7 +692,7 @@ mod tests {
 	#[test]
 	fn uv_run_pytest_routes_to_python_filter() {
 		let config = MinimizerConfig::default();
-		let context = ctx("uv", Some("run"), "uv run pytest", &config);
+		let context = ctx("uv", Some("run"), "uv run --extra turso pytest", &config);
 		let input = "============================= test session starts \
 		             ==============================\ncollected 2 items\n\na.py .\nb.py \
 		             F\n\n=================================== FAILURES \
@@ -974,9 +1033,11 @@ mod tests {
 	fn bundle_exec_rails_db_migrate_routes_to_def() {
 		let config = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("bundle", Some("exec"), "bundle exec rails db:migrate", &config);
-		let input = "== 20240115 CreateUsers: migrating\n-- create_table(:users)\n   -> 0.0234s\n== \
-		             20240115 CreateUsers: migrated\n";
-		let out = filter(&context, input, 0);
+		let input = minimizable_input(
+			"== 20240115 CreateUsers: migrating\n-- create_table(:users)\n   -> 0.0234s\n== 20240115 \
+			 CreateUsers: migrated\n",
+		);
+		let out = filter(&context, &input, 0);
 		assert!(out.changed);
 		assert!(out.text.contains("CreateUsers"));
 		assert!(!out.text.contains("-- create_table"));
@@ -986,8 +1047,10 @@ mod tests {
 	fn bundle_exec_rails_routes_routes_to_def() {
 		let config = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("bundle", Some("exec"), "bundle exec rails routes", &config);
-		let input = "                                  Prefix Verb   URI Pattern                                                                                       Controller#Action\n                                    root GET    /                                                                                                 home#index\n";
-		let out = filter(&context, input, 0);
+		let input = minimizable_input(
+			"                                  Prefix Verb   URI Pattern                                                                                       Controller#Action\n                                    root GET    /                                                                                                 home#index\n",
+		);
+		let out = filter(&context, &input, 0);
 		assert!(out.changed);
 		assert!(!out.text.contains("Prefix"));
 		assert!(out.text.contains("root GET"));
@@ -997,9 +1060,11 @@ mod tests {
 	fn bundle_exec_rspec_routes_to_ruby_filter() {
 		let config = MinimizerConfig { enabled: true, ..Default::default() };
 		let context = ctx("bundle", Some("exec"), "bundle exec rspec", &config);
-		let input = "Randomized with seed 12345\n\nUserController\n  GET /users\n    returns a list \
-		             of users\n\nFinished in 0.45 seconds\n5 examples, 0 failures\n";
-		let out = filter(&context, input, 0);
+		let input = minimizable_input(
+			"Randomized with seed 12345\n\nUserController\n  GET /users\n    returns a list of \
+			 users\n\nFinished in 0.45 seconds\n5 examples, 0 failures\n",
+		);
+		let out = filter(&context, &input, 0);
 		assert!(out.changed);
 		assert!(out.text.contains("5 examples, 0 failures"));
 		assert!(!out.text.contains("returns a list of users"));

@@ -44,4 +44,14 @@ describe("renderStatusLine", () => {
 		expect(rendered).not.toContain("\n");
 		expect(rendered).toContain("a b c");
 	});
+
+	it("allows meta entries to use the title accent color", async () => {
+		const uiTheme = (await getThemeByName("dark"))!;
+		expect(uiTheme).toBeDefined();
+		const rendered = renderStatusLine(
+			{ icon: "success", title: "Task", meta: ["1 agent: task"], metaColor: "accent" },
+			uiTheme,
+		);
+		expect(rendered).toContain(`${uiTheme.getFgAnsi("accent")}1 agent: task\x1b[39m`);
+	});
 });

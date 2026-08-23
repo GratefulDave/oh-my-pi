@@ -9,22 +9,21 @@
  * endpoint.
  */
 import { type AuthStorage, type FetchImpl, type OAuthAccess, withOAuthAccess } from "@oh-my-pi/pi-ai";
-import {
-	ANTIGRAVITY_SYSTEM_INSTRUCTION,
-	getAntigravityUserAgent,
-	getGeminiCliHeaders,
-} from "@oh-my-pi/pi-catalog/wire/gemini-headers";
-import { fetchWithRetry } from "@oh-my-pi/pi-utils";
+import { getAntigravityUserAgent, getGeminiCliHeaders } from "@oh-my-pi/pi-catalog/wire/gemini-headers";
+import { fetchWithRetry, USER_AGENT } from "@oh-my-pi/pi-utils";
 
 import type { SearchCitation, SearchResponse, SearchSource } from "../../../web/search/types";
 import { SearchProviderError } from "../../../web/search/types";
+import { formatQuery, GOOGLE_QUERY_SYNTAX, parseSearchQuery, type StructuredQuery } from "../query";
 import type { SearchParams } from "./base";
 import { SearchProvider } from "./base";
 import { classifyProviderHttpError, withHardTimeout } from "./utils";
 
 const DEFAULT_ENDPOINT = "https://cloudcode-pa.googleapis.com";
 const DEVELOPER_API_PROVIDER = "google";
-const DEVELOPER_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
+const CLOUDFLARE_GATEWAY_PROVIDER = "cloudflare-ai-gateway";
+const DEFAULT_DEVELOPER_API_HOST = "https://generativelanguage.googleapis.com";
+const DEVELOPER_API_VERSION = "v1beta";
 const ANTIGRAVITY_DAILY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
 const ANTIGRAVITY_SANDBOX_ENDPOINT = "https://daily-cloudcode-pa.sandbox.googleapis.com";
 const ANTIGRAVITY_ENDPOINT_FALLBACKS = [ANTIGRAVITY_DAILY_ENDPOINT, ANTIGRAVITY_SANDBOX_ENDPOINT] as const;
@@ -32,6 +31,39 @@ const DEFAULT_MODEL = "gemini-2.5-flash";
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 const RATE_LIMIT_BUDGET_MS = 5 * 60 * 1000;
+
+function resolveGeminiSearchModel(configuredModel: string | undefined): string {
+	const envModel = Bun.env.GEMINI_SEARCH_MODEL?.trim();
+	if (envModel) return envModel;
+	const model = configuredModel?.trim();
+	return model || DEFAULT_MODEL;
+}
+
+interface GeminiDeveloperEndpoint {
+	url: string;
+	authProvider: typeof DEVELOPER_API_PROVIDER | typeof CLOUDFLARE_GATEWAY_PROVIDER;
+	isCloudflareGateway: boolean;
+}
+
+function resolveGeminiDeveloperEndpoint(): GeminiDeveloperEndpoint {
+	const configuredHost = Bun.env.GOOGLE_GEMINI_BASE_URL?.trim().replace(/\/+$/, "");
+	const host = configuredHost || DEFAULT_DEVELOPER_API_HOST;
+	let parsed: URL;
+	try {
+		parsed = new URL(host);
+	} catch {
+		throw new SearchProviderError("gemini", "GOOGLE_GEMINI_BASE_URL must be a valid absolute URL", 400);
+	}
+	if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+		throw new SearchProviderError("gemini", "GOOGLE_GEMINI_BASE_URL must use HTTP or HTTPS", 400);
+	}
+	const isCloudflareGateway = parsed.hostname === "gateway.ai.cloudflare.com";
+	return {
+		url: `${host}/${DEVELOPER_API_VERSION}`,
+		authProvider: isCloudflareGateway ? CLOUDFLARE_GATEWAY_PROVIDER : DEVELOPER_API_PROVIDER,
+		isCloudflareGateway,
+	};
+}
 
 const GEMINI_PROVIDERS = ["google-gemini-cli", "google-antigravity"] as const;
 type GeminiProviderId = (typeof GEMINI_PROVIDERS)[number];
@@ -44,6 +76,8 @@ interface GeminiToolParams {
 
 export interface GeminiSearchParams extends GeminiToolParams {
 	query: string;
+	/** Pre-parsed structured query; falls back to parsing `query` when omitted. */
+	parsedQuery?: StructuredQuery;
 	system_prompt?: string;
 	num_results?: number;
 	/** Maximum output tokens. */
@@ -51,10 +85,12 @@ export interface GeminiSearchParams extends GeminiToolParams {
 	/** Sampling temperature (0–1). Lower = more focused/factual. */
 	temperature?: number;
 	signal?: AbortSignal;
+	timeoutMs?: number;
 	authStorage: AuthStorage;
 	sessionId?: string;
 	fetch?: FetchImpl;
 	antigravityEndpointMode?: "auto" | "production" | "sandbox";
+	geminiModel?: string;
 }
 
 export function buildGeminiRequestTools(params: GeminiToolParams): Array<Record<string, Record<string, unknown>>> {
@@ -160,13 +196,16 @@ interface CloudCodeResponseChunk {
 	response?: GeminiModelResponse;
 }
 
-async function parseGeminiSearchStream(body: ReadableStream<Uint8Array>): Promise<GeminiSearchResult> {
+async function parseGeminiSearchStream(
+	body: ReadableStream<Uint8Array>,
+	fallbackModel: string,
+): Promise<GeminiSearchResult> {
 	const answerParts: string[] = [];
 	const sources: SearchSource[] = [];
 	const citations: SearchCitation[] = [];
 	const searchQueries: string[] = [];
 	const seenUrls = new Set<string>();
-	let model = DEFAULT_MODEL;
+	let model = fallbackModel;
 	let usage: { inputTokens: number; outputTokens: number; totalTokens: number } | undefined;
 
 	const reader = body.getReader();
@@ -277,6 +316,79 @@ async function parseGeminiSearchStream(body: ReadableStream<Uint8Array>): Promis
 	};
 }
 
+function isGroundingRedirectUrl(url: string): boolean {
+	try {
+		const parsed = new URL(url);
+		return (
+			parsed.hostname === "vertexaisearch.cloud.google.com" && parsed.pathname.includes("/grounding-api-redirect")
+		);
+	} catch {
+		return false;
+	}
+}
+
+async function resolveGroundingRedirect(
+	proxyUrl: string,
+	fetchImpl: FetchImpl | undefined,
+	signal: AbortSignal | undefined,
+): Promise<string> {
+	try {
+		const response = await (fetchImpl ?? fetch)(proxyUrl, {
+			method: "HEAD",
+			redirect: "manual",
+			signal: withHardTimeout(signal, 5000),
+		});
+		const location = response.headers.get("location");
+		if (!location) return proxyUrl;
+		const resolved = new URL(location, proxyUrl);
+		return resolved.protocol === "http:" || resolved.protocol === "https:" ? resolved.toString() : proxyUrl;
+	} catch {
+		return proxyUrl;
+	}
+}
+
+async function finalizeGeminiSearchResult(
+	result: GeminiSearchResult,
+	fetchImpl: FetchImpl | undefined,
+	signal: AbortSignal | undefined,
+): Promise<GeminiSearchResult> {
+	if (!result.answer && result.sources.length === 0) {
+		throw new SearchProviderError("gemini", "Gemini API returned an empty grounded response", 502);
+	}
+
+	const redirectUrls = new Set<string>();
+	for (const source of result.sources) {
+		if (isGroundingRedirectUrl(source.url)) redirectUrls.add(source.url);
+	}
+	for (const citation of result.citations) {
+		if (isGroundingRedirectUrl(citation.url)) redirectUrls.add(citation.url);
+	}
+	if (redirectUrls.size === 0) return result;
+
+	signal?.throwIfAborted();
+	const resolvedEntries = await Promise.all(
+		[...redirectUrls].map(async url => [url, await resolveGroundingRedirect(url, fetchImpl, signal)] as const),
+	);
+	signal?.throwIfAborted();
+	const resolvedUrls = new Map(resolvedEntries);
+	for (const source of result.sources) {
+		source.url = resolvedUrls.get(source.url) ?? source.url;
+	}
+	for (const citation of result.citations) {
+		citation.url = resolvedUrls.get(citation.url) ?? citation.url;
+	}
+
+	const seenUrls = new Set<string>();
+	let writeIndex = 0;
+	for (const source of result.sources) {
+		if (seenUrls.has(source.url)) continue;
+		seenUrls.add(source.url);
+		result.sources[writeIndex++] = source;
+	}
+	result.sources.length = writeIndex;
+	return result;
+}
+
 /**
  * Calls the Cloud Code Assist API with Google Search grounding enabled.
  *
@@ -287,6 +399,7 @@ async function parseGeminiSearchStream(body: ReadableStream<Uint8Array>): Promis
  */
 async function callGeminiSearch(
 	auth: GeminiAuth,
+	model: string,
 	query: string,
 	systemPrompt: string | undefined,
 	maxOutputTokens: number | undefined,
@@ -294,6 +407,7 @@ async function callGeminiSearch(
 	toolParams: GeminiToolParams,
 	fetchImpl: FetchImpl | undefined,
 	signal: AbortSignal | undefined,
+	timeoutMs: number | undefined,
 	mode?: "auto" | "production" | "sandbox",
 ): Promise<GeminiSearchResult> {
 	let endpoints: string[];
@@ -318,19 +432,18 @@ async function callGeminiSearch(
 				requestId: `agent-${crypto.randomUUID()}`,
 			}
 		: {
-				userAgent: "pi-coding-agent",
-				requestId: `pi-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+				userAgent: USER_AGENT,
+				requestId: `omp-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
 			};
 
 	const normalizedSystemPrompt = systemPrompt?.toWellFormed();
-	const systemInstructionParts: Array<{ text: string }> = [
-		...(auth.isAntigravity ? [{ text: ANTIGRAVITY_SYSTEM_INSTRUCTION }] : []),
-		...(normalizedSystemPrompt ? [{ text: normalizedSystemPrompt }] : []),
-	];
+	const systemInstructionParts: Array<{ text: string }> = normalizedSystemPrompt
+		? [{ text: normalizedSystemPrompt }]
+		: [];
 
 	const requestBody: Record<string, unknown> = {
 		project: auth.projectId,
-		model: DEFAULT_MODEL,
+		model,
 		request: {
 			contents: [
 				{
@@ -368,7 +481,7 @@ async function callGeminiSearch(
 			...headers,
 		},
 		body: JSON.stringify(requestBody),
-		signal: withHardTimeout(signal),
+		signal: withHardTimeout(signal, timeoutMs),
 	});
 
 	let response: Response | undefined;
@@ -403,7 +516,8 @@ async function callGeminiSearch(
 	}
 
 	if (!response?.ok) {
-		const errorText = response ? await response.text() : "Network error";
+		const rawErrorText = response ? await response.text() : "Network error";
+		const errorText = auth.accessToken ? rawErrorText.split(auth.accessToken).join("[redacted]") : rawErrorText;
 		const status = response?.status ?? 502;
 		const classified = classifyProviderHttpError("gemini", status, errorText);
 		if (classified) throw classified;
@@ -414,11 +528,13 @@ async function callGeminiSearch(
 		throw new SearchProviderError("gemini", "Gemini API returned no response body", 500);
 	}
 
-	return parseGeminiSearchStream(response.body);
+	return finalizeGeminiSearchResult(await parseGeminiSearchStream(response.body, model), fetchImpl, signal);
 }
 
 async function callGeminiDeveloperSearch(
 	apiKey: string,
+	endpoint: GeminiDeveloperEndpoint,
+	model: string,
 	query: string,
 	systemPrompt: string | undefined,
 	maxOutputTokens: number | undefined,
@@ -426,6 +542,7 @@ async function callGeminiDeveloperSearch(
 	toolParams: GeminiToolParams,
 	fetchImpl: FetchImpl | undefined,
 	signal: AbortSignal | undefined,
+	timeoutMs: number | undefined,
 ): Promise<GeminiSearchResult> {
 	const normalizedSystemPrompt = systemPrompt?.toWellFormed();
 	const requestBody: Record<string, unknown> = {
@@ -454,26 +571,26 @@ async function callGeminiDeveloperSearch(
 		requestBody.generationConfig = generationConfig;
 	}
 
-	const response = await fetchWithRetry(
-		() => `${DEVELOPER_API_ENDPOINT}/models/${DEFAULT_MODEL}:streamGenerateContent?alt=sse`,
-		{
-			method: "POST",
-			headers: {
-				"x-goog-api-key": apiKey,
-				"Content-Type": "application/json",
-				Accept: "text/event-stream",
-			},
-			body: JSON.stringify(requestBody),
-			signal: withHardTimeout(signal),
-			fetch: fetchImpl,
-			maxAttempts: MAX_RETRIES + 1,
-			defaultDelayMs: attempt => BASE_DELAY_MS * 2 ** attempt,
-			maxDelayMs: RATE_LIMIT_BUDGET_MS,
+	const response = await fetchWithRetry(() => `${endpoint.url}/models/${model}:streamGenerateContent?alt=sse`, {
+		method: "POST",
+		headers: {
+			...(endpoint.isCloudflareGateway
+				? { "cf-aig-authorization": `Bearer ${apiKey}` }
+				: { "x-goog-api-key": apiKey }),
+			"Content-Type": "application/json",
+			Accept: "text/event-stream",
 		},
-	);
+		body: JSON.stringify(requestBody),
+		signal: withHardTimeout(signal, timeoutMs),
+		fetch: fetchImpl,
+		maxAttempts: MAX_RETRIES + 1,
+		defaultDelayMs: attempt => BASE_DELAY_MS * 2 ** attempt,
+		maxDelayMs: RATE_LIMIT_BUDGET_MS,
+	});
 
 	if (!response.ok) {
-		const errorText = await response.text();
+		const rawErrorText = await response.text();
+		const errorText = apiKey ? rawErrorText.split(apiKey).join("[redacted]") : rawErrorText;
 		const classified = classifyProviderHttpError("gemini", response.status, errorText);
 		if (classified) throw classified;
 		throw new SearchProviderError(
@@ -487,13 +604,20 @@ async function callGeminiDeveloperSearch(
 		throw new SearchProviderError("gemini", "Gemini API returned no response body", 500);
 	}
 
-	return parseGeminiSearchStream(response.body);
+	return finalizeGeminiSearchResult(await parseGeminiSearchStream(response.body, model), fetchImpl, signal);
 }
 
 /**
  * Executes a web search using Google Gemini with Google Search grounding.
  */
 export async function searchGemini(params: GeminiSearchParams): Promise<SearchResponse> {
+	const selectedModel = resolveGeminiSearchModel(params.geminiModel);
+	// Gemini's googleSearch grounding forwards the query to Google Search, which
+	// understands the classic operator set natively. Normalize directive aliases
+	// (domain: → site:, since: → after:, …) to canonical Google forms; leave
+	// directive-free queries byte-identical.
+	const parsed = params.parsedQuery ?? parseSearchQuery(params.query);
+	const searchQuery = parsed.hasDirectives ? formatQuery(parsed, GOOGLE_QUERY_SYNTAX) : params.query;
 	const seed = await findGeminiAuth(params.authStorage, params.sessionId, params.signal);
 	let result: GeminiSearchResult;
 
@@ -513,7 +637,8 @@ export async function searchGemini(params: GeminiSearchParams): Promise<SearchRe
 						projectId: access.projectId ?? seed.projectId,
 						isAntigravity,
 					},
-					params.query,
+					selectedModel,
+					searchQuery,
 					params.system_prompt,
 					params.max_output_tokens,
 					params.temperature,
@@ -524,22 +649,28 @@ export async function searchGemini(params: GeminiSearchParams): Promise<SearchRe
 					},
 					params.fetch,
 					params.signal,
+					params.timeoutMs,
 					params.antigravityEndpointMode,
 				),
 			{ sessionId: params.sessionId, signal: params.signal, seed: seed.access },
 		);
 	} else {
-		const apiKey = await params.authStorage.getApiKey(DEVELOPER_API_PROVIDER, params.sessionId, {
+		const endpoint = resolveGeminiDeveloperEndpoint();
+		const apiKey = await params.authStorage.getApiKey(endpoint.authProvider, params.sessionId, {
 			signal: params.signal,
 		});
 		if (!apiKey) {
 			throw new Error(
-				"No Gemini credentials found. Set GEMINI_API_KEY, configure an API key for provider \"google\", or login with 'omp /login google-gemini-cli' / 'omp /login google-antigravity' to enable Gemini web search.",
+				endpoint.isCloudflareGateway
+					? 'No Cloudflare AI Gateway credential found. Configure provider "cloudflare-ai-gateway" or set CLOUDFLARE_AI_GATEWAY_API_KEY.'
+					: "No Gemini credentials found. Set GEMINI_API_KEY, configure an API key for provider \"google\", or login with 'omp /login google-gemini-cli' / 'omp /login google-antigravity' to enable Gemini web search.",
 			);
 		}
 		result = await callGeminiDeveloperSearch(
 			apiKey,
-			params.query,
+			endpoint,
+			selectedModel,
+			searchQuery,
 			params.system_prompt,
 			params.max_output_tokens,
 			params.temperature,
@@ -550,6 +681,7 @@ export async function searchGemini(params: GeminiSearchParams): Promise<SearchRe
 			},
 			params.fetch,
 			params.signal,
+			params.timeoutMs,
 		);
 	}
 
@@ -579,12 +711,18 @@ export class GeminiProvider extends SearchProvider {
 		// Cheap, in-memory check — avoids driving the refresh pipeline during
 		// the provider-chain probe. `searchGemini` refreshes OAuth lazily on the
 		// actual request and resolves developer API keys through AuthStorage.
-		return hasGeminiOAuth(authStorage) || authStorage.hasAuth(DEVELOPER_API_PROVIDER);
+		if (hasGeminiOAuth(authStorage)) return true;
+		try {
+			return authStorage.hasAuth(resolveGeminiDeveloperEndpoint().authProvider);
+		} catch {
+			return false;
+		}
 	}
 
 	search(params: SearchParams): Promise<SearchResponse> {
 		return searchGemini({
 			query: params.query,
+			parsedQuery: params.parsedQuery,
 			system_prompt: params.systemPrompt,
 			num_results: params.numSearchResults ?? params.limit,
 			max_output_tokens: params.maxOutputTokens,
@@ -593,9 +731,11 @@ export class GeminiProvider extends SearchProvider {
 			code_execution: params.codeExecution,
 			url_context: params.urlContext,
 			signal: params.signal,
+			timeoutMs: params.timeoutMs,
 			authStorage: params.authStorage,
 			sessionId: params.sessionId,
 			fetch: params.fetch,
+			geminiModel: params.geminiModel,
 		});
 	}
 }

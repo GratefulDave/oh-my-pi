@@ -1,0 +1,101 @@
+disabledExtensions:
+- extension-module:semantic-search
+- extension-module:semantic-search.bundle
+- extension-module:omnidelegate.bundle
+- skill:launch-comms
+- skill:linear-cli
+- skill:omx-antigravity-restore
+- skill:rtk
+- skill:tdd
+- skill:.omc
+- skill:acpx
+- skill:actor-swarm-coordinator
+- skill:agentic-factory-orchestrator
+- skill:analytics-marketing
+- skill:analytics-marketing-onboard
+- skill:arch-review
+- skill:bugfix
+- skill:checkpoint
+- skill:ci-triage
+- skill:cloak-playwright
+- skill:code-intel-benchmark
+- skill:code-retrieval
+- skill:context-mode
+- skill:cross-repo-memory
+- skill:damage-control
+- skill:diagnose
+- skill:domain-integration
+- skill:domain-integration-onboard
+- skill:factory-discovery
+- skill:factory-launch
+- skill:factory-librarian
+- skill:factory-onboard
+- skill:factory-orchestrator
+- skill:fallow
+- skill:find-skills
+- skill:grill-me
+- skill:grill-with-docs
+- skill:handoff
+- skill:herdr-backend
+- skill:icm
+- skill:improve-codebase-architecture
+- skill:incident-factory-commander
+- skill:li-post
+- skill:litigation-research-report
+- skill:mcp-server-factory
+- skill:mcp-server-onboard
+- skill:multi-repo-onboard
+- skill:multi-repo-orchestrator
+- skill:next-best-practices
+- skill:next-cache-components
+- skill:next-upgrade
+- skill:plan-brownfield
+- skill:planf3
+- skill:portless
+- skill:pr-steward
+- skill:prd-to-strav
+- skill:prototype
+- skill:qa-e2e-runner
+- skill:refactor-opportunities
+- skill:release-gatekeeper
+- skill:schema-migration-orchestrator
+- skill:security-red-team
+- skill:semantic-compression
+- skill:setup-matt-pocock-skills
+- skill:skybridge
+- skill:system-prompts
+- skill:team-workflow-prep
+- skill:to-issues
+- skill:to-prd
+- skill:triage
+- skill:tsx-validate
+- skill:tutti-agent-catalog
+- skill:tutti-launch
+- skill:vercel-composition-patterns
+- skill:vercel-react-best-practices
+- skill:vercel-react-native-skills
+- skill:vercel-react-view-transitions
+- skill:web-design-guidelines
+- skill:workflow-onboard
+- skill:workspace-worktree-manager
+- skill:write-a-skill
+- skill:zoom-out
+- extension-module:herdr-omp-agent-state
+skills:
+  includeSkills:
+  - caveman
+  - caveman-help
+  - caveman-review
+  - caveman-compress
+  - cavecrew
+  - caveman-stats
+  - caveman-commit
+  - codebase-memory
+  - compact-json
+  - rehydrate
+  - deep-interview
+  - library
+  - linear-cli
+  - deepinit
+  - omp-fork-upstream-sync
+  - lex-fork-maintainability

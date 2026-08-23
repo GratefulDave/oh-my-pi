@@ -1,17 +1,29 @@
 /**
  * Contract: the anchored subagent HUD (rendered above the editor, next to the
- * Todos block) lists exactly the running *detached* subagents as
- * `Id: description` rows and yields no output once nothing qualifies, so the
- * block self-clears. Sync task spawns and eval `agent()` spawns are excluded:
- * their progress is already rendered inline (tool block / eval cell).
+ * Todos block) lists live *detached* subagents in the pi-subagents-style
+ * `Agents` tree. Finished subagents yield no anchored output because their
+ * final snapshot belongs in transcript scrollback. Sync task spawns and eval
+ * `agent()` spawns are excluded: their progress is already rendered inline
+ * (tool block / eval cell).
  */
-import { beforeAll, describe, expect, it } from "bun:test";
-import { renderSubagentHudLines } from "@oh-my-pi/pi-coding-agent/modes/interactive-mode";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
+import * as path from "node:path";
+import { Agent } from "@oh-my-pi/pi-agent-core";
+import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
+import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import {
+	InteractiveMode,
+	renderSubagentHudLines,
+	renderToolCounterLine,
+} from "@oh-my-pi/pi-coding-agent/modes/interactive-mode";
 import {
 	type ObservableSession,
 	SessionObserverRegistry,
 } from "@oh-my-pi/pi-coding-agent/modes/session-observer-registry";
 import { initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
+import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import {
 	type AgentProgress,
 	type SubagentLifecyclePayload,
@@ -20,6 +32,7 @@ import {
 	TASK_SUBAGENT_PROGRESS_CHANNEL,
 } from "@oh-my-pi/pi-coding-agent/task";
 import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
+import { TempDir } from "@oh-my-pi/pi-utils";
 
 function makeSession(overrides: Partial<ObservableSession> & { id: string }): ObservableSession {
 	return {
@@ -89,14 +102,85 @@ describe("subagent HUD lines", () => {
 		await initTheme();
 	});
 
-	it("renders running subagents as Id: description under a Subagents header", () => {
+	it("renders aggregate tool counts in descending count order", () => {
+		const out = Bun.stripANSI(
+			renderToolCounterLine(
+				new Map([
+					["bash", 2],
+					["read", 4],
+					["mcp__context_mode_ctx_execute", 3],
+				]),
+				200,
+			),
+		);
+		expect(out).toContain("tools:9");
+		expect(out).toContain("read:4");
+		expect(out).toContain("mcp__context_mode_ctx_execute:3");
+		expect(out).toContain("bash:2");
+		expect(out.indexOf("read:4")).toBeLessThan(out.indexOf("mcp__context_mode_ctx_execute:3"));
+		expect(out.indexOf("mcp__context_mode_ctx_execute:3")).toBeLessThan(out.indexOf("bash:2"));
+	});
+
+	it("renders running subagents as agent rows under an Agents header", () => {
 		const out = render([
-			makeSession({ id: "AuthLoader", description: "Refactoring the auth flow" }),
-			makeSession({ id: "SchemaMigrator", description: "Migrating the users table" }),
+			makeSession({ id: "AuthLoader", agent: "task", description: "Refactoring the auth flow" }),
+			makeSession({ id: "SchemaMigrator", agent: "reviewer", description: "Migrating the users table" }),
 		]);
-		expect(out).toContain("Subagents");
-		expect(out).toContain("AuthLoader: Refactoring the auth flow");
-		expect(out).toContain("SchemaMigrator: Migrating the users table");
+		expect(out).toContain("Agents");
+		expect(out).toContain("[task] AuthLoader: Refactoring the auth flow");
+		expect(out).toContain("[reviewer] SchemaMigrator: Migrating the users table");
+		expect(out).toContain("thinking…");
+	});
+
+	it("shows a non-default role badge and hides descriptions that only echo the id", () => {
+		const withRole = render([
+			makeSession({
+				id: "AuthLoader",
+				agent: "scout",
+				description: "Refactor the auth flow",
+			}),
+		]);
+		expect(withRole).toContain("AuthLoader");
+		expect(withRole).toMatch(/AuthLoader.*scout/);
+		expect(withRole).toContain("Refactor the auth flow");
+
+		const echoed = render([
+			makeSession({
+				id: "AuthLoader",
+				agent: "scout",
+				description: "AuthLoader",
+			}),
+		]);
+		expect(echoed).toContain("AuthLoader");
+		expect(echoed).toMatch(/AuthLoader.*scout/);
+		expect(echoed).not.toContain("AuthLoader: AuthLoader");
+
+		const collision = render([
+			makeSession({
+				id: "AuthLoader-3",
+				agent: "scout",
+				description: "AuthLoader",
+			}),
+		]);
+		expect(collision).toContain("AuthLoader-3");
+		expect(collision).toMatch(/AuthLoader-3.*scout/);
+		expect(collision).not.toContain("AuthLoader-3: AuthLoader");
+
+		const mixedCase = render([
+			makeSession({
+				id: "AuthLoader-3",
+				agent: "scout",
+				description: "authloader",
+			}),
+		]);
+		expect(mixedCase).toContain("AuthLoader-3");
+		expect(mixedCase).not.toContain("AuthLoader-3: authloader");
+
+		const defaultWorker = render([
+			makeSession({ id: "SchemaMigrator", agent: "task", description: "Migrate users" }),
+		]);
+		expect(defaultWorker).toContain("SchemaMigrator: Migrate users");
+		expect(defaultWorker).not.toMatch(/SchemaMigrator.*task/);
 	});
 
 	it("only shows active subagents and clears once everything finished", () => {
@@ -123,8 +207,33 @@ describe("subagent HUD lines", () => {
 			makeSession({ id: "Worker", progress: makeProgress({ id: "Worker", task: "Investigate flaky CI on macOS" }) }),
 		]);
 		expect(fromTask).toContain("Worker Investigate flaky CI on macOS");
-	});
 
+		const multiLineTask = render([
+			makeSession({
+				id: "ReviewShell",
+				agent: "scout",
+				progress: makeProgress({
+					id: "ReviewShell",
+					agent: "scout",
+					task: "Complete assignment thoroughly:\n\n# Target\nFiles: src/foo.ts",
+				}),
+			}),
+		]);
+		expect(multiLineTask).toContain("ReviewShell");
+		expect(multiLineTask).toContain("Complete assignment thoroughly: ↵ # Tar");
+		expect(multiLineTask).not.toContain("\n# Target");
+
+		const multiLineDesc = render([
+			makeSession({
+				id: "ReviewShell",
+				agent: "scout",
+				description: "First line\n\nSecond line",
+			}),
+		]);
+		expect(multiLineDesc).toContain("ReviewShell");
+		expect(multiLineDesc).toContain("First line ↵ Second line");
+		expect(multiLineDesc).not.toContain("\nSecond line");
+	});
 	it("hides non-detached spawns: sync task calls and eval agent() helpers", () => {
 		// Sync task spawn (parent blocked on the call) and eval `agent()` spawn
 		// (no detached flag at all) both stay off the HUD.
@@ -199,5 +308,100 @@ describe("subagent HUD lines", () => {
 		);
 
 		expect(activeIds()).toEqual(["SelectorSurfaces", "BlastRadius", "VariantsSurvey"]);
+	});
+
+	it("renders the first eight active detached subagents and summarizes the rest", () => {
+		const active = Array.from({ length: 10 }, (_, index) =>
+			makeSession({
+				id: `Worker${index}`,
+				description: `job ${index}`,
+			}),
+		);
+
+		const out = render(active, 120);
+
+		for (const session of active.slice(0, 8)) {
+			expect(out).toContain(`${session.id}: ${session.description}`);
+		}
+		for (const session of active.slice(8)) {
+			expect(out).not.toContain(`${session.id}: ${session.description}`);
+		}
+		expect(out).toContain("2 more running");
+	});
+});
+
+describe("InteractiveMode subagent observer UI sync", () => {
+	let tempDir: TempDir;
+	let authStorage: AuthStorage;
+	let session: AgentSession;
+	let mode: InteractiveMode;
+	let eventBus: EventBus;
+
+	beforeAll(async () => {
+		await initTheme();
+	});
+
+	beforeEach(async () => {
+		resetSettingsForTest();
+		tempDir = TempDir.createSync("@pi-subagent-observer-");
+		await Settings.init({
+			inMemory: true,
+			cwd: tempDir.path(),
+			overrides: { "startup.quiet": true },
+		});
+		authStorage = await AuthStorage.create(path.join(tempDir.path(), "testauth.db"));
+		const modelRegistry = new ModelRegistry(authStorage);
+		const model = modelRegistry.find("anthropic", "claude-sonnet-4-5");
+		if (!model) throw new Error("Expected claude-sonnet-4-5 to exist in registry");
+
+		eventBus = new EventBus();
+		session = new AgentSession({
+			agent: new Agent({
+				initialState: {
+					model,
+					systemPrompt: ["Test"],
+					tools: [],
+					messages: [],
+				},
+			}),
+			sessionManager: SessionManager.create(tempDir.path(), tempDir.path()),
+			settings: Settings.isolated({ "startup.quiet": true }),
+			modelRegistry,
+		});
+		mode = new InteractiveMode(session, "test", undefined, undefined, undefined, undefined, eventBus);
+	});
+
+	afterEach(async () => {
+		mode?.stop();
+		await session?.dispose();
+		authStorage?.close();
+		tempDir?.removeSync();
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+		resetSettingsForTest();
+	});
+
+	it("coalesces a burst of progress observer changes into one HUD rebuild and render request", async () => {
+		await mode.init({ suppressWelcomeIntro: true });
+		const requestRender = vi.spyOn(mode.ui, "requestRender").mockImplementation(() => {});
+		const rebuildHud = vi.spyOn(mode.subagentContainer, "clear");
+		vi.useFakeTimers();
+
+		for (let index = 0; index < 6; index++) {
+			eventBus.emit(
+				TASK_SUBAGENT_PROGRESS_CHANNEL,
+				makeProgressPayload(`BurstAgent${index}`, index, `Burst job ${index}`, true),
+			);
+		}
+
+		await Promise.resolve();
+		vi.runAllTimers();
+		await Promise.resolve();
+
+		const hud = Bun.stripANSI(mode.subagentContainer.render(120).join("\n"));
+		expect(hud).toContain("BurstAgent0: Burst job 0");
+		expect(hud).toContain("BurstAgent5: Burst job 5");
+		expect(rebuildHud).toHaveBeenCalledTimes(1);
+		expect(requestRender).toHaveBeenCalledTimes(1);
 	});
 });

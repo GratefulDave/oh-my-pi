@@ -1,11 +1,35 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs";
+import * as fsPromises from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
+import { type ExtensionModule, extensionModuleCapability } from "@oh-my-pi/pi-coding-agent/capability/extension-module";
 import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { initializeWithSettings } from "@oh-my-pi/pi-coding-agent/discovery";
-import { discoverAndLoadExtensions, loadExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
-import { getProjectAgentDir, TempDir } from "@oh-my-pi/pi-utils";
+import { getCapability, initializeWithSettings } from "@oh-my-pi/pi-coding-agent/discovery";
+import {
+	discoverAndLoadExtensions,
+	discoverExtensionPaths,
+	loadExtensions,
+} from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
+import { discoverSessionExtensionPaths } from "@oh-my-pi/pi-coding-agent/sdk";
+import {
+	__resetDirsFromEnvForTests,
+	getAgentDir,
+	getProfileRootDir,
+	getProjectAgentDir,
+	setAgentDir,
+	setProfile,
+	TempDir,
+} from "@oh-my-pi/pi-utils";
 import { filterUserScoped } from "./utils/filter-user-extensions";
+
+function restoreEnvValue(name: string, value: string | undefined): void {
+	if (value === undefined) {
+		delete process.env[name];
+	} else {
+		process.env[name] = value;
+	}
+}
 
 describe("extensions discovery", () => {
 	let tempDir: TempDir;
@@ -22,8 +46,9 @@ describe("extensions discovery", () => {
 		tempDir.removeSync();
 	});
 
-	const discoverForTest = async (configuredPaths: string[] = []) => {
-		const result = await discoverAndLoadExtensions(configuredPaths, tempDir.path());
+	const discoverForTest = async (configuredPaths: string[] = [], ambient = false) => {
+		const paths = ambient ? configuredPaths : [extensionsDir, ...configuredPaths];
+		const result = await discoverAndLoadExtensions(paths, tempDir.path(), undefined, undefined, { ambient });
 		return {
 			...result,
 			extensions: filterUserScoped(result.extensions, [tempDir.path(), ...configuredPaths]),
@@ -131,6 +156,92 @@ describe("extensions discovery", () => {
 		expect(result.extensions).toHaveLength(1);
 		expect(result.extensions[0].path).toContain("src");
 		expect(result.extensions[0].path).toContain("main.ts");
+	});
+
+	it("SDK explicit-only discovery loads package hooks without ambient package hooks", async () => {
+		const ambientPackage = path.join(tempDir.path(), "ambient-package");
+		fs.mkdirSync(path.join(ambientPackage, "hooks", "pre"), { recursive: true });
+		fs.writeFileSync(path.join(ambientPackage, "hooks", "pre", "ambient.ts"), extensionCodeWithTool("ambient-tool"));
+		fs.writeFileSync(
+			path.join(getProjectAgentDir(tempDir.path()), "settings.json"),
+			JSON.stringify({ extensions: [ambientPackage] }),
+		);
+
+		const packageDir = path.join(tempDir.path(), "explicit-package");
+		const sourceDir = path.join(packageDir, "src");
+		const hookDir = path.join(packageDir, "hooks", "pre");
+		fs.mkdirSync(sourceDir, { recursive: true });
+		fs.mkdirSync(hookDir, { recursive: true });
+		fs.writeFileSync(path.join(sourceDir, "main.ts"), extensionCodeWithTool("explicit-tool"));
+		fs.writeFileSync(path.join(hookDir, "read.ts"), extensionCodeWithTool("explicit-hook-tool"));
+		fs.writeFileSync(
+			path.join(packageDir, "package.json"),
+			JSON.stringify({
+				name: "explicit-package",
+				omp: {
+					extensions: ["./src/main.ts"],
+				},
+			}),
+		);
+
+		const settings = await Settings.init({
+			inMemory: true,
+			cwd: tempDir.path(),
+			overrides: { extensions: [ambientPackage] },
+		});
+		const paths = await discoverSessionExtensionPaths(
+			{ disableExtensionDiscovery: true, additionalExtensionPaths: [packageDir] },
+			tempDir.path(),
+			settings,
+		);
+		const result = await loadExtensions(paths, tempDir.path());
+
+		expect(result.errors).toHaveLength(0);
+		expect(result.extensions.map(extension => extension.path)).toEqual([
+			path.join(hookDir, "read.ts"),
+			path.join(sourceDir, "main.ts"),
+		]);
+		expect(result.extensions.flatMap(extension => [...extension.tools.keys()])).toEqual([
+			"explicit-hook-tool",
+			"explicit-tool",
+		]);
+	});
+
+	it("explicit-only discovery ignores unreadable optional hook directories", async () => {
+		const packageDir = path.join(tempDir.path(), "explicit-package");
+		const sourceDir = path.join(packageDir, "src");
+		fs.mkdirSync(sourceDir, { recursive: true });
+		fs.writeFileSync(path.join(sourceDir, "main.ts"), extensionCode);
+		fs.writeFileSync(
+			path.join(packageDir, "package.json"),
+			JSON.stringify({
+				name: "explicit-package",
+				omp: {
+					extensions: ["./src/main.ts"],
+				},
+			}),
+		);
+
+		const permissionError = Object.assign(new Error("permission denied"), { code: "EACCES" });
+		const readdirSpy = vi.spyOn(fsPromises, "readdir").mockRejectedValueOnce(permissionError);
+		try {
+			await expect(
+				discoverExtensionPaths([packageDir], tempDir.path(), undefined, { ambient: false }),
+			).resolves.toEqual([path.join(sourceDir, "main.ts")]);
+		} finally {
+			readdirSpy.mockRestore();
+		}
+	});
+
+	it("honors disabled IDs for explicit extension files", async () => {
+		const extensionPath = path.join(tempDir.path(), "disabled-extension.ts");
+		fs.writeFileSync(extensionPath, extensionCode);
+
+		await expect(
+			discoverExtensionPaths([extensionPath], tempDir.path(), ["extension-module:disabled-extension"], {
+				ambient: false,
+			}),
+		).resolves.toEqual([]);
 	});
 
 	it("discovers a symlinked extension package directory", async () => {
@@ -370,7 +481,7 @@ describe("extensions discovery", () => {
 		fs.writeFileSync(path.join(realDir, "index.ts"), extensionCode);
 		fs.symlinkSync(realDir, path.join(extensionsDir, "weird.ts"), "dir");
 
-		const result = await discoverForTest();
+		const result = await discoverForTest([], true);
 
 		expect(result.errors).toHaveLength(0);
 		expect(result.extensions).toHaveLength(1);
@@ -608,12 +719,33 @@ describe("extensions discovery", () => {
 			`,
 		);
 
-		const result = await discoverForTest();
+		const result = await discoverForTest([], true);
 		const loadedHook = result.extensions.find(extension => extension.path === hookPath);
 
 		expect(result.errors).toHaveLength(0);
-		expect(loadedHook).toBeDefined();
 		expect(loadedHook?.handlers.has("tool_call")).toBe(true);
+	});
+
+	it("can exclude ambient hooks without disabling native provider extensions", async () => {
+		const hookDir = path.join(getProjectAgentDir(tempDir.path()), "hooks", "pre");
+		fs.mkdirSync(hookDir, { recursive: true });
+		const hookPath = path.join(hookDir, "models-poison.ts");
+		fs.writeFileSync(
+			hookPath,
+			`export default function(pi) {
+				pi.on("tool_call", async () => ({ block: true, reason: "blocked by hook" }));
+			}`,
+		);
+		const nativeExtensionPath = path.join(extensionsDir, "provider.ts");
+		fs.writeFileSync(nativeExtensionPath, extensionCode);
+
+		const paths = await discoverExtensionPaths([], tempDir.path(), undefined, {
+			ambient: true,
+			includeAmbientHooks: false,
+		});
+
+		expect(paths).toContain(nativeExtensionPath);
+		expect(paths).not.toContain(hookPath);
 	});
 
 	it("keeps discovered hooks separate from disabled extension-module ids", async () => {
@@ -639,12 +771,11 @@ describe("extensions discovery", () => {
 		});
 		initializeWithSettings(settings);
 
-		const result = await discoverForTest();
+		const result = await discoverForTest([], true);
 		const loadedHook = result.extensions.find(extension => extension.path === hookPath);
 
 		expect(result.errors).toHaveLength(0);
 		expect(result.extensions.find(extension => extension.path === extensionPath)).toBeUndefined();
-		expect(loadedHook).toBeDefined();
 		expect(loadedHook?.handlers.has("tool_call")).toBe(true);
 	});
 
@@ -710,5 +841,106 @@ describe("extensions discovery", () => {
 
 		expect(result.errors).toHaveLength(0);
 		expect(result.extensions).toHaveLength(0);
+	});
+
+	it("discovers default-agent configured extensions when a profile config has no extensions", async () => {
+		const originalEnv = {
+			HOME: process.env.HOME,
+			PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+			OMP_PROFILE: process.env.OMP_PROFILE,
+			PI_PROFILE: process.env.PI_PROFILE,
+			XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+			XDG_STATE_HOME: process.env.XDG_STATE_HOME,
+			XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
+		};
+		const profileHome = TempDir.createSync("@pi-ext-profile-home-");
+
+		const writePackageExtension = (root: string): string => {
+			fs.mkdirSync(root, { recursive: true });
+			const entry = path.join(root, "index.ts");
+			fs.writeFileSync(entry, extensionCode);
+			return entry;
+		};
+
+		try {
+			process.env.HOME = profileHome.path();
+			delete process.env.XDG_DATA_HOME;
+			delete process.env.XDG_STATE_HOME;
+			delete process.env.XDG_CACHE_HOME;
+			vi.spyOn(os, "homedir").mockReturnValue(profileHome.path());
+
+			const defaultAgentDir = path.join(getProfileRootDir(undefined), "agent");
+			setAgentDir(defaultAgentDir);
+			setProfile("work");
+			const profileAgentDir = getAgentDir();
+
+			const defaultExtensionRoot = path.join(profileHome.path(), "default-global-extension");
+			const defaultExtensionEntry = writePackageExtension(defaultExtensionRoot);
+			const disabledDefaultRoot = path.join(profileHome.path(), "blocked-default-extension");
+			const disabledDefaultEntry = writePackageExtension(disabledDefaultRoot);
+			fs.mkdirSync(defaultAgentDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(defaultAgentDir, "config.yml"),
+				JSON.stringify({
+					extensions: [defaultExtensionRoot, defaultExtensionRoot, disabledDefaultRoot],
+				}),
+			);
+
+			const profileExtensionEntry = writePackageExtension(
+				path.join(profileAgentDir, "extensions", "profile-specific-extension"),
+			);
+			fs.writeFileSync(
+				path.join(profileAgentDir, "config.yml"),
+				JSON.stringify({
+					disabledExtensions: ["extension-module:blocked-default-extension"],
+				}),
+			);
+
+			const settings = await Settings.loadReadOnly({ agentDir: profileAgentDir, cwd: tempDir.path() });
+			initializeWithSettings(settings);
+
+			const paths = await discoverSessionExtensionPaths({}, tempDir.path(), settings);
+
+			expect(paths).toContain(defaultExtensionEntry);
+			expect(paths).toContain(profileExtensionEntry);
+			expect(paths).not.toContain(disabledDefaultEntry);
+			expect(paths.filter(p => path.resolve(p) === path.resolve(defaultExtensionEntry))).toHaveLength(1);
+		} finally {
+			vi.restoreAllMocks();
+			for (const [name, value] of Object.entries(originalEnv)) {
+				restoreEnvValue(name, value);
+			}
+			__resetDirsFromEnvForTests();
+			profileHome.removeSync();
+		}
+	});
+
+	it("discoverExtensionPaths only invokes the native extension-module provider (#4198)", async () => {
+		// The extension-module capability has multiple providers
+		// (native, claude, codex, gemini, opencode), but discoverExtensionPaths
+		// only surfaces native-provider paths. Regression: pre-fix it still
+		// invoked every provider's load() and then dropped foreign items,
+		// running four unused directory walks per startup (worst on Windows).
+		const capability = getCapability<ExtensionModule>(extensionModuleCapability.id);
+		expect(capability, "extension-modules capability must be registered").toBeDefined();
+
+		const providers = capability?.providers ?? [];
+		const foreignIds = providers.map(p => p.id).filter(id => id !== "native");
+		// Guard the invariant this test is defending — without foreign providers
+		// the test would trivially pass and hide a future regression.
+		expect(foreignIds.length).toBeGreaterThan(0);
+
+		const spies = providers.map(provider => vi.spyOn(provider, "load"));
+		try {
+			await discoverExtensionPaths([], tempDir.path());
+
+			const callsById = new Map(providers.map((provider, i) => [provider.id, spies[i].mock.calls.length]));
+			expect(callsById.get("native")).toBe(1);
+			for (const id of foreignIds) {
+				expect(callsById.get(id), `foreign provider ${id} must not be walked`).toBe(0);
+			}
+		} finally {
+			for (const spy of spies) spy.mockRestore();
+		}
 	});
 });

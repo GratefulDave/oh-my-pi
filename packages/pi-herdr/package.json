@@ -1,0 +1,30 @@
+{
+	"type": "module",
+	"name": "pi-herdr",
+	"version": "16.1.12-lex",
+	"description": "OMP extension for controlling Herdr panes and visible agent processes",
+	"author": "David Andrews",
+	"license": "MIT",
+	"scripts": {
+		"build": "bun scripts/build-bundle.ts",
+		"check": "biome check . && bun run check:types",
+		"check:types": "tsgo -p tsconfig.json --noEmit",
+		"test": "bun test test",
+		"lint": "biome lint .",
+		"fix": "biome check --write --unsafe .",
+		"fmt": "biome format --write ."
+	},
+	"peerDependencies": {
+		"@oh-my-pi/pi-coding-agent": "workspace:*"
+	},
+	"omp": {
+		"extensions": [
+			"./dist/herdr.bundle.js"
+		]
+	},
+	"files": [
+		"dist",
+		"src",
+		"README.md"
+	]
+}

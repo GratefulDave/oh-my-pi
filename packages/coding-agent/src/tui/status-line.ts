@@ -16,6 +16,7 @@ export interface StatusLineOptions {
 	description?: string;
 	badge?: { label: string; color: ThemeColor };
 	meta?: string[];
+	metaColor?: ThemeColor;
 }
 
 /**
@@ -47,7 +48,7 @@ export function renderStatusLine(options: StatusLineOptions, theme: Theme): stri
 
 	const meta = options.meta?.map(flattenForHeader).filter(value => value.trim().length > 0) ?? [];
 	if (meta.length > 0) {
-		line += ` ${theme.fg("dim", meta.join(theme.sep.dot))}`;
+		line += ` ${theme.fg(options.metaColor ?? "dim", meta.join(theme.sep.dot))}`;
 	}
 
 	return line;

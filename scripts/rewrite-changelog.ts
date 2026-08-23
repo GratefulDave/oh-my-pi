@@ -8,7 +8,7 @@
  * the final shipped behavior belongs in release notes.
  *
  * For every non-empty `[Unreleased]` section this script hands the whole section
- * to a small model (default `google-vertex/gemini-3.5-flash` via `@oh-my-pi/pi-ai`)
+ * to a small model (default `google-antigravity/gemini-3.7-flash` via `@oh-my-pi/pi-ai`)
  * and asks for a complete replacement grouped by changelog category. The model
  * returns structured sections/items; markdown is rendered locally so only the
  * Unreleased section changes and formatting stays deterministic.
@@ -31,13 +31,13 @@
 
 import * as path from "node:path";
 import { parseArgs } from "node:util";
-import { type Api, AuthStorage, completeSimple, Effort, type Model, SqliteAuthCredentialStore, type Tool, type ToolCall } from "@oh-my-pi/pi-ai";
+import { type } from "@oh-my-pi/omptype";
+import { type Api, completeSimple, Effort, type Model, type Tool, type ToolCall } from "@oh-my-pi/pi-ai";
+import { discoverAuthStorage } from "@oh-my-pi/pi-ai/auth-broker";
 import { type GeneratedProvider, getBundledModel } from "@oh-my-pi/pi-catalog/models";
-import { getAgentDbPath } from "@oh-my-pi/pi-utils";
-import { z } from "zod/v4";
 import {
-	changelogPaths,
 	type ChangelogDocument,
+	changelogPaths,
 	type NumberedLine,
 	parseChangelog,
 	parseItems,
@@ -46,7 +46,7 @@ import {
 	resolveRepoRoot,
 } from "./fix-changelogs";
 
-const DEFAULT_MODEL = "google-vertex/gemini-3.5-flash";
+const DEFAULT_MODEL = "google-antigravity/gemini-3.7-flash";
 
 // --------------------------------------------------------------------------
 // Prompts
@@ -100,14 +100,20 @@ async function openModel(modelSpec: string): Promise<RewriteModel> {
 	const modelId = modelSpec.slice(slash + 1);
 	const model = getBundledModel(provider as GeneratedProvider, modelId);
 	if (!model) throw new Error(`unknown model "${modelSpec}" (not in bundled catalog)`);
-	const store = await SqliteAuthCredentialStore.open(getAgentDbPath());
-	const storage = new AuthStorage(store);
-	await storage.reload();
-	const apiKey = await storage.getApiKey(provider);
-	if (!apiKey) {
-		throw new Error(`no credentials for provider "${provider}" (run \`omp login\` or set the provider env var)`);
+	const storage = await discoverAuthStorage({ sourceLabel: "rewrite-changelog" });
+	try {
+		const apiKey = await storage.getApiKey(provider);
+		if (!apiKey) {
+			throw new Error(
+				`no credentials for provider "${provider}" via ${storage.sourceLabel ?? "auth storage"} (check broker or run \`omp login\`)`,
+			);
+		}
+		return { model, apiKey, spec: modelSpec };
+	} finally {
+		// Broker-backed storage runs a background SSE/long-poll loop that keeps
+		// the event loop alive; release it once the key is captured.
+		storage.close();
 	}
-	return { model, apiKey, spec: modelSpec };
 }
 
 // --------------------------------------------------------------------------
@@ -142,13 +148,13 @@ interface RewrittenSection {
 	items: string[];
 }
 
-const REWRITE_RESPONSE = z.object({
-	sections: z.array(
-		z.object({
-			category: z.enum(["Breaking Changes", "Added", "Changed", "Fixed", "Removed"]),
-			items: z.array(z.string()),
-		})
-	).default([]),
+const REWRITE_RESPONSE = type({
+	sections: type({
+		category: "'Breaking Changes' | 'Added' | 'Changed' | 'Fixed' | 'Removed'",
+		items: "string[]",
+	})
+		.array()
+		.default(() => []),
 });
 
 const REWRITE_PARAMETERS = {
@@ -187,11 +193,11 @@ const REWRITE_TOOL: Tool = {
 };
 
 function validateRewrite(args: Record<string, unknown>): RewrittenSection[] {
-	const parsed = REWRITE_RESPONSE.safeParse(args);
-	if (!parsed.success) {
-		throw new Error(`invalid tool arguments: ${parsed.error.issues.map(issue => issue.message).join("; ")}`);
+	const parsed = REWRITE_RESPONSE(args);
+	if (parsed instanceof type.errors) {
+		throw new Error(`invalid tool arguments: ${parsed.summary}`);
 	}
-	return parsed.data.sections
+	return parsed.sections
 		.map(sec => ({
 			category: sec.category,
 			items: sec.items.map(item => item.trim()).filter(Boolean),
@@ -200,7 +206,10 @@ function validateRewrite(args: Record<string, unknown>): RewrittenSection[] {
 }
 
 function normalizeRewriteItem(text: string): string[] {
-	const lines = text.trim().split("\n").map(l => l.trimEnd());
+	const lines = text
+		.trim()
+		.split("\n")
+		.map(l => l.trimEnd());
 	if (lines.length === 0) return [];
 	const first = lines[0] ?? "";
 	const content = first.startsWith("- ") ? first.slice(2) : first.startsWith("* ") ? first.slice(2) : first;
@@ -212,7 +221,11 @@ function normalizeRewriteItem(text: string): string[] {
 	return out;
 }
 
-async function requestRewrite(model: RewriteModel, packageName: string, unreleasedBody: string): Promise<RewrittenSection[]> {
+async function requestRewrite(
+	model: RewriteModel,
+	packageName: string,
+	unreleasedBody: string,
+): Promise<RewrittenSection[]> {
 	const userText = `Package: \`${packageName}\`
 
 Original \`[Unreleased]\` section body:
@@ -239,7 +252,9 @@ Consolidate and rewrite this content into user-visible release notes. Keep all p
 			continue;
 		}
 
-		const call = response.content.find((content): content is ToolCall => content.type === "toolCall" && content.name === "rewrite");
+		const call = response.content.find(
+			(content): content is ToolCall => content.type === "toolCall" && content.name === "rewrite",
+		);
 		if (!call) {
 			lastError = "model returned no structured tool call";
 			continue;
@@ -248,7 +263,6 @@ Consolidate and rewrite this content into user-visible release notes. Keep all p
 			return validateRewrite(call.arguments);
 		} catch (error) {
 			lastError = error instanceof Error ? error.message : String(error);
-			continue;
 		}
 	}
 	throw new Error(`rewrite call failed for ${packageName}: ${lastError}`);
@@ -278,11 +292,13 @@ interface RunResult {
 }
 
 function applyRewrite(section: ReleaseSection, sections: RewrittenSection[]): void {
-	section.subsections = sections.map(sec => {
-		const rawLines = sec.items.flatMap(normalizeRewriteItem);
-		const lines: NumberedLine[] = rawLines.map(text => ({ text, lineNumber: 0 }));
-		return { title: sec.category, lines };
-	}).filter(sub => sub.lines.length > 0);
+	section.subsections = sections
+		.map(sec => {
+			const rawLines = sec.items.flatMap(normalizeRewriteItem);
+			const lines: NumberedLine[] = rawLines.map(text => ({ text, lineNumber: 0 }));
+			return { title: sec.category, lines };
+		})
+		.filter(sub => sub.lines.length > 0);
 }
 
 async function run(options: RunOptions): Promise<RunResult> {
@@ -300,41 +316,35 @@ async function run(options: RunOptions): Promise<RunResult> {
 			const i = pathIndex++;
 			const changelogPath = paths[i];
 			if (!changelogPath) continue;
+			const absolutePath = path.join(repoRoot, changelogPath);
+			const content = await Bun.file(absolutePath).text();
+			const document = parseChangelog(content);
+			const section = unreleasedSection(document);
+			if (!section) continue;
 
-			try {
-				const absolutePath = path.join(repoRoot, changelogPath);
-				const content = await Bun.file(absolutePath).text();
-				const document = parseChangelog(content);
-				const section = unreleasedSection(document);
-				if (!section) continue;
+			const originalCount = section.subsections.reduce((sum, sub) => sum + parseItems(sub.lines).length, 0);
+			if (originalCount === 0) continue;
 
-				const originalCount = section.subsections.reduce((sum, sub) => sum + parseItems(sub.lines).length, 0);
-				if (originalCount === 0) continue;
+			const unreleasedBody = renderChangelog({ prefixLines: [], sections: [section] })
+				.replace(/^## \[Unreleased\]\n?/, "")
+				.trim();
 
-				const unreleasedBody = renderChangelog({ prefixLines: [], sections: [section] })
-					.replace(/^## \[Unreleased\]\n?/, "")
-					.trim();
+			const rewritten = await requestRewrite(model, changelogPath, unreleasedBody);
+			applyRewrite(section, rewritten);
+			const next = renderChangelog(document);
+			if (next === content) continue;
 
-				const rewritten = await requestRewrite(model, changelogPath, unreleasedBody);
-				applyRewrite(section, rewritten);
-				const next = renderChangelog(document);
-				if (next === content) continue;
-
-				const rewrittenCount = rewritten.reduce((sum, sec) => sum + sec.items.length, 0);
-				if (options.write) {
-					await Bun.write(absolutePath, next);
-				}
-
-				results[i] = {
-					path: changelogPath,
-					originalCount,
-					rewrittenCount,
-					sections: rewritten,
-				};
-			} catch (error) {
-				// Bubble errors from workers
-				throw error;
+			const rewrittenCount = rewritten.reduce((sum, sec) => sum + sec.items.length, 0);
+			if (options.write) {
+				await Bun.write(absolutePath, next);
 			}
+
+			results[i] = {
+				path: changelogPath,
+				originalCount,
+				rewrittenCount,
+				sections: rewritten,
+			};
 		}
 	}
 
@@ -366,7 +376,7 @@ function parseCli(argv: string[]): CliOptions | "help" {
 		options: {
 			"dry-run": { type: "boolean", default: false },
 			check: { type: "boolean", default: false },
-			model: { type: "string", default: DEFAULT_MODEL },
+			model: { type: "string", short: "m", default: DEFAULT_MODEL },
 			package: { type: "string" },
 			"repo-root": { type: "string" },
 			concurrency: { type: "string", default: "4" },
@@ -385,14 +395,14 @@ function parseCli(argv: string[]): CliOptions | "help" {
 
 function usage(): string {
 	return [
-		"Usage: bun scripts/rewrite-changelog.ts [--dry-run|--check] [--model <prov/id>] [--package <substr>] [--concurrency <n>]",
+		"Usage: bun scripts/rewrite-changelog.ts [--dry-run|--check] [-m|--model <prov/id>] [--package <substr>] [--concurrency <n>]",
 		"",
 		"Hands each non-empty [Unreleased] changelog section to a small model and rewrites the entries",
 		"into user-facing release notes, dropping intermediate developer churn and implementation-only details",
 		"while preserving public contract, exports, API, config, auth, and billing behavior.",
 		"",
 		"Options:",
-		`  --model <prov/id>  Classifier model (default ${DEFAULT_MODEL}).`,
+		`  -m, --model <prov/id>  Classifier model (default ${DEFAULT_MODEL}).`,
 		"  --package <substr> Only changelogs whose path contains this substring.",
 		"  --concurrency <n>  Max concurrent changelogs to process in parallel (default 4).",
 		"  --dry-run          Report what would be dropped without writing files.",
@@ -447,4 +457,4 @@ if (import.meta.main) {
 	await main();
 }
 
-export { applyRewrite, collectEntries, run, type RunResult, unreleasedSection, validateRewrite };
+export { applyRewrite, collectEntries, type RunResult, run, unreleasedSection, validateRewrite };

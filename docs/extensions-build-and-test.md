@@ -29,145 +29,70 @@ binary and the extensions keep working** — nothing in the binary's own source 
 
 ---
 
-## 2. Extension inventory
+## 2. Extension policy
 
-| Extension | Source dir | Entry | Bundle output | Build? |
-|-----------|-----------|-------|---------------|--------|
-| antigravity-adapter | `packages/antigravity-adapter/` | `src/extension.ts` | `dist/antigravity.bundle.js` | yes |
-| pi-minimizer-gain | `packages/pi-minimizer-gain/` | `src/extension.ts` | `dist/gaing.bundle.js` | yes |
-| pi-distill | `packages/pi-distill/` | `src/index.ts` | `dist/distill.bundle.js` | yes |
-| pi-observer | `packages/pi-observer/` | `src/extension.ts` | `dist/observer.bundle.js` | yes |
-| pi-actor-swarm | `packages/pi-actor-swarm/` | `src/extension.ts` | `dist/swarm.bundle.js` | yes |
-| pi-omnidelegate | `packages/pi-omnidelegate/` | `src/extension.ts` | `dist/omnidelegate.bundle.js` | yes |
-| pi-software-factory | `packages/pi-software-factory/` | `src/extension.ts` | `dist/factory.bundle.js` (+ CLI bins) | yes (`build-bin.ts`) |
-| swarm-extension | `packages/swarm-extension/` | `src/extension.ts` | `dist/extension.bundle.js` | pre-built |
-| profile-manager | `.omp/extensions/profile-manager/` | `index.ts` | `dist/index.js` | pre-built |
-| semantic-search | `.omp/extensions/semantic-search/` | `index.ts` | source (unbundled) | none |
-
-Currently registered in `.omp/settings.json`: all of the above **except** semantic-search
-(load it via `--extension` or by adding its path).
+`profile-manager` is the only fork-managed extension; it provides `/pm`. Other fork-managed
+extensions are disabled and removed. Herdr remains externally managed outside this repository.
 
 ---
 
 ## 3. Build
 
-**Bundler:** Bun's `Bun.build()` API, driven by per-package `scripts/build-bundle.ts`.
-
-### Build one extension
+`profile-manager` is a single-file extension, built directly from its source:
 ```bash
-bun --cwd=packages/pi-observer run build
-# -> packages/pi-observer/dist/observer.bundle.js
+bun build .omp/extensions/profile-manager/index.ts \
+  --outfile .omp/extensions/profile-manager/dist/index.js \
+  --target bun --format esm
 ```
 
-### Build all (workspace sweep)
+Use the repository recipe instead:
 ```bash
-bun run build          # = bun run --workspaces --if-present build
-```
-This also builds non-extension packages (coding-agent, ai, natives, …). To build only
-extensions, run each `bun --cwd=packages/<name> run build`.
-
-### Bundler config (canonical, from `pi-observer/scripts/build-bundle.ts`)
-```ts
-await Bun.build({
-  entrypoints: [path.join(root, "src/extension.ts")],
-  outdir:      path.join(root, "dist"),
-  target:      "bun",
-  format:      "esm",
-  naming:      "observer.bundle.js",          // per-extension output name
-  external:    ["@oh-my-pi/pi-coding-agent"],  // host-provided, never bundled
-  plugins:     [stubPiNatives],                // @oh-my-pi/pi-natives -> JS stub
-});
+just build-exts
 ```
 
-Key points when authoring a new extension's build script:
-- `external: ["@oh-my-pi/pi-coding-agent"]` — the host injects this at runtime. Bundling it
-  duplicates the SDK and breaks identity checks.
-- The `stub-pi-natives` plugin replaces `@oh-my-pi/pi-natives` imports with a pure-JS stub so
-  the bundle has **no native dependency**. If an extension genuinely needs native calls at
-  runtime, it must reach them through the host SDK, not by importing the addon.
-- `target: "bun"`, `format: "esm"`, `"type": "module"` in package.json.
+The output is `.omp/extensions/profile-manager/dist/index.js`. No package-scoped extension build
+targets remain in this fork.
 
 ---
 
 ## 4. Register
 
-Edit `.omp/settings.json` (project scope):
+`.omp/settings.json` registers the built extension at project scope:
 ```json
 {
-  "extensions": [
-    "packages/pi-observer/dist/observer.bundle.js",
-    ".omp/extensions/profile-manager/dist/index.js"
-  ]
+  "extensions": [".omp/extensions/profile-manager/dist/index.js"]
 }
 ```
-Paths are relative to the directory you launch omp from. Order is load order.
-
-To test without editing settings, inject at launch:
-```bash
-omp --extension packages/pi-observer/dist/observer.bundle.js
-```
+Paths are relative to the directory you launch omp from.
 
 ---
 
 ## 5. Test with omp
 
-### A. Unit tests (fastest loop — direct source import, no bundle/binary)
-```bash
-bun --cwd=packages/pi-observer run test        # one extension
-bun run test:ts                                # all TS tests (--only-failures)
-```
-Tests use `bun:test` and import the source directly, e.g.
-`packages/pi-observer/test/subagent-aggregation.test.ts` imports `../src/extension` and
-`../src/stats-collector`. This bypasses bundling — good for logic, does **not** prove the
-bundle loads in a real binary.
-
-### B. Integration — load the built bundle in a running omp
-
-1. Build the bundle (§3).
-2. Ensure it is registered (§4) **or** pass `--extension`.
-3. Launch the agent against this repo as cwd:
+1. Build the extension (§3).
+2. Launch the agent from this repository:
    ```bash
-   bun run dev        # = bun --cwd=packages/coding-agent src/cli.ts   (source omp)
+   bun run dev        # source omp
    # or the installed fork binary:
    lex
    ```
-4. Verify it actually loaded:
-   - Extension-specific surface: pi-observer dashboard, profile-manager slash command, etc.
-   - Registered commands/tools appear in the agent.
-   - Check logs for load errors (a bad `external` or a real native import surfaces here).
+3. Run `/pm` and verify profile-manager loads without an extension error.
 
-### C. Lint / typecheck
-```bash
-bun --cwd=packages/pi-observer run check
-```
-
-### Watch loop (no built-in dev mode)
-```bash
-# crude rebuild-on-save:
-while true; do bun --cwd=packages/pi-observer run build; sleep 1; done
-```
-Restart omp to pick up a new bundle (extensions load at startup).
+The extension has no package-local unit-test or check target. Run the repository's focused
+coding-agent tests when changing its host integration.
 
 ---
 
-## 6. Adding a new extension — checklist
+## 6. Extension policy
 
-1. `packages/<name>/` with `package.json` (`"type":"module"`, `"omp":{"extensions":["./dist/<name>.bundle.js"]}`), `tsconfig.json`, `src/extension.ts` (default export).
-2. Copy `scripts/build-bundle.ts` from pi-observer; change `naming` to `<name>.bundle.js`.
-3. `bun --cwd=packages/<name> run build` — confirm `dist/<name>.bundle.js` appears.
-4. Add the dist path to `.omp/settings.json` `"extensions"`.
-5. Add `test/*.test.ts` (`bun:test`, import from `../src`).
-6. `bun --cwd=packages/<name> run test && bun --cwd=packages/<name> run check`.
-7. Launch omp, confirm the extension loads and its surface works (§5B).
+New fork-managed extension packages are not supported. Keep personal or experimental extensions
+outside this repository; the rebuild workflow preserves their installed bundles without rebuilding
+or registering them.
 
 ---
 
-## 7. Off-lex status (does it need the fork binary?)
+## 7. Stock-OMP compatibility
 
-- **OFF-LEX SAFE** (run on stock upstream omp): pi-observer, pi-actor-swarm, pi-omnidelegate,
-  pi-software-factory, swarm-extension, semantic-search, profile-manager (reprofiled to read/write
-  `.omp/settings.json` `modelProfiles`, no LEX `getProfileApi`).
-- **FRAGILE**: antigravity-adapter — uses internal `pi-ai` subpath imports; AG code is fork-only
-  and must never enter upstream.
-- **BLOCKED**: pi-minimizer-gain — depends on `pi-natives` native surface; unblocks when the NAPI
-  minimizer binding (PR #1642) lands.
+`profile-manager` uses `.omp/settings.json` `modelProfiles` and is safe to load on stock upstream
+omp.
+

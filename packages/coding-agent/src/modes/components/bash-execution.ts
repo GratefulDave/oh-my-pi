@@ -40,6 +40,11 @@ export class BashExecutionComponent extends Container {
 	#loader: Loader;
 	#truncation?: TruncationMeta;
 	#expanded = false;
+	// Post-finalize mutation counter (FinalizableBlock.getTranscriptBlockVersion):
+	// a completed command's block still mutates on expansion toggles, and the
+	// transcript's width-epoch resolution and committed-render bypass must
+	// observe that.
+	#blockVersion = 0;
 	#displayDirty = false;
 	#chunkGate = false;
 	#contentContainer: Container;
@@ -65,9 +70,23 @@ export class BashExecutionComponent extends Container {
 	}
 
 	/**
+	 * Transcript finalization contract (see `FinalizableBlock`): the collapsed
+	 * streaming preview rewrites its tail window every chunk, so the block must
+	 * stay out of native scrollback until the command completes.
+	 */
+	isTranscriptBlockFinalized(): boolean {
+		return this.#status !== "running";
+	}
+
+	getTranscriptBlockVersion(): number {
+		return this.#blockVersion;
+	}
+
+	/**
 	 * Set whether the output is expanded (shows full output) or collapsed (preview only).
 	 */
 	setExpanded(expanded: boolean): void {
+		if (this.#expanded !== expanded) this.#blockVersion++;
 		this.#expanded = expanded;
 		this.#updateDisplay();
 	}
@@ -137,14 +156,18 @@ export class BashExecutionComponent extends Container {
 	#updateDisplay(): void {
 		const availableLines = this.#outputLines;
 
-		// Apply preview truncation based on expanded state
+		// Full output is shown when expanded or when sixel passthrough renders
+		// the raw payload; the collapsed preview shows only the tail window.
 		const previewLogicalLines = availableLines.slice(-PREVIEW_LINES);
-		const hiddenLineCount = availableLines.length - previewLogicalLines.length;
 		const sixelLineMask =
 			TERMINAL.imageProtocol === ImageProtocol.Sixel && isSixelPassthroughEnabled()
 				? getSixelLineMask(availableLines)
 				: undefined;
 		const hasSixelOutput = sixelLineMask?.some(Boolean) ?? false;
+		const showingAllLines = this.#expanded || hasSixelOutput;
+		// Only the collapsed preview hides lines; when the full output is shown
+		// the footer must not keep advertising hidden lines / ctrl+o.
+		const hiddenLineCount = showingAllLines ? 0 : availableLines.length - previewLogicalLines.length;
 
 		// Rebuild content container
 		this.#contentContainer.clear();
@@ -154,7 +177,7 @@ export class BashExecutionComponent extends Container {
 
 		// Output
 		if (availableLines.length > 0) {
-			if (this.#expanded || hasSixelOutput) {
+			if (showingAllLines) {
 				const displayText = availableLines
 					.map((line, index) => (sixelLineMask?.[index] ? line : theme.fg("muted", line)))
 					.join("\n");

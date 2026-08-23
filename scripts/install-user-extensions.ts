@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // Symlink the repo's compiled extension bundles into ~/.omp/agent/extensions/
 // and register them in ~/.omp/agent/settings.json (USER scope) so omp loads
 // them from ANY working directory — independent of this repo.
@@ -10,18 +11,12 @@
 // Paths registered use ~ so they stay portable; the loader expands ~ and keeps
 // absolute paths as-is (resolveAgainst in omp-extension-roots.ts).
 
+import * as fs from "node:fs/promises";
 import { homedir } from "node:os";
 import * as path from "node:path";
-import * as fs from "node:fs/promises";
 
 interface RepoSettings {
 	extensions?: string[];
-}
-
-interface PackageJson {
-	omp?: {
-		extensions?: unknown;
-	};
 }
 
 const REPO = path.resolve(import.meta.dir, "..");
@@ -30,9 +25,13 @@ const USER_DIR = path.join(HOME, ".omp", "agent");
 const EXT_DIR = path.join(USER_DIR, "extensions");
 const USER_SETTINGS = path.join(USER_DIR, "settings.json");
 const DRY = process.argv.includes("--dry-run");
+const PRESERVE_SETTINGS = process.argv.includes("--preserve-settings");
+// Profile-manager owns `/pm` model/profile switching. Other fork extensions
+// remain disabled and must not be rediscovered from package manifests.
+const ENABLED_EXTENSION_NAMES: Record<string, true> = { "profile-manager": true };
 
 // Derive a stable folder name from a source bundle path.
-//   packages/pi-observer/dist/observer.bundle.js   -> pi-observer
+//   packages/<extension>/dist/<bundle>.js   -> <extension>
 //   .omp/extensions/profile-manager/dist/index.js  -> profile-manager
 function extName(rel: string): string {
 	const parts = rel.split("/");
@@ -51,62 +50,47 @@ async function readJson<T>(p: string): Promise<T | null> {
 	}
 }
 
-function isManagedExtensionPath(value: string, managedNames: Set<string>): boolean {
-	return (
-		managedNames.has(extName(value)) ||
-		value.startsWith("~/.omp/agent/extensions/") ||
-		path.resolve(value).startsWith(`${EXT_DIR}${path.sep}`)
-	);
+function expandTildePath(value: string): string {
+	return value === "~" ? HOME : value.startsWith("~/") ? path.join(HOME, value.slice(2)) : value;
 }
 
-function mergeExtensionList(previous: unknown, managedNames: Set<string>, registeredExtensions: string[]): string[] {
-	const existing = Array.isArray(previous) ? previous.filter((value): value is string => typeof value === "string") : [];
-	const unmanaged = existing.filter(value => !isManagedExtensionPath(value, managedNames));
-	return Array.from(new Set([...unmanaged, ...registeredExtensions]));
+async function pointsToThisRepo(value: string): Promise<boolean> {
+	const resolved = path.resolve(expandTildePath(value));
+	if (!resolved.startsWith(`${EXT_DIR}${path.sep}`)) return false;
+
+	const target = await fs.readlink(resolved).catch(() => null);
+	if (!target) return false;
+
+	const targetPath = path.resolve(path.dirname(resolved), target);
+	return targetPath === REPO || targetPath.startsWith(`${REPO}${path.sep}`);
 }
 
-function normalizeAntigravityConfig(value: unknown, key = ""): unknown {
-	if (typeof value === "string") {
-		return value.startsWith("antigravity/") ? `google-antigravity/${value.slice("antigravity/".length)}` : value;
-	}
-	if (Array.isArray(value)) {
-		const normalized = value.map(item => normalizeAntigravityConfig(item, key));
-		if (key === "disabledProviders") {
-			return normalized.filter(item => item !== "google-antigravity");
+export async function mergeExtensionList(previous: unknown, registeredExtensions: string[]): Promise<string[]> {
+	const existing = Array.isArray(previous)
+		? previous.filter((value): value is string => typeof value === "string")
+		: [];
+	const registeredByName = new Map(registeredExtensions.map(extension => [extName(extension), extension]));
+	const handledNames = new Set<string>();
+	const merged: string[] = [];
+
+	for (const value of existing) {
+		const name = extName(value);
+		const registered = registeredByName.get(name);
+		if (registered) {
+			merged.push(registered);
+			handledNames.add(name);
+			continue;
 		}
-		return normalized.filter(item => item !== "antigravity" && item !== "antigravity/*");
-	}
-	if (value && typeof value === "object") {
-		const normalized: Record<string, unknown> = {};
-		for (const [childKey, childValue] of Object.entries(value)) {
-			normalized[childKey] = normalizeAntigravityConfig(childValue, childKey);
-		}
-		return normalized;
-	}
-	return value;
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
-function applyActiveProfile(settings: Record<string, unknown>): void {
-	const active = settings.activeModelProfile;
-	const profiles = settings.modelProfiles;
-	if (typeof active !== "string" || !isRecord(profiles) || !isRecord(profiles[active])) return;
-	const profile = profiles[active];
-	for (const key of ["modelRoles", "defaultThinkingLevel", "enabledModels", "cycleOrder", "modelProviderOrder"]) {
-		const value = profile[key];
-		if (Array.isArray(value)) {
-			settings[key] = [...value];
-		} else if (isRecord(value)) {
-			settings[key] = { ...value };
-		} else if (typeof value === "string") {
-			settings[key] = value;
-		}
+		if (!(await pointsToThisRepo(value))) merged.push(value);
 	}
+
+	for (const extension of registeredExtensions) {
+		if (!handledNames.has(extName(extension))) merged.push(extension);
+	}
+
+	return Array.from(new Set(merged));
 }
-
-
 
 async function pathExists(p: string): Promise<boolean> {
 	return fs.stat(p).then(
@@ -131,38 +115,14 @@ export async function removeStaleManagedDiscoveryFiles(destDir: string, entryFil
 	await Promise.all(stale.map(file => fs.rm(path.join(destDir, file), { force: true })));
 }
 
-async function discoverPackageExtensionSources(): Promise<string[]> {
-	const packagesDir = path.join(REPO, "packages");
-	const entries = await fs.readdir(packagesDir, { withFileTypes: true }).catch(() => []);
-	const sources: string[] = [];
-	for (const entry of entries) {
-		if (!entry.isDirectory()) continue;
-		const packageDir = path.join(packagesDir, entry.name);
-		const manifest = await readJson<PackageJson>(path.join(packageDir, "package.json"));
-		const extensions = manifest?.omp?.extensions;
-		if (!Array.isArray(extensions)) continue;
-		for (const extension of extensions) {
-			if (typeof extension !== "string") continue;
-			const rel = path.relative(REPO, path.resolve(packageDir, extension)).split(path.sep).join("/");
-			sources.push(rel);
-		}
-	}
-	return sources;
-}
-
 async function main(): Promise<void> {
 	const repoSettings = await readJson<RepoSettings>(path.join(REPO, ".omp", "settings.json"));
-	const configuredSources = repoSettings?.extensions ?? [];
-	const configuredNames = new Set(configuredSources.map(extName));
-	const manifestSources = await discoverPackageExtensionSources();
-	const sources = [...configuredSources];
-	for (const rel of manifestSources) {
-		if (configuredNames.has(extName(rel))) continue;
-		sources.push(rel);
-	}
+	const sources = (repoSettings?.extensions ?? []).filter(extensionPath =>
+		Boolean(ENABLED_EXTENSION_NAMES[extName(extensionPath)]),
+	);
 	if (sources.length === 0) {
-		console.error("No extensions found in repo .omp/settings.json#extensions or package manifests");
-		process.exit(1);
+		console.log("No fork-managed extensions enabled.");
+		return;
 	}
 
 	const registered: string[] = [];
@@ -195,22 +155,21 @@ async function main(): Promise<void> {
 	// Merge into user settings.json, preserving external extension paths but making
 	// every repo-managed extension authoritative. Never rewrite config.yml here:
 	// profiles, model defaults, disabled capabilities, and symlink targets must persist.
-	const managedNames = new Set(registered.map(extName));
-	const settingsJson = normalizeAntigravityConfig((await readJson<Record<string, unknown>>(USER_SETTINGS)) ?? {}) as Record<
-		string,
-		unknown
-	>;
-	const settingsJsonExtensions = mergeExtensionList(settingsJson.extensions, managedNames, registered);
-	applyActiveProfile(settingsJson);
-	settingsJson.extensions = settingsJsonExtensions;
+	if (PRESERVE_SETTINGS) {
+		console.log(`\nPreserve ${USER_SETTINGS}`);
+	} else {
+		const settingsJson = (await readJson<Record<string, unknown>>(USER_SETTINGS)) ?? {};
+		const settingsJsonExtensions = await mergeExtensionList(settingsJson.extensions, registered);
+		settingsJson.extensions = settingsJsonExtensions;
 
-	console.log(`\n${DRY ? "[dry] " : ""}write ${USER_SETTINGS}`);
-	console.log(`  extensions (${settingsJsonExtensions.length}):`);
-	for (const e of settingsJsonExtensions) console.log(`    ${e}`);
+		console.log(`\n${DRY ? "[dry] " : ""}write ${USER_SETTINGS}`);
+		console.log(`  extensions (${settingsJsonExtensions.length}):`);
+		for (const extension of settingsJsonExtensions) console.log(`    ${extension}`);
 
-	if (!DRY) {
-		await fs.mkdir(USER_DIR, { recursive: true });
-		await fs.writeFile(USER_SETTINGS, `${JSON.stringify(settingsJson, null, 2)}\n`);
+		if (!DRY) {
+			await fs.mkdir(USER_DIR, { recursive: true });
+			await fs.writeFile(USER_SETTINGS, `${JSON.stringify(settingsJson, null, 2)}\n`);
+		}
 	}
 
 	const verifyErrors: string[] = [];

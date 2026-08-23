@@ -27,7 +27,6 @@ export interface DialectToolResult {
 
 export interface DialectRenderOptions {
 	readonly tools?: readonly InbandTool[];
-	readonly example?: boolean;
 }
 
 export interface DialectDefinition {
@@ -46,7 +45,7 @@ export interface DialectDefinition {
 export interface InbandScannerOptions {
 	/** string-typed arg names for a tool → read verbatim. Ignored by JSON-carrying dialects. */
 	stringArgs?: (toolName: string) => ReadonlySet<string>;
-	/** Full tool schemas for schema-driven dialects such as GLM XML and pi-native. */
+	/** Full tool schemas for schema-driven dialects such as GLM XML. */
 	tools?: readonly InbandTool[];
 	/** XML only: parse pipe-wrapped DeepSeek DSML tags vs plain Anthropic invoke/parameter tags. */
 	xmlTagset?: "anthropic" | "dsml";
