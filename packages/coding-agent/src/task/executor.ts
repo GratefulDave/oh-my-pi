@@ -62,6 +62,7 @@ import type { EventBus } from "../utils/event-bus";
 import { trackLateCleanup } from "../utils/late-cleanup";
 import { buildNamedToolChoice } from "../utils/tool-choice";
 import type { WorkspaceTree } from "../workspace-tree";
+import { attributeSubagentError } from "./error-attribution";
 import { generateTaskLabel } from "./label";
 import { resolveAgentPrewalkDefault } from "./prewalk";
 import { isReadOnlyAgent } from "./read-only-policy";
@@ -2125,7 +2126,7 @@ async function driveSessionToYield(
 				}
 			} else if (lastAssistant.stopReason === "error") {
 				exitCode = 1;
-				error ??= lastAssistant.errorMessage || "Subagent failed";
+				error ??= attributeSubagentError(lastAssistant.errorMessage, lastAssistant);
 			}
 		}
 
@@ -2432,7 +2433,7 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 			const aborted = runtimeLimitExceeded || (lastAssistant?.stopReason === "aborted" && !yielded);
 			const error =
 				lastAssistant?.stopReason === "error"
-					? lastAssistant.errorMessage || "Subagent failed"
+					? attributeSubagentError(lastAssistant.errorMessage, lastAssistant)
 					: turnError !== undefined && !yielded
 						? turnError instanceof Error
 							? turnError.stack || turnError.message
