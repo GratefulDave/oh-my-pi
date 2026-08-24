@@ -34,6 +34,8 @@ export interface AggregatedStats {
 	cacheSavings: number;
 	/** Total cost */
 	totalCost: number;
+	/** Requests with token usage but no public-equivalent subscription price. */
+	unpricedRequests: number;
 	/** Total premium requests */
 	totalPremiumRequests: number;
 	/** Average duration in ms */
@@ -122,6 +124,8 @@ export interface CostTimeSeriesPoint {
 	provider: string;
 	/** Total cost for this bucket */
 	cost: number;
+	/** Requests excluded because no public-equivalent subscription price exists. */
+	unpricedRequests: number;
 	/** Cost breakdown */
 	costInput: number;
 	costOutput: number;
@@ -328,6 +332,8 @@ export interface ToolUsageStats {
 	outputTokensShare: number;
 	/** Cost (USD) of invoking turns, attributed per call share. */
 	costShare: number;
+	/** Share of unpriced subscription requests attributed to this tool. */
+	unpricedRequestsShare: number;
 	/** Unix ms of the most recent call in range. */
 	lastUsed: number;
 }
@@ -369,6 +375,8 @@ export interface ProviderAggregate {
 	/** Uncached input + cache reads + cache writes + output. */
 	totalTokens: number;
 	totalCost: number;
+	/** Requests excluded because no public-equivalent subscription price exists. */
+	unpricedRequests: number;
 	totalPremiumRequests: number;
 	avgTokensPerSecond: number | null;
 }
@@ -392,6 +400,8 @@ export interface ProviderTimeSeriesPoint {
 	provider: string;
 	totalTokens: number;
 	cost: number;
+	/** Requests excluded because no public-equivalent subscription price exists. */
+	unpricedRequests: number;
 	requests: number;
 }
 

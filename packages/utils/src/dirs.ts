@@ -492,6 +492,18 @@ export function getActiveProfile(): string | undefined {
 export function getProfileRootDir(profile: string | undefined): string {
 	return getProfileConfigRoot(normalizeProfileName(profile));
 }
+
+/** List named profiles present under ~/.omp/profiles. Empty when the directory does not exist. */
+export function listProfiles(): string[] {
+	try {
+		return fs
+			.readdirSync(path.join(getBaseConfigRoot(), "profiles"), { withFileTypes: true })
+			.filter(entry => entry.isDirectory())
+			.map(entry => entry.name);
+	} catch {
+		return [];
+	}
+}
 /** Get the agent config directory (~/.omp/agent). */
 export function getAgentDir(): string {
 	return dirs.agentDir;
@@ -692,6 +704,11 @@ export function getAuthBrokerSnapshotCachePath(): string {
 	const override = process.env.OMP_AUTH_BROKER_SNAPSHOT_CACHE;
 	if (override) return override;
 	return dirs.rootSubdir(path.join("cache", "auth-broker-snapshot.enc"), "cache");
+}
+
+/** Get the commit-author avatar cache directory (~/.omp/cache/avatars). */
+export function getAvatarCacheDir(): string {
+	return dirs.rootSubdir(path.join("cache", "avatars"), "cache");
 }
 
 /** Get the local FastEmbed model cache directory (~/.omp/cache/fastembed). */

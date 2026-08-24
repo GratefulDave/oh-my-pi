@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { dedupeProjects, getGainDashboardStats, normalizeProjectPath } from "@oh-my-pi/omp-stats/gain-aggregator";
-import { getAgentDir, getStatsDbPath } from "@oh-my-pi/pi-utils";
+import { getAgentDir, getStatsDbPath, setAgentDir } from "@oh-my-pi/pi-utils";
 import { installStatsTestIsolation } from "./helpers/temp-agent";
 
 // ---------------------------------------------------------------------------
@@ -164,6 +165,68 @@ describe("getGainDashboardStats", () => {
 		expect(stats.topFilters).toHaveLength(1);
 		expect(stats.topFilters[0]!.filter).toBe("git-status");
 		expect(stats.topFilters[0]!.hits).toBe(2);
+	});
+	it("includes minimizer records from named profiles under the config root", async () => {
+		const now = new Date().toISOString();
+		await writeMinimizerJSONL([
+			{
+				timestamp: now,
+				filter: "git",
+				inputBytes: 1000,
+				outputBytes: 200,
+				savedBytes: 800,
+				savedTokens: 200,
+				kind: "saved",
+				cwd: "/Users/x/myrepo",
+			},
+		]);
+		const profileAgentDir = path.join(os.homedir(), process.env.PI_CONFIG_DIR!, "profiles", "openrouter", "agent");
+		await fs.mkdir(profileAgentDir, { recursive: true });
+		await Bun.write(
+			path.join(profileAgentDir, "minimizer-gain.jsonl"),
+			JSON.stringify({
+				timestamp: now,
+				filter: "grep",
+				inputBytes: 2000,
+				outputBytes: 200,
+				savedBytes: 1800,
+				savedTokens: 450,
+				kind: "saved",
+				cwd: "/Users/x/otherrepo",
+			}),
+		);
+
+		const stats = await getGainDashboardStats();
+		expect(stats.bySource.minimizer.hits).toBe(2);
+		expect(stats.bySource.minimizer.savedTokens).toBe(650);
+		expect(stats.projects).toContain("/Users/x/otherrepo");
+	});
+
+	it("does not double-count when the active agent dir is itself a profile dir", async () => {
+		const now = new Date().toISOString();
+		const profileAgentDir = path.join(os.homedir(), process.env.PI_CONFIG_DIR!, "profiles", "openrouter", "agent");
+		await fs.mkdir(profileAgentDir, { recursive: true });
+		const record = {
+			timestamp: now,
+			filter: "git",
+			inputBytes: 1000,
+			outputBytes: 200,
+			savedBytes: 800,
+			savedTokens: 200,
+			kind: "saved",
+			cwd: "/Users/x/myrepo",
+		};
+		await Bun.write(path.join(profileAgentDir, "minimizer-gain.jsonl"), JSON.stringify(record));
+
+		const originalAgentDir = getAgentDir();
+		setAgentDir(profileAgentDir);
+		try {
+			const stats = await getGainDashboardStats();
+			expect(stats.bySource.minimizer.hits).toBe(1);
+			expect(stats.bySource.minimizer.savedTokens).toBe(200);
+		} finally {
+			setAgentDir(originalAgentDir);
+		}
 	});
 
 	it("collects missed commands aggregated by full command string", async () => {
