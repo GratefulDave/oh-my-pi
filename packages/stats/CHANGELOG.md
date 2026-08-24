@@ -5,6 +5,7 @@
 ### Fixed
 
 - Recorded `write`/`read` calls against `xd://<tool>` under the inner tool name so MCP, codemap, and LSP no longer vanish from `omp stats` as `write`.
+- Tracked bash minimizer gain from every named profile: the Gain dashboard now aggregates `minimizer-gain.jsonl` across `~/.omp/profiles/*/agent` in addition to the active agent dir, so sessions run under `--profile` no longer vanish from `omp stats`.
 
 
 ### Added

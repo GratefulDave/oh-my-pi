@@ -11,7 +11,15 @@
 import type { Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { getAgentDir, getStatsDbPath, isEnoent, logger } from "@oh-my-pi/pi-utils";
+import {
+	getAgentDir,
+	getProfileRootDir,
+	getStatsDbPath,
+	isEnoent,
+	listProfiles,
+	logger,
+	normalizePathForComparison,
+} from "@oh-my-pi/pi-utils";
 import { getTimeRangeConfig } from "./aggregator";
 import { initDb } from "./db";
 import type {
@@ -79,7 +87,7 @@ function matchesProject(cwd: string | undefined, project: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Minimizer JSONL — single read, three derived result sets
+// Minimizer JSONL — all profile files, single pass per file, three result sets
 // ---------------------------------------------------------------------------
 
 interface MinimizerSets {
@@ -88,14 +96,40 @@ interface MinimizerSets {
 	projects: Set<string>;
 }
 
-async function readMinimizerFile(): Promise<string | null> {
-	const filePath = path.join(getAgentDir(), "minimizer-gain.jsonl");
-	try {
-		return await Bun.file(filePath).text();
-	} catch (err) {
-		if (!isEnoent(err)) logger.debug("gain-aggregator: failed to read minimizer-gain.jsonl", { err: String(err) });
-		return null;
+/**
+ * Every minimizer-gain JSONL: the active agent dir's file plus one per named
+ * profile under ~/.omp/profiles, so sessions run under any profile are tracked
+ * regardless of which profile launched `omp stats`. Deduped by normalized path
+ * because the active agent dir may itself be a profile dir.
+ */
+function minimizerGainFilePaths(): string[] {
+	const candidates = [path.join(getAgentDir(), "minimizer-gain.jsonl")];
+	for (const profile of listProfiles()) {
+		candidates.push(path.join(getProfileRootDir(profile), "agent", "minimizer-gain.jsonl"));
 	}
+	const seen = new Set<string>();
+	const unique: string[] = [];
+	for (const candidate of candidates) {
+		const key = normalizePathForComparison(candidate);
+		if (seen.has(key)) continue;
+		seen.add(key);
+		unique.push(candidate);
+	}
+	return unique;
+}
+
+async function readMinimizerFiles(): Promise<string[]> {
+	return Promise.all(
+		minimizerGainFilePaths().map(async filePath => {
+			try {
+				return await Bun.file(filePath).text();
+			} catch (err) {
+				if (!isEnoent(err))
+					logger.debug("gain-aggregator: failed to read minimizer-gain.jsonl", { err: String(err), filePath });
+				return "";
+			}
+		}),
+	);
 }
 
 /**
@@ -104,34 +138,36 @@ async function readMinimizerFile(): Promise<string | null> {
  * dashboard request.
  */
 async function readMinimizerSets(cutoff: number | null, project: string | null): Promise<MinimizerSets> {
-	const text = await readMinimizerFile();
+	const texts = await readMinimizerFiles();
 	const sets: MinimizerSets = { records: [], missed: [], projects: new Set() };
-	if (!text) return sets;
 
-	for (const line of text.split("\n")) {
-		if (!line.trim()) continue;
-		try {
-			const rec = JSON.parse(line) as MinimizerRecord;
+	for (const text of texts) {
+		if (!text) continue;
+		for (const line of text.split("\n")) {
+			if (!line.trim()) continue;
+			try {
+				const rec = JSON.parse(line) as MinimizerRecord;
 
-			const ts = new Date(rec.timestamp).getTime();
-			if (cutoff !== null && ts < cutoff) continue;
+				const ts = new Date(rec.timestamp).getTime();
+				if (cutoff !== null && ts < cutoff) continue;
 
-			// Collect range-scoped project cwds before the per-project filter so the
-			// selector still shows other projects in the active time range.
-			if (rec.cwd) sets.projects.add(rec.cwd);
+				// Collect range-scoped project cwds before the per-project filter so the
+				// selector still shows other projects in the active time range.
+				if (rec.cwd) sets.projects.add(rec.cwd);
 
-			if (project !== null && !matchesProject(rec.cwd, project)) continue;
+				if (project !== null && !matchesProject(rec.cwd, project)) continue;
 
-			if (rec.kind === "missed") {
-				// Missed records from meaningful cwds are filter-tuning candidates.
-				if (!TEMP_PATH_RE.test(rec.cwd ?? "")) {
-					sets.missed.push(rec);
+				if (rec.kind === "missed") {
+					// Missed records from meaningful cwds are filter-tuning candidates.
+					if (!TEMP_PATH_RE.test(rec.cwd ?? "")) {
+						sets.missed.push(rec);
+					}
+				} else {
+					sets.records.push(rec);
 				}
-			} else {
-				sets.records.push(rec);
+			} catch {
+				/* skip malformed */
 			}
-		} catch {
-			/* skip malformed */
 		}
 	}
 	return sets;
