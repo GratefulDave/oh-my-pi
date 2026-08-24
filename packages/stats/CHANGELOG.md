@@ -11,6 +11,12 @@
 
 - Bash Minimizer gain dashboard in `omp stats` — shows bash minimizer token-savings alongside existing snapcompact savings with stacked time series, top-filter breakdown, project selector, and missed-command tuning table ([#3691](https://github.com/can1357/oh-my-pi/pull/3691)).
 
+## [18.0.4] - 2026-08-24
+
+### Fixed
+
+- Fixed SuperGrok usage appearing as free by applying matching public xAI API pricing (including 200K-token rates), labeling costs as API-equivalent estimates, backfilling existing usage records, and displaying subscription-only models as N/A ([#9512](https://github.com/can1357/oh-my-pi/issues/9512)).
+
 ## [18.0.1] - 2026-08-23
 
 ### Fixed
