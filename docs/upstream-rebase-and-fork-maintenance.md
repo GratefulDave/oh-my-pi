@@ -219,6 +219,29 @@ Fork-maintenance tooling lives outside this upstream-facing checkout:
 
 The Lex checkout retains only the `rebuild-lex.zsh` launcher and runtime/product patches.
 
+
+### Patch 12: SuperGrok (`xai-oauth`) Responses stream workarounds
+
+**Why**: `api.x.ai` is not a drop-in OpenAI Responses host. When omp omits
+`parallel_tool_calls`, SuperGrok defaults it **off** (OpenAI defaults on). This
+is an xAI request-field default, not an omp `config.yml` setting. Later
+`function_call`s appear only on `response.completed.output`; Completions-shaped
+`tool_calls` can arrive on the Responses SSE; the stream may close with no
+terminal frame. Upstream #8617 is OPEN/`wontfix` on the host (#8698). Keep the
+client workarounds here until `api.x.ai` is spec-faithful or upstream merges.
+
+**Files**:
+- `packages/ai/src/providers/openai-responses.ts` — force `parallel_tool_calls: true` for `xai-oauth` only
+- `packages/ai/src/providers/openai-shared.ts` — harvest terminal `function_call`s; ingest Completions-shaped chunks; finalize if no terminal
+- `packages/ai/test/openai-responses-stream-terminal.test.ts`
+- `packages/ai/test/openai-responses-tool-quarantine.test.ts`
+
+**Verify**:
+- `bun test packages/ai/test/openai-responses-stream-terminal.test.ts packages/ai/test/openai-responses-tool-quarantine.test.ts`
+
+**Conflict risk**: medium — `processResponsesStream` is a merge hot zone. If the
+xai-oauth gates disappear after an upstream merge, re-apply from this section.
+
 ---
 
 ## 4. Post-merge checklist

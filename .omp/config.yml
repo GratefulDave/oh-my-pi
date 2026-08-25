@@ -80,7 +80,6 @@ disabledExtensions:
 - skill:workspace-worktree-manager
 - skill:write-a-skill
 - skill:zoom-out
-- extension-module:herdr-omp-agent-state
 skills:
   includeSkills:
   - caveman
@@ -91,11 +90,20 @@ skills:
   - caveman-stats
   - caveman-commit
   - codebase-memory
+  - codebase-retrieval
+  - code-intel-impact
+  - code-intel-large-output
+  - code-intel-outline
+  - code-intel-symbols
   - compact-json
   - rehydrate
+  - context-mode
+  - handoff
   - deep-interview
   - library
   - linear-cli
+  - herdr
   - deepinit
+  - diagram-design
   - omp-fork-upstream-sync
   - lex-fork-maintainability

@@ -92,7 +92,6 @@ if (process.platform === "darwin") {
 	}
 }
 
-
 const localAddon = resolveLocalHostAddon({
 	platform: process.platform,
 	arch: process.arch,

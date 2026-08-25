@@ -1,16 +1,3 @@
 {
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "_managed_by": "library",
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /Users/davidandrews/PycharmProjects/the-library/hooks/claude/code-intel-userpromptsubmit.mjs"
-          }
-        ]
-      }
-    ]
-  }
+  "hooks": {}
 }

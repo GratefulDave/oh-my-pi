@@ -2956,6 +2956,8 @@ export async function processResponsesStream<TApi extends Api>(
 	const contentIndexOf = (block: ThinkingContent | TextContent | StreamingToolCallBlock): number =>
 		output.content.indexOf(block);
 
+	const xaiOauthCompletionsToolBlocks = new Map<number, ResponsesToolCallBlock>();
+
 	let sawFirstToken = false;
 	// Whether the current stream produced a completed native `web_search_call`
 	// output item. A provider-hosted search that finishes without yield is
@@ -3270,6 +3272,11 @@ export async function processResponsesStream<TApi extends Api>(
 			}
 		} else if (terminalEvent) {
 			const response = terminalEvent.response;
+			// SuperGrok often omits output_item.added/done for later parallel
+			// function_calls and only lists them on the terminal response.output.
+			if (model.provider === "xai-oauth") {
+				harvestResponsesTerminalOutputToolCalls(output, stream, response?.output);
+			}
 			const shouldPromoteIncompleteToolUse =
 				response?.status === "incomplete" &&
 				response.incomplete_details?.reason === "max_output_tokens" &&
@@ -3332,6 +3339,12 @@ export async function processResponsesStream<TApi extends Api>(
 			// Breaking unwinds the iterator chain (the consumer's `.return()`
 			// reaches the SDK stream), actively releasing the connection.
 			break;
+		} else if (model.provider === "xai-oauth" && isXaiOauthCompletionsShapedChunk(event)) {
+			if (!sawFirstToken) {
+				sawFirstToken = true;
+				options?.onFirstToken?.();
+			}
+			ingestXaiOauthCompletionsShapedToolCalls(event, output, stream, xaiOauthCompletionsToolBlocks, contentIndexOf);
 		} else if (event.type === "error") {
 			const err = (event as any).error ?? event;
 			const code = err.code ?? "unknown";
@@ -3351,6 +3364,13 @@ export async function processResponsesStream<TApi extends Api>(
 					: "Unknown error (no error details in response)";
 			throw new AIError.ProviderResponseError(message, { provider: model.provider, kind: "output" });
 		}
+	}
+
+	// Completions-shaped SuperGrok streams may close without a Responses
+	// terminal frame. Finalize leftover argument buffers so those calls run.
+	if (model.provider === "xai-oauth") {
+		finalizePendingResponsesToolCalls(output);
+		promoteResponsesToolUseStopReason(output, undefined);
 	}
 }
 
@@ -3450,6 +3470,147 @@ export function promoteResponsesToolUseStopReason(
 	}
 	if (endTurn === false && output.stopReason === "stop") {
 		output.stopDetails = { type: "pause_turn" };
+	}
+}
+
+function isXaiOauthCompletionsShapedChunk(event: unknown): event is {
+	choices?: Array<{
+		delta?: {
+			tool_calls?: Array<{
+				index?: number;
+				id?: string;
+				function?: { name?: string; arguments?: string };
+			}>;
+		};
+		finish_reason?: string | null;
+	}>;
+} {
+	if (!event || typeof event !== "object") return false;
+	const rec = event as { type?: unknown; object?: unknown; choices?: unknown };
+	if (typeof rec.type === "string" && rec.type.startsWith("response.")) return false;
+	return rec.object === "chat.completion.chunk" || Array.isArray(rec.choices);
+}
+
+function ingestXaiOauthCompletionsShapedToolCalls(
+	event: {
+		choices?: Array<{
+			delta?: {
+				tool_calls?: Array<{
+					index?: number;
+					id?: string;
+					function?: { name?: string; arguments?: string };
+				}>;
+			};
+			finish_reason?: string | null;
+		}>;
+	},
+	output: AssistantMessage,
+	stream: AssistantMessageEventStream,
+	blocksByIndex: Map<number, ResponsesToolCallBlock>,
+	contentIndexOf: (block: ThinkingContent | TextContent | ResponsesToolCallBlock) => number,
+): void {
+	const deltaCalls = event.choices?.[0]?.delta?.tool_calls;
+	if (!deltaCalls?.length) return;
+	for (const [offset, toolCall] of deltaCalls.entries()) {
+		const index = typeof toolCall.index === "number" ? toolCall.index : offset;
+		let block = blocksByIndex.get(index);
+		if (!block) {
+			block = {
+				type: "toolCall",
+				id: toolCall.id || `xai-oauth-fc-${index}`,
+				name: toolCall.function?.name || "",
+				arguments: {},
+				[kStreamingPartialJson]: "",
+			};
+			blocksByIndex.set(index, block);
+			output.content.push(block);
+			stream.push({ type: "toolcall_start", contentIndex: contentIndexOf(block), partial: output });
+		} else {
+			if (toolCall.id && !block.id) block.id = toolCall.id;
+			if (toolCall.function?.name) block.name = toolCall.function.name;
+		}
+		const argsDelta = toolCall.function?.arguments;
+		if (argsDelta) {
+			accumulateToolCallArgumentsDelta(block, argsDelta, stream, output, contentIndexOf(block));
+		}
+	}
+}
+
+function alreadyHasResponsesToolCall(output: AssistantMessage, callId: string, itemId?: string): boolean {
+	const encoded = encodeResponsesToolCallId(callId, itemId);
+	const prefix = `${callId}|`;
+	for (const block of output.content) {
+		if (block.type !== "toolCall") continue;
+		if (block.id === encoded || block.id.startsWith(prefix)) return true;
+	}
+	return false;
+}
+
+/**
+ * Promote function_call / custom_tool_call / computer_call items that exist
+ * only on the terminal response.output (no streamed added/done). SuperGrok
+ * often streams the first call and dumps the rest on response.completed.
+ */
+export function harvestResponsesTerminalOutputToolCalls(
+	output: AssistantMessage,
+	stream: AssistantMessageEventStream,
+	items: ResponseOutputItem[] | undefined,
+): void {
+	if (!items?.length) return;
+	for (const item of items) {
+		if (item.type === "function_call") {
+			if (!item.call_id || alreadyHasResponsesToolCall(output, item.call_id, item.id)) continue;
+			const args = item.arguments ? parseStreamingJson(item.arguments) : parseStreamingJson("{}");
+			const toolCall: ToolCall = {
+				type: "toolCall",
+				id: encodeResponsesToolCallId(item.call_id, item.id),
+				name: item.name,
+				arguments: args,
+			};
+			output.content.push(toolCall);
+			stream.push({
+				type: "toolcall_end",
+				contentIndex: output.content.length - 1,
+				toolCall,
+				partial: output,
+			});
+			continue;
+		}
+		if (item.type === "custom_tool_call") {
+			if (!item.call_id || alreadyHasResponsesToolCall(output, item.call_id, item.id)) continue;
+			const toolCall: ToolCall = {
+				type: "toolCall",
+				id: encodeResponsesToolCallId(item.call_id, item.id),
+				name: item.name,
+				arguments: { input: item.input ?? "" },
+				customWireName: item.name,
+			};
+			output.content.push(toolCall);
+			stream.push({
+				type: "toolcall_end",
+				contentIndex: output.content.length - 1,
+				toolCall,
+				partial: output,
+			});
+			continue;
+		}
+		if (item.type === "computer_call") {
+			if (!item.call_id || alreadyHasResponsesToolCall(output, item.call_id, item.id)) continue;
+			const toolCall: ToolCall = {
+				type: "toolCall",
+				id: encodeResponsesToolCallId(item.call_id, item.id),
+				name: "computer",
+				arguments: {},
+				providerMetadata: computerCallMetadata(item),
+			};
+			output.content.push(toolCall);
+			stream.push({
+				type: "toolcall_end",
+				contentIndex: output.content.length - 1,
+				toolCall,
+				partial: output,
+			});
+		}
 	}
 }
 

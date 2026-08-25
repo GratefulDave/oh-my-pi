@@ -24,6 +24,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { Model } from "@oh-my-pi/pi-ai";
+import { settings } from "@oh-my-pi/pi-coding-agent";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -40,6 +41,10 @@ interface ModelProfile {
 	enabledModels?: string[];
 	cycleOrder?: string[];
 	modelProviderOrder?: string[];
+	task?: {
+		defaultModel?: string;
+		agentModelOverrides?: Record<string, string>;
+	};
 }
 
 interface OmpSettings {
@@ -117,16 +122,18 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 			const selection = resolveStartupSelection(pi, settings);
 			if (!selection) return;
 			const startupSkip = preflightProfileStartup(ctx, selection.profile);
+			const status = await applyProfile(pi, ctx, selection.profile, {
+				switchModel: !startupSkip,
+			});
 			if (startupSkip) {
 				notifyStartup(
 					ctx,
 					pi,
-					`[pm] startup: ${selection.label} — ${startupSkip}`,
+					`[pm] startup: ${selection.label} — roles applied; ${startupSkip}`,
 					"warning",
 				);
 				return;
 			}
-			const status = await applyProfile(pi, ctx, selection.profile);
 			notifyStartup(ctx, pi, `[pm] startup: ${selection.label} — ${status}`);
 		} catch (err) {
 			notifyStartup(
@@ -144,8 +151,11 @@ export default function profileManagerExtension(pi: ExtensionAPI): void {
 		try {
 			const settings = readSettings(ctx);
 			const selection = resolveStartupSelection(pi, settings);
-			if (!selection || preflightProfileStartup(ctx, selection.profile)) return;
-			await applyProfile(pi, ctx, selection.profile);
+			if (!selection) return;
+			const startupSkip = preflightProfileStartup(ctx, selection.profile);
+			await applyProfile(pi, ctx, selection.profile, {
+				switchModel: !startupSkip,
+			});
 		} catch {
 			// Profile application is best-effort; swallow to protect page switch.
 		}
@@ -614,11 +624,23 @@ function notifyStartup(
 	notify(pi, message);
 }
 /**
- * Apply a profile to the live session. `replaceModelRoles` replaces all role
- * overrides (clearing previous profile's roles); `overrideEnabledModels`
- * applies the profile's model filter to the live session; `setModel` switches
- * the visible default model for the current session.
+ * Apply a profile to the live session.
+ *
+ * `replaceModelRoles` (not additive `overrideModelRoles`) so a switch clears
+ * the previous profile's roles. `overrideEnabledModels` applies the profile's
+ * model filter to the live session; `setModel` switches the visible default
+ * model for the current session. `task.agentModelOverrides` is a runtime-only
+ * Settings override so unpacked agent frontmatter cannot leak other providers.
  */
+function applyAgentModelOverrides(profile: ModelProfile): void {
+	const overrides = profile.task?.agentModelOverrides;
+	if (overrides && Object.keys(overrides).length > 0) {
+		settings.override("task.agentModelOverrides", overrides);
+		return;
+	}
+	settings.clearOverride("task.agentModelOverrides");
+}
+
 export async function applyProfile(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
@@ -633,6 +655,7 @@ export async function applyProfile(
 	sessionApi.overrideEnabledModels?.(
 		enabledPatterns && enabledPatterns.length > 0 ? enabledPatterns : null,
 	);
+	applyAgentModelOverrides(profile);
 	if (!switchModel) return "Settings applied.";
 
 	const selector = profile.modelRoles?.default;

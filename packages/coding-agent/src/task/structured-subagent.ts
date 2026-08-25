@@ -405,7 +405,15 @@ function buildExecutorOptions(
 		invokedAt: request.invokedAt,
 		acquiredAt: request.acquiredAt,
 		modelOverride: policy.modelOverride,
-		enforceAutomaticModelPolicy: request.model === undefined,
+		enforceAutomaticModelPolicy:
+			request.model === undefined &&
+			!(
+				Array.isArray(policy.modelOverride)
+					? policy.modelOverride
+					: policy.modelOverride
+						? [policy.modelOverride]
+						: []
+			).some(pattern => pattern.toLowerCase().startsWith("openrouter/")),
 		modelRole: policy.modelRole,
 		parentActiveModelPattern: policy.parentActiveModelPattern,
 		thinkingLevel: policy.effectiveAgent.thinkingLevel,

@@ -329,6 +329,38 @@ describe("structured subagent primitive", () => {
 		expect(settled.result.modelRole).toBeUndefined();
 		await fs.rm(settled.artifactsDir, { recursive: true, force: true });
 	});
+	it("does not remap a resolved OpenRouter agent model to Codex terra", async () => {
+		mockDiscovery();
+		const childSession = session();
+		childSession.settings.override("task.agentModelOverrides", {
+			worker: "openrouter/stealth/ox-alpha:auto",
+		});
+		const dispatched: executorModule.ExecutorOptions[] = [];
+		vi.spyOn(executorModule, "runSubprocess").mockImplementation(async options => {
+			dispatched.push(options);
+			return result();
+		});
+
+		await runStructuredSubagent(request({ session: childSession, retainArtifacts: true }));
+
+		expect(dispatched[0]?.modelOverride).toEqual(["openrouter/stealth/ox-alpha:auto"]);
+		expect(dispatched[0]?.enforceAutomaticModelPolicy).toBe(false);
+		await fs.rm(dispatched[0]?.artifactsDir ?? "", { recursive: true, force: true });
+	});
+
+	it("keeps automatic OpenRouter remapping when the resolved agent model is not OpenRouter", async () => {
+		mockDiscovery();
+		const dispatched: executorModule.ExecutorOptions[] = [];
+		vi.spyOn(executorModule, "runSubprocess").mockImplementation(async options => {
+			dispatched.push(options);
+			return result();
+		});
+
+		await runStructuredSubagent(request({ retainArtifacts: true }));
+
+		expect(dispatched[0]?.enforceAutomaticModelPolicy).toBe(true);
+		await fs.rm(dispatched[0]?.artifactsDir ?? "", { recursive: true, force: true });
+	});
 
 	it("leases temporary artifacts for a retained invocation and registers them for agent URLs", async () => {
 		mockDiscovery();

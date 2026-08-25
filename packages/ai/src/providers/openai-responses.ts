@@ -1242,6 +1242,12 @@ export function buildParams(
 		const strictMode = !disableStrictTools && model.compat.supportsStrictMode !== false;
 		params.tools = convertTools(context.tools, strictMode, model);
 		strictToolsApplied = params.tools.some(t => (t as { strict?: boolean }).strict === true);
+		// SuperGrok (`xai-oauth`) defaults parallel tool calling off. Omit the
+		// field and api.x.ai honors only the first function_call. Not an omp
+		// config setting — the request just never sent this wire flag.
+		if (model.provider === "xai-oauth" && params.tools.length > 0) {
+			params.parallel_tool_calls = true;
+		}
 		if (options?.toolChoice) {
 			// Map tool_choice against the tools that survived quarantine, not the
 			// original list: a forced choice for a dropped tool — or "required" when
