@@ -66,29 +66,6 @@ bun "${LEX_MAINTENANCE_HOME:-../lex-maintenance}/scripts/check-fork-patches.ts" 
 These are changes that exist in this fork but NOT in upstream `can1357/oh-my-pi`. They must be
 re-verified after every merge. The `check-fork-patches.ts` script does this automatically.
 
-### Patch 1: `replaceModelRoles` (profile-manager profile switch)
-
-**Why**: `overrideModelRoles` is additive (merges into existing roles). Profile switches need to
-*replace* the entire role map, not accumulate. Upstream only has the additive version.
-
-**Files**:
-- `packages/coding-agent/src/config/settings.ts` — `replaceModelRoles()` method
-- `packages/coding-agent/src/extensibility/extensions/types.ts` — `replaceModelRoles` in `ExtensionAPI` + `ExtensionActions`
-- `packages/coding-agent/src/extensibility/extensions/loader.ts` — stub + real impl
-- `packages/coding-agent/src/extensibility/extensions/runner.ts` — wired to actions
-- `packages/coding-agent/src/modes/runtime-init.ts` — wired to session.settings
-- `packages/coding-agent/src/modes/acp/acp-agent.ts` — wired
-- `packages/coding-agent/src/modes/controllers/extension-ui-controller.ts` — wired (×2)
-- `packages/coding-agent/src/task/executor.ts` — wired
-
-**Verify**: `grep -r 'replaceModelRoles' packages/coding-agent/src/ | wc -l` should be ≥ 8.
-
-**Conflict risk**: any upstream refactor of `overrideModelRoles` wiring touches the same sites.
-Pattern: wherever `overrideModelRoles` is wired, `replaceModelRoles` must be wired in parallel.
-
----
-
-
 ### Patch 3: Subagent HUD — spinner, settle summary, activity rows
 
 **Why**: Upstream's subagent HUD is a static tree (no spinner, no post-completion summary message).
@@ -111,19 +88,6 @@ diff `interactive-mode.ts` carefully. The spinner and settle-detection logic liv
 ---
 
 ### Patch 4: `status-line.ts` — `metaColor` option
-
-**Why**: Allows callers to override the meta text color (default `"dim"`) for subagent status rows
-that need accent or error coloring.
-
-**Files**:
-- `packages/coding-agent/src/tui/status-line.ts`
-
-**Verify**: `grep -c 'metaColor' packages/coding-agent/src/tui/status-line.ts` → ≥ 2.
-
-**Conflict risk**: low — additive option, unlikely to conflict unless upstream rewrites status-line.
-
----
-
 ### Patch 5: `sdk.ts` — extension preload inheritance in eval-spawned subagents
 
 **Why**: Without this, eval-spawned subagents re-run extension discovery on the shared registry
@@ -137,20 +101,6 @@ to subagent SDK construction so already-loaded extensions are inherited rather t
 **Verify**: `grep -c 'getPreloadedExtensions\|preloadedExtensions' packages/coding-agent/src/sdk.ts` → ≥ 2.
 
 **Conflict risk**: medium — sdk.ts is frequently modified upstream.
-
----
-
-### Patch 6: `task/disabled-agents.ts` — `isAlwaysEnabledAgent()`
-
-**Why**: Certain agents (e.g. `task`) must never be disabled by `enabledAgents` filters. This
-utility guards the filter to always pass `task` through.
-
-**Files**:
-- `packages/coding-agent/src/task/disabled-agents.ts` (new file, fork-only)
-
-**Verify**: file exists: `ls packages/coding-agent/src/task/disabled-agents.ts`.
-
-**Conflict risk**: low — new file, no upstream collision unless upstream adds same name.
 
 ---
 
@@ -173,41 +123,6 @@ and prepend it to `process.env.PATH` so all child spawns (cargo metadata, napi b
 If that script is replaced again, re-apply the nightly PATH prepend block at the top of the new version.
 
 
----
-
-### Patch 8: Automatic agents use OpenAI Codex
-
-**Why**: Automatic task and Vibe agents must never spend OpenRouter credits, regardless of the
-active model profile or an agent definition's fallback chain. OpenRouter Claude-family selectors
-map to comparable OpenAI Codex models at `auto` effort:
-
-- Opus → `openai-codex/gpt-5.6-sol:auto`
-- Sonnet → `openai-codex/gpt-5.6-terra:auto`
-- Haiku → `openai-codex/gpt-5.6-luna:auto`
-- Unknown OpenRouter automatic agent → `openai-codex/gpt-5.6-terra:auto`
-
-Explicit per-call model requests remain explicit overrides. The external maintenance rebuild runs
-`set-agent-codex-defaults.ts`, which writes fixed Codex defaults into canonical and isolated
-`.omp`/`.lex` profile configs without changing credentials or unrelated settings.
-
-**Files**:
-- `packages/coding-agent/src/task/executor.ts`
-- `packages/coding-agent/src/task/structured-subagent.ts`
-- `packages/coding-agent/src/vibe/runtime.ts`
-- `../lex-maintenance/scripts/set-agent-codex-defaults.ts`
-- `rebuild-lex.zsh` — external-tool launcher
-
-**Verify**:
-- `bun test packages/coding-agent/test/task/executor-subagent-reminders.test.ts`
-- `bun "${LEX_MAINTENANCE_HOME:-../lex-maintenance}/scripts/set-agent-codex-defaults.test.ts"`
-- `bun "${LEX_MAINTENANCE_HOME:-../lex-maintenance}/scripts/check-fork-patches.ts" --repo "$PWD"`
-
-**Conflict risk**: medium — upstream task-routing changes can touch the same executor paths. The
-fork checker rejects a rebuild if any mapping, provider exclusion, task/Vibe enforcement, or
-rebuild normalization hook disappears.
-
----
-
 ### Patch 9: External maintenance tooling
 
 Fork-maintenance tooling lives outside this upstream-facing checkout:
@@ -219,6 +134,29 @@ Fork-maintenance tooling lives outside this upstream-facing checkout:
 
 The Lex checkout retains only the `rebuild-lex.zsh` launcher and runtime/product patches.
 
+
+### Patch 12: SuperGrok (`xai-oauth`) Responses stream workarounds
+
+**Why**: `api.x.ai` is not a drop-in OpenAI Responses host. When omp omits
+`parallel_tool_calls`, SuperGrok defaults it **off** (OpenAI defaults on). This
+is an xAI request-field default, not an omp `config.yml` setting. Later
+`function_call`s appear only on `response.completed.output`; Completions-shaped
+`tool_calls` can arrive on the Responses SSE; the stream may close with no
+terminal frame. Upstream #8617 is OPEN/`wontfix` on the host (#8698). Keep the
+client workarounds here until `api.x.ai` is spec-faithful or upstream merges.
+
+**Files**:
+- `packages/ai/src/providers/openai-responses.ts` — force `parallel_tool_calls: true` for `xai-oauth` only
+- `packages/ai/src/providers/openai-shared.ts` — harvest terminal `function_call`s; ingest Completions-shaped chunks; finalize if no terminal
+- `packages/ai/test/openai-responses-stream-terminal.test.ts`
+- `packages/ai/test/openai-responses-tool-quarantine.test.ts`
+
+**Verify**:
+- `bun test packages/ai/test/openai-responses-stream-terminal.test.ts packages/ai/test/openai-responses-tool-quarantine.test.ts`
+
+**Conflict risk**: medium — `processResponsesStream` is a merge hot zone. If the
+xai-oauth gates disappear after an upstream merge, re-apply from this section.
+
 ---
 
 ## 4. Post-merge checklist
@@ -229,10 +167,10 @@ After every `git merge upstream/main`:
    — reports any patch that no longer applies (method removed, file replaced, grep miss)
 2. **Conflict hot zone review**: `git diff upstream/main HEAD -- packages/coding-agent/src/modes/interactive-mode.ts | head -50`
    — if the subagent HUD region changed upstream, re-verify Patch 3
-3. **`bun check`** — catches type errors from upstream API changes
+3. **`bun check`**
 4. **`./rebuild-lex.zsh`** — binary/native build + extension-state preservation guard
 5. **Optional extension rebuild** — only with both explicit opt-in environment variables
-6. **Live test**: start lex, run `/pm use ag`, open `/models` — should show only `ag/*` models
+6. **Live test**: start lex, switch profiles via core profile commands, open `/models` — should show only the active profile's models
 
 ---
 
@@ -248,7 +186,6 @@ After every `git merge upstream/main`:
 | All TS tests | `bun test` |
 | Single package tests | `bun test packages/coding-agent/test/<file>.test.ts` |
 | Sync fork version stamp | `bun "${LEX_MAINTENANCE_HOME:-../lex-maintenance}/scripts/sync-versions.ts" <version>` |
-| Upgrade profile-manager | `bun build .omp/extensions/profile-manager/index.ts --outfile .omp/extensions/profile-manager/dist/index.js --target bun --format esm` |
 
 ---
 
@@ -256,14 +193,11 @@ After every `git merge upstream/main`:
 
 ```
 ~/.omp/agent/extensions/
-  profile-manager/profile-manager.bundle.js    # from .omp/extensions/profile-manager
-  profile-manager/index.js -> profile-manager.bundle.js   # symlink (rebuild-lex.zsh creates)
   [personal extensions...]                     # from ~/PycharmProjects/omp-personal-extensions
 ```
 
-The `profile-manager` extension is **not** a workspace package — it lives in
-`.omp/extensions/profile-manager/`. `rebuild-lex.zsh` builds it with a direct `bun build` call
-and restores the `index.js` symlink that `install-user-extensions.ts` removes.
+The `profile-manager` extension was retired (2026-08-24) along with Patches 1, 3, 4, and 6;
+model-role switching now goes through core profile settings only.
 
 Personal extensions (`omp-personal-extensions`) are rebuilt and installed by `rebuild-lex.zsh`
 after the workspace build. They run `bun run build && bun run install:user`.

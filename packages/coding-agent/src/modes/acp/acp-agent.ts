@@ -2553,7 +2553,6 @@ export class AcpAgent implements Agent {
 				getThinkingLevel: () => record.session.thinkingLevel,
 				setThinkingLevel: level => record.session.setThinkingLevel(level),
 				overrideModelRoles: roles => record.session.settings.overrideModelRoles(roles),
-				replaceModelRoles: roles => record.session.settings.replaceModelRoles(roles),
 				overrideEnabledModels: patterns => record.session.settings.overrideEnabledModels(patterns),
 				getServiceTiers: () => record.session.serviceTierByFamily,
 				setServiceTier: (family, tier) => record.session.setServiceTierFamily(family, tier),

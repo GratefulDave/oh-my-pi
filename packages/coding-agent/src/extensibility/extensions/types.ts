@@ -1474,9 +1474,6 @@ export interface ExtensionAPI {
 	/** Override model role selectors for the current session without persisting to disk. */
 	overrideModelRoles(roles: Record<string, string>): void;
 
-	/** Replace all model role overrides for the current session (clears previous profile's roles). */
-	replaceModelRoles(roles: Record<string, string>): void;
-
 	/** Override the enabledModels filter for the current session without persisting to disk. Pass `null` to restore the persisted setting. */
 	overrideEnabledModels(patterns: string[] | null): void;
 
@@ -1716,7 +1713,6 @@ export interface ExtensionActions {
 	getThinkingLevel: GetThinkingLevelHandler;
 	setThinkingLevel: SetThinkingLevelHandler;
 	overrideModelRoles: (roles: Record<string, string>) => void;
-	replaceModelRoles: (roles: Record<string, string>) => void;
 	overrideEnabledModels: (patterns: string[] | null) => void;
 	getServiceTiers?: GetServiceTiersHandler;
 	setServiceTier?: SetServiceTierHandler;

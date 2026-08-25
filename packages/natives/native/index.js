@@ -33,6 +33,7 @@ export const TtyWriter = nativeBindings.TtyWriter;
 // functions
 export const __ompInstallTokioRuntime = nativeBindings.__ompInstallTokioRuntime;
 export const __piNativesV18_0_4 = nativeBindings.__piNativesV18_0_4;
+export const applyShellMinimizer = nativeBindings.applyShellMinimizer;
 export const astEdit = nativeBindings.astEdit;
 export const astGrep = nativeBindings.astGrep;
 export const astMatch = nativeBindings.astMatch;
@@ -65,6 +66,7 @@ export const isoProbe = nativeBindings.isoProbe;
 export const isoResolve = nativeBindings.isoResolve;
 export const isoStart = nativeBindings.isoStart;
 export const isoStop = nativeBindings.isoStop;
+export const isShellMinimizerEligible = nativeBindings.isShellMinimizerEligible;
 export const listWorkspace = nativeBindings.listWorkspace;
 export const macOSAutocorrectWord = nativeBindings.macOSAutocorrectWord;
 export const macOSCheckSpelling = nativeBindings.macOSCheckSpelling;
@@ -92,8 +94,6 @@ export const truncateToWidth = nativeBindings.truncateToWidth;
 export const vectorIndexTopK = nativeBindings.vectorIndexTopK;
 export const visibleWidth = nativeBindings.visibleWidth;
 export const wrapTextWithAnsi = nativeBindings.wrapTextWithAnsi;
-export const applyShellMinimizer = nativeBindings.applyShellMinimizer;
-export const isShellMinimizerEligible = nativeBindings.isShellMinimizerEligible;
 
 // string/numeric enums (napi-rs string_enum produces TS-only const enum)
 export const AstMatchStrictness = {

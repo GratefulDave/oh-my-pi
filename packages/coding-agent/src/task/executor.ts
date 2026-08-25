@@ -13,7 +13,6 @@ import { ASYNC_JOB_MANAGER_SHUTDOWN_REASON, AsyncJobManager } from "../async";
 import type { Rule } from "../capability/rule";
 import { ModelRegistry } from "../config/model-registry";
 import {
-	filterAvailableModelsByEnabledPatterns,
 	formatModelSelectorValue,
 	formatModelStringWithRouting,
 	resolveAgentAdvisorSelection,
@@ -161,54 +160,12 @@ function normalizeModelPatterns(value: string | string[] | undefined): string[] 
 		.filter(Boolean);
 }
 
-const AUTOMATIC_AGENT_DEFAULT_MODEL = "openai-codex/gpt-5.6-terra:auto";
-const AUTOMATIC_AGENT_OPENROUTER_FALLBACKS: Record<string, string> = {
-	"claude-opus": "openai-codex/gpt-5.6-sol:auto",
-	"claude-sonnet": "openai-codex/gpt-5.6-terra:auto",
-	"claude-haiku": "openai-codex/gpt-5.6-luna:auto",
-};
-
-function remapAutomaticAgentModelPatterns(patterns: string[]): string[] {
-	const remapped: string[] = [];
-	for (const pattern of patterns) {
-		const normalized = pattern.toLowerCase();
-		if (!normalized.startsWith("openrouter/")) {
-			remapped.push(pattern);
-			continue;
-		}
-		const fallback = Object.entries(AUTOMATIC_AGENT_OPENROUTER_FALLBACKS).find(([family]) =>
-			normalized.includes(family),
-		)?.[1];
-		if (fallback) remapped.push(fallback);
-	}
-	if (remapped.length === 0) remapped.push(AUTOMATIC_AGENT_DEFAULT_MODEL);
-	return Array.from(new Set(remapped));
-}
 
 const SUBAGENT_RETRY_FALLBACK_ROLE_PREFIX = "subagent:";
 
 interface SubagentRetryFallbackCandidate {
 	model: Model<Api>;
 	selector: string;
-}
-
-type SubagentModelLookup = Pick<ModelRegistry, "getApiKey" | "getAvailable">;
-
-function createSubagentModelLookup(
-	modelRegistry: ModelRegistry,
-	settings: Settings,
-	enforceAutomaticModelPolicy: boolean,
-): SubagentModelLookup {
-	if (!enforceAutomaticModelPolicy) return modelRegistry;
-	const eligible = modelRegistry.getAvailable().filter(model => model.provider !== "openrouter");
-	const enabledModels = settings.get("enabledModels");
-	const scoped =
-		enabledModels.length === 0 ? eligible : filterAvailableModelsByEnabledPatterns(eligible, enabledModels, settings);
-	const available = scoped.length > 0 ? scoped : eligible;
-	return {
-		getApiKey: (model, sessionId) => modelRegistry.getApiKey(model, sessionId),
-		getAvailable: () => available,
-	};
 }
 
 function resolveSubagentRetryFallbackCandidates(
@@ -416,12 +373,6 @@ export interface ExecutorOptions {
 	modelOverride?: string | string[];
 	/** Explicit pre-expansion model role alias selected for this run. */
 	modelRole?: string;
-	/**
-	 * Enforce automatic-agent routing: never OpenRouter, map Claude families to
-	 * comparable OpenAI Codex models, and honor non-OpenRouter enabledModels.
-	 * Explicit per-call model requests leave this unset.
-	 */
-	enforceAutomaticModelPolicy?: boolean;
 	/**
 	 * Active model selector of the parent session, used as an auth-aware fallback
 	 * if the resolved subagent model has no working credentials. See #985.
@@ -2859,11 +2810,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		toolNames = Array.from(new Set(expanded));
 	}
 
-	const configuredModelPatterns = normalizeModelPatterns(modelOverride ?? agent.model);
-	const modelPatterns =
-		options.enforceAutomaticModelPolicy === true
-			? remapAutomaticAgentModelPatterns(configuredModelPatterns)
-			: configuredModelPatterns;
+	const modelPatterns = normalizeModelPatterns(modelOverride ?? agent.model);
 	const sessionFile = subtaskSessionFile ?? null;
 	const spawnsEnv = atMaxDepth
 		? ""
@@ -2977,17 +2924,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				);
 			}
 			checkAbort();
-			if (!registryFromParent) {
-				modelRegistry.refreshInBackground();
-			} else {
-				logger.debug("runSubagent: reusing parent modelRegistry; skipping refresh");
-			}
-			checkAbort();
-			const modelLookup = createSubagentModelLookup(
-				modelRegistry,
-				settings,
-				options.enforceAutomaticModelPolicy === true,
-			);
+			const modelLookup = modelRegistry;
 
 			const configuredModelPatterns = resolveConfiguredModelPatterns(modelPatterns, settings);
 			const inheritedRetryFallbackChain =
@@ -3007,9 +2944,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			} = await awaitAbortable(
 				resolveModelOverrideWithAuthFallback(
 					modelPatterns,
-					options.enforceAutomaticModelPolicy === true && options.parentActiveModelPattern
-						? remapAutomaticAgentModelPatterns([options.parentActiveModelPattern])[0]
-						: options.parentActiveModelPattern,
+					options.parentActiveModelPattern,
 					modelLookup,
 					settings,
 					id,
@@ -3093,10 +3028,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			});
 			if (prewalkPattern) {
 				await awaitAbortable(modelRegistry.awaitBackgroundRefresh());
-				const effectivePrewalkPattern =
-					options.enforceAutomaticModelPolicy === true
-						? remapAutomaticAgentModelPatterns([prewalkPattern])[0]
-						: prewalkPattern;
+				const effectivePrewalkPattern = prewalkPattern;
 				const {
 					model: target,
 					thinkingLevel: prewalkThinkingLevel,
@@ -3386,8 +3318,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 						getThinkingLevel: () => session.thinkingLevel,
 						setThinkingLevel: level => session.setThinkingLevel(level),
 						overrideModelRoles: roles => session.settings.overrideModelRoles(roles),
-						replaceModelRoles: roles => session.settings.replaceModelRoles(roles),
-						overrideEnabledModels: patterns => session.settings.overrideEnabledModels(patterns),
+							overrideEnabledModels: patterns => session.settings.overrideEnabledModels(patterns),
 						getServiceTiers: () => session.serviceTierByFamily,
 						setServiceTier: (family, tier) => session.setServiceTierFamily(family, tier),
 						getSessionName: () => session.sessionManager.getSessionName(),

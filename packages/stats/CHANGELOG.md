@@ -5,6 +5,7 @@
 ### Fixed
 
 - Recorded `write`/`read` calls against `xd://<tool>` under the inner tool name so MCP, codemap, and LSP no longer vanish from `omp stats` as `write`.
+- Fixed the Gain dashboard showing only one agent dir's minimizer telemetry: records are now consolidated from `<config-root>/agent/` plus every `profiles/<name>/agent/`, so profile-mode sessions no longer vanish depending on which env `omp stats` runs in.
 
 
 ### Added

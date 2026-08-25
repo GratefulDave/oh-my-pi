@@ -2,7 +2,10 @@
  * Aggregates token-savings data for the Gain dashboard.
  *
  * Sources:
- *   1. Bash minimizer: ~/.omp/agent/minimizer-gain.jsonl
+ *   1. Bash minimizer: minimizer-gain.jsonl in the resolved agent dir PLUS
+ *      every profile's agent dir (~/.omp/profiles/<name>/agent/) — profile-mode
+ *      agents each record into their own dir, so consolidating keeps the
+ *      dashboard complete no matter which env the stats server runs in.
  *   2. Snapcompact:    colocated with stats.db as snapcompact-savings.jsonl
  *
  * Missing files are treated as zero records — never an error.
@@ -24,6 +27,7 @@ import type {
 
 const BYTES_PER_TOKEN_ESTIMATE = 4;
 const SQLITE_VARIABLE_CHUNK_SIZE = 500;
+const MINIMIZER_GAIN_FILE = "minimizer-gain.jsonl";
 
 // ---------------------------------------------------------------------------
 // Minimizer record schema
@@ -46,6 +50,11 @@ interface MinimizerRecord {
 const TEMP_PATH_RE =
 	/\/T(?:\/|$)|\/tmp(?:\/|$)|\/pi-bash-exec(?:\/|$)|\/omp-bash-exec(?:\/|$)|\/pi-bash-detach(?:\/|$)|\/var\/folders(?:\/|$)/;
 
+interface MinimizerSets {
+	records: MinimizerRecord[];
+	missed: MinimizerRecord[];
+	projects: Set<string>;
+}
 // ---------------------------------------------------------------------------
 // Project-match helper
 // ---------------------------------------------------------------------------
@@ -78,24 +87,62 @@ function matchesProject(cwd: string | undefined, project: string): boolean {
 	return isSameOrSubPath(normalizedCwd, normalizedProject) || isSameOrSubPath(cwd, normalizedProject);
 }
 
-// ---------------------------------------------------------------------------
-// Minimizer JSONL — single read, three derived result sets
-// ---------------------------------------------------------------------------
+/**
+ * Gain JSONL paths to aggregate. Profile-mode agents record into
+ * `<config-root>/profiles/<name>/agent/` while default-mode agents use
+ * `<config-root>/agent/`; the stats server may run under any one of these
+ * environments, so every sibling dir's file is consolidated — otherwise the
+ * dashboard shows only whichever single dir this process resolved.
+ */
+async function resolveMinimizerGainPaths(): Promise<string[]> {
+	const agentDir = getAgentDir();
+	if (path.basename(agentDir) !== "agent") return [path.join(agentDir, MINIMIZER_GAIN_FILE)];
 
-interface MinimizerSets {
-	records: MinimizerRecord[];
-	missed: MinimizerRecord[];
-	projects: Set<string>;
+	const agentParent = path.dirname(agentDir);
+	// Profile layout: <config-root>/profiles/<name>/agent — two levels up from
+	// the agent dir. Default layout: <config-root>/agent — one level up.
+	const configRoot =
+		path.basename(path.dirname(agentParent)) === "profiles" ? path.dirname(path.dirname(agentParent)) : agentParent;
+
+	const agentDirs = [path.join(configRoot, "agent")];
+	const profilesDir = path.join(configRoot, "profiles");
+	try {
+		const entries = await fs.readdir(profilesDir);
+		for (const entry of entries) {
+			if (!entry.startsWith(".")) agentDirs.push(path.join(profilesDir, entry, "agent"));
+		}
+	} catch (err) {
+		if (!isEnoent(err)) {
+			logger.debug("gain-aggregator: failed to list profiles dir", { profilesDir, err: String(err) });
+		}
+	}
+
+	const paths = new Array<string>();
+	const seen = new Set<string>();
+	for (const dir of agentDirs) {
+		if (seen.has(dir)) continue;
+		seen.add(dir);
+		paths.push(path.join(dir, MINIMIZER_GAIN_FILE));
+	}
+	return paths;
 }
 
-async function readMinimizerFile(): Promise<string | null> {
-	const filePath = path.join(getAgentDir(), "minimizer-gain.jsonl");
-	try {
-		return await Bun.file(filePath).text();
-	} catch (err) {
-		if (!isEnoent(err)) logger.debug("gain-aggregator: failed to read minimizer-gain.jsonl", { err: String(err) });
-		return null;
-	}
+/** Read every gain file; missing files are skipped, other failures are logged. */
+async function readMinimizerTexts(): Promise<string[]> {
+	const paths = await resolveMinimizerGainPaths();
+	const texts = await Promise.all(
+		paths.map(async filePath => {
+			try {
+				return await Bun.file(filePath).text();
+			} catch (err) {
+				if (!isEnoent(err)) {
+					logger.debug("gain-aggregator: failed to read minimizer-gain.jsonl", { filePath, err: String(err) });
+				}
+				return null;
+			}
+		}),
+	);
+	return texts.filter((text): text is string => text !== null);
 }
 
 /**
@@ -104,34 +151,34 @@ async function readMinimizerFile(): Promise<string | null> {
  * dashboard request.
  */
 async function readMinimizerSets(cutoff: number | null, project: string | null): Promise<MinimizerSets> {
-	const text = await readMinimizerFile();
+	const texts = await readMinimizerTexts();
 	const sets: MinimizerSets = { records: [], missed: [], projects: new Set() };
-	if (!text) return sets;
+	for (const text of texts) {
+		for (const line of text.split("\n")) {
+			if (!line.trim()) continue;
+			try {
+				const rec = JSON.parse(line) as MinimizerRecord;
 
-	for (const line of text.split("\n")) {
-		if (!line.trim()) continue;
-		try {
-			const rec = JSON.parse(line) as MinimizerRecord;
+				const ts = new Date(rec.timestamp).getTime();
+				if (cutoff !== null && ts < cutoff) continue;
 
-			const ts = new Date(rec.timestamp).getTime();
-			if (cutoff !== null && ts < cutoff) continue;
+				// Collect range-scoped project cwds before the per-project filter so the
+				// selector still shows other projects in the active time range.
+				if (rec.cwd) sets.projects.add(rec.cwd);
 
-			// Collect range-scoped project cwds before the per-project filter so the
-			// selector still shows other projects in the active time range.
-			if (rec.cwd) sets.projects.add(rec.cwd);
+				if (project !== null && !matchesProject(rec.cwd, project)) continue;
 
-			if (project !== null && !matchesProject(rec.cwd, project)) continue;
-
-			if (rec.kind === "missed") {
-				// Missed records from meaningful cwds are filter-tuning candidates.
-				if (!TEMP_PATH_RE.test(rec.cwd ?? "")) {
-					sets.missed.push(rec);
+				if (rec.kind === "missed") {
+					// Missed records from meaningful cwds are filter-tuning candidates.
+					if (!TEMP_PATH_RE.test(rec.cwd ?? "")) {
+						sets.missed.push(rec);
+					}
+				} else {
+					sets.records.push(rec);
 				}
-			} else {
-				sets.records.push(rec);
+			} catch {
+				/* skip malformed */
 			}
-		} catch {
-			/* skip malformed */
 		}
 	}
 	return sets;

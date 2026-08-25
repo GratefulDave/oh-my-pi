@@ -170,10 +170,6 @@ export class ExtensionRuntime implements IExtensionRuntime {
 		throw new ExtensionRuntimeNotInitializedError();
 	}
 
-	replaceModelRoles(): void {
-		throw new ExtensionRuntimeNotInitializedError();
-	}
-
 	getServiceTiers(): ServiceTierByFamily {
 		throw new ExtensionRuntimeNotInitializedError();
 	}
@@ -354,10 +350,6 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 
 	overrideModelRoles(roles: Record<string, string>): void {
 		this.runtime.overrideModelRoles(roles);
-	}
-
-	replaceModelRoles(roles: Record<string, string>): void {
-		this.runtime.replaceModelRoles(roles);
 	}
 
 	overrideEnabledModels(patterns: string[] | null): void {

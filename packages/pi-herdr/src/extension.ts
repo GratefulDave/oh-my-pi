@@ -382,7 +382,7 @@ export function createHerdrExtension(pi: ExtensionAPI, options: HerdrExtensionOp
 				.optional()
 				.describe("Include raw Herdr layout JSON in details; text summary is always returned."),
 		}),
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params: { includeJson?: boolean }) {
 			const identity = await requireAvailable();
 			const layout = await request<unknown>(identity, "pane.layout", { pane_id: identity.paneId });
 			return {

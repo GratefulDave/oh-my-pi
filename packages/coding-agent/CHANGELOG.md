@@ -13,6 +13,7 @@
 - Fixed transient terminal input delivery gaps ending held-Space speech-to-text recordings prematurely.
 - Fixed RTK taking over native-eligible Bash commands after a fork rebuild; gain telemetry now records every completed Bash execution.
 - Fixed `shellMinimizer.gainTelemetry` being dropped from the settings schema, so the Shell tab toggle vanished and the config value was ignored. Telemetry is enabled by default and can now be disabled to prevent raw Bash command capture.
+- Fixed gain telemetry still failing closed on any profile without an explicit `shellMinimizer.gainTelemetry` entry, silently keeping the dashboard empty for new profiles; capture is now permanently default-on and only an explicit `false` opts out.
 - Fixed project-level `disabledProviders` settings re-enabling providers disabled in the user-level Extensions Control Center.
 
 ## [18.0.4] - 2026-08-24

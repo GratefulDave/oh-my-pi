@@ -1146,20 +1146,6 @@ export class Settings {
 	}
 
 	/**
-	 * Replace all model role overrides with the given set (clears previous profile's
-	 * roles). Use for profile switches; use `overrideModelRoles` for additive CLI overrides.
-	 */
-	replaceModelRoles(roles: ReadOnlyDict<string>): void {
-		const next: Record<string, string> = {};
-		for (const [role, modelId] of Object.entries(roles)) {
-			if (modelId) {
-				next[role] = modelId;
-			}
-		}
-		this.override("modelRoles", next);
-	}
-
-	/**
 	 * Override the enabledModels filter for the current session without persisting to disk.
 	 * Pass `null` to clear a previous override (restores the persisted setting).
 	 */

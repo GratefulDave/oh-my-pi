@@ -592,7 +592,9 @@ export function renderSubagentHudLines(sessions: ObservableSession[], columns: n
 	if (running.length === 0) return [];
 
 	const width = Math.max(TRUNCATE_LENGTHS.SHORT, columns);
-	const frames = theme.spinnerFrames;
+	// Activity frames are braille in every symbol preset (nerd's status frames
+	// are Nerd Font clock glyphs most terminals render as identical tofu).
+	const frames = theme.getSpinnerFrames("activity");
 	const frame = frames.length > 0 ? frames[spinnerFrame % frames.length] : theme.styledSymbol("status.done", "accent");
 	const visible = running.slice(0, SUBAGENT_HUD_VISIBLE_LIMIT);
 	const hiddenCount = running.length - visible.length;
@@ -603,7 +605,14 @@ export function renderSubagentHudLines(sessions: ObservableSession[], columns: n
 		const activityConnector = isLast ? "   " : `${theme.tree.vertical}  `;
 		const displayId = formatTaskId(session.id);
 		const agentLabel = replaceTabs(session.agent || session.progress?.agent || "agent");
-		const description = session.description?.trim() || session.progress?.description?.trim();
+		const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+		const rawDescription = session.description?.trim() || session.progress?.description?.trim() || "";
+		// Hide descriptions that only echo the id (e.g. the agent re-stated
+		// "AuthLoader" for id "AuthLoader-3") — they add no information.
+		const description =
+			rawDescription && normalize(rawDescription).length > 0 && normalize(displayId).includes(normalize(rawDescription))
+				? undefined
+				: rawDescription || undefined;
 		const taskPreview = session.progress?.task?.trim();
 		const label = description
 			? `${theme.fg("accent", theme.bold(displayId))}${theme.fg("accent", ":")} ${theme.fg(
@@ -2846,9 +2855,10 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	#startSubagentSpinner(): void {
 		if (this.#subagentSpinnerInterval) return;
-		this.#subagentSpinnerFrame = sharedSpinnerFrame(theme.spinnerFrames.length);
+		const frameCount = theme.getSpinnerFrames("activity").length;
+		this.#subagentSpinnerFrame = sharedSpinnerFrame(frameCount);
 		this.#subagentSpinnerInterval = setInterval(() => {
-			this.#subagentSpinnerFrame = sharedSpinnerFrame(theme.spinnerFrames.length);
+			this.#subagentSpinnerFrame = sharedSpinnerFrame(frameCount);
 			this.#renderSubagentList();
 			this.ui.requestRender();
 		}, SPINNER_RENDER_INTERVAL_MS);

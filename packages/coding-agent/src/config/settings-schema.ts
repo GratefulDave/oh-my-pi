@@ -3897,13 +3897,13 @@ export const SETTINGS_SCHEMA = {
 	},
 	"shellMinimizer.gainTelemetry": {
 		type: "boolean",
-		default: false,
+		default: true,
 		ui: {
 			tab: "shell",
 			group: "Bash",
 			label: "Shell Minimizer Gain Telemetry",
 			description:
-				"Record bash minimizer hit/miss gain data to ~/.omp/agent/minimizer-gain.jsonl. Disabled by default; enable only when explicitly needed. Note: records the raw command string verbatim.",
+				"Record bash minimizer hit/miss gain data to the agent dir's minimizer-gain.jsonl. Enabled by default; set to false to opt out. Note: records the raw command string verbatim.",
 		},
 	},
 
