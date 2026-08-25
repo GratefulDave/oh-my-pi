@@ -1,0 +1,10 @@
+{
+  "enabledMcpjsonServers": [
+    "chrome-devtools"
+  ],
+  "permissions": {
+    "allow": [
+      "Bash(node *)"
+    ]
+  }
+}

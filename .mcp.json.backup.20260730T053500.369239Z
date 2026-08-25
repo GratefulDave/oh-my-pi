@@ -1,0 +1,43 @@
+{
+  "mcpServers": {
+    "context7": {
+      "_managed_by": "library"
+    },
+    "chrome-devtools": {
+      "_managed_by": "library",
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ]
+    },
+    "context-mode": {
+      "_managed_by": "library",
+      "command": "/Users/davidandrews/.local/bin/context-mode-mcp"
+    },
+    "grep-app": {
+      "_managed_by": "library"
+    },
+    "codemap": {
+      "_managed_by": "library",
+      "command": "node",
+      "args": [
+        "/Users/davidandrews/PycharmProjects/the-library/tools/codemap/server.mjs"
+      ]
+    },
+    "codebase-memory": {
+      "_managed_by": "library",
+      "command": "codebase-memory-mcp"
+    },
+    "smart-crusher-gateway": {
+      "_managed_by": "library",
+      "command": "smart-crusher-gateway",
+      "args": [
+        "serve"
+      ],
+      "env": {
+        "SMART_CRUSHER_MCP_CONFIG": "~/.claude.json"
+      }
+    }
+  }
+}

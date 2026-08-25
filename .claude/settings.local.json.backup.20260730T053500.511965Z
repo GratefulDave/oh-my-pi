@@ -1,0 +1,13 @@
+{
+  "enabledMcpjsonServers": [
+    "chrome-devtools",
+    "context7",
+    "grep-app",
+    "smart-crusher-gateway"
+  ],
+  "permissions": {
+    "allow": [
+      "Bash(node *)"
+    ]
+  }
+}

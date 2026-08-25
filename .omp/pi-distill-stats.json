@@ -840,6 +840,94 @@
       "hits": 2,
       "firstTs": 1786465512158,
       "lastTs": 1786465538732
+    },
+    "01a009c0-6edb-7000-b2bd-5f09b7b081ad": {
+      "sessionId": "01a009c0-6edb-7000-b2bd-5f09b7b081ad",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Strip landed patches from #8617",
+      "savedBytes": 3459,
+      "originalBytes": 4199,
+      "replacementBytes": 740,
+      "hits": 1,
+      "firstTs": 1786904454459,
+      "lastTs": 1786904454459
+    },
+    "01a00bee-5ca1-7000-a404-8a844e60b80c": {
+      "sessionId": "01a00bee-5ca1-7000-a404-8a844e60b80c",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 42127,
+      "originalBytes": 50221,
+      "replacementBytes": 8094,
+      "hits": 7,
+      "firstTs": 1786906582145,
+      "lastTs": 1786906859412
+    },
+    "01a00bee-5ca1-7002-9c1e-fd752fe9c20c": {
+      "sessionId": "01a00bee-5ca1-7002-9c1e-fd752fe9c20c",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 14284,
+      "originalBytes": 19114,
+      "replacementBytes": 4830,
+      "hits": 2,
+      "firstTs": 1786906598925,
+      "lastTs": 1786906603946
+    },
+    "01a00bee-5ca1-7001-9fb0-69b42c2eaa11": {
+      "sessionId": "01a00bee-5ca1-7001-9fb0-69b42c2eaa11",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 25324,
+      "originalBytes": 32503,
+      "replacementBytes": 7179,
+      "hits": 4,
+      "firstTs": 1786906621432,
+      "lastTs": 1786906883715
+    },
+    "01a00bed-0ac9-7000-a5a3-c92426c28efd": {
+      "sessionId": "01a00bed-0ac9-7000-a5a3-c92426c28efd",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Improve startup time further",
+      "savedBytes": 6961,
+      "originalBytes": 9321,
+      "replacementBytes": 2360,
+      "hits": 2,
+      "firstTs": 1786906949095,
+      "lastTs": 1786906954514
+    },
+    "01a00cd2-0807-7000-b287-99c0945ef7e2": {
+      "sessionId": "01a00cd2-0807-7000-b287-99c0945ef7e2",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 37325,
+      "originalBytes": 41783,
+      "replacementBytes": 4458,
+      "hits": 4,
+      "firstTs": 1786921533983,
+      "lastTs": 1786921947626
+    },
+    "01a00cd0-dc47-7000-9987-f2dfcc34afce": {
+      "sessionId": "01a00cd0-dc47-7000-9987-f2dfcc34afce",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "Open pr and merge all changes",
+      "savedBytes": 72180,
+      "originalBytes": 78773,
+      "replacementBytes": 6593,
+      "hits": 5,
+      "firstTs": 1786921659372,
+      "lastTs": 1786933480917
+    },
+    "01a00cd2-07e7-7000-8637-0557ba39d273": {
+      "sessionId": "01a00cd2-07e7-7000-8637-0557ba39d273",
+      "project": "/Users/davidandrews/PycharmProjects/lex",
+      "label": "/Users/davidandrews/PycharmProjects/lex",
+      "savedBytes": 14855,
+      "originalBytes": 16718,
+      "replacementBytes": 1863,
+      "hits": 3,
+      "firstTs": 1786921733564,
+      "lastTs": 1786921801825
     }
   }
 }

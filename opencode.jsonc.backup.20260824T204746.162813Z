@@ -22,27 +22,6 @@
       ],
       "enabled": true,
       "_managed_by": "library"
-    },
-    "codebase-memory": {
-      "type": "local",
-      "command": [
-        "codebase-memory-mcp"
-      ],
-      "enabled": true,
-      "_managed_by": "library"
-    },
-    "ast-grep": {
-      "type": "local",
-      "command": [
-        "uvx",
-        "--from",
-        "git+https://github.com/ast-grep/ast-grep-mcp",
-        "--with",
-        "mcp<2",
-        "ast-grep-server"
-      ],
-      "enabled": true,
-      "_managed_by": "library"
     }
   }
 }

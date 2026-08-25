@@ -8,6 +8,9 @@
         "mcp-remote",
         "https://mcp.linear.app/mcp"
       ]
+    },
+    "grep-app": {
+      "_managed_by": "library"
     }
   }
 }

@@ -1,0 +1,18 @@
+{
+  "mcp": {
+    "context-mode": {
+      "type": "local",
+      "command": [
+        "/Users/davidandrews/.local/bin/context-mode-mcp"
+      ],
+      "enabled": true,
+      "_managed_by": "library"
+    },
+    "grep-app": {
+      "type": "remote",
+      "url": "https://mcp.grep.app",
+      "enabled": true,
+      "_managed_by": "library"
+    }
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "mcp": {
+    "context-mode": {
+      "type": "local",
+      "command": [
+        "/Users/davidandrews/.local/bin/context-mode-mcp"
+      ],
+      "enabled": true,
+      "_managed_by": "library"
+    },
+    "auggie": {
+      "type": "local",
+      "command": [
+        "/Users/davidandrews/.local/bin/auggie-mcp",
+        "--mcp",
+        "--mcp-auto-workspace"
+      ],
+      "enabled": true,
+      "_managed_by": "library",
+      "environment": {
+        "PATH": "/Users/davidandrews/.local/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "grep-app": {
+      "type": "remote",
+      "url": "https://mcp.grep.app",
+      "enabled": true,
+      "_managed_by": "library"
+    },
+    "ast-grep": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "--from",
+        "git+https://github.com/ast-grep/ast-grep-mcp",
+        "ast-grep-server"
+      ],
+      "enabled": true,
+      "_managed_by": "library"
+    },
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "enabled": true,
+      "_managed_by": "library"
+    },
+    "chrome-devtools": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ],
+      "enabled": true,
+      "_managed_by": "library"
+    },
+    "codemap": {
+      "type": "local",
+      "command": [
+        "node",
+        "/Users/davidandrews/PycharmProjects/the-library/tools/codemap/server.mjs"
+      ],
+      "enabled": true,
+      "_managed_by": "library"
+    },
+    "codebase-memory": {
+      "type": "local",
+      "command": [
+        "codebase-memory-mcp"
+      ],
+      "enabled": true,
+      "_managed_by": "library"
+    },
+    "smart-crusher-gateway": {
+      "type": "local",
+      "command": [
+        "smart-crusher-gateway",
+        "serve"
+      ],
+      "enabled": true,
+      "_managed_by": "library",
+      "environment": {
+        "SMART_CRUSHER_MCP_CONFIG": "~/.claude.json"
+      }
+    }
+  }
+}

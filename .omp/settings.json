@@ -1,5 +1,3 @@
 {
-  "extensions": [
-    ".omp/extensions/profile-manager/dist/index.js"
-  ]
+  "extensions": []
 }
