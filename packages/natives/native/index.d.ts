@@ -376,7 +376,7 @@ export declare function __ompInstallTokioRuntime(): void
  * `packages/natives/native/index.js` (which derives the name from
  * `package.json#version`).
  */
-export declare function __piNativesV18_0_6(): void
+export declare function __piNativesV18_0_7(): void
 
 /**
  * Run the shell-output minimizer over an already-captured command result,

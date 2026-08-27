@@ -101,6 +101,7 @@ import {
 import { type AdvisorConfig, type AdvisorRuntimeStatus, loadAdvisorTranscriptCosts } from "../advisor";
 import { ASYNC_JOB_MANAGER_SHUTDOWN_REASON, type AsyncJob, AsyncJobManager } from "../async";
 import { reset as resetCapabilities } from "../capability";
+import type { EffectiveExtensionRoots } from "../capability/types";
 import { shouldEnableAppendOnlyContext } from "../config/append-only-context-mode";
 import type { ModelRegistry } from "../config/model-registry";
 import type { ResolvedModelRoleValue } from "../config/model-resolver";
@@ -470,6 +471,7 @@ function cloneMessageEndNotification(message: AgentMessage): AgentMessage {
 }
 
 const INTERRUPTED_THINKING_MIN_CHARS = 60;
+const SESSION_CWD_CHANGE_REJECTED = Symbol("sessionCwdChangeRejected");
 
 export class AgentSession {
 	readonly agent: Agent;
@@ -481,6 +483,18 @@ export class AgentSession {
 	fileSnapshotStore?: InMemorySnapshotStore;
 	/** Per-session `CUT`/`PASTE` clipboard register shared across edit calls. */
 	editClipboard?: Clipboard;
+
+	/** Materializes this session's live extension-root policy per discovery call. */
+	readonly #extensionRoots: () => EffectiveExtensionRoots;
+
+	/**
+	 * Session-local extension roots for post-startup rediscovery. Subagents may
+	 * inherit the owning session's provider so recursive task discovery preserves
+	 * explicit roots, mode, configured roots, and provenance.
+	 */
+	get effectiveExtensionRoots(): EffectiveExtensionRoots {
+		return this.#extensionRoots();
+	}
 
 	#powerAssertion: MacOSPowerAssertion | undefined;
 
@@ -522,7 +536,7 @@ export class AgentSession {
 	#goalModeState: GoalModeState | undefined;
 	#goalRuntime: GoalRuntime;
 	readonly #advisors: SessionAdvisors;
-	/** Resolves once the resume-time advisor spend backfill settles (issue #9553). */
+	/** Resolves once the resume-time advisor spend backfill settles. */
 	#advisorCostRestore: Promise<void> = Promise.resolve();
 	#goalTurnCounter = 0;
 	#planReferenceSent = false;
@@ -951,7 +965,25 @@ export class AgentSession {
 		const pending = this.#pendingAgentEndEmit;
 		if (!pending) return;
 		this.#pendingAgentEndEmit = undefined;
-		this.#emit(pending);
+		if (pending.type !== "agent_end" || pending.isTerminal === false) {
+			this.#emit(pending);
+			return;
+		}
+
+		// `agent_end` is deferred until the prompt count reaches zero, but it is
+		// emitted immediately before the settle drain schedules work that arrived
+		// after the loop's final queue/aside poll. Such a tail arrival is a real
+		// continuation, not a terminal stop: mark this end non-terminal so
+		// subscribers wait through the queued steer/follow-up or stranded IRC wake.
+		const canDrain =
+			!this.#abortInProgress && this.#unsubscribeAgent !== undefined && this.#modeExitDrainSuppressionDepth === 0;
+		const queuedContinuation =
+			canDrain &&
+			!this.#queuedMessageDrainBlocked &&
+			this.#canAutoContinueForFollowUp() &&
+			this.agent.hasQueuedMessages();
+		const ircContinuation = canDrain && !this.#isDisposed && !this.#planModeState?.enabled && this.#irc.hasPending();
+		this.#emit(queuedContinuation || ircContinuation ? { ...pending, isTerminal: false } : pending);
 	}
 
 	/**
@@ -1000,6 +1032,14 @@ export class AgentSession {
 		this.sessionManager = config.sessionManager;
 		this.settings = config.settings;
 		this.#modelRegistry = config.modelRegistry;
+		this.#extensionRoots =
+			config.extensionRoots ??
+			(() => ({
+				explicit: config.additionalExtensionPaths ?? [],
+				mode: config.disableExtensionDiscovery ? "explicit-only" : "merge",
+				configured: this.settings.get("extensions") ?? [],
+				configuredLevel: this.settings.extensionsSourceLevel(),
+			}));
 		this.#codexResetCoordinator = config.codexResetCoordinator ?? defaultCodexAutoRedeemCoordinator;
 		const bashHost: BashRunnerHost = {
 			agent: this.agent,
@@ -1317,6 +1357,7 @@ export class AgentSession {
 			agent: this.agent,
 			sessionManager: this.sessionManager,
 			settings: this.settings,
+			effectiveExtensionRoots: () => this.effectiveExtensionRoots,
 			modelRegistry: this.#modelRegistry,
 			extensionRunner: () => this.#extensionRunner,
 			clientBridge: () => this.#clientBridge,
@@ -1352,6 +1393,9 @@ export class AgentSession {
 			mcpManagerToolNames: config.mcpManagerToolNames,
 			presentationPinnedToolNames: config.presentationPinnedToolNames,
 			ensureWriteRegistered: config.ensureWriteRegistered,
+			isDeviceOnlyWrite: config.isDeviceOnlyWrite,
+			setDeviceOnlyWrite: config.setDeviceOnlyWrite,
+			setPendingFullWriteDescription: config.setPendingFullWriteDescription,
 			ensureGoalRegistered: config.ensureGoalRegistered,
 			rebuildSystemPrompt: config.rebuildSystemPrompt,
 			getMcpServerInstructions: config.getMcpServerInstructions,
@@ -2206,6 +2250,18 @@ export class AgentSession {
 		void processing.finally(() => this.#inFlightEventHandlers.delete(processing)).catch(() => {});
 		return processing;
 	};
+
+	/**
+	 * Await only message persistence already in flight at call time.
+	 *
+	 * Focus attach uses this after subscribing to the target so a tool result
+	 * emitted during the focus blackout is present in the transcript rebuild.
+	 * This intentionally excludes agent_end maintenance, which may perform
+	 * provider-backed compaction and must not block switching sessions.
+	 */
+	async settleInFlightMessagePersistence(): Promise<void> {
+		await Promise.allSettled([...this.#pendingMessageEndPersistence.values()]);
+	}
 
 	/**
 	 * Await every in-flight event handler (and any it chains into) so a late
@@ -7892,6 +7948,11 @@ export class AgentSession {
 		return this.#irc.deliver(msg, opts);
 	}
 
+	/** Waits for side-channel IRC auto-replies currently owned by this session. */
+	waitForIrcAutoReplies(): Promise<void> {
+		return this.#irc.waitForAutoReplies();
+	}
+
 	/** Installs task-executor monitoring around autonomous IRC wake turns. */
 	setIrcWakeTurnObserver(
 		observer: ((records: CustomMessage[]) => ((error?: unknown) => void | Promise<void>) | undefined) | undefined,
@@ -8071,16 +8132,23 @@ export class AgentSession {
 	async reload(): Promise<void> {
 		const sessionFile = this.sessionFile;
 		if (!sessionFile) return;
-		await this.switchSession(sessionFile);
+		const switched = await this.switchSession(sessionFile);
+		if (!switched) throw new Error("Session reload cancelled");
 	}
-
 	/**
 	 * Switch to a different session file.
 	 * Aborts current operation, loads messages, restores model/thinking.
 	 * Listeners are preserved and will continue receiving events.
-	 * @returns true if switch completed, false if cancelled by hook
+	 * @returns true if switch completed, false if cancelled by hook or cwd change
 	 */
-	async switchSession(sessionPath: string): Promise<boolean> {
+	async switchSession(
+		sessionPath: string,
+		options?: {
+			onCwdChange?: (newCwd: string, previousCwd: string) => Promise<boolean>;
+			/** Collab snapshot adoption keeps the guest's process cwd and marks the replica runtime-only. */
+			preserveLocalCwd?: boolean;
+		},
+	): Promise<boolean> {
 		const previousSessionFile = this.sessionManager.getSessionFile();
 		const switchingToDifferentSession = previousSessionFile
 			? path.resolve(previousSessionFile) !== path.resolve(sessionPath)
@@ -8155,6 +8223,7 @@ export class AgentSession {
 		this.#usagePreflightReadyForNextModelCall = false;
 		this.#usagePreflightReadyModel = undefined;
 
+		let cwdChangeTarget: string | undefined;
 		try {
 			if (switchingToDifferentSession) {
 				// Stop and settle in-flight advisors while the old-session feeds can
@@ -8163,6 +8232,25 @@ export class AgentSession {
 			}
 			await this.sessionManager.setSessionFile(sessionPath);
 			this.#bash.markSessionTransition(bashTransition);
+			const newCwd = this.sessionManager.getCwd();
+			const recordedCwd = this.sessionManager.getRecordedCwd() ?? previousSessionState.cwd;
+			if (options?.preserveLocalCwd) {
+				this.sessionManager.setCwdWithoutRelocation(previousSessionState.cwd);
+			} else {
+				if (!options?.onCwdChange && path.resolve(recordedCwd) !== path.resolve(previousSessionState.cwd)) {
+					throw SESSION_CWD_CHANGE_REJECTED;
+				}
+				if (options?.onCwdChange) {
+					if (path.resolve(newCwd) !== path.resolve(previousSessionState.cwd)) {
+						cwdChangeTarget = newCwd;
+						if (!(await options.onCwdChange(newCwd, previousSessionState.cwd))) {
+							throw SESSION_CWD_CHANGE_REJECTED;
+						}
+					} else if (path.resolve(recordedCwd) !== path.resolve(previousSessionState.cwd)) {
+						throw SESSION_CWD_CHANGE_REJECTED;
+					}
+				}
+			}
 			if (switchingToDifferentSession) {
 				this.#freshProviderSessionId = undefined;
 				this.#clearInheritedProviderPromptCacheKey();
@@ -8365,7 +8453,25 @@ export class AgentSession {
 					error: String(reconcileError),
 				});
 			}
+			if (cwdChangeTarget && error !== SESSION_CWD_CHANGE_REJECTED && options?.onCwdChange) {
+				let rollbackFailure: string | undefined;
+				try {
+					if (!(await options.onCwdChange(previousSessionState.cwd, cwdChangeTarget))) {
+						rollbackFailure = "cwd rollback was rejected";
+					}
+				} catch (rollbackError) {
+					rollbackFailure = `cwd rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`;
+				}
+				if (rollbackFailure) {
+					this.beginDispose();
+					this.#bash.finishSessionTransition(bashTransition, false);
+					logger.warn("Failed to restore cwd after session switch", { cwd: previousSessionState.cwd });
+					const original = error instanceof Error ? error.message : String(error);
+					throw new Error(`${original} (${rollbackFailure}; the process may remain in ${cwdChangeTarget})`);
+				}
+			}
 			this.#bash.finishSessionTransition(bashTransition, false);
+			if (error === SESSION_CWD_CHANGE_REJECTED) return false;
 			throw error;
 		}
 	}
@@ -9749,11 +9855,9 @@ export class AgentSession {
 
 	/**
 	 * Begin backfilling advisor spend recorded before this resume, off the
-	 * critical path (issue #9553). A large advisor transcript would otherwise
-	 * block session startup for tens of seconds while the whole file is streamed
-	 * and parsed; instead the status-line total hydrates once the scan settles.
-	 * The resulting promise is exposed via {@link advisorCostRestore} for tests
-	 * and headless callers that must observe the hydrated total.
+	 * critical path. A large transcript would otherwise block startup while
+	 * the file is streamed; the status-line total hydrates once the scan
+	 * settles.
 	 */
 	beginInitialAdvisorCostRestore(): void {
 		let stale = false;
