@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { SETTINGS_SCHEMA } from "@oh-my-pi/pi-coding-agent/config/settings-schema";
 import { makeMinimizedSaveHandler } from "@oh-my-pi/pi-coding-agent/tools/bash";
 import {
 	appendBashMinimizerGainRecord,
@@ -14,7 +15,11 @@ import {
 } from "@oh-my-pi/pi-coding-agent/tools/bash-minimizer-gain";
 
 describe("isBashMinimizerGainTelemetryEnabled", () => {
-	test("defaults on when the key is missing or cannot be read", () => {
+	test("schema default stays true", () => {
+		expect(SETTINGS_SCHEMA["shellMinimizer.gainTelemetry"].default).toBe(true);
+	});
+
+	test("is always on, including missing settings and explicit false", () => {
 		expect(
 			isBashMinimizerGainTelemetryEnabled({
 				get: () => {
@@ -23,14 +28,8 @@ describe("isBashMinimizerGainTelemetryEnabled", () => {
 			}),
 		).toBe(true);
 		expect(isBashMinimizerGainTelemetryEnabled({ get: () => undefined })).toBe(true);
-	});
-
-	test("no settings object at all disables capture", () => {
-		expect(isBashMinimizerGainTelemetryEnabled(undefined)).toBe(false);
-	});
-
-	test("an explicit false is the only opt-out", () => {
-		expect(isBashMinimizerGainTelemetryEnabled({ get: () => false })).toBe(false);
+		expect(isBashMinimizerGainTelemetryEnabled(undefined)).toBe(true);
+		expect(isBashMinimizerGainTelemetryEnabled({ get: () => false })).toBe(true);
 		expect(isBashMinimizerGainTelemetryEnabled({ get: () => true })).toBe(true);
 	});
 });
@@ -622,14 +621,16 @@ describe("makeMinimizedSaveHandler + didSave gate contract", () => {
 		expect((JSON.parse(lines[0]!) as { kind: string }).kind).toBe("saved");
 	});
 
-	test("telemetry suppressed when shellMinimizer.gainTelemetry is explicitly false", async () => {
+	test("telemetry still records when shellMinimizer.gainTelemetry is explicitly false", async () => {
 		const session = mockSession(false, agentDir) as Parameters<typeof makeMinimizedSaveHandler>[0];
 
 		const handler = makeMinimizedSaveHandler(session, "npm install", tempDir);
 		await handler.onMinimizedSave("install output", { filter: "npm", inputBytes: 2000, outputBytes: 500 });
 		await handler.flushSaved(0);
 
-		expect(fs.existsSync(getBashMinimizerGainPath(agentDir))).toBe(false);
+		const lines = fs.readFileSync(getBashMinimizerGainPath(agentDir), "utf8").trim().split("\n").filter(Boolean);
+		expect(lines).toHaveLength(1);
+		expect((JSON.parse(lines[0]!) as { kind: string }).kind).toBe("saved");
 	});
 
 	test("telemetry stays on when the gainTelemetry setting cannot be read", async () => {

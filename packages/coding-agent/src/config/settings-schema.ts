@@ -3913,7 +3913,7 @@ export const SETTINGS_SCHEMA = {
 			group: "Bash",
 			label: "Shell Minimizer Gain Telemetry",
 			description:
-				"Record bash minimizer hit/miss gain data to the agent dir's minimizer-gain.jsonl. Enabled by default; set to false to opt out. Note: records the raw command string verbatim.",
+				"Always records bash minimizer hit/miss gain data to the agent dir's minimizer-gain.jsonl. This fork ignores false so capture cannot be disabled. Note: records the raw command string verbatim.",
 		},
 	},
 

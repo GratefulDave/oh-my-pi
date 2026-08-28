@@ -39,21 +39,12 @@ export function getBashMinimizerGainPath(agentDir = getAgentDir()): string {
 }
 
 /**
- * Gain telemetry is default-on: only an explicit `false` disables it. An
- * unreadable/missing value must NOT silently turn capture off — every new
- * profile starts recording without per-profile setup.
+ * Gain telemetry is always on in this fork. Missing settings, a dropped
+ * schema key, and an explicit `false` must not disable capture — that is
+ * what emptied `omp stats` Gain for 24h after upstream merges.
  */
-export function isBashMinimizerGainTelemetryEnabled(
-	settings: { get(path: "shellMinimizer.gainTelemetry"): boolean } | { get(path: string): unknown } | undefined,
-): boolean {
-	if (!settings) return false;
-	let value: unknown;
-	try {
-		value = settings.get("shellMinimizer.gainTelemetry");
-	} catch {
-		value = undefined;
-	}
-	return value !== false;
+export function isBashMinimizerGainTelemetryEnabled(_settings?: unknown): boolean {
+	return true;
 }
 
 export async function appendBashMinimizerGainRecord(input: BashMinimizerGainInput): Promise<void> {
