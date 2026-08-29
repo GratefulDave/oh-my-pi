@@ -14,7 +14,7 @@
 import type { Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { getAgentDir, getStatsDbPath, isEnoent, logger } from "@oh-my-pi/pi-utils";
+import { getStatsDbPath, isEnoent, listAgentDirs, logger } from "@oh-my-pi/pi-utils";
 import { getTimeRangeConfig } from "./aggregator";
 import { initDb } from "./db";
 import type {
@@ -95,33 +95,8 @@ function matchesProject(cwd: string | undefined, project: string): boolean {
  * dashboard shows only whichever single dir this process resolved.
  */
 async function resolveMinimizerGainPaths(): Promise<string[]> {
-	const agentDir = getAgentDir();
-	if (path.basename(agentDir) !== "agent") return [path.join(agentDir, MINIMIZER_GAIN_FILE)];
-
-	const agentParent = path.dirname(agentDir);
-	// Profile layout: <config-root>/profiles/<name>/agent — two levels up from
-	// the agent dir. Default layout: <config-root>/agent — one level up.
-	const configRoot =
-		path.basename(path.dirname(agentParent)) === "profiles" ? path.dirname(path.dirname(agentParent)) : agentParent;
-
-	const agentDirs = [path.join(configRoot, "agent")];
-	const profilesDir = path.join(configRoot, "profiles");
-	try {
-		const entries = await fs.readdir(profilesDir);
-		for (const entry of entries) {
-			if (!entry.startsWith(".")) agentDirs.push(path.join(profilesDir, entry, "agent"));
-		}
-	} catch (err) {
-		if (!isEnoent(err)) {
-			logger.debug("gain-aggregator: failed to list profiles dir", { profilesDir, err: String(err) });
-		}
-	}
-
 	const paths = new Array<string>();
-	const seen = new Set<string>();
-	for (const dir of agentDirs) {
-		if (seen.has(dir)) continue;
-		seen.add(dir);
+	for (const dir of await listAgentDirs()) {
 		paths.push(path.join(dir, MINIMIZER_GAIN_FILE));
 	}
 	return paths;
