@@ -116,6 +116,14 @@ async function writeMinimizerJSONL(records: object[]): Promise<void> {
 	await Bun.write(path.join(agentDir, "minimizer-gain.jsonl"), lines);
 }
 
+/** Write a minimizer-gain.jsonl into a named profile's agent dir under the temp config root. */
+async function writeProfileMinimizerJSONL(profile: string, records: object[]): Promise<void> {
+	const profileAgentDir = path.join(path.dirname(getAgentDir()), "profiles", profile, "agent");
+	await fs.mkdir(profileAgentDir, { recursive: true });
+	const lines = records.map(r => JSON.stringify(r)).join("\n");
+	await Bun.write(path.join(profileAgentDir, "minimizer-gain.jsonl"), lines);
+}
+
 /** Write Snapcompact savings alongside stats.db. */
 async function writeSnapcompactJSONL(records: object[]): Promise<void> {
 	const lines = records.map(r => JSON.stringify(r)).join("\n");
@@ -227,6 +235,52 @@ describe("getGainDashboardStats", () => {
 		} finally {
 			setAgentDir(originalAgentDir);
 		}
+	});
+
+	it("aggregates gain records across the default agent dir and every profile agent dir", async () => {
+		const now = new Date().toISOString();
+		await writeMinimizerJSONL([
+			{
+				timestamp: now,
+				filter: "git-status",
+				inputBytes: 1000,
+				outputBytes: 200,
+				savedBytes: 800,
+				savedTokens: 200,
+				kind: "saved",
+				cwd: "/Users/x/myrepo",
+			},
+		]);
+		await writeProfileMinimizerJSONL("openrouter", [
+			{
+				timestamp: now,
+				filter: "cargo-build",
+				inputBytes: 900,
+				outputBytes: 100,
+				savedBytes: 800,
+				savedTokens: 200,
+				kind: "saved",
+				cwd: "/Users/x/otherrepo",
+			},
+		]);
+		await writeProfileMinimizerJSONL("deepseek", [
+			{
+				timestamp: now,
+				filter: "missed",
+				command: "make all",
+				inputBytes: 300,
+				outputBytes: 300,
+				savedBytes: 0,
+				kind: "missed",
+				cwd: "/Users/x/thirdrepo",
+			},
+		]);
+
+		const stats = await getGainDashboardStats();
+		expect(stats.overall.hits).toBe(2);
+		expect(stats.overall.savedTokens).toBe(400);
+		expect(stats.topFilters.map(f => f.filter).sort()).toEqual(["cargo-build", "git-status"]);
+		expect(stats.missedCommands.map(c => c.command)).toContain("make all");
 	});
 
 	it("collects missed commands aggregated by full command string", async () => {

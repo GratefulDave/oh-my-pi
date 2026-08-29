@@ -1,13 +1,13 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "UserPromptSubmit": [
       {
         "_managed_by": "library",
-        "matcher": "Task|Agent",
+        "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "node /Users/davidandrews/PycharmProjects/the-library/hooks/claude/code-intel-task-inject-pretooluse.mjs"
+            "command": "node /Users/davidandrews/PycharmProjects/the-library/hooks/claude/code-intel-userpromptsubmit.mjs"
           }
         ]
       }

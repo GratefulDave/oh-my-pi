@@ -94,7 +94,6 @@ export async function initializeExtensions(session: AgentSession, options: Initi
 			getThinkingLevel: () => session.thinkingLevel,
 			setThinkingLevel: level => session.setThinkingLevel(level),
 			overrideModelRoles: roles => session.settings.overrideModelRoles(roles),
-			replaceModelRoles: roles => session.settings.replaceModelRoles(roles),
 			overrideEnabledModels: patterns => session.settings.overrideEnabledModels(patterns),
 			getServiceTiers: () => session.serviceTierByFamily,
 			setServiceTier: (family, tier) => session.setServiceTierFamily(family, tier),

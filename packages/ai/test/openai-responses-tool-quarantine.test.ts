@@ -5,13 +5,14 @@ import type { Context, Model, ModelSpec, Tool } from "@oh-my-pi/pi-ai/types";
 import { findStrictToolSchemaViolation } from "@oh-my-pi/pi-ai/utils/schema";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
 
-function makeModel(provider: "openai" | "xai-oauth" = "openai"): Model<"openai-responses"> {
+function makeModel(provider: "openai" | "xai" | "xai-oauth" = "openai"): Model<"openai-responses"> {
+	const isXai = provider === "xai" || provider === "xai-oauth";
 	return buildModel({
-		id: provider === "xai-oauth" ? "grok-4" : "gpt-5",
-		name: provider === "xai-oauth" ? "Grok 4" : "GPT-5",
+		id: isXai ? "grok-4" : "gpt-5",
+		name: isXai ? "Grok 4" : "GPT-5",
 		api: "openai-responses",
 		provider,
-		baseUrl: provider === "xai-oauth" ? "https://api.x.ai/v1" : "https://api.openai.com/v1",
+		baseUrl: isXai ? "https://api.x.ai/v1" : "https://api.openai.com/v1",
 		reasoning: true,
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -146,10 +147,15 @@ describe("convertTools quarantine (#2652)", () => {
 	test("preserves an exclusive-required MCP tool on OpenAI Responses", () => {
 		const out = convertTools([coverageTool, goodTool], true, makeModel()) as Array<{
 			name: string;
-			parameters: { anyOf?: unknown };
+			parameters: { required?: string[]; properties?: Record<string, { anyOf?: unknown[] }> };
 		}>;
 		expect(out.map(t => t.name)).toEqual(["mcp__codebase_memory_check_index_coverage", "read_file"]);
-		expect(out[0]?.parameters.anyOf).toHaveLength(2);
+		// v18 normalizes the root anyOf into per-property nullable unions instead of
+		// keeping it verbatim; the tool itself must survive conversion un-quarantined.
+		const params = out[0]?.parameters;
+		expect(params?.properties?.paths?.anyOf).toHaveLength(2);
+		expect(params?.properties?.scopes?.anyOf).toHaveLength(2);
+		expect(params?.required).toContain("project");
 	});
 
 	test("keeps a leftover object-root union on OpenAI Responses", () => {
@@ -226,6 +232,42 @@ describe("buildParams tool_choice reconciliation (#2652)", () => {
 			undefined,
 		);
 		expect(params.tool_choice).toEqual({ type: "function", name: "read_file" });
+	});
+
+	test("xai-oauth Responses sets parallel_tool_calls so SuperGrok emits every function_call", () => {
+		const { params } = buildParams(makeModel("xai-oauth"), ctx([goodTool]), {}, undefined);
+		expect(params.parallel_tool_calls).toBe(true);
+	});
+
+	test("OpenAI Responses leaves parallel_tool_calls unset", () => {
+		const { params } = buildParams(makeModel(), ctx([goodTool]), {}, undefined);
+		expect(params.parallel_tool_calls).toBeUndefined();
+	});
+
+	test("API-key xai Responses leaves parallel_tool_calls unset", () => {
+		const { params } = buildParams(makeModel("xai"), ctx([goodTool]), {}, undefined);
+		expect(params.parallel_tool_calls).toBeUndefined();
+	});
+
+	test("OpenRouter Responses leaves parallel_tool_calls unset", () => {
+		const { params } = buildParams(
+			buildModel({
+				id: "x-ai/grok-4.6",
+				name: "OpenRouter Grok 4.6",
+				api: "openai-responses",
+				provider: "openrouter",
+				baseUrl: "https://openrouter.ai/api/v1",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 256000,
+				maxTokens: 64000,
+			} as ModelSpec<"openai-responses">),
+			ctx([goodTool]),
+			{},
+			undefined,
+		);
+		expect(params.parallel_tool_calls).toBeUndefined();
 	});
 
 	test("keeps a forced native computer choice when only a sibling tool is quarantined", () => {

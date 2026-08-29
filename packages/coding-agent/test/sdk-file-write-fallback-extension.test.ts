@@ -58,7 +58,6 @@ function initializeRunnerForTest(runner: ExtensionRunner | undefined): void {
 		setThinkingLevel: () => {},
 		getSessionName: () => undefined,
 		overrideModelRoles: () => {},
-		replaceModelRoles: () => {},
 		overrideEnabledModels: () => {},
 		setSessionName: async () => {},
 	};

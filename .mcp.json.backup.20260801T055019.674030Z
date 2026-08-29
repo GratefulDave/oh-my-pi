@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "linear": {
+      "_managed_by": "library",
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.linear.app/mcp"
+      ]
+    },
+    "grep-app": {
+      "_managed_by": "library"
+    }
+  }
+}

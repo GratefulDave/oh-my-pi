@@ -1,0 +1,12 @@
+{
+  "mcp": {
+    "context-mode": {
+      "type": "local",
+      "command": [
+        "/Users/davidandrews/.local/bin/context-mode-mcp"
+      ],
+      "enabled": true,
+      "_managed_by": "library"
+    }
+  }
+}

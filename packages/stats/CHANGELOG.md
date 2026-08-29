@@ -5,12 +5,19 @@
 ### Fixed
 
 - Recorded `write`/`read` calls against `xd://<tool>` under the inner tool name so MCP, codemap, and LSP no longer vanish from `omp stats` as `write`.
-- Tracked bash minimizer gain from every named profile: the Gain dashboard now aggregates `minimizer-gain.jsonl` across `~/.omp/profiles/*/agent` in addition to the active agent dir, so sessions run under `--profile` no longer vanish from `omp stats`.
+- Fixed session sync reading only the active agent dir: `omp stats` now ingests `<config-root>/agent/sessions` plus every `profiles/<name>/agent/sessions` into the shared app-root `stats.db`, so named-profile traffic no longer vanishes from 24h/7d.
+- Fixed the Gain dashboard showing only one agent dir's minimizer telemetry: records are now consolidated from `<config-root>/agent/` plus every `profiles/<name>/agent/`, so profile-mode sessions no longer vanish depending on which env `omp stats` runs in.
 
 
 ### Added
 
 - Bash Minimizer gain dashboard in `omp stats` — shows bash minimizer token-savings alongside existing snapcompact savings with stacked time series, top-filter breakdown, project selector, and missed-command tuning table ([#3691](https://github.com/can1357/oh-my-pi/pull/3691)).
+
+## [18.0.9] - 2026-08-28
+
+### Fixed
+
+- Fixed inconsistent model colors between the Model Preference chart and Model Statistics table.
 
 ## [18.0.4] - 2026-08-24
 

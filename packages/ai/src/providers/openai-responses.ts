@@ -25,7 +25,7 @@ import {
 	sanitizeOpenAIResponsesAssistantHistoryItemsForReplay,
 } from "../utils";
 import { createAbortSourceTracker } from "../utils/abort";
-import { withEmptyCompletionRetry } from "../utils/empty-completion-retry";
+import { withReplaySafeStreamRetry } from "../utils/empty-completion-retry";
 import { AssistantMessageEventStream } from "../utils/event-stream";
 import type { RawHttpRequestDump } from "../utils/http-inspector";
 import {
@@ -190,7 +190,8 @@ function isOpenAIResponsesReplayUnsafeEvent(event: ResponseStreamEvent): boolean
 function isRetryableOpenAIResponsesStreamFailure(error: unknown): boolean {
 	return (
 		AIError.isTransientStreamParseError(error) ||
-		(error instanceof AIError.ProviderResponseError && error.kind === "incomplete-stream")
+		(error instanceof AIError.ProviderResponseError && error.kind === "incomplete-stream") ||
+		AIError.isProviderRetryableError(error)
 	);
 }
 
@@ -921,13 +922,14 @@ const streamOpenAIResponsesOnce = (
 };
 
 /**
- * Public entry: wrap the single-attempt Responses streamer with bounded
- * empty-completion retries — a `response.completed` carrying no content/usage
- * would otherwise stall the agent loop. Shared with the OpenAI-completions and
- * Anthropic providers via `withEmptyCompletionRetry`.
+ * Public entry: retry benign empty completions before they reach the agent
+ * loop. Transient stream failures are retried inside the attempt so stateful
+ * Responses request metadata remains stable.
  */
 export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (model, context, options) =>
-	withEmptyCompletionRetry(model, context, options, streamOpenAIResponsesOnce);
+	withReplaySafeStreamRetry(model, context, options, streamOpenAIResponsesOnce, {
+		retryEmptyCompletion: true,
+	});
 
 function isOfficialOpenAIResponsesEndpoint(model: Model<"openai-responses">): boolean {
 	if (model.provider !== "openai") return false;
@@ -1242,6 +1244,12 @@ export function buildParams(
 		const strictMode = !disableStrictTools && model.compat.supportsStrictMode !== false;
 		params.tools = convertTools(context.tools, strictMode, model);
 		strictToolsApplied = params.tools.some(t => (t as { strict?: boolean }).strict === true);
+		// SuperGrok (`xai-oauth`) defaults parallel tool calling off. Omit the
+		// field and api.x.ai honors only the first function_call. Not an omp
+		// config setting — the request just never sent this wire flag.
+		if (model.provider === "xai-oauth" && params.tools.length > 0) {
+			params.parallel_tool_calls = true;
+		}
 		if (options?.toolChoice) {
 			// Map tool_choice against the tools that survived quarantine, not the
 			// original list: a forced choice for a dropped tool — or "required" when

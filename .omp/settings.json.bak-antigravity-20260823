@@ -1,0 +1,81 @@
+{
+ "extensions": [
+  ".omp/extensions/profile-manager/dist/index.js"
+ ],
+  "activeModelProfile": "antigravity",
+  "cycleOrder": [
+    "smol",
+    "default",
+    "plan",
+    "slow"
+  ],
+  "defaultThinkingLevel": "medium",
+  "enabledModels": [
+    "openai-codex/*",
+    "opencode-antigravity/*",
+    "google-antigravity/*",
+    "anthropic/*",
+    "google/*",
+    "openai/*",
+    "grok/*",
+    "deepseek/*",
+    "perplexity/*",
+    "omlx/*",
+    "nvidia/*",
+    "lmstudio/*",
+    "ollama/*",
+    "llama.cpp/*"
+  ],
+  "modelProviderOrder": [
+    "openai-codex",
+    "google-antigravity",
+    "opencode-antigravity",
+    "anthropic",
+    "google",
+    "openai",
+    "grok",
+    "deepseek",
+    "perplexity",
+    "nvidia",
+    "omlx",
+    "lmstudio",
+    "ollama",
+    "llama.cpp"
+  ],
+  "modelRoles": {
+    "commit": "google-antigravity/gemini-3.5-flash-extra-low:low",
+    "default": "google-antigravity/claude-sonnet-4-6:medium",
+    "designer": "google-antigravity/gemini-pro-agent",
+    "plan": "google-antigravity/claude-opus-4-6-thinking:high",
+    "slow": "google-antigravity/claude-opus-4-6-thinking",
+    "smol": "google-antigravity/gemini-3.5-flash-low:low",
+    "task": "google-antigravity/claude-sonnet-4-6",
+    "vision": "google-antigravity/gemini-3-flash-agent"
+  },
+  "modelProfiles": {
+    "codex-ag": {
+      "cycleOrder": [
+        "smol",
+        "default",
+        "plan",
+        "slow"
+      ],
+      "defaultThinkingLevel": "medium",
+      "enabledModels": [
+        "openai-codex/*",
+        "AG-*",
+        "opencode-antigravity/*"
+      ],
+      "modelProviderOrder": [
+        "openai-codex",
+        "opencode-antigravity"
+      ],
+      "modelRoles": {
+        "default": "openai-codex/gpt-5.5:high",
+        "smol": "AG-gemini-3.5-flash:medium",
+        "plan": "AG-claude-sonnet-4.6-thinking:medium",
+        "slow": "AG-claude-opus-4.6-thinking:xhigh"
+      }
+    }
+  }
+}

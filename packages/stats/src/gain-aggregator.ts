@@ -2,7 +2,10 @@
  * Aggregates token-savings data for the Gain dashboard.
  *
  * Sources:
- *   1. Bash minimizer: ~/.omp/agent/minimizer-gain.jsonl
+ *   1. Bash minimizer: minimizer-gain.jsonl in the resolved agent dir PLUS
+ *      every profile's agent dir (~/.omp/profiles/<name>/agent/) — profile-mode
+ *      agents each record into their own dir, so consolidating keeps the
+ *      dashboard complete no matter which env the stats server runs in.
  *   2. Snapcompact:    colocated with stats.db as snapcompact-savings.jsonl
  *
  * Missing files are treated as zero records — never an error.
@@ -11,15 +14,7 @@
 import type { Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import {
-	getAgentDir,
-	getProfileRootDir,
-	getStatsDbPath,
-	isEnoent,
-	listProfiles,
-	logger,
-	normalizePathForComparison,
-} from "@oh-my-pi/pi-utils";
+import { getStatsDbPath, isEnoent, listAgentDirs, logger } from "@oh-my-pi/pi-utils";
 import { getTimeRangeConfig } from "./aggregator";
 import { initDb } from "./db";
 import type {
@@ -32,6 +27,7 @@ import type {
 
 const BYTES_PER_TOKEN_ESTIMATE = 4;
 const SQLITE_VARIABLE_CHUNK_SIZE = 500;
+const MINIMIZER_GAIN_FILE = "minimizer-gain.jsonl";
 
 // ---------------------------------------------------------------------------
 // Minimizer record schema
@@ -54,6 +50,11 @@ interface MinimizerRecord {
 const TEMP_PATH_RE =
 	/\/T(?:\/|$)|\/tmp(?:\/|$)|\/pi-bash-exec(?:\/|$)|\/omp-bash-exec(?:\/|$)|\/pi-bash-detach(?:\/|$)|\/var\/folders(?:\/|$)/;
 
+interface MinimizerSets {
+	records: MinimizerRecord[];
+	missed: MinimizerRecord[];
+	projects: Set<string>;
+}
 // ---------------------------------------------------------------------------
 // Project-match helper
 // ---------------------------------------------------------------------------
@@ -86,50 +87,37 @@ function matchesProject(cwd: string | undefined, project: string): boolean {
 	return isSameOrSubPath(normalizedCwd, normalizedProject) || isSameOrSubPath(cwd, normalizedProject);
 }
 
-// ---------------------------------------------------------------------------
-// Minimizer JSONL — all profile files, single pass per file, three result sets
-// ---------------------------------------------------------------------------
-
-interface MinimizerSets {
-	records: MinimizerRecord[];
-	missed: MinimizerRecord[];
-	projects: Set<string>;
-}
-
 /**
- * Every minimizer-gain JSONL: the active agent dir's file plus one per named
- * profile under ~/.omp/profiles, so sessions run under any profile are tracked
- * regardless of which profile launched `omp stats`. Deduped by normalized path
- * because the active agent dir may itself be a profile dir.
+ * Gain JSONL paths to aggregate. Profile-mode agents record into
+ * `<config-root>/profiles/<name>/agent/` while default-mode agents use
+ * `<config-root>/agent/`; the stats server may run under any one of these
+ * environments, so every sibling dir's file is consolidated — otherwise the
+ * dashboard shows only whichever single dir this process resolved.
  */
-function minimizerGainFilePaths(): string[] {
-	const candidates = [path.join(getAgentDir(), "minimizer-gain.jsonl")];
-	for (const profile of listProfiles()) {
-		candidates.push(path.join(getProfileRootDir(profile), "agent", "minimizer-gain.jsonl"));
+async function resolveMinimizerGainPaths(): Promise<string[]> {
+	const paths = new Array<string>();
+	for (const dir of await listAgentDirs()) {
+		paths.push(path.join(dir, MINIMIZER_GAIN_FILE));
 	}
-	const seen = new Set<string>();
-	const unique: string[] = [];
-	for (const candidate of candidates) {
-		const key = normalizePathForComparison(candidate);
-		if (seen.has(key)) continue;
-		seen.add(key);
-		unique.push(candidate);
-	}
-	return unique;
+	return paths;
 }
 
-async function readMinimizerFiles(): Promise<string[]> {
-	return Promise.all(
-		minimizerGainFilePaths().map(async filePath => {
+/** Read every gain file; missing files are skipped, other failures are logged. */
+async function readMinimizerTexts(): Promise<string[]> {
+	const paths = await resolveMinimizerGainPaths();
+	const texts = await Promise.all(
+		paths.map(async filePath => {
 			try {
 				return await Bun.file(filePath).text();
 			} catch (err) {
-				if (!isEnoent(err))
-					logger.debug("gain-aggregator: failed to read minimizer-gain.jsonl", { err: String(err), filePath });
-				return "";
+				if (!isEnoent(err)) {
+					logger.debug("gain-aggregator: failed to read minimizer-gain.jsonl", { filePath, err: String(err) });
+				}
+				return null;
 			}
 		}),
 	);
+	return texts.filter((text): text is string => text !== null);
 }
 
 /**
@@ -138,11 +126,9 @@ async function readMinimizerFiles(): Promise<string[]> {
  * dashboard request.
  */
 async function readMinimizerSets(cutoff: number | null, project: string | null): Promise<MinimizerSets> {
-	const texts = await readMinimizerFiles();
+	const texts = await readMinimizerTexts();
 	const sets: MinimizerSets = { records: [], missed: [], projects: new Set() };
-
 	for (const text of texts) {
-		if (!text) continue;
 		for (const line of text.split("\n")) {
 			if (!line.trim()) continue;
 			try {

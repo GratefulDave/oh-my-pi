@@ -1,0 +1,34 @@
+{
+  "mcpServers": {
+    "context7": {
+      "_managed_by": "library"
+    },
+    "context-mode": {
+      "_managed_by": "library",
+      "command": "/Users/davidandrews/.local/bin/context-mode-mcp"
+    },
+    "linear": {
+      "_managed_by": "library",
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.linear.app/mcp"
+      ]
+    },
+    "grep-app": {
+      "_managed_by": "library"
+    },
+    "codemap": {
+      "_managed_by": "library",
+      "command": "node",
+      "args": [
+        "/Users/davidandrews/PycharmProjects/the-library/tools/codemap/server.mjs"
+      ]
+    },
+    "codebase-memory": {
+      "_managed_by": "library",
+      "command": "codebase-memory-mcp"
+    }
+  }
+}

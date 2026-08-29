@@ -26,6 +26,7 @@ import type {
 	ExtensionUIContext,
 	InputEvent,
 	InputEventResult,
+	ProviderModelConfig,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { ExtensionToolWrapper } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/wrapper";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
@@ -155,7 +156,6 @@ describe("ExtensionRunner", () => {
 			setThinkingLevel: () => {},
 			getSessionName: () => undefined,
 			overrideModelRoles: () => {},
-			replaceModelRoles: () => {},
 			overrideEnabledModels: () => {},
 			setSessionName: async () => {},
 		};
@@ -181,6 +181,52 @@ describe("ExtensionRunner", () => {
 		runner.initialize(actions, contextActions, undefined, undefined, "tui");
 		expect(runner.createContext().mode).toBe("tui");
 	});
+
+	it("uses required context actions when command actions are unavailable", async () => {
+		const result = await loadTestExtensions();
+		const runner = new ExtensionRunner(
+			result.extensions,
+			result.runtime,
+			tempDir.path(),
+			sessionManager,
+			modelRegistry,
+		);
+		const usage = { tokens: 1200, contextWindow: 8000, percent: 15 };
+		const compact = vi.fn(async () => {});
+
+		runner.initialize(
+			{
+				sendMessage: () => {},
+				sendUserMessage: () => {},
+				appendEntry: () => {},
+				setLabel: () => {},
+				getActiveTools: () => [],
+				getAllTools: () => [],
+				setActiveTools: async () => {},
+				getCommands: () => [],
+				setModel: async () => false,
+				getThinkingLevel: () => undefined,
+				setThinkingLevel: () => {},
+				getSessionName: () => undefined,
+				setSessionName: async () => {},
+			},
+			{
+				getModel: () => undefined,
+				isIdle: () => true,
+				abort: () => {},
+				hasPendingMessages: () => false,
+				shutdown: () => {},
+				getContextUsage: () => usage,
+				compact,
+				getSystemPrompt: () => [],
+			},
+		);
+
+		expect(runner.createContext().getContextUsage()).toEqual(usage);
+		await runner.createContext().compact("preserve current task");
+		expect(compact).toHaveBeenCalledWith("preserve current task");
+	});
+
 	describe("shortcut conflicts", () => {
 		it("warns when extension shortcut conflicts with built-in", async () => {
 			const extCode = `
@@ -656,7 +702,6 @@ describe("ExtensionRunner", () => {
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
 					overrideModelRoles: () => {},
-					replaceModelRoles: () => {},
 					overrideEnabledModels: () => {},
 					getSessionName: () => undefined,
 					setSessionName: async () => {},
@@ -875,7 +920,6 @@ describe("ExtensionRunner", () => {
 					setThinkingLevel: () => {},
 					getSessionName: () => undefined,
 					overrideModelRoles: () => {},
-					replaceModelRoles: () => {},
 					overrideEnabledModels: () => {},
 					setSessionName: async () => {},
 				},
@@ -1098,7 +1142,6 @@ describe("ExtensionRunner", () => {
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
 					overrideModelRoles: () => {},
-					replaceModelRoles: () => {},
 					overrideEnabledModels: () => {},
 					getSessionName: () => undefined,
 					setSessionName: async () => {},
@@ -1403,7 +1446,6 @@ describe("ExtensionRunner", () => {
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
 					overrideModelRoles: () => {},
-					replaceModelRoles: () => {},
 					overrideEnabledModels: () => {},
 					getSessionName: () => undefined,
 					setSessionName: async () => {},
@@ -2090,7 +2132,6 @@ describe("ExtensionRunner", () => {
 					setThinkingLevel: () => {},
 					overrideModelRoles,
 					getSessionName: () => undefined,
-					replaceModelRoles: () => {},
 					overrideEnabledModels: () => {},
 					setSessionName: async () => {},
 				},
@@ -2161,7 +2202,6 @@ describe("ExtensionRunner", () => {
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
 					overrideModelRoles: () => {},
-					replaceModelRoles: () => {},
 					overrideEnabledModels: () => {},
 					getSessionName: () => undefined,
 					setSessionName: async () => {},
@@ -2186,6 +2226,12 @@ describe("ExtensionRunner", () => {
 				searchable: true,
 			});
 			delete globalState.__ompMemoryStatus;
+		});
+	});
+
+	describe("provider model API", () => {
+		it("accepts a per-model WebSocket preference", () => {
+			expectTypeOf<ProviderModelConfig["preferWebsockets"]>().toEqualTypeOf<boolean | undefined>();
 		});
 	});
 
@@ -2249,7 +2295,6 @@ describe("ExtensionRunner", () => {
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
 					overrideModelRoles: () => {},
-					replaceModelRoles: () => {},
 					overrideEnabledModels: () => {},
 					getServiceTiers: () => serviceTiers,
 					setServiceTier: (family, tier) => {
@@ -2321,7 +2366,6 @@ describe("ExtensionRunner", () => {
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
 					overrideModelRoles: () => {},
-					replaceModelRoles: () => {},
 					overrideEnabledModels: () => {},
 					getSessionName: () => sessionManager.getSessionName(),
 					setSessionName: async name => {
@@ -2384,7 +2428,6 @@ describe("ExtensionRunner", () => {
 					getSessionName: () => undefined,
 					setSessionName: async () => {},
 					overrideModelRoles: () => {},
-					replaceModelRoles: () => {},
 					overrideEnabledModels: () => {},
 				},
 				{
@@ -3060,7 +3103,7 @@ describe("ExtensionRunner", () => {
 			// resolves against the revised args and blocks — the tool never runs.
 			await expect(
 				wrapped.execute("tool-call-id", { command: "echo original" }, undefined, undefined, yoloContext),
-			).rejects.toThrow(/blocked by user policy/);
+			).rejects.toThrow('Tool "bash" is blocked by tool policy.\nReason: dangerous');
 			expect(fs.existsSync(recordPath)).toBe(false); // tool never executed
 		});
 
@@ -3595,7 +3638,6 @@ describe("ExtensionRunner", () => {
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
 					overrideModelRoles: () => {},
-					replaceModelRoles: () => {},
 					overrideEnabledModels: () => {},
 					getSessionName: () => sessionManager.getSessionName(),
 					setSessionName: async () => {},
@@ -3670,7 +3712,6 @@ describe("ExtensionRunner", () => {
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
 					overrideModelRoles: () => {},
-					replaceModelRoles: () => {},
 					overrideEnabledModels: () => {},
 					getSessionName: () => sessionManager.getSessionName(),
 					setSessionName: async () => {},
@@ -3763,7 +3804,6 @@ describe("ExtensionRunner", () => {
 					getThinkingLevel: () => undefined,
 					setThinkingLevel: () => {},
 					overrideModelRoles: () => {},
-					replaceModelRoles: () => {},
 					overrideEnabledModels: () => {},
 					getSessionName: () => sessionManager.getSessionName(),
 					setSessionName: async () => {},

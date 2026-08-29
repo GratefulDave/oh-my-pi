@@ -24,6 +24,7 @@ import type {
 import { getSessionSlashCommands } from "../../extensibility/extensions/get-commands-handler";
 import { AskDialogComponent, boundPromptTitle } from "../../modes/components/ask-dialog";
 import { installExtensionComposerShape } from "../../modes/components/composer-shape-registry";
+import { EditorTopGap } from "../../modes/components/editor-top-gap";
 import { HookEditorComponent } from "../../modes/components/hook-editor";
 import { HookInputComponent } from "../../modes/components/hook-input";
 import { HookSelectorComponent, type HookSelectorSlider } from "../../modes/components/hook-selector";
@@ -204,7 +205,6 @@ export class ExtensionUiController {
 			getThinkingLevel: () => this.ctx.session.thinkingLevel,
 			setThinkingLevel: level => this.ctx.session.setThinkingLevel(level),
 			overrideModelRoles: roles => this.ctx.settings.overrideModelRoles(roles),
-			replaceModelRoles: roles => this.ctx.settings.replaceModelRoles(roles),
 			overrideEnabledModels: patterns => this.ctx.settings.overrideEnabledModels(patterns),
 			getServiceTiers: () => this.ctx.session.serviceTierByFamily,
 			setServiceTier: (family, tier) => this.ctx.session.setServiceTierFamily(family, tier),
@@ -390,7 +390,7 @@ export class ExtensionUiController {
 
 		if (widgets.size === 0) {
 			if (spacerWhenEmpty) {
-				container.addChild(new Spacer(1));
+				container.addChild(new EditorTopGap(() => this.ctx.statusRowOccupied));
 			}
 			return;
 		}
@@ -440,7 +440,6 @@ export class ExtensionUiController {
 			getThinkingLevel: () => this.ctx.session.thinkingLevel,
 			setThinkingLevel: (level, persist) => this.ctx.session.setThinkingLevel(level, persist),
 			overrideModelRoles: roles => this.ctx.settings.overrideModelRoles(roles),
-			replaceModelRoles: roles => this.ctx.settings.replaceModelRoles(roles),
 			overrideEnabledModels: patterns => this.ctx.settings.overrideEnabledModels(patterns),
 			getServiceTiers: () => this.ctx.session.serviceTierByFamily,
 			setServiceTier: (family, tier) => this.ctx.session.setServiceTierFamily(family, tier),

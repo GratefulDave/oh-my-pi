@@ -141,7 +141,7 @@ describe("subagent HUD lines", () => {
 			}),
 		]);
 		expect(withRole).toContain("AuthLoader");
-		expect(withRole).toMatch(/AuthLoader.*scout/);
+		expect(withRole).toMatch(/scout.*AuthLoader/);
 		expect(withRole).toContain("Refactor the auth flow");
 
 		const echoed = render([
@@ -152,7 +152,7 @@ describe("subagent HUD lines", () => {
 			}),
 		]);
 		expect(echoed).toContain("AuthLoader");
-		expect(echoed).toMatch(/AuthLoader.*scout/);
+		expect(echoed).toMatch(/scout.*AuthLoader/);
 		expect(echoed).not.toContain("AuthLoader: AuthLoader");
 
 		const collision = render([
@@ -163,7 +163,7 @@ describe("subagent HUD lines", () => {
 			}),
 		]);
 		expect(collision).toContain("AuthLoader-3");
-		expect(collision).toMatch(/AuthLoader-3.*scout/);
+		expect(collision).toMatch(/scout.*AuthLoader-3/);
 		expect(collision).not.toContain("AuthLoader-3: AuthLoader");
 
 		const mixedCase = render([
@@ -180,7 +180,7 @@ describe("subagent HUD lines", () => {
 			makeSession({ id: "SchemaMigrator", agent: "task", description: "Migrate users" }),
 		]);
 		expect(defaultWorker).toContain("SchemaMigrator: Migrate users");
-		expect(defaultWorker).not.toMatch(/SchemaMigrator.*task/);
+		expect(defaultWorker).toContain("[task] SchemaMigrator: Migrate users");
 	});
 
 	it("only shows active subagents and clears once everything finished", () => {
@@ -252,7 +252,7 @@ describe("subagent HUD lines", () => {
 	it("threads the detached flag from lifecycle and progress payloads", () => {
 		const eventBus = new EventBus();
 		const registry = new SessionObserverRegistry();
-		registry.subscribeToEventBus(eventBus);
+		registry.subscribeToEventBus(eventBus, eventBus);
 
 		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, makeLifecycle("Detached", 0, "background work", true));
 		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, makeLifecycle("Inline", 1, "sync work"));
@@ -273,10 +273,24 @@ describe("subagent HUD lines", () => {
 		}
 	});
 
+	it("dedupes frames dual-published on the session bus and the shared bus", () => {
+		const eventBus = new EventBus();
+		const registry = new SessionObserverRegistry();
+		registry.subscribeToEventBus(eventBus, eventBus);
+		const kinds: string[] = [];
+		registry.onChange(kind => kinds.push(kind));
+		const payload = makeLifecycle("DualPublished", 0, "dual-published frame");
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, payload);
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, payload);
+		expect(kinds).toEqual(["lifecycle"]);
+		expect(registry.getActiveSubagentCount()).toBe(1);
+		registry.dispose();
+	});
+
 	it("keeps subagent registry order stable while progress arrives out of order", () => {
 		const eventBus = new EventBus();
 		const registry = new SessionObserverRegistry();
-		registry.subscribeToEventBus(eventBus);
+		registry.subscribeToEventBus(eventBus, eventBus);
 		const activeIds = () =>
 			registry
 				.getSessions()
@@ -395,7 +409,10 @@ describe("InteractiveMode subagent observer UI sync", () => {
 		}
 
 		await Promise.resolve();
-		vi.runAllTimers();
+		// Bounded advance: runAllTimers() would spin forever on the live HUD
+		// spinner's self-re-arming 80ms interval. 100ms fires exactly the
+		// observer coalesce window.
+		vi.advanceTimersByTime(100);
 		await Promise.resolve();
 
 		const hud = Bun.stripANSI(mode.subagentContainer.render(120).join("\n"));
