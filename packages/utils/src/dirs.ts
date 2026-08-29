@@ -564,6 +564,18 @@ export function getActiveProfile(): string | undefined {
 export function getProfileRootDir(profile: string | undefined): string {
 	return getProfileConfigRoot(normalizeProfileName(profile));
 }
+
+/** List named profiles present under ~/.omp/profiles. Empty when the directory does not exist. */
+export function listProfiles(): string[] {
+	try {
+		return fs
+			.readdirSync(path.join(getBaseConfigRoot(), "profiles"), { withFileTypes: true })
+			.filter(entry => entry.isDirectory())
+			.map(entry => entry.name);
+	} catch {
+		return [];
+	}
+}
 /** Get the agent config directory (~/.omp/agent). */
 export function getAgentDir(): string {
 	return dirs.agentDir;
