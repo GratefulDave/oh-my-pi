@@ -6,6 +6,7 @@
 
 - Recorded `write`/`read` calls against `xd://<tool>` under the inner tool name so MCP, codemap, and LSP no longer vanish from `omp stats` as `write`.
 - Fixed session sync reading only the active agent dir: `omp stats` now ingests `<config-root>/agent/sessions` plus every `profiles/<name>/agent/sessions` into the shared app-root `stats.db`, so named-profile traffic no longer vanishes from 24h/7d.
+- Ingested bash minimizer `minimizer-gain.jsonl` from the default agent dir and every `profiles/<name>/agent` into `stats.db` on `omp stats` sync and Gain-tab load, so profile sidecar logs are recorded instead of only re-parsed in memory.
 - Fixed the Gain dashboard showing only one agent dir's minimizer telemetry: records are now consolidated from `<config-root>/agent/` plus every `profiles/<name>/agent/`, so profile-mode sessions no longer vanish depending on which env `omp stats` runs in.
 
 

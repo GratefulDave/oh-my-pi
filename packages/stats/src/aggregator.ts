@@ -34,6 +34,7 @@ import {
 	updateToolResults,
 	updateUserMessageLinks,
 } from "./db";
+import { ingestMinimizerGainFiles } from "./gain-ingest";
 import { getSessionEntry, listAllSessionFiles, type ParseSessionResult, parseSessionFile } from "./parser";
 import type { SyncWorkerRequest, SyncWorkerResponse } from "./sync-worker";
 // Coding-agent binary/bundle workers route through the CLI entrypoint with a
@@ -244,6 +245,7 @@ export async function syncAllSessions(opts?: SyncOptions): Promise<{ processed: 
 
 async function syncAllSessionsLocked(opts?: SyncOptions): Promise<{ processed: number; files: number }> {
 	await initDb();
+	await ingestMinimizerGainFiles();
 
 	const files = await listAllSessionFiles();
 	let totalProcessed = 0;

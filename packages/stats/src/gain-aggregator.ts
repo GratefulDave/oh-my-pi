@@ -2,11 +2,10 @@
  * Aggregates token-savings data for the Gain dashboard.
  *
  * Sources:
- *   1. Bash minimizer: minimizer-gain.jsonl in the resolved agent dir PLUS
- *      every profile's agent dir (~/.omp/profiles/<name>/agent/) — profile-mode
- *      agents each record into their own dir, so consolidating keeps the
- *      dashboard complete no matter which env the stats server runs in.
- *   2. Snapcompact:    colocated with stats.db as snapcompact-savings.jsonl
+ *   1. Bash minimizer: `gain_records` in stats.db, filled from
+ *      minimizer-gain.jsonl in `<config-root>/agent/` plus every
+ *      `profiles/<name>/agent/` on sync and on each Gain request.
+ *   2. Snapcompact: colocated with stats.db as snapcompact-savings.jsonl
  *
  * Missing files are treated as zero records — never an error.
  */
@@ -14,9 +13,10 @@
 import type { Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { getStatsDbPath, isEnoent, listAgentDirs, logger } from "@oh-my-pi/pi-utils";
+import { getStatsDbPath, isEnoent, logger } from "@oh-my-pi/pi-utils";
 import { getTimeRangeConfig } from "./aggregator";
-import { initDb } from "./db";
+import { initDb, listGainRecords } from "./db";
+import { ingestMinimizerGainFiles } from "./gain-ingest";
 import type {
 	GainDashboardStats,
 	GainMissedCommand,
@@ -27,7 +27,6 @@ import type {
 
 const BYTES_PER_TOKEN_ESTIMATE = 4;
 const SQLITE_VARIABLE_CHUNK_SIZE = 500;
-const MINIMIZER_GAIN_FILE = "minimizer-gain.jsonl";
 
 // ---------------------------------------------------------------------------
 // Minimizer record schema
@@ -88,72 +87,36 @@ function matchesProject(cwd: string | undefined, project: string): boolean {
 }
 
 /**
- * Gain JSONL paths to aggregate. Profile-mode agents record into
- * `<config-root>/profiles/<name>/agent/` while default-mode agents use
- * `<config-root>/agent/`; the stats server may run under any one of these
- * environments, so every sibling dir's file is consolidated — otherwise the
- * dashboard shows only whichever single dir this process resolved.
- */
-async function resolveMinimizerGainPaths(): Promise<string[]> {
-	const paths = new Array<string>();
-	for (const dir of await listAgentDirs()) {
-		paths.push(path.join(dir, MINIMIZER_GAIN_FILE));
-	}
-	return paths;
-}
-
-/** Read every gain file; missing files are skipped, other failures are logged. */
-async function readMinimizerTexts(): Promise<string[]> {
-	const paths = await resolveMinimizerGainPaths();
-	const texts = await Promise.all(
-		paths.map(async filePath => {
-			try {
-				return await Bun.file(filePath).text();
-			} catch (err) {
-				if (!isEnoent(err)) {
-					logger.debug("gain-aggregator: failed to read minimizer-gain.jsonl", { filePath, err: String(err) });
-				}
-				return null;
-			}
-		}),
-	);
-	return texts.filter((text): text is string => text !== null);
-}
-
-/**
- * Parse the minimizer JSONL exactly once and derive all three result sets in
- * a single pass. Avoids re-reading and re-parsing the file three times per
- * dashboard request.
+ * Ingest every agent-dir gain JSONL into stats.db, then derive the dashboard
+ * sets from the stored rows. Missing files stay zero records.
  */
 async function readMinimizerSets(cutoff: number | null, project: string | null): Promise<MinimizerSets> {
-	const texts = await readMinimizerTexts();
+	await ingestMinimizerGainFiles();
 	const sets: MinimizerSets = { records: [], missed: [], projects: new Set() };
-	for (const text of texts) {
-		for (const line of text.split("\n")) {
-			if (!line.trim()) continue;
-			try {
-				const rec = JSON.parse(line) as MinimizerRecord;
+	for (const row of listGainRecords(cutoff)) {
+		const rec: MinimizerRecord = {
+			timestamp: new Date(row.timestamp).toISOString(),
+			filter: row.filter,
+			command: row.command,
+			inputBytes: row.inputBytes,
+			outputBytes: row.outputBytes,
+			savedBytes: row.savedBytes,
+			savedTokens: row.savedTokens,
+			kind: row.kind,
+			sessionId: row.sessionId,
+			cwd: row.cwd ?? "",
+		};
 
-				const ts = new Date(rec.timestamp).getTime();
-				if (cutoff !== null && ts < cutoff) continue;
+		if (rec.cwd) sets.projects.add(rec.cwd);
 
-				// Collect range-scoped project cwds before the per-project filter so the
-				// selector still shows other projects in the active time range.
-				if (rec.cwd) sets.projects.add(rec.cwd);
+		if (project !== null && !matchesProject(rec.cwd, project)) continue;
 
-				if (project !== null && !matchesProject(rec.cwd, project)) continue;
-
-				if (rec.kind === "missed") {
-					// Missed records from meaningful cwds are filter-tuning candidates.
-					if (!TEMP_PATH_RE.test(rec.cwd ?? "")) {
-						sets.missed.push(rec);
-					}
-				} else {
-					sets.records.push(rec);
-				}
-			} catch {
-				/* skip malformed */
+		if (rec.kind === "missed") {
+			if (!TEMP_PATH_RE.test(rec.cwd)) {
+				sets.missed.push(rec);
 			}
+		} else {
+			sets.records.push(rec);
 		}
 	}
 	return sets;

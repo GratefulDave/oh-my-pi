@@ -242,6 +242,25 @@ export async function initDb(): Promise<Database> {
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
 		);
+
+		CREATE TABLE IF NOT EXISTS gain_records (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_file TEXT NOT NULL,
+			byte_offset INTEGER NOT NULL,
+			timestamp INTEGER NOT NULL,
+			filter TEXT NOT NULL,
+			command TEXT,
+			input_bytes INTEGER NOT NULL,
+			output_bytes INTEGER NOT NULL,
+			saved_bytes INTEGER NOT NULL,
+			saved_tokens INTEGER,
+			kind TEXT NOT NULL,
+			cwd TEXT,
+			session_id TEXT,
+			UNIQUE(source_file, byte_offset)
+		);
+		CREATE INDEX IF NOT EXISTS idx_gain_records_timestamp ON gain_records(timestamp);
+		CREATE INDEX IF NOT EXISTS idx_gain_records_kind_timestamp ON gain_records(kind, timestamp);
 	`);
 
 	const messageColumns = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
@@ -504,6 +523,106 @@ export function setFileOffset(sessionFile: string, offset: number, lastModified:
 		VALUES (?, ?, ?)
 	`);
 	stmt.run(sessionFile, offset, lastModified);
+}
+
+export interface GainRecordRow {
+	sourceFile: string;
+	byteOffset: number;
+	timestamp: number;
+	filter: string;
+	command?: string;
+	inputBytes: number;
+	outputBytes: number;
+	savedBytes: number;
+	savedTokens?: number;
+	kind: "saved" | "missed";
+	cwd?: string;
+	sessionId?: string;
+}
+
+export function deleteGainRecordsForFile(sourceFile: string): void {
+	if (!db) return;
+	db.prepare("DELETE FROM gain_records WHERE source_file = ?").run(sourceFile);
+}
+
+export function insertGainRecords(rows: GainRecordRow[]): number {
+	if (!db || rows.length === 0) return 0;
+	const stmt = db.prepare(`
+		INSERT OR IGNORE INTO gain_records (
+			source_file, byte_offset, timestamp, filter, command,
+			input_bytes, output_bytes, saved_bytes, saved_tokens, kind, cwd, session_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`);
+	const apply = db.transaction((batch: GainRecordRow[]) => {
+		let inserted = 0;
+		for (const row of batch) {
+			const result = stmt.run(
+				row.sourceFile,
+				row.byteOffset,
+				row.timestamp,
+				row.filter,
+				row.command ?? null,
+				row.inputBytes,
+				row.outputBytes,
+				row.savedBytes,
+				row.savedTokens ?? null,
+				row.kind,
+				row.cwd ?? null,
+				row.sessionId ?? null,
+			);
+			inserted += Number(result.changes);
+		}
+		return inserted;
+	});
+	return apply(rows);
+}
+
+export function listGainRecords(cutoff: number | null): GainRecordRow[] {
+	if (!db) return [];
+	const stmt =
+		cutoff === null
+			? db.prepare(
+					`SELECT source_file, byte_offset, timestamp, filter, command,
+						input_bytes, output_bytes, saved_bytes, saved_tokens, kind, cwd, session_id
+					 FROM gain_records`,
+				)
+			: db.prepare(
+					`SELECT source_file, byte_offset, timestamp, filter, command,
+						input_bytes, output_bytes, saved_bytes, saved_tokens, kind, cwd, session_id
+					 FROM gain_records WHERE timestamp >= ?`,
+				);
+	const raw = (cutoff === null ? stmt.all() : stmt.all(cutoff)) as Array<{
+		source_file: string;
+		byte_offset: number;
+		timestamp: number;
+		filter: string;
+		command: string | null;
+		input_bytes: number;
+		output_bytes: number;
+		saved_bytes: number;
+		saved_tokens: number | null;
+		kind: string;
+		cwd: string | null;
+		session_id: string | null;
+	}>;
+	const rows: GainRecordRow[] = [];
+	for (const row of raw) {
+		rows.push({
+			sourceFile: row.source_file,
+			byteOffset: row.byte_offset,
+			timestamp: row.timestamp,
+			filter: row.filter,
+			command: row.command ?? undefined,
+			inputBytes: row.input_bytes,
+			outputBytes: row.output_bytes,
+			savedBytes: row.saved_bytes,
+			savedTokens: row.saved_tokens ?? undefined,
+			kind: row.kind === "missed" ? "missed" : "saved",
+			cwd: row.cwd ?? undefined,
+			sessionId: row.session_id ?? undefined,
+		});
+	}
+	return rows;
 }
 
 /**

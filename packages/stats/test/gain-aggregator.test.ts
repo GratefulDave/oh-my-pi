@@ -1,7 +1,9 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { syncAllSessions } from "@oh-my-pi/omp-stats/aggregator";
 import { dedupeProjects, getGainDashboardStats, normalizeProjectPath } from "@oh-my-pi/omp-stats/gain-aggregator";
 import { getAgentDir, getStatsDbPath, setAgentDir } from "@oh-my-pi/pi-utils";
 import { installStatsTestIsolation } from "./helpers/temp-agent";
@@ -479,5 +481,78 @@ describe("getGainDashboardStats", () => {
 		expect(stats.bySource.minimizer.reductionPercent).toBe(0.8);
 		expect(stats.bySource.snapcompact.reductionPercent).toBeNull();
 		expect(stats.overall.reductionPercent).toBeNull();
+	});
+
+	it("records minimizer jsonl into stats.db so a second load does not double-count", async () => {
+		const now = new Date().toISOString();
+		const first = {
+			timestamp: now,
+			filter: "git-status",
+			inputBytes: 1000,
+			outputBytes: 200,
+			savedBytes: 800,
+			savedTokens: 200,
+			kind: "saved" as const,
+			cwd: "/Users/x/myrepo",
+		};
+		await writeMinimizerJSONL([first]);
+		const firstStats = await getGainDashboardStats();
+		expect(firstStats.bySource.minimizer.hits).toBe(1);
+
+		const dbPath = getStatsDbPath();
+		const check = new Database(dbPath, { readonly: true });
+		const stored = check.prepare("SELECT COUNT(*) AS n FROM gain_records").get() as { n: number };
+		check.close();
+		expect(stored.n).toBe(1);
+
+		const agentFile = path.join(getAgentDir(), "minimizer-gain.jsonl");
+		await fs.appendFile(
+			agentFile,
+			`\n${JSON.stringify({
+				timestamp: now,
+				filter: "uv",
+				inputBytes: 400,
+				outputBytes: 100,
+				savedBytes: 300,
+				savedTokens: 75,
+				kind: "saved",
+				cwd: "/Users/x/myrepo",
+			})}\n`,
+		);
+		const secondStats = await getGainDashboardStats();
+		expect(secondStats.bySource.minimizer.hits).toBe(2);
+		expect(secondStats.bySource.minimizer.savedTokens).toBe(275);
+	});
+
+	it("ingests profile gain jsonl during session sync with no session files", async () => {
+		const now = new Date().toISOString();
+		await writeProfileMinimizerJSONL("grok", [
+			{
+				timestamp: now,
+				filter: "grep",
+				inputBytes: 2000,
+				outputBytes: 200,
+				savedBytes: 1800,
+				savedTokens: 450,
+				kind: "saved",
+				cwd: "/Users/x/otherrepo",
+			},
+		]);
+
+		const synced = await syncAllSessions({ workers: 1 });
+		expect(synced.files).toBe(0);
+
+		const check = new Database(getStatsDbPath(), { readonly: true });
+		const stored = check.prepare("SELECT filter, saved_tokens, kind FROM gain_records").all() as Array<{
+			filter: string;
+			saved_tokens: number;
+			kind: string;
+		}>;
+		check.close();
+		expect(stored).toEqual([{ filter: "grep", saved_tokens: 450, kind: "saved" }]);
+
+		const stats = await getGainDashboardStats();
+		expect(stats.bySource.minimizer.hits).toBe(1);
+		expect(stats.bySource.minimizer.savedTokens).toBe(450);
 	});
 });
