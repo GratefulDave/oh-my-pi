@@ -97,3 +97,4 @@ omp-session-*.html
 
 .agent_memory.json
 .agent_memory/
+.parity/
