@@ -10,6 +10,17 @@
 
 - `getStatsDbPath()` stays at the app config root under a named profile so `omp stats` shares one database across `~/.omp/agent` and `~/.omp/profiles/<name>/`.
 
+## [18.1.6] - 2026-09-03
+
+### Added
+
+- Added `IncomingDoc` (`@oh-my-pi/pi-utils/incoming-json`) for incrementally reading path-addressed JSON data as text arrives, including string chunks and lines, array elements, and keyed object values, with structured errors for missing, incomplete, aborted, malformed, or mismatched data.
+- Added `Serial` for running asynchronous operations sequentially in call order.
+
+### Fixed
+
+- Fixed relaxed JSON parsing for single-quoted strings followed by line or block comments.
+
 ## [18.1.5] - 2026-09-03
 
 ### Added
