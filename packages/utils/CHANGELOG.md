@@ -10,6 +10,10 @@
 
 - `getStatsDbPath()` stays at the app config root under a named profile so `omp stats` shares one database across `~/.omp/agent` and `~/.omp/profiles/<name>/`.
 
+### Fixed
+
+- Fixed `filterChildShellEnv` applying the omp process's own launch-environment provenance (the pre-dotenv `NODE_ENV` and launcher-owned names read from `/proc/self/environ`) to caller-supplied environment objects; launch provenance now only applies when filtering the live `process.env`/`Bun.env`, and an explicit env resolves its dotenv mode from its own `NODE_ENV`.
+
 ## [18.1.11] - 2026-09-05
 
 ### Fixed
