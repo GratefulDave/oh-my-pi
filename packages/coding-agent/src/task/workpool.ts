@@ -436,7 +436,7 @@ export class WorkPool {
 		for (const item of batch.items) item.status = batch.status;
 		agent.turns++;
 		agent.jobId = undefined;
-		const ref = AgentRegistry.global().get(agent.id);
+		const ref = (this.session.agentRegistry ?? AgentRegistry.global()).get(agent.id);
 		ref?.session?.setWorkPoolYieldItems([]);
 		if (this.freshAgents) {
 			agent.state = "dead";
@@ -570,7 +570,9 @@ export class WorkPool {
 			timestamp,
 		};
 		try {
-			AgentRegistry.global().get(this.ownerId)?.session?.emitIrcRelayObservation(record);
+			(this.session.agentRegistry ?? AgentRegistry.global())
+				.get(this.ownerId)
+				?.session?.emitIrcRelayObservation(record);
 		} catch (error) {
 			logger.debug("workpool: card emission failed", {
 				pool: this.name,

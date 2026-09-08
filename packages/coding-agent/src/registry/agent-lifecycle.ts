@@ -508,6 +508,7 @@ export class AgentLifecycleManager {
 		this.#parks.clear();
 		this.#persistedReviverFactory = undefined;
 		if (AgentLifecycleManager.#global === this) AgentLifecycleManager.#global = undefined;
+		AgentLifecycleManager.#byRegistry.delete(this.#registry);
 	}
 
 	async #revive(id: string, revive: AgentReviver, ref: AgentRef, adopted: AdoptedAgent): Promise<AgentSession> {

@@ -4013,7 +4013,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 							getActiveModelString,
 						};
 						await vibeRegistry.suspendScope(vibeRegistry.ownerScope(vibeParentSession), scopedAsyncJobManager);
-						await AgentLifecycleManager.global().dispose();
+						await AgentLifecycleManager.forRegistry(agentRegistry).dispose();
 					}
 					await originalDispose();
 				} finally {

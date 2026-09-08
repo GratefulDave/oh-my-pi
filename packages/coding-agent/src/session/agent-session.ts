@@ -589,6 +589,7 @@ export class AgentSession {
 	#lastRunState: "running" | "idle" = "idle";
 	#heldExtensionAgentEnd = false;
 	#extensionLifecycleChain = Promise.resolve();
+	#extensionLifecycleSeq = 0;
 	#commandMetadataChangedListeners: CommandMetadataChangedListener[] = [];
 	#sessionChangeCallbacks = new Set<() => void>();
 	#observedSessionId: string | undefined;
@@ -2153,9 +2154,11 @@ export class AgentSession {
 		return this.#agentRegistry.hasRunningDescendant(rootId);
 	}
 
-	#queueExtensionLifecycle(work: () => Promise<unknown>): void {
+	#queueExtensionLifecycle(work: () => Promise<unknown>, live: () => boolean): void {
+		const seq = this.#extensionLifecycleSeq;
 		this.#extensionLifecycleChain = this.#extensionLifecycleChain.then(async () => {
 			try {
+				if (seq !== this.#extensionLifecycleSeq || this.#isDisposed || !live()) return;
 				await work();
 			} catch (err) {
 				logger.error("Extension lifecycle notification failed", { err });
@@ -2171,6 +2174,7 @@ export class AgentSession {
 				this.#emitRunState("running");
 				this.#queueExtensionLifecycle(
 					() => this.#extensionRunner?.emit({ type: "agent_start" }) ?? Promise.resolve(),
+					() => this.#heldExtensionAgentEnd && !this.isStreaming && this.#hasLiveRunningDescendants(),
 				);
 			}
 			return;
@@ -2184,10 +2188,13 @@ export class AgentSession {
 		this.#heldExtensionAgentEnd = false;
 		this.#emitRunState("idle");
 		const messages = [...this.agent.state.messages];
-		this.#queueExtensionLifecycle(async () => {
-			await this.#emitSessionEvent({ type: "agent_end", messages, isTerminal: true });
-			await this.#emitAgentEndNotification(messages);
-		});
+		this.#queueExtensionLifecycle(
+			async () => {
+				await this.#emitSessionEvent({ type: "agent_end", messages, isTerminal: true });
+				await this.#emitAgentEndNotification(messages);
+			},
+			() => !this.isStreaming && !this.#hasPendingAsyncWake() && !this.#hasLiveRunningDescendants(),
+		);
 	}
 
 	/**
@@ -2855,6 +2862,7 @@ export class AgentSession {
 		if (event.type === "agent_start") {
 			this.#prunedTerminalRefusal = undefined;
 			this.#emitRunState("running");
+			this.#extensionLifecycleSeq++;
 		}
 		// This must happen before event fan-out awaits: streamed tool-call deltas
 		// can otherwise queue validation that a delayed turn-start reset erases.
