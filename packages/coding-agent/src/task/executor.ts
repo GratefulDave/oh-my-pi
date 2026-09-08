@@ -169,7 +169,6 @@ function normalizeModelPatterns(value: string | string[] | undefined): string[] 
 		.filter(Boolean);
 }
 
-
 const SUBAGENT_RETRY_FALLBACK_ROLE_PREFIX = "subagent:";
 
 interface SubagentRetryFallbackCandidate {
@@ -3141,7 +3140,6 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		try {
 			checkAbort();
 			// Pin authStorage to modelRegistry.authStorage — mirrors the createAgentSession invariant.
-			const registryFromParent = options.modelRegistry !== undefined;
 			const modelRegistry =
 				options.modelRegistry ??
 				new ModelRegistry(options.authStorage ?? (await awaitAbortable(discoverAuthStorage())));
@@ -3590,7 +3588,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 						getThinkingLevel: () => session.thinkingLevel,
 						setThinkingLevel: level => session.setThinkingLevel(level),
 						overrideModelRoles: roles => session.settings.overrideModelRoles(roles),
-							overrideEnabledModels: patterns => session.settings.overrideEnabledModels(patterns),
+						overrideEnabledModels: patterns => session.settings.overrideEnabledModels(patterns),
 						getServiceTiers: () => session.serviceTierByFamily,
 						setServiceTier: (family, tier) => session.setServiceTierFamily(family, tier),
 						getSessionName: () => session.sessionManager.getSessionName(),
@@ -3600,7 +3598,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 					},
 					{
 						getModel: () => session.model,
-						isIdle: () => !session.isStreaming,
+						isIdle: () => session.isIdle,
 						abort: () => session.abort({ reason: USER_INTERRUPT_LABEL }),
 						hasPendingMessages: () => session.queuedMessageCount > 0,
 						shutdown: () => {},

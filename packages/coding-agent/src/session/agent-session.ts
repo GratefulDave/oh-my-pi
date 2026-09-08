@@ -153,6 +153,7 @@ import { normalizeToolEventInput, resolveToolEventInput } from "../extensibility
 import { GoalRuntime } from "../goals/runtime";
 import type { GoalModeState } from "../goals/state";
 import type { HindsightSessionState } from "../hindsight/state";
+import { AgentRegistry } from "../registry/agent-registry";
 import { type LocalProtocolOptions, resolveLocalUrlToPath } from "../internal-urls";
 import type { IrcMessage } from "../irc/bus";
 import type { DaemonCompletionNotification } from "../launch/protocol";
@@ -586,6 +587,9 @@ export class AgentSession {
 	#eventListeners: AgentSessionEventListener[] = [];
 	#activeToolExecutionUpdates = new Map<string, Extract<AgentSessionEvent, { type: "tool_execution_update" }>>();
 	#runStateListeners = new Set<(state: "running" | "idle") => void>();
+	#unsubscribeRegistry?: () => void;
+	#lastRunState: "running" | "idle" = "idle";
+	#heldExtensionAgentEnd = false;
 	#commandMetadataChangedListeners: CommandMetadataChangedListener[] = [];
 	#sessionChangeCallbacks = new Set<() => void>();
 	#observedSessionId: string | undefined;
@@ -1490,6 +1494,7 @@ export class AgentSession {
 			agentKind: () => this.#agentKind,
 			isDisposed: () => this.#isDisposed,
 			isStreaming: () => this.isStreaming,
+			isIdle: () => this.isIdle,
 			queuedMessageCount: () => this.queuedMessageCount,
 			planModeEnabled: () => this.#planModeState?.enabled === true,
 			model: () => this.model,
@@ -1572,6 +1577,9 @@ export class AgentSession {
 		this.#loopGuards = new LoopGuards(streamGuardsHost);
 		this.#agentId = config.agentId;
 		this.#agentKind = config.agentKind ?? "main";
+		if (this.#agentKind === "main") {
+			this.#unsubscribeRegistry = AgentRegistry.global().onChange(() => this.#reconcileDescendantRunState());
+		}
 		this.#scoutAllowedBySpawnPolicy = config.scoutAllowedBySpawnPolicy ?? true;
 		this.#providerSessionId = config.providerSessionId;
 		this.#inheritedProviderPromptCacheKey =
@@ -2119,7 +2127,7 @@ export class AgentSession {
 	 */
 	#hasPendingAsyncWake(): boolean {
 		const manager = this.#asyncJobManager;
-		if (!manager) return false;
+		if (!manager) return this.#hasLiveRunningDescendants();
 		const ownerFilter = this.#agentId ? { ownerId: this.#agentId } : undefined;
 		return (
 			manager.getRunningJobs(ownerFilter).some(job => !manager.isDeliverySuppressed(job.id)) ||
@@ -2129,8 +2137,54 @@ export class AgentSession {
 			// longer reports it. Without this leg a terminal yield in the
 			// (idle-flush delay / step-boundary) handoff window would read as
 			// quiescent and the run driver would drop the queued result.
-			this.yieldQueue.has(ASYNC_RESULT_MESSAGE_TYPE)
+			this.yieldQueue.has(ASYNC_RESULT_MESSAGE_TYPE) ||
+			this.#hasLiveRunningDescendants()
 		);
+	}
+
+	/** Running task/eval descendants of this session, including nested children. */
+	#hasLiveRunningDescendants(): boolean {
+		if (this.#agentKind !== "main") return false;
+		const rootId = this.#agentId;
+		if (!rootId) return false;
+		const registry = AgentRegistry.global();
+		return registry.list().some(ref => {
+			if (ref.kind !== "sub" || ref.status !== "running") return false;
+			const seen = new Set<string>();
+			let id = ref.parentId;
+			while (id) {
+				if (id === rootId) return true;
+				if (seen.has(id)) return false;
+				seen.add(id);
+				id = registry.get(id)?.parentId;
+			}
+			return false;
+		});
+	}
+
+	#reconcileDescendantRunState(): void {
+		if (this.#isDisposed || this.#agentKind !== "main" || this.isStreaming) return;
+		if (this.#hasLiveRunningDescendants()) {
+			if (this.#lastRunState !== "running") {
+				this.#heldExtensionAgentEnd = true;
+				this.#emitRunState("running");
+				void this.#extensionRunner?.emit({ type: "agent_start" });
+			}
+			return;
+		}
+		this.#releaseHeldTerminalSettle();
+	}
+
+	#releaseHeldTerminalSettle(): void {
+		if (!this.#heldExtensionAgentEnd) return;
+		if (this.isStreaming || this.#hasPendingAsyncWake()) return;
+		this.#heldExtensionAgentEnd = false;
+		this.#emitRunState("idle");
+		const messages = [...this.agent.state.messages];
+		void this.#emitSessionEvent({ type: "agent_end", messages, isTerminal: true });
+		void this.#emitAgentEndNotification(messages).catch(err => {
+			logger.error("Agent end extension notification failed", { err });
+		});
 	}
 
 	/**
@@ -2236,6 +2290,7 @@ export class AgentSession {
 	}
 
 	#emitRunState(state: "running" | "idle"): void {
+		this.#lastRunState = state;
 		for (const listener of this.#runStateListeners) {
 			try {
 				listener(state);
@@ -3151,6 +3206,11 @@ export class AgentSession {
 			// maintenance can emit agent_end, so preserve the state at settle entry.
 			const ttsrAbortPendingAtAgentEnd = this.#ttsr.abortPending;
 			const emitAgentEndNotification = async (options?: { willContinue?: boolean }) => {
+				if (this.#hasLiveRunningDescendants()) {
+					this.#heldExtensionAgentEnd = true;
+					await this.#emitSessionEvent({ ...event, isTerminal: false });
+					return;
+				}
 				this.#emitRunState("idle");
 				// Public agent_end is held out of the eager display pass and emitted
 				// here after maintenance routing, tagged isTerminal so subscribers can
@@ -4372,6 +4432,9 @@ export class AgentSession {
 	 */
 	beginDispose(): void {
 		this.#isDisposed = true;
+		this.#unsubscribeRegistry?.();
+		this.#unsubscribeRegistry = undefined;
+		this.#heldExtensionAgentEnd = false;
 		this.#modelDiscoveryAbortController.abort();
 		this.#queuedMessageDrainBlocked = false;
 		this.#usagePreflightReadyForNextModelCall = false;
@@ -4943,6 +5006,14 @@ export class AgentSession {
 	/** Whether agent is currently streaming a response */
 	get isStreaming(): boolean {
 		return this.agent.state.isStreaming || this.#promptInFlightCount > 0;
+	}
+
+	/**
+	 * Extension/host idle: parent loop is not streaming and no spawned
+	 * subagent is still `running`. Independent of profile or reporter path.
+	 */
+	get isIdle(): boolean {
+		return !this.isStreaming && !this.#hasLiveRunningDescendants();
 	}
 
 	get isAborting(): boolean {
@@ -6486,7 +6557,7 @@ export class AgentSession {
 
 			model: this.model ?? undefined,
 			models: createExtensionModelQuery(this.#modelRegistry, this.settings, () => this.model ?? undefined),
-			isIdle: () => !this.isStreaming,
+			isIdle: () => this.isIdle,
 			abort: () => {
 				void this.abort();
 			},
@@ -9731,7 +9802,7 @@ export class AgentSession {
 			sessionManager: this.sessionManager,
 			modelRegistry: this.#modelRegistry,
 			model: this.model,
-			isIdle: () => !this.isStreaming,
+			isIdle: () => this.isIdle,
 			hasQueuedMessages: () => this.queuedMessageCount > 0,
 			abort: () => {
 				this.agent.abort();

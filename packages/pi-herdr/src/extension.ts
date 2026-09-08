@@ -228,9 +228,10 @@ export function createHerdrExtension(pi: ExtensionAPI, options: HerdrExtensionOp
 	const aliases = new Map<string, ManagedPane>();
 	const aliasOrder: string[] = [];
 	const activeSubagents = new Set<string>();
+	let agentLoopActive = false;
 	let currentSessionContext: ExtensionContext | undefined;
 	let reporterActive = false;
-	let activitySequence = Date.now();
+	let activitySequence = Date.now() * 1000;
 	let activityReporterEpoch = 0;
 	let activityInFlight = false;
 	let activityRetryTimer: NodeJS.Timeout | undefined;
@@ -290,19 +291,25 @@ export function createHerdrExtension(pi: ExtensionAPI, options: HerdrExtensionOp
 		if (!reporterActive || !state.available || !state.identity) return;
 
 		desiredActivity = {
-			state: herdrActivityState(currentSessionContext?.isIdle() === false, activeSubagents.size),
+			state: herdrActivityState(agentLoopActive || currentSessionContext?.isIdle() === false, activeSubagents.size),
 			retries: 0,
 		};
 		clearActivityRetry();
 		void flushActivity();
 	};
 
+	const applySubagentLifecycle = (event: unknown): void => {
+		if (!reporterActive || !isSubagentLifecycleEvent(event) || typeof event.id !== "string") return;
+		if (event.status === "started") activeSubagents.add(event.id);
+		else if (event.status === "completed" || event.status === "failed" || event.status === "aborted")
+			activeSubagents.delete(event.id);
+		else return;
+		reportActivity();
+	};
+
 	const prepareActivityReporter = async (ctx: ExtensionContext): Promise<void> => {
 		const activationEpoch = ++activityReporterEpoch;
-		reporterActive = false;
-		currentSessionContext = undefined;
 		desiredActivity = undefined;
-		activeSubagents.clear();
 		clearActivityRetry();
 
 		reconstructAliases(ctx, aliases, aliasOrder);
@@ -311,6 +318,7 @@ export function createHerdrExtension(pi: ExtensionAPI, options: HerdrExtensionOp
 
 		currentSessionContext = ctx;
 		reporterActive = ctx.hasUI === true;
+		if (ctx.isIdle() === false) agentLoopActive = true;
 		reportActivity();
 	};
 
@@ -319,25 +327,32 @@ export function createHerdrExtension(pi: ExtensionAPI, options: HerdrExtensionOp
 	});
 
 	pi.on("session_switch", async (_event, ctx) => {
+		agentLoopActive = false;
+		activeSubagents.clear();
 		await prepareActivityReporter(ctx);
 	});
 
 	pi.on("agent_start", () => {
+		agentLoopActive = true;
 		reportActivity();
 	});
 
-	pi.on("agent_end", () => {
+	pi.on("tool_execution_start", () => {
+		agentLoopActive = true;
 		reportActivity();
 	});
 
-	pi.events.on("task:subagent:lifecycle", event => {
-		if (!reporterActive || !isSubagentLifecycleEvent(event) || typeof event.id !== "string") return;
-		if (event.status === "started") activeSubagents.add(event.id);
-		else if (event.status === "completed" || event.status === "failed" || event.status === "aborted")
-			activeSubagents.delete(event.id);
-		else return;
+	pi.on("agent_end", event => {
+		if (typeof event === "object" && event !== null && "willContinue" in event && event.willContinue === true) {
+			return;
+		}
+		agentLoopActive = false;
 		reportActivity();
 	});
+
+	pi.on("subagent_lifecycle", applySubagentLifecycle);
+
+	pi.events.on("task:subagent:lifecycle", applySubagentLifecycle);
 
 	pi.on("session_tree", async (_event, ctx) => {
 		reconstructAliases(ctx, aliases, aliasOrder);

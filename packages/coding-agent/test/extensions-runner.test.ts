@@ -31,6 +31,7 @@ import type {
 import { ExtensionToolWrapper } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/wrapper";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
 import { getProjectAgentDir, logger, TempDir } from "@oh-my-pi/pi-utils";
 
 describe("ExtensionRunner", () => {
@@ -4090,6 +4091,67 @@ describe("ExtensionRunner", () => {
 			const image: ImageContent = { type: "image", mimeType: "image/png", data: "aW1hZ2U=" };
 
 			expect(await runner.emitInput("rewrite me", [image], "interactive")).toEqual({ text: "REWRITE ME" });
+		});
+	});
+
+	describe("subagent_lifecycle bus bridge", () => {
+		it("forwards dual-published task:subagent:lifecycle frames once", async () => {
+			const seen: Array<{ id: string; status: string }> = [];
+			const first = Promise.withResolvers<void>();
+			const extensionPath = path.join(extensionsDir, "subagent-lifecycle.ts");
+			const extension: Extension = {
+				path: extensionPath,
+				resolvedPath: extensionPath,
+				handlers: new Map([
+					[
+						"subagent_lifecycle",
+						[
+							async (...args: unknown[]) => {
+								const event = args[0] as { id: string; status: string };
+								seen.push({ id: event.id, status: event.status });
+								if (seen.length === 1) first.resolve();
+							},
+						],
+					],
+				]),
+				tools: new Map(),
+				assistantThinkingRenderers: [],
+				fileWriteFallbackHandlers: [],
+				fileDeleteFallbackHandlers: [],
+				messageRenderers: new Map(),
+				composerShapes: new Map(),
+				commands: new Map(),
+				flags: new Map(),
+				shortcuts: new Map(),
+			};
+			const runner = new ExtensionRunner(
+				[extension],
+				new ExtensionRuntime(),
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+			);
+			const eventBus = new EventBus();
+			const observabilityBus = new EventBus();
+			runner.bindSubagentLifecycle(eventBus, observabilityBus);
+
+			const payload = {
+				id: "Scout",
+				agent: "scout",
+				agentSource: "bundled",
+				status: "started",
+				index: 0,
+			};
+			eventBus.emit("task:subagent:lifecycle", payload);
+			observabilityBus.emit("task:subagent:lifecycle", payload);
+			await first.promise;
+
+			expect(seen).toEqual([{ id: "Scout", status: "started" }]);
+
+			runner.unbindSubagentLifecycle();
+			eventBus.emit("task:subagent:lifecycle", { ...payload, status: "completed" });
+			await Promise.resolve();
+			expect(seen).toEqual([{ id: "Scout", status: "started" }]);
 		});
 	});
 });

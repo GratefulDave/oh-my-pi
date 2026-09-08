@@ -52,6 +52,7 @@ export interface SessionToolsHost {
 	agentKind(): "main" | "sub";
 	isDisposed(): boolean;
 	isStreaming(): boolean;
+	isIdle(): boolean;
 	queuedMessageCount(): number;
 	planModeEnabled(): boolean;
 	model(): Model | undefined;
@@ -1635,7 +1636,7 @@ export class SessionTools {
 			sessionManager: this.#host.sessionManager,
 			modelRegistry: this.#host.modelRegistry,
 			model: this.#host.model(),
-			isIdle: () => !this.#host.isStreaming(),
+			isIdle: () => this.#host.isIdle(),
 			hasQueuedMessages: () => this.#host.queuedMessageCount() > 0,
 			abort: () => {
 				this.#host.agent.abort();

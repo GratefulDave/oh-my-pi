@@ -214,7 +214,7 @@ export class ExtensionUiController {
 		};
 		const contextActions: ExtensionContextActions = {
 			getModel: () => this.ctx.session.model,
-			isIdle: () => !this.ctx.session.isStreaming,
+			isIdle: () => this.ctx.session.isIdle,
 			abort: () => this.ctx.session.abort({ reason: USER_INTERRUPT_LABEL }),
 			hasPendingMessages: () => this.ctx.session.queuedMessageCount > 0,
 			shutdown: () => {
@@ -449,7 +449,7 @@ export class ExtensionUiController {
 		};
 		const contextActions: ExtensionContextActions = {
 			getModel: () => this.ctx.session.model,
-			isIdle: () => !this.ctx.session.isStreaming,
+			isIdle: () => this.ctx.session.isIdle,
 			abort: () => this.ctx.session.abort({ reason: USER_INTERRUPT_LABEL }),
 			hasPendingMessages: () => this.ctx.session.queuedMessageCount > 0,
 			shutdown: () => {

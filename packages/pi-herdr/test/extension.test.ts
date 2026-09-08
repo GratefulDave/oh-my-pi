@@ -325,6 +325,40 @@ describe("pi-herdr extension", () => {
 		expect(harness.statuses.at(-1)).toEqual({ key: "herdr", value: "herdr:off" });
 	});
 
+	test("late session_start does not clobber working after agent_start", async () => {
+		const gate = Promise.withResolvers<HerdrState>();
+		const harness = createHarness({ getState: async () => gate.promise });
+		const sessionStart = harness.events.get("session_start");
+		const agentStart = harness.events.get("agent_start");
+		if (!sessionStart || !agentStart) throw new Error("activity lifecycle handlers were not registered");
+
+		const pendingStart = sessionStart({}, harness.ctx);
+		await agentStart({}, harness.ctx);
+		harness.setIdle(true);
+		gate.resolve({ available: true, identity, reason: "available" });
+		await pendingStart;
+
+		expect(harness.requests.map(request => ({ method: request.method, state: request.params.state }))).toEqual([
+			{ method: "pane.report_agent", state: "working" },
+		]);
+	});
+
+	test("tool_execution_start reports working even if isIdle", async () => {
+		const harness = createHarness({ getState: async () => ({ available: true, identity, reason: "available" }) });
+		const sessionStart = harness.events.get("session_start");
+		const toolStart = harness.events.get("tool_execution_start");
+		if (!sessionStart || !toolStart) throw new Error("activity lifecycle handlers were not registered");
+
+		await sessionStart({}, harness.ctx);
+		harness.setIdle(true);
+		await toolStart({ toolName: "bash" }, harness.ctx);
+
+		expect(harness.requests.map(request => ({ method: request.method, state: request.params.state }))).toEqual([
+			{ method: "pane.report_agent", state: "idle" },
+			{ method: "pane.report_agent", state: "working" },
+		]);
+	});
+
 	test("reports a stale root end as working until the live session becomes idle", async () => {
 		const harness = createHarness({ getState: async () => ({ available: true, identity, reason: "available" }) });
 		const sessionStart = harness.events.get("session_start");
@@ -366,6 +400,61 @@ describe("pi-herdr extension", () => {
 			{ method: "pane.report_agent", state: "working" },
 			{ method: "pane.report_agent", state: "idle" },
 		]);
+	});
+
+	test("keeps working through parent agent_end while a subagent is live even if isIdle", async () => {
+		const harness = createHarness({ getState: async () => ({ available: true, identity, reason: "available" }) });
+		const sessionStart = harness.events.get("session_start");
+		const agentStart = harness.events.get("agent_start");
+		const agentEnd = harness.events.get("agent_end");
+		const subagentLifecycle = harness.events.get("subagent_lifecycle");
+		if (!sessionStart || !agentStart || !agentEnd || !subagentLifecycle)
+			throw new Error("activity lifecycle handlers were not registered");
+
+		await sessionStart({}, harness.ctx);
+		harness.setIdle(true);
+		await agentStart({}, harness.ctx);
+		await subagentLifecycle({ id: "subagent-1", status: "started" }, harness.ctx);
+		await agentEnd({}, harness.ctx);
+
+		expect(harness.requests.map(request => ({ method: request.method, state: request.params.state }))).toEqual([
+			{ method: "pane.report_agent", state: "idle" },
+			{ method: "pane.report_agent", state: "working" },
+			{ method: "pane.report_agent", state: "working" },
+			{ method: "pane.report_agent", state: "working" },
+		]);
+	});
+
+	test("does not publish idle on agent_end when a continuation is already scheduled", async () => {
+		const harness = createHarness({ getState: async () => ({ available: true, identity, reason: "available" }) });
+		const sessionStart = harness.events.get("session_start");
+		const agentStart = harness.events.get("agent_start");
+		const agentEnd = harness.events.get("agent_end");
+		if (!sessionStart || !agentStart || !agentEnd) throw new Error("activity lifecycle handlers were not registered");
+
+		await sessionStart({}, harness.ctx);
+		harness.setIdle(false);
+		await agentStart({}, harness.ctx);
+		harness.setIdle(true);
+		await agentEnd({ willContinue: true }, harness.ctx);
+
+		expect(harness.requests.map(request => ({ method: request.method, state: request.params.state }))).toEqual([
+			{ method: "pane.report_agent", state: "idle" },
+			{ method: "pane.report_agent", state: "working" },
+		]);
+	});
+
+	test("uses millisecond-scaled seq so Herdr accepts reports against the omp integration", async () => {
+		const harness = createHarness({ getState: async () => ({ available: true, identity, reason: "available" }) });
+		const sessionStart = harness.events.get("session_start");
+		if (!sessionStart) throw new Error("session_start handler was not registered");
+
+		await sessionStart({}, harness.ctx);
+		const seqs = harness.requests
+			.filter(request => request.method === "pane.report_agent")
+			.map(request => request.params.seq);
+		expect(seqs.length).toBeGreaterThan(0);
+		expect(seqs.every(seq => typeof seq === "number" && seq > 1_000_000_000_000_000)).toBe(true);
 	});
 
 	test("herdr wait_agent accepts either idle or done as a completion state", async () => {

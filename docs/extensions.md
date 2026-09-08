@@ -300,6 +300,7 @@ Cancelable pre-events:
 - `agent_start` / `agent_end` — agent loop lifecycle notification; `agent_end` remains notification-only
 - `session_stop` — main-session stop hook, awaited before settle; may continue with `{ continue: true, additionalContext }` or `{ decision: "block", reason }`; capped at 8 consecutive continuations, never fires for task/subagent sessions, and defers until agent-owned background jobs are fully idle (`#hasPendingAsyncWake` in `session/agent-session.ts`)
 - `turn_start` / `turn_end`
+- `subagent_lifecycle` — parent-session notification when a spawned subagent starts or settles (`started` / `completed` / `failed` / `aborted`). Same payload as the `task:subagent:lifecycle` EventBus channel, plus `type`. Hosts that report pane activity (e.g. Herdr) must treat live `started` ids as working even when the parent loop is idle.
 - `message_start` / `message_update` / `message_end` — lifecycle notifications; `message_end` receives a detached message snapshot, so use `tool_result` or `context` when an extension needs to change provider context
 
 ### Tool lifecycle

@@ -599,7 +599,9 @@ export function renderSubagentHudLines(sessions: ObservableSession[], columns: n
 		// Hide descriptions that only echo the id (e.g. the agent re-stated
 		// "AuthLoader" for id "AuthLoader-3") — they add no information.
 		const description =
-			rawDescription && normalize(rawDescription).length > 0 && normalize(displayId).includes(normalize(rawDescription))
+			rawDescription &&
+			normalize(rawDescription).length > 0 &&
+			normalize(displayId).includes(normalize(rawDescription))
 				? undefined
 				: rawDescription || undefined;
 		const taskPreview = session.progress?.task?.trim();
