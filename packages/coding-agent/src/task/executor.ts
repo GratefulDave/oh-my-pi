@@ -2636,6 +2636,8 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 		} as const;
 		emitSubagentFrame(options.eventBus, options.subagentEventBus, TASK_SUBAGENT_LIFECYCLE_CHANNEL, startedPayload);
 
+		const wakeRegistry = session.agentRegistry ?? AgentRegistry.global();
+		wakeRegistry.markFinalizing(id);
 		turnMonitor.setActiveSession(session);
 		const unsubscribeTurn = turnMonitor.attach(session);
 		return async turnError => {
@@ -2703,6 +2705,7 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 					error: finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
 				});
 			} finally {
+				wakeRegistry.clearFinalizing(id);
 				relay.resolve();
 			}
 		};
@@ -2976,34 +2979,34 @@ export async function runSubagentFollowUpTurn(options: FollowUpTurnOptions): Pro
 	// neither marks this batch yielded nor leaks into its result, restore the
 	// ordinary contract so the wake cannot consume pooled items, wait it out,
 	// then reinstall and reattach for the retry.
-	let attemptUnsubscribe = monitor.attach(session);
-	try {
-		outcome = await driveSessionToYield(session, monitor, message, async () => {
-			attemptUnsubscribe();
-			logger.debug("Subagent follow-up lost the prompt race to an IRC wake; backing off", { id });
-			await session.setWorkPoolYieldItems([]);
-			if (signal) {
-				await untilAborted(signal, () => session.waitForIdle());
-			} else {
-				await session.waitForIdle();
-			}
-			await session.setWorkPoolYieldItems(options.workPoolYieldItems ?? []);
-			attemptUnsubscribe = monitor.attach(session);
-		});
-	} finally {
-		try {
-			await untilAborted(AbortSignal.timeout(5000), () => monitor.waitForActiveSessionAbort());
-		} catch {
-			// Ignore abort cleanup timeouts; the session stays adopted either way.
-		}
-		attemptUnsubscribe();
-		const active = monitor.takeActiveSession();
-		if (active) monitor.captureSalvage(active);
-		monitor.finish();
-	}
-
 	registry.markFinalizing(id);
 	try {
+		let attemptUnsubscribe = monitor.attach(session);
+		try {
+			outcome = await driveSessionToYield(session, monitor, message, async () => {
+				attemptUnsubscribe();
+				logger.debug("Subagent follow-up lost the prompt race to an IRC wake; backing off", { id });
+				await session.setWorkPoolYieldItems([]);
+				if (signal) {
+					await untilAborted(signal, () => session.waitForIdle());
+				} else {
+					await session.waitForIdle();
+				}
+				await session.setWorkPoolYieldItems(options.workPoolYieldItems ?? []);
+				attemptUnsubscribe = monitor.attach(session);
+			});
+		} finally {
+			try {
+				await untilAborted(AbortSignal.timeout(5000), () => monitor.waitForActiveSessionAbort());
+			} catch {
+				// Ignore abort cleanup timeouts; the session stays adopted either way.
+			}
+			attemptUnsubscribe();
+			const active = monitor.takeActiveSession();
+			if (active) monitor.captureSalvage(active);
+			monitor.finish();
+		}
+
 		return await finalizeRunResult({
 			monitor,
 			done: { ...outcome, abortReason: outcome.abortReasonText, durationMs: Date.now() - startTime },
@@ -3081,8 +3084,6 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			abortReason: "Cancelled before start",
 		};
 	}
-
-	registry.markFinalizing(id);
 
 	// Set up artifact paths and write input file upfront if artifacts dir provided
 	let subtaskSessionFile: string | undefined;
@@ -3584,6 +3585,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				throw err;
 			}
 			sessionCreatedAt = performance.now();
+			registry.markFinalizing(id);
 
 			monitor.setActiveSession(session);
 			// Run-state notifications precede deferrable wire-level `agent_end`,
