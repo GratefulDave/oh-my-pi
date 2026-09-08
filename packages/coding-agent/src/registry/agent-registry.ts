@@ -137,6 +137,8 @@ export class AgentRegistry {
 	readonly #generation = new Map<string, number>();
 	/** parent edges keyed by `${id}\\n${generation}` while any live descendant still needs the walk. */
 	readonly #parentEdge = new Map<string, AncestryEdge>();
+	/** Ids whose run finished but artifacts/isolation post-processing is still in flight. */
+	readonly #finalizing = new Set<string>();
 
 	#matchesExpected(ref: AgentRef, expected?: AgentRefExpectation): boolean {
 		return expected === undefined || ref === expected || ref.session === expected;
@@ -272,6 +274,7 @@ export class AgentRegistry {
 		const ref = this.#refs.get(id);
 		if (!ref || !this.#matchesExpected(ref, expected)) return false;
 		this.#refs.delete(id);
+		this.#finalizing.delete(id);
 		this.#pruneAncestry();
 		this.#emit({ type: "removed", ref });
 		return true;
@@ -325,12 +328,33 @@ export class AgentRegistry {
 		return false;
 	}
 
-	/** True when a `sub` agent under `rootId` is currently `running`. */
+	/** True when a `sub` agent under `rootId` is currently `running` or still finalizing. */
 	hasRunningDescendant(rootId: string): boolean {
 		if (!rootId) return false;
 		return this.list().some(
-			ref => ref.kind === "sub" && ref.status === "running" && this.isDescendantOf(rootId, ref.id),
+			ref =>
+				ref.kind === "sub" &&
+				this.isDescendantOf(rootId, ref.id) &&
+				(ref.status === "running" || this.#finalizing.has(ref.id)),
 		);
+	}
+
+	/**
+	 * Pin a descendant as live through artifact write / isolation merge after its
+	 * registry status has already left `running`.
+	 */
+	markFinalizing(id: string): void {
+		if (!id || this.#finalizing.has(id)) return;
+		this.#finalizing.add(id);
+		const ref = this.#refs.get(id);
+		if (ref) this.#emit({ type: "metadata_changed", ref });
+	}
+
+	/** Drop the post-run hold so a parked/idle child no longer blocks parent idle. */
+	clearFinalizing(id: string): void {
+		if (!this.#finalizing.delete(id)) return;
+		const ref = this.#refs.get(id);
+		if (ref) this.#emit({ type: "metadata_changed", ref });
 	}
 
 	/** Whether a ref's claimed running state is corroborated by its attached live session. */

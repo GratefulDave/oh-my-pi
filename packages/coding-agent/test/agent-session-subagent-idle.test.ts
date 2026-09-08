@@ -312,4 +312,44 @@ describe("AgentSession parent idle vs live subagents", () => {
 		expect(isolated.isDescendantOf("Main", "C")).toBe(true);
 		expect(isolated.hasRunningDescendant("Main")).toBe(true);
 	});
+	it("holds idle while a parked child is still finalizing", () => {
+		registerChild("Scout", "Main", "parked");
+		expect(session.isIdle).toBe(true);
+
+		AgentRegistry.global().markFinalizing("Scout");
+		expect(session.isIdle).toBe(false);
+		expect(AgentRegistry.global().hasRunningDescendant("Main")).toBe(true);
+
+		AgentRegistry.global().clearFinalizing("Scout");
+		expect(session.isIdle).toBe(true);
+		expect(AgentRegistry.global().hasRunningDescendant("Main")).toBe(false);
+	});
+
+	it("drops a queued synthetic settle when another descendant cycle starts first", async () => {
+		const gate = Promise.withResolvers<void>();
+		let block = true;
+		extensionEmit.mockImplementation(async () => {
+			if (block) await gate.promise;
+		});
+
+		registerChild("First", "Main");
+		emitTextOnlyStop();
+		await session.waitForIdle();
+		expect(agentEndTerminalStates).toEqual([false]);
+
+		AgentRegistry.global().setStatus("First", "idle");
+		await Promise.resolve();
+		registerChild("Second", "Main");
+		AgentRegistry.global().setStatus("First", "parked");
+		await Promise.resolve();
+		AgentRegistry.global().setStatus("Second", "idle");
+
+		block = false;
+		gate.resolve();
+		for (let i = 0; i < 40; i++) await Promise.resolve();
+		await flushExtensionLifecycle();
+
+		expect(agentEndTerminalStates.filter(state => state === true)).toHaveLength(1);
+		expect(session.isIdle).toBe(true);
+	});
 });

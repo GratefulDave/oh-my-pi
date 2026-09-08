@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { formatTaskResultSummary } from "@oh-my-pi/pi-coding-agent/task/result-summary";
+import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import type { SingleResult } from "@oh-my-pi/pi-coding-agent/task/types";
 
 function settledResult(output: string): SingleResult {
@@ -59,5 +60,26 @@ describe("formatTaskResultSummary", () => {
 		});
 		expect(summary).toContain("<output>\ndone\n</output>");
 		expect(summary).not.toContain("<preview");
+	});
+	it("reads resumable status from the spawn registry, not only global", () => {
+		const registry = new AgentRegistry();
+		registry.register({
+			id: "Scout",
+			displayName: "Scout",
+			kind: "sub",
+			session: null,
+			status: "idle",
+		});
+		const result = settledResult("stopped");
+		result.aborted = true;
+		result.abortReason = "budget";
+		result.exitCode = 1;
+		const summary = formatTaskResultSummary(result, {
+			totalDurationMs: 5,
+			registry,
+		});
+		expect(summary).toContain("the agent is still live with its full context");
+		const globalOnly = formatTaskResultSummary(result, { totalDurationMs: 5 });
+		expect(globalOnly).not.toContain("the agent is still live with its full context");
 	});
 });

@@ -197,8 +197,8 @@ async function writeIsolationPatch(
 export async function runIsolatedSubprocess(opts: IsolatedRunOptions): Promise<SingleResult> {
 	let handle: IsolationHandle | undefined;
 	let deferredCleanup: Promise<void> | undefined;
-	const remember = (result: SingleResult): SingleResult =>
-		rememberAgentArtifacts(result, opts.baseOptions.agentRegistry ?? AgentRegistry.global());
+	const registry = opts.baseOptions.agentRegistry ?? AgentRegistry.global();
+	const remember = (result: SingleResult): SingleResult => rememberAgentArtifacts(result, registry);
 	try {
 		const taskBaseline = structuredClone(opts.context.baseline);
 		handle = await ensureIsolation(opts.context.repoRoot, opts.agentId, opts.preferredBackend);
@@ -293,6 +293,7 @@ export async function runIsolatedSubprocess(opts: IsolatedRunOptions): Promise<S
 	} catch (err) {
 		return remember(opts.buildFailureResult(err));
 	} finally {
+		registry.clearFinalizing(opts.agentId);
 		if (handle) {
 			const isolationHandle = handle;
 			if (deferredCleanup) {

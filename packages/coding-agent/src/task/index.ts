@@ -643,6 +643,10 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		this.#getSpawnSemaphore().release();
 	}
 
+	#agentRegistry(): AgentRegistry {
+		return this.session.agentRegistry ?? AgentRegistry.global();
+	}
+
 	/**
 	 * Resolve the shared policy before detached work exists. The resulting
 	 * policy intentionally stays local: executor dispatch resolves again from
@@ -1092,7 +1096,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			options;
 		const buildFollowUpHint = async (aborted: boolean): Promise<string> => {
 			if (aborted) {
-				const ref = AgentRegistry.global().get(agentId);
+				const ref = this.#agentRegistry().get(agentId);
 				const transcript = (await hasResolvableTranscript(agentId))
 					? `transcript at history://${agentId}`
 					: "transcript unavailable";
@@ -1156,8 +1160,12 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 							// status back to the subagent's initial "pending" snapshot.
 							progress.modelRole = nextProgress.modelRole ?? progress.modelRole;
 							progress.resolvedModel = nextProgress.resolvedModel;
-							progress.resolvedModelIsFallback =
-								nextProgress.resolvedModelIsFallback ?? progress.resolvedModelIsFallback;
+							progress.resolvedModelIdentity = nextProgress.resolvedModelIdentity;
+							progress.resolvedThinkingLevel = nextProgress.resolvedThinkingLevel;
+							progress.resolvedModelIsFallback = nextProgress.resolvedModel
+								? nextProgress.resolvedModelIsFallback
+								: undefined;
+							progress.advisor = nextProgress.advisor ?? progress.advisor;
 							progress.tokens = nextProgress.tokens;
 							progress.requests = nextProgress.requests;
 							progress.contextTokens = nextProgress.contextTokens;
@@ -1213,12 +1221,16 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 					progress.retryFailure = singleResult?.retryFailure;
 					progress.retryState = undefined;
 					progress.modelRole = singleResult?.modelRole ?? progress.modelRole;
+					progress.advisor = singleResult?.advisor ?? progress.advisor;
 					if (singleResult?.resolvedModel) {
 						progress.resolvedModel = singleResult.resolvedModel;
-						progress.resolvedModelIsFallback =
-							singleResult.resolvedModelIsFallback ?? progress.resolvedModelIsFallback;
+						progress.resolvedModelIdentity = singleResult.resolvedModelIdentity;
+						progress.resolvedThinkingLevel = singleResult.resolvedThinkingLevel;
+						progress.resolvedModelIsFallback = singleResult.resolvedModelIsFallback;
 					} else {
 						delete progress.resolvedModel;
+						delete progress.resolvedModelIdentity;
+						delete progress.resolvedThinkingLevel;
 						delete progress.resolvedModelIsFallback;
 					}
 					onSettled?.(resultFailed);
@@ -1243,7 +1255,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 					const statusText = `Background task ${agentId} failed.`;
 					await reportProgress(statusText, buildDetails() as unknown as Record<string, unknown>);
 					const message = error instanceof Error ? error.message : String(error);
-					const hint = AgentRegistry.global().get(agentId) ? await buildFollowUpHint(false) : "";
+					const hint = this.#agentRegistry().get(agentId) ? await buildFollowUpHint(false) : "";
 					throw new TaskJobError(`${message}${hint}`);
 				} finally {
 					releasePermit();
@@ -1537,7 +1549,11 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		totalDurationMs: number,
 		mergeSummary: string,
 	): AgentToolResult<TaskToolDetails> {
-		const summary = formatTaskResultSummary(result, { totalDurationMs, mergeSummary });
+		const summary = formatTaskResultSummary(result, {
+			totalDurationMs,
+			mergeSummary,
+			registry: this.#agentRegistry(),
+		});
 
 		return {
 			content: [{ type: "text", text: summary }],
