@@ -464,6 +464,7 @@ describe("runEvalAgent", () => {
 				isolated: options.worktree !== undefined,
 				agentIdleTtlMs: 0,
 				reviveSession: null,
+				registry: AgentRegistry.global(),
 			});
 			return singleResult(options);
 		});

@@ -534,6 +534,7 @@ export class ExtensionRunner {
 	 */
 	#fileFallbackDisposers: Array<() => void> = [];
 	#subagentLifecycleUnsubscribers: Array<() => void> = [];
+	#subagentLifecycleGeneration = 0;
 	/**
 	 * Dedup markers for `tool_call` emission, keyed `${toolCallId}:${toolName}`.
 	 * The agent loop emits `tool_call` at arg-prep time (before scheduling and
@@ -649,6 +650,7 @@ export class ExtensionRunner {
 	 */
 	bindSubagentLifecycle(eventBus: EventBus, subagentEventBus?: EventBus, ownerId?: string): void {
 		this.unbindSubagentLifecycle();
+		const generation = this.#subagentLifecycleGeneration;
 		const seen = new WeakSet<object>();
 		const owned = new Set<string>();
 		let chain = Promise.resolve();
@@ -671,6 +673,7 @@ export class ExtensionRunner {
 				}
 			}
 			chain = chain.then(async () => {
+				if (generation !== this.#subagentLifecycleGeneration) return;
 				try {
 					await this.emit(event);
 				} catch (err) {
@@ -685,6 +688,7 @@ export class ExtensionRunner {
 	}
 
 	unbindSubagentLifecycle(): void {
+		this.#subagentLifecycleGeneration++;
 		for (const unsub of this.#subagentLifecycleUnsubscribers) unsub();
 		this.#subagentLifecycleUnsubscribers = [];
 	}

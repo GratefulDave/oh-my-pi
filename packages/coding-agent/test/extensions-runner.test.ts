@@ -4222,5 +4222,66 @@ describe("ExtensionRunner", () => {
 			expect(order).toEqual(["started", "completed"]);
 			runner.unbindSubagentLifecycle();
 		});
+
+		it("drops queued lifecycle emits after unbind", async () => {
+			const order: string[] = [];
+			const holdStarted = Promise.withResolvers<void>();
+			const extensionPath = path.join(extensionsDir, "subagent-lifecycle-unbind.ts");
+			const extension: Extension = {
+				path: extensionPath,
+				resolvedPath: extensionPath,
+				handlers: new Map([
+					[
+						"subagent_lifecycle",
+						[
+							async (...args: unknown[]) => {
+								const event = args[0];
+								if (
+									!event ||
+									typeof event !== "object" ||
+									!("status" in event) ||
+									typeof event.status !== "string"
+								) {
+									return;
+								}
+								if (event.status === "started") await holdStarted.promise;
+								order.push(event.status);
+							},
+						],
+					],
+				]),
+				tools: new Map(),
+				assistantThinkingRenderers: [],
+				fileWriteFallbackHandlers: [],
+				fileDeleteFallbackHandlers: [],
+				messageRenderers: new Map(),
+				composerShapes: new Map(),
+				commands: new Map(),
+				flags: new Map(),
+				shortcuts: new Map(),
+			};
+			const runner = new ExtensionRunner(
+				[extension],
+				new ExtensionRuntime(),
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+			);
+			const eventBus = new EventBus();
+			runner.bindSubagentLifecycle(eventBus);
+			const frame = {
+				id: "Scout",
+				agent: "scout",
+				agentSource: "bundled" as const,
+				index: 0,
+			};
+			eventBus.emit("task:subagent:lifecycle", { ...frame, status: "started" });
+			eventBus.emit("task:subagent:lifecycle", { ...frame, status: "completed" });
+			runner.unbindSubagentLifecycle();
+			holdStarted.resolve();
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(order).toEqual([]);
+		});
 	});
 });

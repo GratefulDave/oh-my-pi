@@ -1876,6 +1876,10 @@ export class AgentSession {
 		return this.#agentId;
 	}
 
+	get agentRegistry(): AgentRegistry {
+		return this.#agentRegistry;
+	}
+
 	/** Dequeue the next HARD forced tool choice for the upcoming LLM call, dropping
 	 *  (and rejecting) one whose named tool is no longer active. */
 	#nextHardToolChoice(): ToolChoice | undefined {

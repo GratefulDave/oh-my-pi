@@ -547,6 +547,8 @@ export interface ExecutorOptions {
 	 * passes its own `getAgentId()`).
 	 */
 	parentAgentId?: string;
+	/** Registry the spawn tree shares with the parent session. Default: AgentRegistry.global(). */
+	agentRegistry?: AgentRegistry;
 	/**
 	 * Keep the finished subagent addressable in the registry for IRC/revival.
 	 * Defaults to true. Eval bridge agents are programmatic one-shot helpers and
@@ -2674,8 +2676,9 @@ export async function finalizeSubagentLifecycle(args: {
 	reviveSession: AgentReviver | null;
 	cleanupDeadlineAt?: number;
 	onCleanupDeferred?: (completion: Promise<void>) => void;
+	registry: AgentRegistry;
 }): Promise<void> {
-	const registry = AgentRegistry.global();
+	const registry = args.registry;
 	const ref = registry.get(args.id);
 	const ownsRef = Boolean(ref && ref.session === args.session);
 	const cleanupDeadlineAt = args.cleanupDeadlineAt ?? Date.now() + 5000;
@@ -2923,6 +2926,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		signal,
 		onProgress,
 	} = options;
+	const registry = options.agentRegistry ?? AgentRegistry.global();
 	const cleanupGraceMs = options.cleanupGraceMs ?? TASK_ABORT_CLEANUP_GRACE_MS;
 	const startTime = Date.now();
 	// Set by the session's onFirstChatDispatch hook the first time the agent
@@ -3403,6 +3407,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				enableMCP,
 				mcpManager,
 				customTools: sessionCustomTools.length > 0 ? sessionCustomTools : undefined,
+				agentRegistry: registry,
 				localProtocolOptions: options.localProtocolOptions,
 				telemetry: subagentTelemetry,
 				parentEvalSessionId: options.parentEvalSessionId,
@@ -3439,10 +3444,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			}
 			sessionCreatedAt = performance.now();
 
-			monitor.setActiveSession(session);
-			// Run-state notifications precede deferrable wire-level `agent_end`,
-			// so adopted keep-alive lifecycle cannot get stuck during prompt unwind.
-			AgentRegistry.global().syncSessionStatus(id, session);
+			registry.syncSessionStatus(id, session);
 			if (sessionFile !== null && worktree === undefined) {
 				// Lifecycle reviver: park closed the JSONL writer, so reopening takes
 				// the single-writer lock cleanly and restores the full message history
@@ -3477,7 +3479,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 						reportRuntimeError: err =>
 							logger.error("Extension error", { path: err.extensionPath, error: err.error }),
 					});
-					AgentRegistry.global().syncSessionStatus(id, revived);
+					registry.syncSessionStatus(id, revived);
 					installIrcWakeTurnMonitor(revived);
 					return revived;
 				};
@@ -3725,6 +3727,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 						deferredSessionShutdown = completion;
 						deferCleanup(completion);
 					},
+					registry,
 				});
 			}
 			if (jobManager) {
@@ -3816,6 +3819,6 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		sessionFile: subtaskSessionFile,
 		startTime,
 	});
-	AgentRegistry.global().setHistory(id, { outputPath: result.outputPath });
+	registry.setHistory(id, { outputPath: result.outputPath });
 	return result;
 }

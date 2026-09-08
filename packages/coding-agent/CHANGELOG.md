@@ -12,6 +12,7 @@
 - Intermediate `willContinue` settles no longer flip a child to idle in the agent registry, so the parent stays working across retry and compaction continuations.
 - Parent `subagent_lifecycle` handlers still receive one-shot settle events after unregister, in publication order.
 - Isolated SDK sessions use their own agent registry for descendant idle, and a removed intermediate parent still counts running grandchildren.
+- Task spawns inherit the parent's agent registry, and queued `subagent_lifecycle` emits are dropped on unbind.
 
 ## [18.1.14] - 2026-09-07
 
