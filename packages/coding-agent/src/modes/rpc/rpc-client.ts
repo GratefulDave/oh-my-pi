@@ -998,7 +998,7 @@ export class RpcClient {
 		const { promise, resolve, reject } = Promise.withResolvers<void>();
 		let settled = false;
 		const unsubscribe = this.onEvent(event => {
-			if (event.type === "agent_end") {
+			if (event.type === "agent_end" && (event as { isTerminal?: boolean }).isTerminal !== false) {
 				settled = true;
 				unsubscribe();
 				clearTimeout(timeoutId);
@@ -1024,7 +1024,7 @@ export class RpcClient {
 		let settled = false;
 		const unsubscribe = this.onEvent(event => {
 			events.push(event);
-			if (event.type === "agent_end") {
+			if (event.type === "agent_end" && (event as { isTerminal?: boolean }).isTerminal !== false) {
 				settled = true;
 				unsubscribe();
 				clearTimeout(timeoutId);

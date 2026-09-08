@@ -24,6 +24,7 @@
 - Task result summaries and background follow-up hints look up live/resumable children in the spawn registry, not only the process-global one.
 - `history://` and `agent://` resolve against the calling session's agent registry, so isolated SDK children remain readable while the process-global roster is empty.
 - Nested finalization holds no longer drop on the first clear, and clearing an unregistered hold still wakes the parent settle.
+- ACP and RPC hosts ignore non-terminal `agent_end` events so a parent waiting on live subagents is not reported complete.
 
 ## [18.1.15] - 2026-09-08
 

@@ -2052,6 +2052,54 @@ describe("ACP agent", () => {
 		}
 	});
 
+	it("does not finish an ACP prompt on a non-terminal agent_end", async () => {
+		const harness = await createHarness();
+		const created = await harness.agent.newSession({ cwd: harness.cwdA, mcpServers: [] });
+		const session = harness.findSession(created.sessionId)!;
+		const { promise: emitTerminal, resolve: sendTerminal } = Promise.withResolvers<void>();
+		session.prompt = async (text: string): Promise<boolean> => {
+			session.promptCalls.push(text);
+			session.isStreaming = true;
+			const assistantMessage = makeAssistantMessage("waiting on children");
+			for (const listener of session.listeners()) {
+				listener({
+					type: "agent_end",
+					messages: [assistantMessage],
+					isTerminal: false,
+				} as AgentSessionEvent);
+			}
+			session.isStreaming = false;
+			void emitTerminal.then(() => {
+				for (const listener of session.listeners()) {
+					listener({
+						type: "agent_end",
+						messages: [assistantMessage],
+						isTerminal: true,
+					} as AgentSessionEvent);
+				}
+			});
+			return true;
+		};
+
+		const prompt = harness.agent.prompt({
+			sessionId: created.sessionId,
+			prompt: [{ type: "text", text: "hold for children" }],
+		});
+		await Bun.sleep(0);
+		try {
+			const returnedEarly = await Promise.race([prompt.then(() => true), Bun.sleep(20).then(() => false)]);
+			expect(returnedEarly).toBe(false);
+			expect(session.waitForIdleCalls).toBe(0);
+			sendTerminal();
+			await prompt;
+			expect(session.waitForIdleCalls).toBe(1);
+		} finally {
+			sendTerminal();
+			harness.abortController.abort();
+			await Bun.sleep(0);
+		}
+	});
+
 	it("streams the retried turn inside the /retry prompt turn", async () => {
 		const harness = await createHarness();
 		const created = await harness.agent.newSession({ cwd: harness.cwdA, mcpServers: [] });
