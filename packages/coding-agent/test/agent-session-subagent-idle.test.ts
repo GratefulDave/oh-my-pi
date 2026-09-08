@@ -325,6 +325,18 @@ describe("AgentSession parent idle vs live subagents", () => {
 		expect(AgentRegistry.global().hasRunningDescendant("Main")).toBe(false);
 	});
 
+	it("keeps a one-shot child live after unregister until finalization clears", () => {
+		registerChild("Scout", "Main");
+		AgentRegistry.global().markFinalizing("Scout");
+		AgentRegistry.global().unregister("Scout");
+		expect(AgentRegistry.global().hasRunningDescendant("Main")).toBe(true);
+		expect(session.isIdle).toBe(false);
+
+		AgentRegistry.global().clearFinalizing("Scout");
+		expect(AgentRegistry.global().hasRunningDescendant("Main")).toBe(false);
+		expect(session.isIdle).toBe(true);
+	});
+
 	it("drops a queued synthetic settle when another descendant cycle starts first", async () => {
 		const gate = Promise.withResolvers<void>();
 		let block = true;

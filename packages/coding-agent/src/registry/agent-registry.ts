@@ -139,6 +139,8 @@ export class AgentRegistry {
 	readonly #parentEdge = new Map<string, AncestryEdge>();
 	/** Ids whose run finished but artifacts/isolation post-processing is still in flight. */
 	readonly #finalizing = new Set<string>();
+	/** Ancestor ids captured at mark time so the hold survives unregister. */
+	readonly #finalizingAncestors = new Map<string, Set<string>>();
 
 	#matchesExpected(ref: AgentRef, expected?: AgentRefExpectation): boolean {
 		return expected === undefined || ref === expected || ref.session === expected;
@@ -274,7 +276,6 @@ export class AgentRegistry {
 		const ref = this.#refs.get(id);
 		if (!ref || !this.#matchesExpected(ref, expected)) return false;
 		this.#refs.delete(id);
-		this.#finalizing.delete(id);
 		this.#pruneAncestry();
 		this.#emit({ type: "removed", ref });
 		return true;
@@ -331,12 +332,20 @@ export class AgentRegistry {
 	/** True when a `sub` agent under `rootId` is currently `running` or still finalizing. */
 	hasRunningDescendant(rootId: string): boolean {
 		if (!rootId) return false;
-		return this.list().some(
-			ref =>
-				ref.kind === "sub" &&
-				this.isDescendantOf(rootId, ref.id) &&
-				(ref.status === "running" || this.#finalizing.has(ref.id)),
-		);
+		if (
+			this.list().some(
+				ref =>
+					ref.kind === "sub" &&
+					this.isDescendantOf(rootId, ref.id) &&
+					(ref.status === "running" || this.#finalizing.has(ref.id)),
+			)
+		) {
+			return true;
+		}
+		for (const ancestors of this.#finalizingAncestors.values()) {
+			if (ancestors.has(rootId)) return true;
+		}
+		return false;
 	}
 
 	/**
@@ -346,13 +355,24 @@ export class AgentRegistry {
 	markFinalizing(id: string): void {
 		if (!id || this.#finalizing.has(id)) return;
 		this.#finalizing.add(id);
+		const ancestors = new Set<string>();
+		let current: string | undefined = this.#refs.get(id)?.parentId;
+		const seen = new Set<string>();
+		while (current && !seen.has(current)) {
+			seen.add(current);
+			ancestors.add(current);
+			current = this.#refs.get(current)?.parentId;
+		}
+		this.#finalizingAncestors.set(id, ancestors);
 		const ref = this.#refs.get(id);
 		if (ref) this.#emit({ type: "metadata_changed", ref });
 	}
 
 	/** Drop the post-run hold so a parked/idle child no longer blocks parent idle. */
 	clearFinalizing(id: string): void {
-		if (!this.#finalizing.delete(id)) return;
+		const had = this.#finalizing.delete(id);
+		this.#finalizingAncestors.delete(id);
+		if (!had) return;
 		const ref = this.#refs.get(id);
 		if (ref) this.#emit({ type: "metadata_changed", ref });
 	}

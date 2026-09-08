@@ -483,9 +483,24 @@ export class AgentLifecycleManager {
 	}
 
 	/** Release adopted agents under `rootId` without disposing a shared manager. */
-	async releaseOwnedBy(rootId: string): Promise<void> {
+	async releaseOwnedBy(rootId: string, deadlineAt: number = Date.now() + AGENT_RELEASE_GRACE_MS): Promise<void> {
 		const ids = [...this.#adopted.keys()].filter(id => id === rootId || this.#registry.isDescendantOf(rootId, id));
-		await Promise.all(ids.map(async id => this.release(id).then(() => {})));
+		await Promise.all(
+			ids.map(async id => {
+				const release = this.release(id).then(() => {});
+				try {
+					await untilAborted(AbortSignal.timeout(Math.max(0, deadlineAt - Date.now())), () => release);
+				} catch (error) {
+					if (Date.now() >= deadlineAt) {
+						trackLateCleanup(release, { id, resource: "adopted-agent" });
+					}
+					logger.warn("Agent cleanup exceeded its deadline", {
+						id,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}),
+		);
 	}
 
 	/** Teardown everything; disposing the global manager makes its next owner a fresh instance. */

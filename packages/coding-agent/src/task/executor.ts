@@ -3935,10 +3935,10 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		};
 	};
 
-	const done = await runSubagent();
-	monitor.finish();
-
 	try {
+		const done = await runSubagent();
+		monitor.finish();
+
 		const result = await finalizeRunResult({
 			monitor,
 			done,
