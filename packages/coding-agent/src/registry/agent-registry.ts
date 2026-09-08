@@ -307,8 +307,9 @@ export class AgentRegistry {
 		let id: string | undefined = agentId;
 		let generation = this.#generation.get(agentId);
 		while (id) {
-			if (seen.has(id)) return false;
-			seen.add(id);
+			const visitKey = generation === undefined ? id : this.#edgeKey(id, generation);
+			if (seen.has(visitKey)) return false;
+			seen.add(visitKey);
 			const edge: AncestryEdge | undefined =
 				generation === undefined ? undefined : this.#parentEdge.get(this.#edgeKey(id, generation));
 			const parentId: string | undefined = edge?.parentId ?? this.#refs.get(id)?.parentId;

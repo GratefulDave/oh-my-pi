@@ -291,4 +291,25 @@ describe("AgentSession parent idle vs live subagents", () => {
 		expect(isolated.isDescendantOf("Main", "Nested")).toBe(false);
 		expect(isolated.hasRunningDescendant("Main")).toBe(false);
 	});
+
+	it("walks ancestry when a reused id appears at two generations", () => {
+		const isolated = new AgentRegistry();
+		const row = (id: string, parentId?: string) =>
+			isolated.register({
+				id,
+				displayName: id,
+				kind: id === "Main" ? "main" : "sub",
+				parentId,
+				session: null,
+				status: "running",
+			});
+		row("Main");
+		row("A", "Main");
+		row("B", "A");
+		isolated.unregister("A");
+		row("A", "B");
+		row("C", "A");
+		expect(isolated.isDescendantOf("Main", "C")).toBe(true);
+		expect(isolated.hasRunningDescendant("Main")).toBe(true);
+	});
 });

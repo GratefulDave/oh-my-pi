@@ -2154,11 +2154,11 @@ export class AgentSession {
 		return this.#agentRegistry.hasRunningDescendant(rootId);
 	}
 
-	#queueExtensionLifecycle(work: () => Promise<unknown>, live: () => boolean): void {
+	#queueExtensionLifecycle(work: () => Promise<unknown>, live: () => boolean, ephemeral = false): void {
 		const seq = this.#extensionLifecycleSeq;
 		this.#extensionLifecycleChain = this.#extensionLifecycleChain.then(async () => {
 			try {
-				if (seq !== this.#extensionLifecycleSeq || this.#isDisposed || !live()) return;
+				if ((ephemeral && seq !== this.#extensionLifecycleSeq) || this.#isDisposed || !live()) return;
 				await work();
 			} catch (err) {
 				logger.error("Extension lifecycle notification failed", { err });
@@ -2175,6 +2175,7 @@ export class AgentSession {
 				this.#queueExtensionLifecycle(
 					() => this.#extensionRunner?.emit({ type: "agent_start" }) ?? Promise.resolve(),
 					() => this.#heldExtensionAgentEnd && !this.isStreaming && this.#hasLiveRunningDescendants(),
+					true,
 				);
 			}
 			return;
@@ -2194,6 +2195,7 @@ export class AgentSession {
 				await this.#emitAgentEndNotification(messages);
 			},
 			() => !this.isStreaming && !this.#hasPendingAsyncWake() && !this.#hasLiveRunningDescendants(),
+			true,
 		);
 	}
 
