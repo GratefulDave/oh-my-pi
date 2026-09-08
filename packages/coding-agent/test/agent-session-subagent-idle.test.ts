@@ -72,7 +72,12 @@ describe("AgentSession parent idle vs live subagents", () => {
 		});
 	}
 
-	function createSession(opts?: { agentId?: string; agentKind?: "main" | "sub"; asyncJobs?: boolean }): AgentSession {
+	function createSession(opts?: {
+		agentId?: string;
+		agentKind?: "main" | "sub";
+		asyncJobs?: boolean;
+		agentRegistry?: AgentRegistry;
+	}): AgentSession {
 		const model = getBundledModel("anthropic", "claude-sonnet-4-5");
 		if (!model) throw new Error("Expected built-in anthropic model to exist");
 		extensionEmit = vi.fn().mockResolvedValue(undefined);
@@ -95,6 +100,7 @@ describe("AgentSession parent idle vs live subagents", () => {
 			modelRegistry: sharedModelRegistry,
 			agentId: opts?.agentId ?? "Main",
 			agentKind: opts?.agentKind ?? "main",
+			agentRegistry: opts?.agentRegistry,
 			asyncJobManager: manager,
 			extensionRunner: {
 				emit: extensionEmit,
@@ -217,5 +223,32 @@ describe("AgentSession parent idle vs live subagents", () => {
 		await Promise.resolve();
 		await Promise.resolve();
 		expect(agentEndTerminalStates.filter(state => state === true)).toHaveLength(1);
+	});
+
+	it("ignores running children registered on a different registry", async () => {
+		const isolated = new AgentRegistry();
+		const other = createSession({ agentRegistry: isolated });
+		registerChild("Scout", "Main");
+		expect(session.isIdle).toBe(false);
+		expect(other.isIdle).toBe(true);
+		isolated.register({
+			id: "Scout",
+			displayName: "Scout",
+			kind: "sub",
+			parentId: "Main",
+			session: null,
+			status: "running",
+		});
+		expect(other.isIdle).toBe(false);
+		await other.dispose();
+	});
+
+	it("keeps a grandchild live after the intermediate parent unregisters", () => {
+		registerChild("Mid", "Main");
+		registerChild("Nested", "Mid");
+		expect(session.isIdle).toBe(false);
+		AgentRegistry.global().unregister("Mid");
+		expect(AgentRegistry.global().hasRunningDescendant("Main")).toBe(true);
+		expect(session.isIdle).toBe(false);
 	});
 });

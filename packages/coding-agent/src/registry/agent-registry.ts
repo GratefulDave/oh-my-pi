@@ -131,6 +131,8 @@ export class AgentRegistry {
 
 	readonly #refs = new Map<string, AgentRef>();
 	readonly #listeners = new Set<RegistryListener>();
+	/** parentId edges retained while any live descendant still needs the walk. */
+	readonly #parentOf = new Map<string, string>();
 
 	#matchesExpected(ref: AgentRef, expected?: AgentRefExpectation): boolean {
 		return expected === undefined || ref === expected || ref.session === expected;
@@ -157,6 +159,8 @@ export class AgentRegistry {
 			history: input.history,
 		};
 		this.#refs.set(ref.id, ref);
+		if (input.parentId) this.#parentOf.set(ref.id, input.parentId);
+		else this.#parentOf.delete(ref.id);
 		this.#emit({ type: "registered", ref });
 		return ref;
 	}
@@ -258,6 +262,7 @@ export class AgentRegistry {
 		const ref = this.#refs.get(id);
 		if (!ref || !this.#matchesExpected(ref, expected)) return false;
 		this.#refs.delete(id);
+		this.#pruneAncestry();
 		this.#emit({ type: "removed", ref });
 		return true;
 	}
@@ -285,12 +290,12 @@ export class AgentRegistry {
 	isDescendantOf(rootId: string, agentId: string): boolean {
 		if (!rootId || agentId === rootId) return false;
 		const seen = new Set<string>();
-		let id = this.#refs.get(agentId)?.parentId;
+		let id = this.#parentOf.get(agentId) ?? this.#refs.get(agentId)?.parentId;
 		while (id) {
 			if (id === rootId) return true;
 			if (seen.has(id)) return false;
 			seen.add(id);
-			id = this.#refs.get(id)?.parentId;
+			id = this.#parentOf.get(id) ?? this.#refs.get(id)?.parentId;
 		}
 		return false;
 	}
@@ -329,6 +334,23 @@ export class AgentRegistry {
 			} catch {
 				// listeners must not break the dispatch loop
 			}
+		}
+	}
+
+	#pruneAncestry(): void {
+		const keep = new Set<string>();
+		for (const id of this.#refs.keys()) {
+			let current: string | undefined = id;
+			const seen = new Set<string>();
+			while (current) {
+				if (seen.has(current)) break;
+				seen.add(current);
+				keep.add(current);
+				current = this.#parentOf.get(current);
+			}
+		}
+		for (const id of this.#parentOf.keys()) {
+			if (!keep.has(id)) this.#parentOf.delete(id);
 		}
 	}
 }

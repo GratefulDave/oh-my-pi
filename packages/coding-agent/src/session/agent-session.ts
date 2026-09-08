@@ -672,6 +672,7 @@ export class AgentSession {
 		| undefined;
 	// Agent identity (registry id) used for IRC routing and job ownership.
 	#agentId: string | undefined;
+	#agentRegistry: AgentRegistry;
 	#agentKind: "main" | "sub" = "main";
 	#scoutAllowedBySpawnPolicy = true;
 	#providerSessionId: string | undefined;
@@ -1575,8 +1576,9 @@ export class AgentSession {
 		this.#loopGuards = new LoopGuards(streamGuardsHost);
 		this.#agentId = config.agentId;
 		this.#agentKind = config.agentKind ?? "main";
+		this.#agentRegistry = config.agentRegistry ?? AgentRegistry.global();
 		if (this.#agentId) {
-			this.#unsubscribeRegistry = AgentRegistry.global().onChange(() => this.#reconcileDescendantRunState());
+			this.#unsubscribeRegistry = this.#agentRegistry.onChange(() => this.#reconcileDescendantRunState());
 		}
 		this.#scoutAllowedBySpawnPolicy = config.scoutAllowedBySpawnPolicy ?? true;
 		this.#providerSessionId = config.providerSessionId;
@@ -2143,7 +2145,7 @@ export class AgentSession {
 	#hasLiveRunningDescendants(): boolean {
 		const rootId = this.#agentId;
 		if (!rootId) return false;
-		return AgentRegistry.global().hasRunningDescendant(rootId);
+		return this.#agentRegistry.hasRunningDescendant(rootId);
 	}
 
 	#reconcileDescendantRunState(): void {

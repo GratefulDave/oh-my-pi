@@ -35,6 +35,7 @@ import type { ExtensionRunner, PreparedExtension } from "../extensibility/extens
 import type { ContextUsage } from "../extensibility/extensions/types";
 import type { Skill, SkillWarning } from "../extensibility/skills";
 import type { FileSlashCommand } from "../extensibility/slash-commands";
+import type { AgentRegistry } from "../registry/agent-registry";
 import type { SecretObfuscator } from "../secrets/obfuscator";
 import type { ConfiguredThinkingLevel } from "../thinking";
 import type { XdevState } from "../tools/xdev";
@@ -270,6 +271,8 @@ export interface AgentSessionConfig {
 	asyncJobManager?: AsyncJobManager;
 	/** Registry identity used for IRC routing. */
 	agentId?: string;
+	/** Registry used for descendant idle tracking. Default: AgentRegistry.global(). */
+	agentRegistry?: AgentRegistry;
 	/** Whether this is a top-level or subagent session. */
 	agentKind?: "main" | "sub";
 	/** Provider-facing session ID override. */
