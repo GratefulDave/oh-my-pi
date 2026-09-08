@@ -18,6 +18,7 @@
 - Isolated spawn IRC, activity, and corpse reclaim use the spawn registry, and reused intermediate ids keep the original grandchild ancestry.
 - Shared-registry SDK teardown releases only that root's adopted children, reused root ids do not inherit old descendants, and same-id subagent settles stay generation-queued.
 - Ordinary extension `agent_end` stays queued across a later `agent_start`, and ancestry walks allow the same id at two generations.
+- Vibe first spawns and isolation artifact metadata use the session registry.
 
 ## [18.1.14] - 2026-09-07
 

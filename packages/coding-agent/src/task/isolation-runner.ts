@@ -45,8 +45,8 @@ import {
 
 type IsoBackendKind = natives.IsoBackendKind;
 
-function rememberAgentArtifacts(result: SingleResult): SingleResult {
-	AgentRegistry.global().setHistory(result.id, {
+function rememberAgentArtifacts(result: SingleResult, registry: AgentRegistry = AgentRegistry.global()): SingleResult {
+	registry.setHistory(result.id, {
 		outputPath: result.outputPath,
 		patchPath: result.patchPath,
 		branchName: result.branchName,
@@ -197,6 +197,8 @@ async function writeIsolationPatch(
 export async function runIsolatedSubprocess(opts: IsolatedRunOptions): Promise<SingleResult> {
 	let handle: IsolationHandle | undefined;
 	let deferredCleanup: Promise<void> | undefined;
+	const remember = (result: SingleResult): SingleResult =>
+		rememberAgentArtifacts(result, opts.baseOptions.agentRegistry ?? AgentRegistry.global());
 	try {
 		const taskBaseline = structuredClone(opts.context.baseline);
 		handle = await ensureIsolation(opts.context.repoRoot, opts.agentId, opts.preferredBackend);
@@ -228,7 +230,7 @@ export async function runIsolatedSubprocess(opts: IsolatedRunOptions): Promise<S
 					opts.description,
 					opts.buildCommitMessage?.(),
 				);
-				return rememberAgentArtifacts({
+				return remember({
 					...result,
 					branchName: commitResult?.branchName,
 					branchBaseSha: commitResult?.baseSha,
@@ -259,7 +261,7 @@ export async function runIsolatedSubprocess(opts: IsolatedRunOptions): Promise<S
 						opts.artifactsDir,
 						opts.agentId,
 					);
-					return rememberAgentArtifacts({
+					return remember({
 						...result,
 						patchPath: patchResult.patchPath,
 						nestedPatches: patchResult.nestedPatches,
@@ -267,7 +269,7 @@ export async function runIsolatedSubprocess(opts: IsolatedRunOptions): Promise<S
 					});
 				} catch (patchErr) {
 					const patchMsg = patchErr instanceof Error ? patchErr.message : String(patchErr);
-					return rememberAgentArtifacts({
+					return remember({
 						...result,
 						error: `Merge failed: ${msg}; patch capture failed: ${patchMsg}.${rescueNote}`,
 					});
@@ -277,19 +279,19 @@ export async function runIsolatedSubprocess(opts: IsolatedRunOptions): Promise<S
 		if (result.exitCode === 0) {
 			try {
 				const patchResult = await writeIsolationPatch(isolationDir, taskBaseline, opts.artifactsDir, opts.agentId);
-				return rememberAgentArtifacts({
+				return remember({
 					...result,
 					patchPath: patchResult.patchPath,
 					nestedPatches: patchResult.nestedPatches,
 				});
 			} catch (patchErr) {
 				const msg = patchErr instanceof Error ? patchErr.message : String(patchErr);
-				return rememberAgentArtifacts({ ...result, error: `Patch capture failed: ${msg}` });
+				return remember({ ...result, error: `Patch capture failed: ${msg}` });
 			}
 		}
-		return rememberAgentArtifacts(result);
+		return remember(result);
 	} catch (err) {
-		return rememberAgentArtifacts(opts.buildFailureResult(err));
+		return remember(opts.buildFailureResult(err));
 	} finally {
 		if (handle) {
 			const isolationHandle = handle;

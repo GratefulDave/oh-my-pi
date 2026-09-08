@@ -546,8 +546,12 @@ export class VibeSessionRegistry {
 		return record;
 	}
 
-	#registeredAgent(record: VibeRecord): AgentRef | undefined {
-		const ref = AgentRegistry.global().get(record.id);
+	#registryFor(session?: ToolSession): AgentRegistry {
+		return session?.agentRegistry ?? AgentRegistry.global();
+	}
+
+	#registeredAgent(record: VibeRecord, session?: ToolSession): AgentRef | undefined {
+		const ref = this.#registryFor(session).get(record.id);
 		if (ref?.kind !== "sub" || ref.parentId !== record.ownerId) return undefined;
 		if (record.childSessionFile && ref.sessionFile !== record.childSessionFile) return undefined;
 		return ref;
@@ -940,8 +944,8 @@ export class VibeSessionRegistry {
 		}
 		const message = args.message.trim();
 		if (!message) throw new ToolError("Message must not be empty.");
-		const registered = this.#registeredAgent(record);
-		if (AgentRegistry.global().get(record.id) && !registered) {
+		const registered = this.#registeredAgent(record, session);
+		if (this.#registryFor(session).get(record.id) && !registered) {
 			throw new ToolError(`Vibe session "${record.id}" no longer resolves to this parent session.`);
 		}
 
@@ -1365,6 +1369,7 @@ export class VibeSessionRegistry {
 			parentTelemetry: session.getTelemetry?.(),
 			parentEvalSessionId: session.getEvalSessionId?.() ?? undefined,
 			parentAgentId: session.getAgentId?.() ?? MAIN_AGENT_ID,
+			agentRegistry: session.agentRegistry,
 			parentServiceTier: session.getServiceTierByFamily ? (session.getServiceTierByFamily() ?? null) : undefined,
 			keepAlive: true,
 		};
@@ -1471,7 +1476,7 @@ export class VibeSessionRegistry {
 			return;
 		}
 		// Only an idle/parked ref with this parent's exact child file is resumable.
-		const registered = this.#registeredAgent(record);
+		const registered = this.#registeredAgent(record, session);
 		record.state = registered && (registered.status === "idle" || registered.status === "parked") ? "idle" : "dead";
 		if (record.state === "dead") {
 			record.terminalPersisted = await this.#appendTombstone(session, record, "unrecoverable");
