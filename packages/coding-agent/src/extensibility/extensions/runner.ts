@@ -17,6 +17,8 @@ import { type Settings, withActiveSettings } from "../../config/settings";
 import type { LocalProtocolOptions } from "../../internal-urls/local-protocol";
 import type { MemoryRuntimeContext } from "../../memory-backend";
 import { type Theme, theme } from "../../modes/theme/theme";
+import { AgentRegistry } from "../../registry/agent-registry";
+import { TASK_SUBAGENT_LIFECYCLE_CHANNEL, type SubagentLifecyclePayload } from "../../task/types";
 import type { AsyncJobSnapshot } from "../../session/agent-session";
 import type { SessionManager } from "../../session/session-manager";
 import { addFileDeleteFallback, addFileWriteFallback } from "../../tools/file-write-fallback";
@@ -77,22 +79,25 @@ import type {
 	UserPythonEventResult,
 } from "./types";
 
-/** Session EventBus channel dual-published by the task executor. */
-const SUBAGENT_LIFECYCLE_BUS_CHANNEL = "task:subagent:lifecycle";
+function isSubagentLifecyclePayload(data: unknown): data is SubagentLifecyclePayload {
+	if (data === null || typeof data !== "object") return false;
+	const payload = data as Record<string, unknown>;
+	return (
+		typeof payload.id === "string" &&
+		payload.id.length > 0 &&
+		typeof payload.agent === "string" &&
+		(payload.agentSource === "bundled" || payload.agentSource === "user" || payload.agentSource === "project") &&
+		typeof payload.index === "number" &&
+		(payload.status === "started" ||
+			payload.status === "completed" ||
+			payload.status === "failed" ||
+			payload.status === "aborted")
+	);
+}
 
 function toSubagentLifecycleEvent(data: unknown): SubagentLifecycleEvent | undefined {
-	if (data === null || typeof data !== "object") return undefined;
-	const payload = data as Record<string, unknown>;
-	if (typeof payload.id !== "string" || payload.id.length === 0) return undefined;
-	if (
-		payload.status !== "started" &&
-		payload.status !== "completed" &&
-		payload.status !== "failed" &&
-		payload.status !== "aborted"
-	) {
-		return undefined;
-	}
-	return { type: "subagent_lifecycle", ...(payload as unknown as Omit<SubagentLifecycleEvent, "type">) };
+	if (!isSubagentLifecyclePayload(data)) return undefined;
+	return { type: "subagent_lifecycle", ...data };
 }
 /** Combined result from all before_agent_start handlers */
 interface BeforeAgentStartCombinedResult {
@@ -638,8 +643,9 @@ export class ExtensionRunner {
 	 * Forward `task:subagent:lifecycle` frames from the session bus (and the
 	 * tree observability bus) to `pi.on("subagent_lifecycle")` handlers.
 	 * Dual-published payloads share one object reference and are handled once.
+	 * When `ownerId` is set, only descendants of that agent are forwarded.
 	 */
-	bindSubagentLifecycle(eventBus: EventBus, subagentEventBus?: EventBus): void {
+	bindSubagentLifecycle(eventBus: EventBus, subagentEventBus?: EventBus, ownerId?: string): void {
 		this.unbindSubagentLifecycle();
 		const seen = new WeakSet<object>();
 		const forward = (data: unknown): void => {
@@ -649,11 +655,12 @@ export class ExtensionRunner {
 			}
 			const event = toSubagentLifecycleEvent(data);
 			if (!event) return;
+			if (ownerId && !AgentRegistry.global().isDescendantOf(ownerId, event.id)) return;
 			void this.emit(event);
 		};
-		this.#subagentLifecycleUnsubscribers.push(eventBus.on(SUBAGENT_LIFECYCLE_BUS_CHANNEL, forward));
+		this.#subagentLifecycleUnsubscribers.push(eventBus.on(TASK_SUBAGENT_LIFECYCLE_CHANNEL, forward));
 		if (subagentEventBus && subagentEventBus !== eventBus) {
-			this.#subagentLifecycleUnsubscribers.push(subagentEventBus.on(SUBAGENT_LIFECYCLE_BUS_CHANNEL, forward));
+			this.#subagentLifecycleUnsubscribers.push(subagentEventBus.on(TASK_SUBAGENT_LIFECYCLE_CHANNEL, forward));
 		}
 	}
 

@@ -281,6 +281,28 @@ export class AgentRegistry {
 		);
 	}
 
+	/** True when `agentId` is in the parentId chain under `rootId`. */
+	isDescendantOf(rootId: string, agentId: string): boolean {
+		if (!rootId || agentId === rootId) return false;
+		const seen = new Set<string>();
+		let id = this.#refs.get(agentId)?.parentId;
+		while (id) {
+			if (id === rootId) return true;
+			if (seen.has(id)) return false;
+			seen.add(id);
+			id = this.#refs.get(id)?.parentId;
+		}
+		return false;
+	}
+
+	/** True when a `sub` agent under `rootId` is currently `running`. */
+	hasRunningDescendant(rootId: string): boolean {
+		if (!rootId) return false;
+		return this.list().some(
+			ref => ref.kind === "sub" && ref.status === "running" && this.isDescendantOf(rootId, ref.id),
+		);
+	}
+
 	/** Whether a ref's claimed running state is corroborated by its attached live session. */
 	isRunning(ref: AgentRef): boolean {
 		if (ref.status !== "running") return false;

@@ -1575,7 +1575,7 @@ export class AgentSession {
 		this.#loopGuards = new LoopGuards(streamGuardsHost);
 		this.#agentId = config.agentId;
 		this.#agentKind = config.agentKind ?? "main";
-		if (this.#agentKind === "main") {
+		if (this.#agentId) {
 			this.#unsubscribeRegistry = AgentRegistry.global().onChange(() => this.#reconcileDescendantRunState());
 		}
 		this.#scoutAllowedBySpawnPolicy = config.scoutAllowedBySpawnPolicy ?? true;
@@ -2125,7 +2125,7 @@ export class AgentSession {
 	 */
 	#hasPendingAsyncWake(): boolean {
 		const manager = this.#asyncJobManager;
-		if (!manager) return this.#hasLiveRunningDescendants();
+		if (!manager) return false;
 		const ownerFilter = this.#agentId ? { ownerId: this.#agentId } : undefined;
 		return (
 			manager.getRunningJobs(ownerFilter).some(job => !manager.isDeliverySuppressed(job.id)) ||
@@ -2135,33 +2135,19 @@ export class AgentSession {
 			// longer reports it. Without this leg a terminal yield in the
 			// (idle-flush delay / step-boundary) handoff window would read as
 			// quiescent and the run driver would drop the queued result.
-			this.yieldQueue.has(ASYNC_RESULT_MESSAGE_TYPE) ||
-			this.#hasLiveRunningDescendants()
+			this.yieldQueue.has(ASYNC_RESULT_MESSAGE_TYPE)
 		);
 	}
 
 	/** Running task/eval descendants of this session, including nested children. */
 	#hasLiveRunningDescendants(): boolean {
-		if (this.#agentKind !== "main") return false;
 		const rootId = this.#agentId;
 		if (!rootId) return false;
-		const registry = AgentRegistry.global();
-		return registry.list().some(ref => {
-			if (ref.kind !== "sub" || ref.status !== "running") return false;
-			const seen = new Set<string>();
-			let id = ref.parentId;
-			while (id) {
-				if (id === rootId) return true;
-				if (seen.has(id)) return false;
-				seen.add(id);
-				id = registry.get(id)?.parentId;
-			}
-			return false;
-		});
+		return AgentRegistry.global().hasRunningDescendant(rootId);
 	}
 
 	#reconcileDescendantRunState(): void {
-		if (this.#isDisposed || this.#agentKind !== "main" || this.isStreaming) return;
+		if (this.#isDisposed || this.isStreaming) return;
 		if (this.#hasLiveRunningDescendants()) {
 			if (this.#lastRunState !== "running") {
 				this.#heldExtensionAgentEnd = true;
@@ -3209,6 +3195,7 @@ export class AgentSession {
 					await this.#emitSessionEvent({ ...event, isTerminal: false });
 					return;
 				}
+				this.#heldExtensionAgentEnd = false;
 				this.#emitRunState("idle");
 				// Public agent_end is held out of the eager display pass and emitted
 				// here after maintenance routing, tagged isTerminal so subscribers can

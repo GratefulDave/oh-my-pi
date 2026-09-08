@@ -19,6 +19,7 @@ import type { Rule } from "../capability/rule";
 import type { Goal, GoalModeState } from "../goals/state";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry } from "../session/session-entries";
 import type { TodoItem } from "../tools/todo";
+import type { SubagentLifecyclePayload } from "../task/types";
 
 // ============================================================================
 // Session Events
@@ -202,23 +203,9 @@ export interface AgentEndEvent {
 }
 
 /** Fired on the parent session when a spawned subagent starts or settles. */
-export interface SubagentLifecycleEvent {
+export type SubagentLifecycleEvent = SubagentLifecyclePayload & {
 	type: "subagent_lifecycle";
-	id: string;
-	agent: string;
-	agentSource: "bundled" | "user" | "project";
-	description?: string;
-	status: "started" | "completed" | "failed" | "aborted";
-	sessionFile?: string;
-	parentToolCallId?: string;
-	index: number;
-	/**
-	 * Spawn runs as a detached background job: the parent turn keeps working
-	 * while this agent runs. Sync task spawns and eval `agent()` bridge spawns
-	 * leave this unset.
-	 */
-	detached?: boolean;
-}
+};
 
 /** Fired at the start of each turn */
 export interface TurnStartEvent {

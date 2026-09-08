@@ -30,6 +30,7 @@ import type {
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { ExtensionToolWrapper } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/wrapper";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
 import { getProjectAgentDir, logger, TempDir } from "@oh-my-pi/pi-utils";
@@ -4010,6 +4011,76 @@ describe("ExtensionRunner", () => {
 			eventBus.emit("task:subagent:lifecycle", { ...payload, status: "completed" });
 			await Promise.resolve();
 			expect(seen).toEqual([{ id: "Scout", status: "started" }]);
+		});
+
+		it("forwards only descendants of the owning session", async () => {
+			AgentRegistry.resetGlobalForTests();
+			AgentRegistry.global().register({
+				id: "Scout",
+				displayName: "Scout",
+				kind: "sub",
+				parentId: "Main",
+				session: null,
+				status: "running",
+			});
+			AgentRegistry.global().register({
+				id: "Other",
+				displayName: "Other",
+				kind: "sub",
+				parentId: "SomeoneElse",
+				session: null,
+				status: "running",
+			});
+
+			const seen: string[] = [];
+			const extensionPath = path.join(extensionsDir, "subagent-lifecycle-filter.ts");
+			const extension: Extension = {
+				path: extensionPath,
+				resolvedPath: extensionPath,
+				handlers: new Map([
+					[
+						"subagent_lifecycle",
+						[
+							async (...args: unknown[]) => {
+								const event = args[0];
+								if (event && typeof event === "object" && "id" in event && typeof event.id === "string") {
+									seen.push(event.id);
+								}
+							},
+						],
+					],
+				]),
+				tools: new Map(),
+				assistantThinkingRenderers: [],
+				fileWriteFallbackHandlers: [],
+				fileDeleteFallbackHandlers: [],
+				messageRenderers: new Map(),
+				composerShapes: new Map(),
+				commands: new Map(),
+				flags: new Map(),
+				shortcuts: new Map(),
+			};
+			const runner = new ExtensionRunner(
+				[extension],
+				new ExtensionRuntime(),
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+			);
+			const eventBus = new EventBus();
+			runner.bindSubagentLifecycle(eventBus, undefined, "Main");
+			const frame = {
+				agent: "scout",
+				agentSource: "bundled" as const,
+				status: "started" as const,
+				index: 0,
+			};
+			eventBus.emit("task:subagent:lifecycle", { ...frame, id: "Scout" });
+			eventBus.emit("task:subagent:lifecycle", { ...frame, id: "Other" });
+			await Promise.resolve();
+			expect(seen).toEqual(["Scout"]);
+			runner.unbindSubagentLifecycle();
+			AgentRegistry.resetGlobalForTests();
 		});
 	});
 });
