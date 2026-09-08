@@ -2810,6 +2810,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			localProtocolOptions,
 			() => (hasSession ? session.getAsyncJobSnapshot() : null),
 		);
+		extensionRunner.bindSubagentLifecycle(eventBus, subagentEventBus);
 
 		credentialDisabledTarget = extensionRunner;
 		for (const event of startupCredentialDisabledEvents.splice(0)) {
@@ -2821,7 +2822,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			sessionManager,
 			modelRegistry,
 			model: agent.state.model,
-			isIdle: () => !session.isStreaming,
+			isIdle: () => session.isIdle,
 			hasQueuedMessages: () => session.queuedMessageCount > 0,
 			abort: () => {
 				session.abort({ reason: USER_INTERRUPT_LABEL });

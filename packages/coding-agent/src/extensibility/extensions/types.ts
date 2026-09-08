@@ -83,6 +83,7 @@ import type { EventBus } from "../../utils/event-bus";
 import type {
 	AgentEndEvent,
 	AgentStartEvent,
+	SubagentLifecycleEvent,
 	AutoCompactionEndEvent,
 	AutoCompactionStartEvent,
 	AutoRetryEndEvent,
@@ -763,6 +764,7 @@ export interface BeforeAgentStartEvent {
 export type {
 	AgentEndEvent,
 	AgentStartEvent,
+	SubagentLifecycleEvent,
 	SessionStopEvent,
 	SessionStopEventResult,
 	TurnEndEvent,
@@ -1074,6 +1076,7 @@ export type ExtensionEvent =
 	| BeforeAgentStartEvent
 	| AgentStartEvent
 	| AgentEndEvent
+	| SubagentLifecycleEvent
 	| SessionStopEvent
 	| TurnStartEvent
 	| TurnEndEvent
@@ -1263,6 +1266,7 @@ export interface ExtensionAPI {
 	on(event: "before_agent_start", handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>): void;
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;
+	on(event: "subagent_lifecycle", handler: ExtensionHandler<SubagentLifecycleEvent>): void;
 	on(event: "session_stop", handler: ExtensionHandler<SessionStopEvent, SessionStopEventResult>): void;
 	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
 	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent>): void;

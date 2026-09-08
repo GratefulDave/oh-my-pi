@@ -113,7 +113,7 @@ export async function initializeExtensions(session: AgentSession, options: Initi
 		// ExtensionContextActions
 		{
 			getModel: () => session.model,
-			isIdle: () => !session.isStreaming,
+			isIdle: () => session.isIdle,
 			abort: () => session.abort({ reason: USER_INTERRUPT_LABEL }),
 			hasPendingMessages: () => session.queuedMessageCount > 0,
 			shutdown,

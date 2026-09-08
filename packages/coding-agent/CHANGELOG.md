@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Extensions can subscribe to `subagent_lifecycle` to observe spawned subagent start and settle on the parent session.
+
+### Fixed
+
+- The parent session no longer reports idle while spawned subagents are still running, so hosts that key off `agent_end` / `ctx.isIdle()` stay working.
+
 ## [18.1.14] - 2026-09-07
 
 ### Fixed

@@ -20,6 +20,7 @@ import { type Theme, theme } from "../../modes/theme/theme";
 import type { AsyncJobSnapshot } from "../../session/agent-session";
 import type { SessionManager } from "../../session/session-manager";
 import { addFileDeleteFallback, addFileWriteFallback } from "../../tools/file-write-fallback";
+import type { EventBus } from "../../utils/event-bus";
 import type { BranchHandler, NavigateTreeHandler, NewSessionHandler } from "../session-handler-types";
 import { ManagedTimers } from "./managed-timers";
 import { createExtensionModelQuery } from "./model-api";
@@ -63,6 +64,7 @@ import type {
 	SessionBeforeTreeResult,
 	SessionCompactingResult,
 	SessionStopEvent,
+	SubagentLifecycleEvent,
 	SessionStopEventResult,
 	ToolCallEvent,
 	ToolCallEventResult,
@@ -75,6 +77,23 @@ import type {
 	UserPythonEventResult,
 } from "./types";
 
+/** Session EventBus channel dual-published by the task executor. */
+const SUBAGENT_LIFECYCLE_BUS_CHANNEL = "task:subagent:lifecycle";
+
+function toSubagentLifecycleEvent(data: unknown): SubagentLifecycleEvent | undefined {
+	if (data === null || typeof data !== "object") return undefined;
+	const payload = data as Record<string, unknown>;
+	if (typeof payload.id !== "string" || payload.id.length === 0) return undefined;
+	if (
+		payload.status !== "started" &&
+		payload.status !== "completed" &&
+		payload.status !== "failed" &&
+		payload.status !== "aborted"
+	) {
+		return undefined;
+	}
+	return { type: "subagent_lifecycle", ...(payload as unknown as Omit<SubagentLifecycleEvent, "type">) };
+}
 /** Combined result from all before_agent_start handlers */
 interface BeforeAgentStartCombinedResult {
 	messages?: NonNullable<BeforeAgentStartEventResult["message"]>[];
@@ -394,6 +413,7 @@ export async function emitSessionShutdownEvent(extensionRunner: ExtensionRunner 
 		return true;
 	} finally {
 		extensionRunner.disposeFileFallbacks();
+		extensionRunner.unbindSubagentLifecycle();
 		extensionRunner.clearManagedTimers();
 	}
 }
@@ -508,6 +528,7 @@ export class ExtensionRunner {
 	 * takes effect, which is why the API documents load-time registration.
 	 */
 	#fileFallbackDisposers: Array<() => void> = [];
+	#subagentLifecycleUnsubscribers: Array<() => void> = [];
 	/**
 	 * Dedup markers for `tool_call` emission, keyed `${toolCallId}:${toolName}`.
 	 * The agent loop emits `tool_call` at arg-prep time (before scheduling and
@@ -611,6 +632,34 @@ export class ExtensionRunner {
 		this.#uiContext = noOpUIContext;
 		this.#getMemoryFn = getMemory;
 		this.#getAsyncJobSnapshotFn = getAsyncJobSnapshot ?? (() => null);
+	}
+
+	/**
+	 * Forward `task:subagent:lifecycle` frames from the session bus (and the
+	 * tree observability bus) to `pi.on("subagent_lifecycle")` handlers.
+	 * Dual-published payloads share one object reference and are handled once.
+	 */
+	bindSubagentLifecycle(eventBus: EventBus, subagentEventBus?: EventBus): void {
+		this.unbindSubagentLifecycle();
+		const seen = new WeakSet<object>();
+		const forward = (data: unknown): void => {
+			if (data !== null && typeof data === "object") {
+				if (seen.has(data)) return;
+				seen.add(data);
+			}
+			const event = toSubagentLifecycleEvent(data);
+			if (!event) return;
+			void this.emit(event);
+		};
+		this.#subagentLifecycleUnsubscribers.push(eventBus.on(SUBAGENT_LIFECYCLE_BUS_CHANNEL, forward));
+		if (subagentEventBus && subagentEventBus !== eventBus) {
+			this.#subagentLifecycleUnsubscribers.push(subagentEventBus.on(SUBAGENT_LIFECYCLE_BUS_CHANNEL, forward));
+		}
+	}
+
+	unbindSubagentLifecycle(): void {
+		for (const unsub of this.#subagentLifecycleUnsubscribers) unsub();
+		this.#subagentLifecycleUnsubscribers = [];
 	}
 
 	/**
