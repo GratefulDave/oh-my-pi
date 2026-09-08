@@ -71,7 +71,10 @@ export function artifactsDirsFromRegistry(options?: { preferredDir?: string; reg
  * multiple dirs, the first hit wins (registry dirs are scanned first; a
  * `preferredDir` from the caller root is scanned before them).
  */
-export async function sessionFilesFromDisk(preferredDir?: string): Promise<Map<string, string>> {
+export async function sessionFilesFromDisk(
+	preferredDir?: string,
+	registry?: AgentRegistry,
+): Promise<Map<string, string>> {
 	const found = new Map<string, string>();
 	const seenDirs = new Set<string>();
 	const scan = async (dir: string, depth: number): Promise<void> => {
@@ -97,7 +100,9 @@ export async function sessionFilesFromDisk(preferredDir?: string): Promise<Map<s
 			if (!found.has(id)) found.set(id, path.join(dir, name));
 		}
 	};
-	const dirs = preferredDir ? [preferredDir, ...artifactsDirsFromRegistry()] : artifactsDirsFromRegistry();
+	const dirs = preferredDir
+		? [preferredDir, ...artifactsDirsFromRegistry({ registry })]
+		: artifactsDirsFromRegistry({ registry });
 	for (const dir of dirs) await scan(dir, 0);
 	return found;
 }
@@ -123,7 +128,7 @@ export async function hasResolvableTranscript(
 		ref ??= registry.list().find(candidate => candidate.kind !== "advisor" && candidate.id.toLowerCase() === lower);
 		if (ref?.session) return true;
 		if (ref?.sessionFile && (await isReadableFile(ref.sessionFile))) return true;
-		const files = await sessionFilesFromDisk();
+		const files = await sessionFilesFromDisk(undefined, registry);
 		for (const id of files.keys()) {
 			if (id.toLowerCase() === lower) return true;
 		}

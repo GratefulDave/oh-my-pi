@@ -137,8 +137,8 @@ export class AgentRegistry {
 	readonly #generation = new Map<string, number>();
 	/** parent edges keyed by `${id}\\n${generation}` while any live descendant still needs the walk. */
 	readonly #parentEdge = new Map<string, AncestryEdge>();
-	/** Ids whose run finished but artifacts/isolation post-processing is still in flight. */
-	readonly #finalizing = new Set<string>();
+	/** Nested finalization holds per id (IRC wake overlapping artifact write). */
+	readonly #finalizing = new Map<string, number>();
 	/** Ancestor ids captured at mark time so the hold survives unregister. */
 	readonly #finalizingAncestors = new Map<string, Set<string>>();
 
@@ -353,8 +353,10 @@ export class AgentRegistry {
 	 * registry status has already left `running`.
 	 */
 	markFinalizing(id: string): void {
-		if (!id || this.#finalizing.has(id)) return;
-		this.#finalizing.add(id);
+		if (!id) return;
+		const next = (this.#finalizing.get(id) ?? 0) + 1;
+		this.#finalizing.set(id, next);
+		if (next > 1) return;
 		const ancestors = new Set<string>();
 		let current: string | undefined = this.#refs.get(id)?.parentId;
 		const seen = new Set<string>();
@@ -370,11 +372,32 @@ export class AgentRegistry {
 
 	/** Drop the post-run hold so a parked/idle child no longer blocks parent idle. */
 	clearFinalizing(id: string): void {
-		const had = this.#finalizing.delete(id);
+		const current = this.#finalizing.get(id);
+		if (!current) return;
+		if (current > 1) {
+			this.#finalizing.set(id, current - 1);
+			return;
+		}
+		this.#finalizing.delete(id);
 		this.#finalizingAncestors.delete(id);
-		if (!had) return;
 		const ref = this.#refs.get(id);
-		if (ref) this.#emit({ type: "metadata_changed", ref });
+		if (ref) {
+			this.#emit({ type: "metadata_changed", ref });
+			return;
+		}
+		this.#emit({
+			type: "removed",
+			ref: {
+				id,
+				displayName: id,
+				kind: "sub",
+				status: "idle",
+				session: null,
+				sessionFile: null,
+				createdAt: 0,
+				lastActivity: 0,
+			},
+		});
 	}
 
 	/** Whether a ref's claimed running state is corroborated by its attached live session. */

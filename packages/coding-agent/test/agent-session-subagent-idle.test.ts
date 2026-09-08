@@ -337,6 +337,34 @@ describe("AgentSession parent idle vs live subagents", () => {
 		expect(session.isIdle).toBe(true);
 	});
 
+	it("overlapping finalizing holds keep the parent working until the last clear", () => {
+		registerChild("Scout", "Main", "idle");
+		AgentRegistry.global().markFinalizing("Scout");
+		AgentRegistry.global().markFinalizing("Scout");
+		AgentRegistry.global().clearFinalizing("Scout");
+		expect(session.isIdle).toBe(false);
+		expect(AgentRegistry.global().hasRunningDescendant("Main")).toBe(true);
+		AgentRegistry.global().clearFinalizing("Scout");
+		expect(session.isIdle).toBe(true);
+		expect(AgentRegistry.global().hasRunningDescendant("Main")).toBe(false);
+	});
+
+	it("clearing an unregistered finalizer delivers the held parent agent_end", async () => {
+		registerChild("Scout", "Main");
+		AgentRegistry.global().markFinalizing("Scout");
+		emitTextOnlyStop();
+		for (let i = 0; i < 20; i++) await Promise.resolve();
+		expect(agentEndTerminalStates).toEqual([false]);
+
+		AgentRegistry.global().unregister("Scout");
+		AgentRegistry.global().clearFinalizing("Scout");
+		await flushExtensionLifecycle();
+
+		expect(session.isIdle).toBe(true);
+		expect(agentEndTerminalStates).toEqual([false, true]);
+		expect(extensionEmit.mock.calls.some(call => call[0]?.type === "agent_end")).toBe(true);
+	});
+
 	it("drops a queued synthetic settle when another descendant cycle starts first", async () => {
 		const gate = Promise.withResolvers<void>();
 		let block = true;

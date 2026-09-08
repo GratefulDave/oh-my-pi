@@ -492,4 +492,33 @@ describe("history:// protocol", () => {
 		expect(customCompletions.map(c => c.value)).toContain("SdkChild");
 		expect((await handler.complete()).map(c => c.value)).not.toContain("SdkChild");
 	});
+
+	it("history:// disk fallback does not serve a global-only same-named transcript", async () => {
+		await withTempDir(async dir => {
+			const globalFile = path.join(dir, "SdkChild.jsonl");
+			await Bun.write(globalFile, sessionFixtureJsonl());
+			AgentRegistry.global().register({
+				id: "SdkChild",
+				displayName: "task",
+				kind: "sub",
+				session: null,
+				sessionFile: globalFile,
+				status: "parked",
+			});
+			const custom = new AgentRegistry();
+			const handler = new HistoryProtocolHandler();
+			const miss = await handler.resolve(parseInternalUrl("history://SdkChild"), { agentRegistry: custom }).then(
+				() => null,
+				err => err as Error,
+			);
+			expect(miss).toBeInstanceOf(Error);
+			expect(miss?.message).toMatch(/Unknown agent: SdkChild/);
+
+			const index = await handler.resolve(parseInternalUrl("history://"), { agentRegistry: custom });
+			expect(index.content).not.toContain("SdkChild");
+			expect((await handler.complete(undefined, { agentRegistry: custom })).map(c => c.value)).not.toContain(
+				"SdkChild",
+			);
+		});
+	});
 });

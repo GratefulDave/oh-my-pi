@@ -64,7 +64,7 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 		// root's scan must not be served (or listed as known) in its place.
 		// The refresh is latched per root, so a settled roster never re-scans.
 		let rootSessionFile: string | undefined;
-		if (agentId && context?.sessionFile) {
+		if (context?.sessionFile) {
 			rootSessionFile = await ensurePersistedRoster(registry, context.sessionFile);
 		}
 		// On-disk fallbacks below scan the caller root's artifact directory
@@ -76,7 +76,7 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 		const visible = registry.list().filter(ref => ref.kind !== "advisor");
 
 		if (!agentId) {
-			const content = await this.#renderIndex(visible);
+			const content = await this.#renderIndex(visible, preferredArtifactDir, registry);
 			return {
 				url: url.href,
 				content,
@@ -96,7 +96,7 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 		if (!ref) {
 			// Registry miss — the agent may have been unregistered or lost on resume.
 			// Serve its transcript straight from disk if the session file persists.
-			const disk = await this.#resolveFromDisk(agentId, preferredArtifactDir);
+			const disk = await this.#resolveFromDisk(agentId, preferredArtifactDir, registry);
 			if (disk) return { ...disk, url: url.href };
 
 			const known = visible.map(candidate => candidate.id);
@@ -115,7 +115,7 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 		} else {
 			// No live session and no retained sessionFile — try the disk scan before
 			// giving up, in case the transcript lingers under an artifacts dir.
-			const disk = await this.#resolveFromDisk(ref.id, preferredArtifactDir);
+			const disk = await this.#resolveFromDisk(ref.id, preferredArtifactDir, registry);
 			if (disk) return { ...disk, url: url.href };
 			throw new Error(`Agent ${ref.id} has no transcript: session is gone and no session file was retained`);
 		}
@@ -138,8 +138,12 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 	 * known — is scanned before every registry-derived dir, so a same-id
 	 * transcript from another root cannot shadow the caller's own.
 	 */
-	async #resolveFromDisk(agentId: string, preferredArtifactDir?: string): Promise<InternalResource | undefined> {
-		const files = await sessionFilesFromDisk(preferredArtifactDir);
+	async #resolveFromDisk(
+		agentId: string,
+		preferredArtifactDir?: string,
+		registry?: AgentRegistry,
+	): Promise<InternalResource | undefined> {
+		const files = await sessionFilesFromDisk(preferredArtifactDir, registry);
 		const lower = agentId.toLowerCase();
 		let matchedId: string | undefined;
 		let sessionFile: string | undefined;
@@ -163,7 +167,7 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 		};
 	}
 
-	async #renderIndex(refs: AgentRef[]): Promise<string> {
+	async #renderIndex(refs: AgentRef[], preferredArtifactDir?: string, registry?: AgentRegistry): Promise<string> {
 		const entries: IndexEntry[] = refs.map(ref => ({
 			id: ref.id,
 			status: ref.status,
@@ -173,7 +177,7 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 		}));
 		// Merge on-disk transcripts for agents absent from the registry.
 		const registered = new Set(refs.map(ref => ref.id));
-		const disk = await sessionFilesFromDisk();
+		const disk = await sessionFilesFromDisk(preferredArtifactDir, registry);
 		for (const id of disk.keys()) {
 			if (registered.has(id)) continue;
 			entries.push({ id, status: "on disk", kind: "—", parent: "—", lastActivity: "—" });
@@ -195,7 +199,13 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 	async complete(_query?: string, context?: ResolveContext): Promise<UrlCompletion[]> {
 		const completions: UrlCompletion[] = [];
 		const seen = new Set<string>();
-		for (const ref of (context?.agentRegistry ?? AgentRegistry.global()).list()) {
+		const registry = context?.agentRegistry ?? AgentRegistry.global();
+		let preferredArtifactDir: string | undefined;
+		if (context?.sessionFile) {
+			const rootSessionFile = await ensurePersistedRoster(registry, context.sessionFile);
+			preferredArtifactDir = rootSessionFile?.slice(0, -".jsonl".length);
+		}
+		for (const ref of registry.list()) {
 			if (ref.kind === "advisor") continue;
 			seen.add(ref.id);
 			completions.push({
@@ -203,7 +213,7 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 				description: `${ref.status} · ${ref.kind}${ref.parentId ? ` · parent ${ref.parentId}` : ""}`,
 			});
 		}
-		const disk = await sessionFilesFromDisk();
+		const disk = await sessionFilesFromDisk(preferredArtifactDir, registry);
 		for (const id of disk.keys()) {
 			if (seen.has(id)) continue;
 			seen.add(id);
