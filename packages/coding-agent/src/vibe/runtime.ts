@@ -1427,6 +1427,7 @@ export class VibeSessionRegistry {
 						? await runSubprocess(await this.#buildSpawnOptions(session, record, message, signal, onProgress))
 						: await runSubagentFollowUpTurn({
 								id: record.id,
+								agentRegistry: session.agentRegistry,
 								agent: record.agent,
 								message,
 								description: `vibe ${record.cli} session`,

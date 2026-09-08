@@ -72,6 +72,10 @@ describe("AgentSession parent idle vs live subagents", () => {
 		});
 	}
 
+	async function flushExtensionLifecycle(): Promise<void> {
+		for (let i = 0; i < 8; i++) await Promise.resolve();
+	}
+
 	function createSession(opts?: {
 		agentId?: string;
 		agentKind?: "main" | "sub";
@@ -155,8 +159,7 @@ describe("AgentSession parent idle vs live subagents", () => {
 		expect(emitSessionStop).toHaveBeenCalledTimes(1);
 
 		AgentRegistry.global().setStatus("Scout", "idle");
-		await Promise.resolve();
-		await Promise.resolve();
+		await flushExtensionLifecycle();
 
 		expect(session.isIdle).toBe(true);
 		expect(agentEndTerminalStates).toEqual([false, true]);
@@ -208,8 +211,7 @@ describe("AgentSession parent idle vs live subagents", () => {
 		expect(emitSessionStop).not.toHaveBeenCalled();
 
 		AgentRegistry.global().setStatus("Scout", "idle");
-		await Promise.resolve();
-		await Promise.resolve();
+		await flushExtensionLifecycle();
 		expect(agentEndTerminalStates).toEqual([false]);
 
 		gate.resolve("done");
@@ -220,8 +222,7 @@ describe("AgentSession parent idle vs live subagents", () => {
 		const terminalEnds = agentEndTerminalStates.filter(state => state === true);
 		expect(terminalEnds).toHaveLength(1);
 		AgentRegistry.global().setStatus("Scout", "parked");
-		await Promise.resolve();
-		await Promise.resolve();
+		await flushExtensionLifecycle();
 		expect(agentEndTerminalStates.filter(state => state === true)).toHaveLength(1);
 	});
 

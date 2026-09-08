@@ -394,6 +394,7 @@ export class WorkPool {
 						result = execution.result;
 					} else {
 						result = await runSubagentFollowUpTurn({
+							agentRegistry: this.session.agentRegistry,
 							id: agent.id,
 							agent: this.policy.agent,
 							message,

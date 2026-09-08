@@ -2679,6 +2679,7 @@ export async function finalizeSubagentLifecycle(args: {
 	registry: AgentRegistry;
 }): Promise<void> {
 	const registry = args.registry;
+	const lifecycle = AgentLifecycleManager.forRegistry(registry);
 	const ref = registry.get(args.id);
 	const ownsRef = Boolean(ref && ref.session === args.session);
 	const cleanupDeadlineAt = args.cleanupDeadlineAt ?? Date.now() + 5000;
@@ -2718,7 +2719,7 @@ export async function finalizeSubagentLifecycle(args: {
 		if (ref && ownsRef) {
 			if (args.abortKind === "shutdown") {
 				try {
-					await AgentLifecycleManager.global().release(args.id, ref);
+					await lifecycle.release(args.id, ref);
 				} catch (error) {
 					logger.warn("runSubagent: failed to release session during manager shutdown", {
 						id: args.id,
@@ -2732,7 +2733,7 @@ export async function finalizeSubagentLifecycle(args: {
 				// decision is durable and a restart cannot rediscover the transcript
 				// as a revivable parked agent.
 				try {
-					await AgentLifecycleManager.global().release(args.id, ref, { tombstone: true });
+					await lifecycle.release(args.id, ref, { tombstone: true });
 				} catch (error) {
 					logger.warn("runSubagent: failed to persist kill tombstone", { id: args.id, error: String(error) });
 					registry.setStatus(args.id, "aborted", ref);
@@ -2771,7 +2772,7 @@ export async function finalizeSubagentLifecycle(args: {
 		await disposeSession();
 		return;
 	}
-	AgentLifecycleManager.global().adopt(
+	lifecycle.adopt(
 		args.id,
 		{
 			idleTtlMs: args.agentIdleTtlMs,
@@ -2785,6 +2786,8 @@ export async function finalizeSubagentLifecycle(args: {
 export interface FollowUpTurnOptions {
 	/** Registry id of the (live or parked) subagent to continue. */
 	id: string;
+	/** Registry the original spawn used. Default: AgentRegistry.global(). */
+	agentRegistry?: AgentRegistry;
 	/** Agent definition the session was originally spawned with (drives progress labels + finalize). */
 	agent: AgentDefinition;
 	/** The follow-up message; sent as the turn's user prompt. */
@@ -2829,9 +2832,10 @@ export async function runSubagentFollowUpTurn(options: FollowUpTurnOptions): Pro
 	const { id, agent, message, signal } = options;
 	const index = options.index ?? 0;
 	const startTime = Date.now();
-	const session = await AgentLifecycleManager.global().ensureLive(id);
+	const registry = options.agentRegistry ?? AgentRegistry.global();
+	const session = await AgentLifecycleManager.forRegistry(registry).ensureLive(id);
 	session.setWorkPoolYieldItems(options.workPoolYieldItems ?? []);
-	const ref = AgentRegistry.global().get(id);
+	const ref = registry.get(id);
 	const sessionFile = ref?.sessionFile ?? undefined;
 
 	const monitor = createSubagentRunMonitor({

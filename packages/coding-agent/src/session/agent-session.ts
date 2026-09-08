@@ -588,6 +588,7 @@ export class AgentSession {
 	#unsubscribeRegistry?: () => void;
 	#lastRunState: "running" | "idle" = "idle";
 	#heldExtensionAgentEnd = false;
+	#extensionLifecycleChain = Promise.resolve();
 	#commandMetadataChangedListeners: CommandMetadataChangedListener[] = [];
 	#sessionChangeCallbacks = new Set<() => void>();
 	#observedSessionId: string | undefined;
@@ -2152,13 +2153,25 @@ export class AgentSession {
 		return this.#agentRegistry.hasRunningDescendant(rootId);
 	}
 
+	#queueExtensionLifecycle(work: () => Promise<unknown>): void {
+		this.#extensionLifecycleChain = this.#extensionLifecycleChain.then(async () => {
+			try {
+				await work();
+			} catch (err) {
+				logger.error("Extension lifecycle notification failed", { err });
+			}
+		});
+	}
+
 	#reconcileDescendantRunState(): void {
 		if (this.#isDisposed || this.isStreaming) return;
 		if (this.#hasLiveRunningDescendants()) {
 			if (this.#lastRunState !== "running") {
 				this.#heldExtensionAgentEnd = true;
 				this.#emitRunState("running");
-				void this.#extensionRunner?.emit({ type: "agent_start" });
+				this.#queueExtensionLifecycle(
+					() => this.#extensionRunner?.emit({ type: "agent_start" }) ?? Promise.resolve(),
+				);
 			}
 			return;
 		}
@@ -2171,9 +2184,9 @@ export class AgentSession {
 		this.#heldExtensionAgentEnd = false;
 		this.#emitRunState("idle");
 		const messages = [...this.agent.state.messages];
-		void this.#emitSessionEvent({ type: "agent_end", messages, isTerminal: true });
-		void this.#emitAgentEndNotification(messages).catch(err => {
-			logger.error("Agent end extension notification failed", { err });
+		this.#queueExtensionLifecycle(async () => {
+			await this.#emitSessionEvent({ type: "agent_end", messages, isTerminal: true });
+			await this.#emitAgentEndNotification(messages);
 		});
 	}
 

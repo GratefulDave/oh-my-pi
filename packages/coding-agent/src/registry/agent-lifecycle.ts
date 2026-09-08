@@ -88,12 +88,24 @@ interface RevivingAgent {
 
 export class AgentLifecycleManager {
 	static #global: AgentLifecycleManager | undefined;
+	static #byRegistry = new WeakMap<AgentRegistry, AgentLifecycleManager>();
 
 	static global(): AgentLifecycleManager {
 		if (!AgentLifecycleManager.#global) {
 			AgentLifecycleManager.#global = new AgentLifecycleManager();
 		}
 		return AgentLifecycleManager.#global;
+	}
+
+	/** Lifecycle owner bound to `registry`. The process-global registry reuses {@link global}. */
+	static forRegistry(registry: AgentRegistry): AgentLifecycleManager {
+		if (registry === AgentRegistry.global()) return AgentLifecycleManager.global();
+		let manager = AgentLifecycleManager.#byRegistry.get(registry);
+		if (!manager) {
+			manager = new AgentLifecycleManager(registry);
+			AgentLifecycleManager.#byRegistry.set(registry, manager);
+		}
+		return manager;
 	}
 
 	/** Reset the global manager. Test-only. */
