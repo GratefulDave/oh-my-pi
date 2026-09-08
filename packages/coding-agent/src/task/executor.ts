@@ -3077,6 +3077,8 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		};
 	}
 
+	registry.markFinalizing(id);
+
 	// Set up artifact paths and write input file upfront if artifacts dir provided
 	let subtaskSessionFile: string | undefined;
 	if (options.artifactsDir) {
@@ -3507,7 +3509,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 						// session is null, so render the cleared set rather than
 						// resurrecting the launch-time pooled instructions.
 						workPoolYieldItems:
-							AgentRegistry.global().get(id)?.session?.getWorkPoolYieldItems?.() ??
+							registry.get(id)?.session?.getWorkPoolYieldItems?.() ??
 							(forRevive ? [] : (options.workPoolYieldItems ?? [])),
 						ircPeers: ircRoster?.peers ?? [],
 						ircParkedCount: ircRoster?.parkedCount ?? 0,
@@ -3847,7 +3849,6 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				}
 			}
 			const session = monitor.takeActiveSession();
-			registry.markFinalizing(id);
 			if (session) {
 				monitor.captureSalvage(session);
 				if (options.keepAlive !== false && worktree === undefined) {
