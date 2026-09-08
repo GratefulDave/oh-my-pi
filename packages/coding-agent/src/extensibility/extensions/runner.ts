@@ -644,10 +644,14 @@ export class ExtensionRunner {
 	 * tree observability bus) to `pi.on("subagent_lifecycle")` handlers.
 	 * Dual-published payloads share one object reference and are handled once.
 	 * When `ownerId` is set, only descendants of that agent are forwarded.
+	 * Ownership is remembered from `started` so one-shot unregister cannot
+	 * drop the matching settle. Emissions are queued so handlers see publish order.
 	 */
 	bindSubagentLifecycle(eventBus: EventBus, subagentEventBus?: EventBus, ownerId?: string): void {
 		this.unbindSubagentLifecycle();
 		const seen = new WeakSet<object>();
+		const owned = new Set<string>();
+		let chain = Promise.resolve();
 		const forward = (data: unknown): void => {
 			if (data !== null && typeof data === "object") {
 				if (seen.has(data)) return;
@@ -655,8 +659,24 @@ export class ExtensionRunner {
 			}
 			const event = toSubagentLifecycleEvent(data);
 			if (!event) return;
-			if (ownerId && !AgentRegistry.global().isDescendantOf(ownerId, event.id)) return;
-			void this.emit(event);
+			if (ownerId) {
+				const live = AgentRegistry.global().isDescendantOf(ownerId, event.id);
+				if (event.status === "started") {
+					if (!live) return;
+					owned.add(event.id);
+				} else if (!owned.has(event.id) && !live) {
+					return;
+				} else {
+					owned.delete(event.id);
+				}
+			}
+			chain = chain.then(async () => {
+				try {
+					await this.emit(event);
+				} catch (err) {
+					logger.error("subagent_lifecycle emit failed", { err });
+				}
+			});
 		};
 		this.#subagentLifecycleUnsubscribers.push(eventBus.on(TASK_SUBAGENT_LIFECYCLE_CHANNEL, forward));
 		if (subagentEventBus && subagentEventBus !== eventBus) {

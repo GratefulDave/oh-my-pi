@@ -9,6 +9,8 @@
 ### Fixed
 
 - The parent session no longer reports idle while spawned subagents are still running, so hosts that key off `agent_end` / `ctx.isIdle()` stay working.
+- Intermediate `willContinue` settles no longer flip a child to idle in the agent registry, so the parent stays working across retry and compaction continuations.
+- Parent `subagent_lifecycle` handlers still receive one-shot settle events after unregister, in publication order.
 
 ## [18.1.14] - 2026-09-07
 

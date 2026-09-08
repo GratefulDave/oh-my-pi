@@ -97,6 +97,10 @@ describe("AgentSession session_stop willContinue", () => {
 			modelRegistry,
 			extensionRunner,
 		});
+		const runStates: Array<"running" | "idle"> = [];
+		session.subscribeRunState(state => {
+			runStates.push(state);
+		});
 
 		await session.prompt("Trigger session_stop continuation");
 		await session.waitForIdle();
@@ -110,6 +114,8 @@ describe("AgentSession session_stop willContinue", () => {
 		expect(agentEnds[0]?.willContinue).toBe(true);
 		// Final settle is terminal.
 		expect(agentEnds[1]?.willContinue).toBeFalsy();
+		expect(runStates.filter(state => state === "idle")).toHaveLength(1);
+		expect(runStates.at(-1)).toBe("idle");
 		const last = session.agent.state.messages.at(-1);
 		expect(last?.role).toBe("assistant");
 		if (last?.role === "assistant") {

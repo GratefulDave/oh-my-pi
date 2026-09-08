@@ -3196,7 +3196,9 @@ export class AgentSession {
 					return;
 				}
 				this.#heldExtensionAgentEnd = false;
-				this.#emitRunState("idle");
+				if (!options?.willContinue) {
+					this.#emitRunState("idle");
+				}
 				// Public agent_end is held out of the eager display pass and emitted
 				// here after maintenance routing, tagged isTerminal so subscribers can
 				// tell final settles from scheduled continuations.
