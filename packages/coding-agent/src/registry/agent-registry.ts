@@ -281,6 +281,10 @@ export class AgentRegistry {
 		return this.#refs.get(id);
 	}
 
+	/** Current ancestry generation for `id`, if any spawn has used it. */
+	generationOf(id: string): number | undefined {
+		return this.#generation.get(id);
+	}
 	list(): AgentRef[] {
 		return [...this.#refs.values()];
 	}
@@ -309,7 +313,11 @@ export class AgentRegistry {
 				generation === undefined ? undefined : this.#parentEdge.get(this.#edgeKey(id, generation));
 			const parentId: string | undefined = edge?.parentId ?? this.#refs.get(id)?.parentId;
 			if (!parentId) return false;
-			if (parentId === rootId) return true;
+			if (parentId === rootId) {
+				const rootGen = this.#generation.get(rootId);
+				if (edge && rootGen !== undefined && edge.parentGen !== rootGen) return false;
+				return true;
+			}
 			id = parentId;
 			generation = edge?.parentGen ?? this.#generation.get(parentId);
 		}

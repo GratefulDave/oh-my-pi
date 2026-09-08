@@ -262,4 +262,33 @@ describe("AgentSession parent idle vs live subagents", () => {
 		expect(AgentRegistry.global().isDescendantOf("Other", "Nested")).toBe(false);
 		expect(session.isIdle).toBe(false);
 	});
+
+	it("does not attribute old descendants to a reused root id", () => {
+		const isolated = new AgentRegistry();
+		isolated.register({
+			id: "Main",
+			displayName: "Main",
+			kind: "main",
+			session: null,
+			status: "running",
+		});
+		isolated.register({
+			id: "Nested",
+			displayName: "Nested",
+			kind: "sub",
+			parentId: "Main",
+			session: null,
+			status: "running",
+		});
+		isolated.unregister("Main");
+		isolated.register({
+			id: "Main",
+			displayName: "Main",
+			kind: "main",
+			session: null,
+			status: "running",
+		});
+		expect(isolated.isDescendantOf("Main", "Nested")).toBe(false);
+		expect(isolated.hasRunningDescendant("Main")).toBe(false);
+	});
 });

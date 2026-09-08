@@ -3230,9 +3230,10 @@ export class AgentSession {
 				// here after maintenance routing, tagged isTerminal so subscribers can
 				// tell final settles from scheduled continuations.
 				await this.#emitSessionEvent({ ...event, isTerminal: !options?.willContinue });
-				void this.#emitAgentEndNotification([...activeMessages], options).catch(err => {
-					logger.error("Agent end extension notification failed", { err });
-				});
+				this.#queueExtensionLifecycle(
+					() => this.#emitAgentEndNotification([...activeMessages], options),
+					() => !this.#isDisposed && (options?.willContinue === true || !this.#hasLiveRunningDescendants()),
+				);
 			};
 			const usage = this.getSessionStats().tokens;
 			await this.#goalRuntime.onAgentEnd({

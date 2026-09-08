@@ -482,6 +482,12 @@ export class AgentLifecycleManager {
 		return true;
 	}
 
+	/** Release adopted agents under `rootId` without disposing a shared manager. */
+	async releaseOwnedBy(rootId: string): Promise<void> {
+		const ids = [...this.#adopted.keys()].filter(id => id === rootId || this.#registry.isDescendantOf(rootId, id));
+		await Promise.all(ids.map(async id => this.release(id).then(() => {})));
+	}
+
 	/** Teardown everything; disposing the global manager makes its next owner a fresh instance. */
 	async dispose(deadlineAt: number = Date.now() + AGENT_RELEASE_GRACE_MS): Promise<void> {
 		this.#unsubscribe?.();

@@ -657,7 +657,7 @@ export class ExtensionRunner {
 		this.unbindSubagentLifecycle();
 		const generation = this.#subagentLifecycleGeneration;
 		const seen = new WeakSet<object>();
-		const owned = new Set<string>();
+		const owned = new Map<string, number[]>();
 		let chain = Promise.resolve();
 		const forward = (data: unknown): void => {
 			if (data !== null && typeof data === "object") {
@@ -670,11 +670,15 @@ export class ExtensionRunner {
 				const live = registry.isDescendantOf(ownerId, event.id);
 				if (event.status === "started") {
 					if (!live) return;
-					owned.add(event.id);
-				} else if (!owned.has(event.id) && !live) {
-					return;
+					const generations = owned.get(event.id) ?? [];
+					generations.push(registry.generationOf(event.id) ?? 0);
+					owned.set(event.id, generations);
 				} else {
-					owned.delete(event.id);
+					const generations = owned.get(event.id);
+					const startGen = generations?.[0];
+					if (startGen === undefined && !live) return;
+					generations?.shift();
+					if (generations && generations.length === 0) owned.delete(event.id);
 				}
 			}
 			chain = chain.then(async () => {
