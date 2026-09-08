@@ -2528,7 +2528,7 @@ async function relayWakeTurnOutput(args: {
 	turnText: string;
 	registry?: AgentRegistry;
 }): Promise<void> {
-	const bus = IrcBus.global();
+	const bus = IrcBus.forRegistry(args.registry ?? AgentRegistry.global());
 	const pending = wakeSources(args.records, args.id).filter(
 		source => !bus.sentSince(args.id, source.from, args.turnStartTime),
 	);
@@ -3002,27 +3002,32 @@ export async function runSubagentFollowUpTurn(options: FollowUpTurnOptions): Pro
 		monitor.finish();
 	}
 
-	return finalizeRunResult({
-		monitor,
-		done: { ...outcome, abortReason: outcome.abortReasonText, durationMs: Date.now() - startTime },
-		index,
-		id,
-		agent,
-		task: message,
-		modelRole: options.modelRole,
-		outputSchema: options.outputSchema,
-		outputSchemaMode: options.outputSchemaMode,
-		outputSchemaSource: options.outputSchemaSource,
-		signal,
-		artifactsDir: options.artifactsDir,
-		eventBus: options.eventBus,
-		subagentEventBus: options.subagentEventBus,
-		parentToolCallId: options.parentToolCallId,
-		detached: true,
-		followUpTurn: true,
-		sessionFile,
-		startTime,
-	});
+	registry.markFinalizing(id);
+	try {
+		return await finalizeRunResult({
+			monitor,
+			done: { ...outcome, abortReason: outcome.abortReasonText, durationMs: Date.now() - startTime },
+			index,
+			id,
+			agent,
+			task: message,
+			modelRole: options.modelRole,
+			outputSchema: options.outputSchema,
+			outputSchemaMode: options.outputSchemaMode,
+			outputSchemaSource: options.outputSchemaSource,
+			signal,
+			artifactsDir: options.artifactsDir,
+			eventBus: options.eventBus,
+			subagentEventBus: options.subagentEventBus,
+			parentToolCallId: options.parentToolCallId,
+			detached: true,
+			followUpTurn: true,
+			sessionFile,
+			startTime,
+		});
+	} finally {
+		registry.clearFinalizing(id);
+	}
 }
 
 /**

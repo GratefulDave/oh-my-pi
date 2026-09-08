@@ -85,6 +85,19 @@ export class IrcBus {
 		IrcBus.#global = undefined;
 	}
 
+	static #byRegistry = new WeakMap<AgentRegistry, IrcBus>();
+
+	/** Bus bound to `registry`. The process-global registry reuses {@link global}. */
+	static forRegistry(registry: AgentRegistry): IrcBus {
+		if (registry === AgentRegistry.global()) return IrcBus.global();
+		let bus = IrcBus.#byRegistry.get(registry);
+		if (!bus) {
+			bus = new IrcBus(registry, AgentLifecycleManager.forRegistry(registry));
+			IrcBus.#byRegistry.set(registry, bus);
+		}
+		return bus;
+	}
+
 	readonly #registry: AgentRegistry;
 	readonly #lifecycle: () => AgentLifecycleManager;
 	readonly #mailboxes = new Map<string, IrcMessage[]>();
@@ -96,7 +109,7 @@ export class IrcBus {
 		this.#registry = registry;
 		// Lazy: the lifecycle global self-constructs against the global registry,
 		// so only touch it when a parked recipient actually needs reviving.
-		this.#lifecycle = () => lifecycle ?? AgentLifecycleManager.global();
+		this.#lifecycle = () => lifecycle ?? AgentLifecycleManager.forRegistry(this.#registry);
 	}
 
 	/**
