@@ -3843,7 +3843,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			titleSystemPrompt: options.titleSystemPrompt,
 		});
 		hasSession = true;
-		extensionRunner.bindSubagentLifecycle(eventBus, subagentEventBus, resolvedAgentId);
+		extensionRunner.bindSubagentLifecycle(eventBus, subagentEventBus, resolvedAgentId, agentRegistry);
 		// Backfill the resumed advisor spend without blocking startup: the scan
 		// runs after the session is live, so `--resume` no longer scales with the
 		// advisor transcript size (issue #9553).

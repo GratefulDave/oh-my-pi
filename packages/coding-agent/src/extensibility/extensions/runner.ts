@@ -648,7 +648,12 @@ export class ExtensionRunner {
 	 * Ownership is remembered from `started` so one-shot unregister cannot
 	 * drop the matching settle. Emissions are queued so handlers see publish order.
 	 */
-	bindSubagentLifecycle(eventBus: EventBus, subagentEventBus?: EventBus, ownerId?: string): void {
+	bindSubagentLifecycle(
+		eventBus: EventBus,
+		subagentEventBus?: EventBus,
+		ownerId?: string,
+		registry: AgentRegistry = AgentRegistry.global(),
+	): void {
 		this.unbindSubagentLifecycle();
 		const generation = this.#subagentLifecycleGeneration;
 		const seen = new WeakSet<object>();
@@ -662,7 +667,7 @@ export class ExtensionRunner {
 			const event = toSubagentLifecycleEvent(data);
 			if (!event) return;
 			if (ownerId) {
-				const live = AgentRegistry.global().isDescendantOf(ownerId, event.id);
+				const live = registry.isDescendantOf(ownerId, event.id);
 				if (event.status === "started") {
 					if (!live) return;
 					owned.add(event.id);

@@ -4085,6 +4085,79 @@ describe("ExtensionRunner", () => {
 			AgentRegistry.resetGlobalForTests();
 		});
 
+		it("filters descendants against the supplied registry, not the process global", async () => {
+			const isolated = new AgentRegistry();
+			isolated.register({
+				id: "Scout",
+				displayName: "Scout",
+				kind: "sub",
+				parentId: "Main",
+				session: null,
+				status: "running",
+			});
+			AgentRegistry.resetGlobalForTests();
+			AgentRegistry.global().register({
+				id: "GlobalOnly",
+				displayName: "GlobalOnly",
+				kind: "sub",
+				parentId: "Main",
+				session: null,
+				status: "running",
+			});
+
+			const seen: string[] = [];
+			const got = Promise.withResolvers<void>();
+			const extensionPath = path.join(extensionsDir, "subagent-lifecycle-isolated.ts");
+			const extension: Extension = {
+				path: extensionPath,
+				resolvedPath: extensionPath,
+				handlers: new Map([
+					[
+						"subagent_lifecycle",
+						[
+							async (...args: unknown[]) => {
+								const event = args[0];
+								if (event && typeof event === "object" && "id" in event && typeof event.id === "string") {
+									seen.push(event.id);
+									got.resolve();
+								}
+							},
+						],
+					],
+				]),
+				tools: new Map(),
+				assistantThinkingRenderers: [],
+				fileWriteFallbackHandlers: [],
+				fileDeleteFallbackHandlers: [],
+				messageRenderers: new Map(),
+				composerShapes: new Map(),
+				commands: new Map(),
+				flags: new Map(),
+				shortcuts: new Map(),
+			};
+			const runner = new ExtensionRunner(
+				[extension],
+				new ExtensionRuntime(),
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+			);
+			const eventBus = new EventBus();
+			runner.bindSubagentLifecycle(eventBus, undefined, "Main", isolated);
+			const frame = {
+				agent: "scout",
+				agentSource: "bundled" as const,
+				status: "started" as const,
+				index: 0,
+			};
+			eventBus.emit("task:subagent:lifecycle", { ...frame, id: "Scout" });
+			eventBus.emit("task:subagent:lifecycle", { ...frame, id: "GlobalOnly" });
+			await got.promise;
+			expect(seen).toEqual(["Scout"]);
+			runner.unbindSubagentLifecycle();
+			AgentRegistry.resetGlobalForTests();
+		});
+
 		it("forwards one-shot settle after the child unregisters", async () => {
 			AgentRegistry.resetGlobalForTests();
 			AgentRegistry.global().register({
