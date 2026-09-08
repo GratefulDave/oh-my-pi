@@ -3444,6 +3444,9 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			}
 			sessionCreatedAt = performance.now();
 
+			monitor.setActiveSession(session);
+			// Run-state notifications precede deferrable wire-level `agent_end`,
+			// so adopted keep-alive lifecycle cannot get stuck during prompt unwind.
 			registry.syncSessionStatus(id, session);
 			if (sessionFile !== null && worktree === undefined) {
 				// Lifecycle reviver: park closed the JSONL writer, so reopening takes
