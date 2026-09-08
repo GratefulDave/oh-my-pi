@@ -41,14 +41,14 @@ export function resetRegisteredArtifactDirsForTests(): void {
  * registered at all). Absent a preferred dir, the pre-existing process-global
  * ordering is preserved unchanged.
  */
-export function artifactsDirsFromRegistry(options?: { preferredDir?: string }): string[] {
+export function artifactsDirsFromRegistry(options?: { preferredDir?: string; registry?: AgentRegistry }): string[] {
 	const dirs: string[] = [];
 	const addDir = (dir: string | null | undefined) => {
 		if (!dir) return;
 		if (!dirs.includes(dir)) dirs.push(dir);
 	};
 	if (options?.preferredDir) addDir(options.preferredDir);
-	for (const ref of AgentRegistry.global().list()) {
+	for (const ref of (options?.registry ?? AgentRegistry.global()).list()) {
 		addDir(ref.session?.sessionManager?.getArtifactsDir());
 		if (ref.sessionFile) addDir(ref.sessionFile.slice(0, -6));
 	}
@@ -112,9 +112,11 @@ export async function sessionFilesFromDisk(preferredDir?: string): Promise<Map<s
  * and probing never throws: a stale path or unreadable artifacts subtree
  * reads as unavailable instead of disturbing the caller's delivery path.
  */
-export async function hasResolvableTranscript(agentId: string): Promise<boolean> {
+export async function hasResolvableTranscript(
+	agentId: string,
+	registry: AgentRegistry = AgentRegistry.global(),
+): Promise<boolean> {
 	try {
-		const registry = AgentRegistry.global();
 		const lower = agentId.toLowerCase();
 		let ref = registry.get(agentId);
 		if (ref?.kind === "advisor") ref = undefined;

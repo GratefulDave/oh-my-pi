@@ -49,7 +49,7 @@ export class AgentProtocolHandler implements ProtocolHandler {
 			throw new Error("agent:// URL cannot combine path extraction with ?q=");
 		}
 
-		const registry = AgentRegistry.global();
+		const registry = context?.agentRegistry ?? AgentRegistry.global();
 		const rootSessionFile = context?.sessionFile
 			? await ensurePersistedRoster(registry, context.sessionFile)
 			: undefined;
@@ -62,7 +62,7 @@ export class AgentProtocolHandler implements ProtocolHandler {
 		// the first-hit id map for a shared id. No caller session file: keep the
 		// pre-existing global scan untouched.
 		const dirs = artifactsDirsFromRegistry(
-			rootSessionFile ? { preferredDir: rootSessionFile.slice(0, -6) } : undefined,
+			rootSessionFile ? { preferredDir: rootSessionFile.slice(0, -6), registry } : { registry },
 		);
 		if (dirs.length === 0) {
 			throw new Error("No session - agent outputs unavailable");
@@ -222,9 +222,9 @@ export class AgentProtocolHandler implements ProtocolHandler {
 		return { anyDirExists, availableIds: new Set(byId.keys()) };
 	}
 
-	async complete(): Promise<UrlCompletion[]> {
+	async complete(_query?: string, context?: ResolveContext): Promise<UrlCompletion[]> {
 		const ids = new Set<string>();
-		for (const dir of artifactsDirsFromRegistry()) {
+		for (const dir of artifactsDirsFromRegistry({ registry: context?.agentRegistry })) {
 			let files: string[];
 			try {
 				files = await fs.readdir(dir);

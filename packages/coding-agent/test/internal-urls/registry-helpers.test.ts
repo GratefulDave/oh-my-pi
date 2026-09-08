@@ -118,4 +118,17 @@ describe("hasResolvableTranscript", () => {
 		});
 		expect(await hasResolvableTranscript("__advisor1")).toBe(false);
 	});
+
+	it("returns true for a live session on a caller-supplied registry", async () => {
+		const custom = new AgentRegistry();
+		custom.register({
+			id: "SdkChild",
+			displayName: "task",
+			kind: "sub",
+			session: fakeLiveSession(),
+			status: "idle",
+		});
+		expect(await hasResolvableTranscript("SdkChild")).toBe(false);
+		expect(await hasResolvableTranscript("SdkChild", custom)).toBe(true);
+	});
 });

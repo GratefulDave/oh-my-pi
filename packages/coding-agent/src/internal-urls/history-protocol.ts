@@ -48,7 +48,7 @@ interface IndexEntry {
 /**
  * Handler for history:// URLs.
  *
- * Resolves agent ids against the global AgentRegistry, then falls back to
+ * Resolves agent ids against the caller registry (or the global AgentRegistry), then falls back to
  * on-disk `.jsonl` transcripts, serving read-only history for live, parked,
  * and unregistered agents alike.
  */
@@ -58,7 +58,7 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 
 	async resolve(url: InternalUrl, context?: ResolveContext): Promise<InternalResource> {
 		const agentId = url.rawHost || url.hostname;
-		const registry = AgentRegistry.global();
+		const registry = context?.agentRegistry ?? AgentRegistry.global();
 		// A caller resolving a possibly-parked id refreshes its own root's
 		// persisted roster first: a same-named parked ref restored by another
 		// root's scan must not be served (or listed as known) in its place.
@@ -192,10 +192,10 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 		return `${lines.join("\n")}\n`;
 	}
 
-	async complete(): Promise<UrlCompletion[]> {
+	async complete(_query?: string, context?: ResolveContext): Promise<UrlCompletion[]> {
 		const completions: UrlCompletion[] = [];
 		const seen = new Set<string>();
-		for (const ref of AgentRegistry.global().list()) {
+		for (const ref of (context?.agentRegistry ?? AgentRegistry.global()).list()) {
 			if (ref.kind === "advisor") continue;
 			seen.add(ref.id);
 			completions.push({

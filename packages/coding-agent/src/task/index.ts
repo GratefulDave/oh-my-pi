@@ -1097,7 +1097,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		const buildFollowUpHint = async (aborted: boolean): Promise<string> => {
 			if (aborted) {
 				const ref = this.#agentRegistry().get(agentId);
-				const transcript = (await hasResolvableTranscript(agentId))
+				const transcript = (await hasResolvableTranscript(agentId, this.#agentRegistry()))
 					? `transcript at history://${agentId}`
 					: "transcript unavailable";
 				if (ref?.status === "idle" || ref?.status === "parked") {

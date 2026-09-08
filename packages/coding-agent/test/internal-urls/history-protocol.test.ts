@@ -15,6 +15,7 @@ import * as path from "node:path";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { InternalUrlRouter } from "@oh-my-pi/pi-coding-agent/internal-urls";
 import { HistoryProtocolHandler } from "@oh-my-pi/pi-coding-agent/internal-urls/history-protocol";
+import { parseInternalUrl } from "@oh-my-pi/pi-coding-agent/internal-urls/parse";
 import {
 	registerArtifactsDir,
 	resetRegisteredArtifactDirsForTests,
@@ -464,5 +465,31 @@ describe("history:// protocol", () => {
 			expect(output.text).not.toContain("hello from root B");
 			expect(AgentRegistry.global().get("Worker")?.sessionFile).toBe(childA);
 		});
+	});
+
+	it("history://<id> reads a live child from the caller registry, not the process-global one", async () => {
+		const custom = new AgentRegistry();
+		custom.register({
+			id: "SdkChild",
+			displayName: "task",
+			kind: "sub",
+			session: fakeLiveSession([{ role: "user", content: "custom-registry-live", timestamp: 1 }]),
+			status: "idle",
+		});
+		const handler = new HistoryProtocolHandler();
+		const miss = await handler.resolve(parseInternalUrl("history://SdkChild")).then(
+			() => null,
+			err => err as Error,
+		);
+		expect(miss).toBeInstanceOf(Error);
+		expect(miss?.message).toMatch(/Unknown agent: SdkChild/);
+
+		const resource = await handler.resolve(parseInternalUrl("history://SdkChild"), { agentRegistry: custom });
+		expect(resource.content).toContain("custom-registry-live");
+		expect(resource.notes).toContain("Source: live session");
+
+		const customCompletions = await handler.complete(undefined, { agentRegistry: custom });
+		expect(customCompletions.map(c => c.value)).toContain("SdkChild");
+		expect((await handler.complete()).map(c => c.value)).not.toContain("SdkChild");
 	});
 });
