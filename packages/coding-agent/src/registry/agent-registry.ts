@@ -94,6 +94,8 @@ export type RegistryEvent =
 	| { type: "metadata_changed"; ref: AgentRef }
 	| { type: "removed"; ref: AgentRef };
 
+type AncestryEdge = { parentId: string; parentGen: number };
+
 type RegistryListener = (event: RegistryEvent) => void;
 
 export interface RegisterInput {
@@ -131,8 +133,10 @@ export class AgentRegistry {
 
 	readonly #refs = new Map<string, AgentRef>();
 	readonly #listeners = new Set<RegistryListener>();
-	/** parentId edges retained while any live descendant still needs the walk. */
-	readonly #parentOf = new Map<string, string>();
+	/** Last assigned generation per id. Survives unregister so reused ids cannot steal old walks. */
+	readonly #generation = new Map<string, number>();
+	/** parent edges keyed by `${id}\\n${generation}` while any live descendant still needs the walk. */
+	readonly #parentEdge = new Map<string, AncestryEdge>();
 
 	#matchesExpected(ref: AgentRef, expected?: AgentRefExpectation): boolean {
 		return expected === undefined || ref === expected || ref.session === expected;
@@ -159,8 +163,14 @@ export class AgentRegistry {
 			history: input.history,
 		};
 		this.#refs.set(ref.id, ref);
-		if (input.parentId) this.#parentOf.set(ref.id, input.parentId);
-		else this.#parentOf.delete(ref.id);
+		const generation = (this.#generation.get(ref.id) ?? 0) + 1;
+		this.#generation.set(ref.id, generation);
+		if (input.parentId) {
+			this.#parentEdge.set(this.#edgeKey(ref.id, generation), {
+				parentId: input.parentId,
+				parentGen: this.#generation.get(input.parentId) ?? 0,
+			});
+		}
 		this.#emit({ type: "registered", ref });
 		return ref;
 	}
@@ -290,12 +300,18 @@ export class AgentRegistry {
 	isDescendantOf(rootId: string, agentId: string): boolean {
 		if (!rootId || agentId === rootId) return false;
 		const seen = new Set<string>();
-		let id = this.#parentOf.get(agentId) ?? this.#refs.get(agentId)?.parentId;
+		let id: string | undefined = agentId;
+		let generation = this.#generation.get(agentId);
 		while (id) {
-			if (id === rootId) return true;
 			if (seen.has(id)) return false;
 			seen.add(id);
-			id = this.#parentOf.get(id) ?? this.#refs.get(id)?.parentId;
+			const edge: AncestryEdge | undefined =
+				generation === undefined ? undefined : this.#parentEdge.get(this.#edgeKey(id, generation));
+			const parentId: string | undefined = edge?.parentId ?? this.#refs.get(id)?.parentId;
+			if (!parentId) return false;
+			if (parentId === rootId) return true;
+			id = parentId;
+			generation = edge?.parentGen ?? this.#generation.get(parentId);
 		}
 		return false;
 	}
@@ -327,6 +343,10 @@ export class AgentRegistry {
 		return () => this.#listeners.delete(listener);
 	}
 
+	#edgeKey(id: string, generation: number): string {
+		return `${id}\n${generation}`;
+	}
+
 	#emit(event: RegistryEvent): void {
 		for (const listener of this.#listeners) {
 			try {
@@ -341,16 +361,21 @@ export class AgentRegistry {
 		const keep = new Set<string>();
 		for (const id of this.#refs.keys()) {
 			let current: string | undefined = id;
+			let generation = this.#generation.get(id);
 			const seen = new Set<string>();
-			while (current) {
-				if (seen.has(current)) break;
-				seen.add(current);
-				keep.add(current);
-				current = this.#parentOf.get(current);
+			while (current && generation !== undefined) {
+				const key = this.#edgeKey(current, generation);
+				if (seen.has(key)) break;
+				seen.add(key);
+				keep.add(key);
+				const edge = this.#parentEdge.get(key);
+				if (!edge) break;
+				current = edge.parentId;
+				generation = edge.parentGen;
 			}
 		}
-		for (const id of this.#parentOf.keys()) {
-			if (!keep.has(id)) this.#parentOf.delete(id);
+		for (const key of this.#parentEdge.keys()) {
+			if (!keep.has(key)) this.#parentEdge.delete(key);
 		}
 	}
 }

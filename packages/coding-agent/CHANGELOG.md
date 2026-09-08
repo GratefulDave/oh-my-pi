@@ -15,6 +15,7 @@
 - Task spawns inherit the parent's agent registry, and queued `subagent_lifecycle` emits are dropped on unbind. Isolated SDK sessions filter lifecycle events against that same registry.
 - Isolated registries get their own agent lifecycle manager, and synthetic parent `agent_start`/`agent_end` emits run in order.
 - Isolated SDK teardown disposes the registry-bound lifecycle manager, workpool reuse looks up workers in that registry, and queued synthetic settles skip if a new parent run started.
+- Isolated spawn IRC, activity, and corpse reclaim use the spawn registry, and reused intermediate ids keep the original grandchild ancestry.
 
 ## [18.1.14] - 2026-09-07
 

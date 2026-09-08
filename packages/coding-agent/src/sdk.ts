@@ -3333,7 +3333,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			// The reclaim is gated by the lifecycle owner and only touches the
 			// registry it manages; the corpse's transcript stays at history://.
 			const stale = agentRegistry.get(resolvedAgentId);
-			const lifecycle = AgentLifecycleManager.global();
+			const lifecycle = AgentLifecycleManager.forRegistry(agentRegistry);
 			if (stale && lifecycle.manages(agentRegistry) && (await lifecycle.reclaimDeadCorpse(resolvedAgentId, stale))) {
 				registeredAgentRef = agentRegistry.registerIfAvailable(registrationInput, null);
 			}

@@ -1013,6 +1013,8 @@ interface RunMonitorArgs {
 	parentToolCallId?: string;
 	detached?: boolean;
 	sessionFile?: string;
+	/** Registry the spawn tree shares with the parent session. Default: AgentRegistry.global(). */
+	agentRegistry?: AgentRegistry;
 	/** Soft assistant-request budget; 0 disables the guard. */
 	softRequestBudget: number;
 	/** Whether crossing the soft budget injects a wrap-up steering notice. */
@@ -1344,7 +1346,7 @@ function createSubagentRunMonitor(args: RunMonitorArgs): SubagentRunMonitor {
 		onProgress?.({ ...progress });
 		const activityGist =
 			progress.lastIntent ?? (progress.currentTool ? `running ${progress.currentTool}` : undefined);
-		if (activityGist) AgentRegistry.global().setActivity(id, activityGist);
+		if (activityGist) (args.agentRegistry ?? AgentRegistry.global()).setActivity(id, activityGist);
 		const progressPayload = {
 			index,
 			agent: agent.name,
@@ -2560,11 +2562,13 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 		const turnStartTime = Date.now();
 		const relay = Promise.withResolvers<void>();
 		session.trackIrcReply(relay.promise);
-		const sessionFile = AgentRegistry.global().get(id)?.sessionFile ?? options.sessionFile ?? undefined;
+		const sessionFile =
+			(session.agentRegistry ?? AgentRegistry.global()).get(id)?.sessionFile ?? options.sessionFile ?? undefined;
 		const turnMonitor = createSubagentRunMonitor({
 			index,
 			id,
 			agent,
+			agentRegistry: session.agentRegistry,
 			task: ircTask,
 			description: options.description,
 			modelOverride: options.modelOverride,
@@ -2842,6 +2846,7 @@ export async function runSubagentFollowUpTurn(options: FollowUpTurnOptions): Pro
 		index,
 		id,
 		agent,
+		agentRegistry: registry,
 		task: message,
 		description: options.description,
 		modelRole: options.modelRole,
@@ -3054,6 +3059,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		index,
 		id,
 		agent,
+		agentRegistry: registry,
 		task,
 		assignment,
 		description: options.description,
@@ -3367,9 +3373,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				preloadedPreparedExtensions: restrictToolNames ? [] : options.preloadedPreparedExtensions,
 				preloadedCustomToolPaths: restrictToolNames ? [] : options.preloadedCustomToolPaths,
 				systemPrompt: defaultPrompt => {
-					const ircRoster = ircEnabled
-						? collectIrcPeerRoster(AgentRegistry.global(), id, ircRootSessionFile)
-						: undefined;
+					const ircRoster = ircEnabled ? collectIrcPeerRoster(registry, id, ircRootSessionFile) : undefined;
 					const subagentPrompt = prompt.render(subagentSystemPromptTemplate, {
 						agent: agent.systemPrompt,
 						context: options.context?.trim() ?? "",
@@ -3427,11 +3431,11 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			sessionOpenedAt = performance.now();
 			if (ircEnabled) {
 				ircRootSessionFile = await ensurePersistedRoster(
-					AgentRegistry.global(),
+					registry,
 					sessionManager.getSessionFile() ??
 						sessionFile ??
-						AgentRegistry.global().get(id)?.sessionFile ??
-						AgentRegistry.global().get(MAIN_AGENT_ID)?.sessionFile,
+						registry.get(id)?.sessionFile ??
+						registry.get(MAIN_AGENT_ID)?.sessionFile,
 				);
 			}
 
@@ -3466,11 +3470,11 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 					}
 					if (ircEnabled) {
 						ircRootSessionFile = await ensurePersistedRoster(
-							AgentRegistry.global(),
+							registry,
 							reopened.getSessionFile() ??
 								sessionFile ??
-								AgentRegistry.global().get(id)?.sessionFile ??
-								AgentRegistry.global().get(MAIN_AGENT_ID)?.sessionFile,
+								registry.get(id)?.sessionFile ??
+								registry.get(MAIN_AGENT_ID)?.sessionFile,
 						);
 					}
 					const { session: revived } = await createAgentSession(

@@ -252,4 +252,14 @@ describe("AgentSession parent idle vs live subagents", () => {
 		expect(AgentRegistry.global().hasRunningDescendant("Main")).toBe(true);
 		expect(session.isIdle).toBe(false);
 	});
+
+	it("does not steal grandchild ancestry when an intermediate id is reused", () => {
+		registerChild("Mid", "Main");
+		registerChild("Nested", "Mid");
+		AgentRegistry.global().unregister("Mid");
+		registerChild("Mid", "Other");
+		expect(AgentRegistry.global().hasRunningDescendant("Main")).toBe(true);
+		expect(AgentRegistry.global().isDescendantOf("Other", "Nested")).toBe(false);
+		expect(session.isIdle).toBe(false);
+	});
 });
