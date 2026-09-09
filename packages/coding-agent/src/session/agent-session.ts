@@ -601,6 +601,7 @@ export class AgentSession {
 	#unsubscribeRegistry?: () => void;
 	#lastRunState: "running" | "idle" = "idle";
 	#heldExtensionAgentEnd = false;
+	#heldWillContinue = false;
 	#syntheticLifecycleGen = 0;
 	#extensionLifecycleChain = Promise.resolve();
 	#extensionLifecycleSeq = 0;
@@ -2314,7 +2315,7 @@ export class AgentSession {
 
 	#releaseHeldTerminalSettle(): void {
 		if (!this.#heldExtensionAgentEnd) return;
-		if (this.isStreaming || this.#hasPendingAsyncWake()) return;
+		if (this.isStreaming || this.#hasPendingAsyncWake() || this.#heldWillContinue) return;
 		const gen = this.#syntheticLifecycleGen;
 		this.#heldExtensionAgentEnd = false;
 		this.#emitRunState("idle");
@@ -3369,10 +3370,12 @@ export class AgentSession {
 			const emitAgentEndNotification = async (options?: { willContinue?: boolean }) => {
 				if (this.#hasLiveRunningDescendants()) {
 					this.#heldExtensionAgentEnd = true;
+					this.#heldWillContinue = options?.willContinue === true;
 					await this.#emitSessionEvent({ ...event, isTerminal: false });
 					return;
 				}
 				this.#heldExtensionAgentEnd = false;
+				this.#heldWillContinue = false;
 				if (!options?.willContinue) {
 					this.#emitRunState("idle");
 				}
@@ -4606,6 +4609,7 @@ export class AgentSession {
 		this.#unsubscribeRegistry?.();
 		this.#unsubscribeRegistry = undefined;
 		this.#heldExtensionAgentEnd = false;
+		this.#heldWillContinue = false;
 		this.#modelDiscoveryAbortController.abort();
 		this.#queuedMessageDrainBlocked = false;
 		this.#usagePreflightReadyForNextModelCall = false;
