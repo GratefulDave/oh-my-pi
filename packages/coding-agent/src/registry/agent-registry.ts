@@ -329,16 +329,16 @@ export class AgentRegistry {
 		return false;
 	}
 
-	/** True when a `sub` agent under `rootId` is currently `running` or still finalizing. */
+	/** True when a `sub` agent under `rootId` is currently working or still finalizing. */
 	hasRunningDescendant(rootId: string): boolean {
 		if (!rootId) return false;
 		if (
-			this.list().some(
-				ref =>
-					ref.kind === "sub" &&
-					this.isDescendantOf(rootId, ref.id) &&
-					(ref.status === "running" || this.#finalizing.has(ref.id)),
-			)
+			this.list().some(ref => {
+				if (ref.kind !== "sub" || !this.isDescendantOf(rootId, ref.id)) return false;
+				if (this.#finalizing.has(ref.id)) return true;
+				if (ref.session) return !ref.session.isIdle;
+				return ref.status === "running";
+			})
 		) {
 			return true;
 		}

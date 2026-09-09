@@ -35,6 +35,7 @@
 - Finalization holds are keyed by ancestor generation, so a reused root id does not inherit another session's still-writing child.
 - Aborting a held continuation clears the wait-for-retry flag so a later descendant settle can emit terminal `agent_end`.
 - Collab guest state, agent roster, and kill/chat/revive follow the session registry, so custom-registry descendants stay visible.
+- Parent idle follows live child sessions, so a stale `running` roster bit cannot keep Herdr working after the tree is idle.
 
 ### Fixed
 

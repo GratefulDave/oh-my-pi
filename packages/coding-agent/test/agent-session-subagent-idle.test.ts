@@ -412,6 +412,25 @@ describe("AgentSession parent idle vs live subagents", () => {
 		expect(agentEndTerminalStates.filter(state => state === true)).toHaveLength(1);
 	});
 
+	it("does not treat an idle attached child as live just because status is running", async () => {
+		const child = createSession({ agentId: "Scout", agentKind: "sub" });
+		try {
+			AgentRegistry.global().register({
+				id: "Scout",
+				displayName: "Scout",
+				kind: "sub",
+				parentId: "Main",
+				session: child,
+				status: "running",
+			});
+			expect(child.isIdle).toBe(true);
+			expect(AgentRegistry.global().hasRunningDescendant("Main")).toBe(false);
+			expect(session.isIdle).toBe(true);
+		} finally {
+			await child.dispose();
+		}
+	});
+
 	it("drops a queued synthetic settle when another descendant cycle starts first", async () => {
 		const gate = Promise.withResolvers<void>();
 		let block = true;

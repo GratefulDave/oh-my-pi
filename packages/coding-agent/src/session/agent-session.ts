@@ -2315,10 +2315,12 @@ export class AgentSession {
 
 	#releaseHeldTerminalSettle(): void {
 		if (!this.#heldExtensionAgentEnd) return;
-		if (this.isStreaming || this.#hasPendingAsyncWake() || this.#heldWillContinue) return;
-		const gen = this.#syntheticLifecycleGen;
+		if (this.isStreaming || this.#hasPendingAsyncWake()) return;
+		if (this.#scheduledHiddenNextTurnGeneration !== undefined) return;
+		this.#heldWillContinue = false;
 		this.#heldExtensionAgentEnd = false;
 		this.#emitRunState("idle");
+		const gen = this.#syntheticLifecycleGen;
 		const messages = [...this.agent.state.messages];
 		const live = (): boolean =>
 			this.#syntheticLifecycleGen === gen &&
@@ -3370,7 +3372,6 @@ export class AgentSession {
 			const emitAgentEndNotification = async (options?: { willContinue?: boolean }) => {
 				if (this.#hasLiveRunningDescendants()) {
 					this.#heldExtensionAgentEnd = true;
-					this.#heldWillContinue = options?.willContinue === true;
 					await this.#emitSessionEvent({ ...event, isTerminal: false });
 					return;
 				}
