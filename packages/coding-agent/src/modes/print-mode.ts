@@ -88,16 +88,19 @@ export function printableEvent(event: AgentSessionEvent): unknown {
 
 /** Parent prompt() can return while detached descendants still run. */
 async function waitForPrintTreeIdle(session: AgentSession): Promise<void> {
-	await session.waitForIdle();
-	if (session.isIdle) return;
+	if (typeof session.waitForIdle === "function") {
+		await session.waitForIdle();
+	}
+	if (session.isIdle !== false) return;
+	if (typeof session.subscribeRunState !== "function") return;
 	const { promise, resolve } = Promise.withResolvers<void>();
 	const unsub = session.subscribeRunState(state => {
-		if (state === "idle" && session.isIdle) {
+		if (state === "idle" && session.isIdle !== false) {
 			unsub();
 			resolve();
 		}
 	});
-	if (session.isIdle) {
+	if (session.isIdle !== false) {
 		unsub();
 		resolve();
 	}

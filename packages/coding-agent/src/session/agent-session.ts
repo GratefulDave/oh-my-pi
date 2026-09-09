@@ -2303,11 +2303,7 @@ export class AgentSession {
 				this.#emitRunState("running");
 				this.#queueExtensionLifecycle(
 					() => this.#extensionRunner?.emit({ type: "agent_start" }) ?? Promise.resolve(),
-					() =>
-						this.#syntheticLifecycleGen === gen &&
-						this.#heldExtensionAgentEnd &&
-						!this.isStreaming &&
-						this.#hasLiveRunningDescendants(),
+					() => this.#syntheticLifecycleGen === gen && !this.isStreaming,
 					true,
 				);
 			}
