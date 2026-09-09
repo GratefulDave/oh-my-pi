@@ -81,6 +81,7 @@ export class AutoLearnController {
 			return;
 		}
 		if (event.type === "agent_end") {
+			if (event.isTerminal === false) return;
 			this.#onAgentEnd(event);
 		}
 	}

@@ -145,5 +145,4 @@ describe("IrcBridge auto-reply bus", () => {
 		expect(steered[0]).toContain("parent");
 		expect(steered[0]).toContain("stop that path");
 	});
-
 });

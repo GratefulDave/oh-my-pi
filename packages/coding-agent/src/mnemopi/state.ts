@@ -582,6 +582,7 @@ export class MnemopiSessionState {
 					);
 				});
 			} else if (event.type === "agent_end") {
+				if (event.isTerminal === false) return;
 				void this.maybeRetainOnAgentEnd(event.messages).catch(error => {
 					this.#logLifecycleFailure("agent_end retention", [this.scoped.retain.bank], error);
 				});
