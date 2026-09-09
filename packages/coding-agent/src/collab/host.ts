@@ -284,7 +284,7 @@ export class CollabHost {
 				);
 			}
 		}
-		this.#registryUnsubscribe = (this.#ctx.session.agentRegistry ?? AgentRegistry.global()).onChange(() => {
+		this.#registryUnsubscribe = this.#sessionRegistry().onChange(() => {
 			this.#scheduleAgentsBroadcast();
 			this.#scheduleStateBroadcast();
 			if (!this.#ctx.session.isIdle && !this.#streamingInterval) {
@@ -566,10 +566,13 @@ export class CollabHost {
 			this.#streamingInterval = null;
 		}
 	}
+	#sessionRegistry(): AgentRegistry {
+		return this.#ctx.session.agentRegistry ?? AgentRegistry.global();
+	}
 
 	#snapshotAgents(): AgentSnapshot[] {
 		return (
-			AgentRegistry.global()
+			this.#sessionRegistry()
 				.list()
 				// Advisor transcripts are local observability only; never mirror them to
 				// guests (the wire AgentSnapshot kind has no `advisor`, and guests must not
@@ -603,7 +606,7 @@ export class CollabHost {
 		}
 		// Advisor refs are excluded from snapshots, but reject control by id defensively:
 		// a stale/malicious client must never chat/kill/revive a read-only advisor transcript.
-		if (AgentRegistry.global().get(agentId)?.kind === "advisor") {
+		if (this.#sessionRegistry().get(agentId)?.kind === "advisor") {
 			this.#socket?.send({ t: "error", message: `agent ${agentId}: advisor transcripts are read-only` }, fromPeer);
 			return;
 		}
@@ -619,7 +622,7 @@ export class CollabHost {
 					return;
 				}
 				// Mirrors the hub's #submitChatMessage: revive if parked, steer if mid-turn.
-				AgentLifecycleManager.global()
+				AgentLifecycleManager.forRegistry(this.#sessionRegistry())
 					.ensureLive(agentId)
 					.then(session => session.prompt(trimmed, { streamingBehavior: "steer" }))
 					.catch(fail);
@@ -627,18 +630,20 @@ export class CollabHost {
 			}
 			case "kill": {
 				const kill = async () => {
-					const ref = AgentRegistry.global().get(agentId);
+					const ref = this.#sessionRegistry().get(agentId);
 					if (!ref) return;
 					if (ref.status === "running" && ref.session) {
 						await ref.session.abort({ reason: USER_INTERRUPT_LABEL });
 					}
-					await AgentLifecycleManager.global().release(agentId, ref, { tombstone: true });
+					await AgentLifecycleManager.forRegistry(this.#sessionRegistry()).release(agentId, ref, {
+						tombstone: true,
+					});
 				};
 				kill().catch(fail);
 				break;
 			}
 			case "revive":
-				AgentLifecycleManager.global().ensureLive(agentId).catch(fail);
+				AgentLifecycleManager.forRegistry(this.#sessionRegistry()).ensureLive(agentId).catch(fail);
 				break;
 		}
 	}
@@ -647,7 +652,7 @@ export class CollabHost {
 	async #handleFetchTranscript(reqId: number, agentId: string, fromByte: number, fromPeer: number): Promise<void> {
 		const reply = (text: string, newSize: number, error?: string) =>
 			this.#socket?.send({ t: "transcript", reqId, text, newSize, error }, fromPeer);
-		const file = AgentRegistry.global().get(agentId)?.sessionFile;
+		const file = this.#sessionRegistry().get(agentId)?.sessionFile;
 		if (!file) {
 			reply("", fromByte, "no transcript available");
 			return;

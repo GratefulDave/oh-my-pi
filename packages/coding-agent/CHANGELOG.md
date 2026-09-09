@@ -34,7 +34,7 @@
 - Print mode waits for detached descendants before teardown, isolated SDK dispose releases late-adopted children, and collab rebroadcasts when a descendant wakes an idle parent.
 - Finalization holds are keyed by ancestor generation, so a reused root id does not inherit another session's still-writing child.
 - Aborting a held continuation clears the wait-for-retry flag so a later descendant settle can emit terminal `agent_end`.
-- Collab guest state follows the session registry, so custom-registry descendants keep guests working.
+- Collab guest state, agent roster, and kill/chat/revive follow the session registry, so custom-registry descendants stay visible.
 
 ### Fixed
 
