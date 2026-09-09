@@ -7896,6 +7896,8 @@ export class AgentSession {
 			this.#resetInFlight();
 			this.#resetSessionStopContinuationState();
 			this.#clearPendingSessionStopContinuations();
+			this.#heldWillContinue = false;
+			this.#reconcileDescendantRunState();
 			// Safety net: if the agent loop aborted without producing an assistant
 			// message (e.g. failed before the first stream), the in-flight yield was
 			// never resolved or rejected by the normal message_end path. Reject it now

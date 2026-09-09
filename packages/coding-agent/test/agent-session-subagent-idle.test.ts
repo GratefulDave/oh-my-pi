@@ -395,6 +395,23 @@ describe("AgentSession parent idle vs live subagents", () => {
 		expect(extensionEmit.mock.calls.some(call => call[0]?.type === "agent_end")).toBe(true);
 	});
 
+	it("clears a canceled continuation hold so descendant settle can emit terminal", async () => {
+		emitSessionStop.mockResolvedValue({ additionalContext: "keep going" });
+		registerChild("Scout", "Main");
+		emitTextOnlyStop();
+		await session.waitForIdle();
+		for (let i = 0; i < 20; i++) await Promise.resolve();
+		expect(agentEndTerminalStates).toEqual([false]);
+		expect(session.isIdle).toBe(false);
+
+		await session.abort();
+		AgentRegistry.global().setStatus("Scout", "idle");
+		await flushExtensionLifecycle();
+
+		expect(session.isIdle).toBe(true);
+		expect(agentEndTerminalStates.filter(state => state === true)).toHaveLength(1);
+	});
+
 	it("drops a queued synthetic settle when another descendant cycle starts first", async () => {
 		const gate = Promise.withResolvers<void>();
 		let block = true;
