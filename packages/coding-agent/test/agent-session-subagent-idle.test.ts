@@ -337,6 +337,36 @@ describe("AgentSession parent idle vs live subagents", () => {
 		expect(session.isIdle).toBe(true);
 	});
 
+	it("does not attribute an old finalizer to a reused root id", () => {
+		const isolated = new AgentRegistry();
+		isolated.register({
+			id: "Main",
+			displayName: "Main",
+			kind: "main",
+			session: null,
+			status: "idle",
+		});
+		isolated.register({
+			id: "Scout",
+			displayName: "Scout",
+			kind: "sub",
+			parentId: "Main",
+			session: null,
+			status: "running",
+		});
+		isolated.markFinalizing("Scout");
+		isolated.unregister("Main");
+		isolated.register({
+			id: "Main",
+			displayName: "Main",
+			kind: "main",
+			session: null,
+			status: "idle",
+		});
+		expect(isolated.hasRunningDescendant("Main")).toBe(false);
+		isolated.clearFinalizing("Scout");
+	});
+
 	it("overlapping finalizing holds keep the parent working until the last clear", () => {
 		registerChild("Scout", "Main", "idle");
 		AgentRegistry.global().markFinalizing("Scout");

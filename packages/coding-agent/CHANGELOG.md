@@ -32,6 +32,7 @@
 - A held parent `agent_end` is dropped if a new descendant starts before subscribers see it.
 - Nested subagent monitors ignore nonterminal `agent_end`, registry `isRunning` follows tree idle, and collab guests keep the working state while descendants run.
 - Print mode waits for detached descendants before teardown, isolated SDK dispose releases late-adopted children, and collab rebroadcasts when a descendant wakes an idle parent.
+- Finalization holds are keyed by ancestor generation, so a reused root id does not inherit another session's still-writing child.
 
 ### Fixed
 

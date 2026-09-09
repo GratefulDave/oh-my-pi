@@ -139,7 +139,7 @@ export class AgentRegistry {
 	readonly #parentEdge = new Map<string, AncestryEdge>();
 	/** Nested finalization holds per id (IRC wake overlapping artifact write). */
 	readonly #finalizing = new Map<string, number>();
-	/** Ancestor ids captured at mark time so the hold survives unregister. */
+	/** Ancestor `${id}\\n${generation}` keys captured at mark time so the hold survives unregister. */
 	readonly #finalizingAncestors = new Map<string, Set<string>>();
 
 	#matchesExpected(ref: AgentRef, expected?: AgentRefExpectation): boolean {
@@ -342,8 +342,9 @@ export class AgentRegistry {
 		) {
 			return true;
 		}
+		const key = this.#edgeKey(rootId, this.#generation.get(rootId) ?? 0);
 		for (const ancestors of this.#finalizingAncestors.values()) {
-			if (ancestors.has(rootId)) return true;
+			if (ancestors.has(key)) return true;
 		}
 		return false;
 	}
@@ -358,12 +359,21 @@ export class AgentRegistry {
 		this.#finalizing.set(id, next);
 		if (next > 1) return;
 		const ancestors = new Set<string>();
-		let current: string | undefined = this.#refs.get(id)?.parentId;
+		let current: string | undefined = id;
+		let generation = this.#generation.get(id);
 		const seen = new Set<string>();
-		while (current && !seen.has(current)) {
-			seen.add(current);
-			ancestors.add(current);
-			current = this.#refs.get(current)?.parentId;
+		while (current) {
+			const visitKey = generation === undefined ? current : this.#edgeKey(current, generation);
+			if (seen.has(visitKey)) break;
+			seen.add(visitKey);
+			const edge: AncestryEdge | undefined =
+				generation === undefined ? undefined : this.#parentEdge.get(this.#edgeKey(current, generation));
+			const parentId: string | undefined = edge?.parentId ?? this.#refs.get(current)?.parentId;
+			if (!parentId) break;
+			const parentGen = edge?.parentGen ?? this.#generation.get(parentId) ?? 0;
+			ancestors.add(this.#edgeKey(parentId, parentGen));
+			current = parentId;
+			generation = parentGen;
 		}
 		this.#finalizingAncestors.set(id, ancestors);
 		const ref = this.#refs.get(id);
