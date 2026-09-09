@@ -86,6 +86,24 @@ export function printableEvent(event: AgentSessionEvent): unknown {
 	}
 }
 
+/** Parent prompt() can return while detached descendants still run. */
+async function waitForPrintTreeIdle(session: AgentSession): Promise<void> {
+	await session.waitForIdle();
+	if (session.isIdle) return;
+	const { promise, resolve } = Promise.withResolvers<void>();
+	const unsub = session.subscribeRunState(state => {
+		if (state === "idle" && session.isIdle) {
+			unsub();
+			resolve();
+		}
+	});
+	if (session.isIdle) {
+		unsub();
+		resolve();
+	}
+	await promise;
+}
+
 /**
  * Run in print (single-shot) mode.
  * Sends prompts to the agent and outputs the result.
@@ -179,6 +197,8 @@ export async function runPrintMode(session: AgentSession, options: PrintModeOpti
 		if (mode === "text") session.setTextOutputCommitted(false);
 		await logger.time("print:prompt:next", () => session.prompt(message));
 	}
+
+	await waitForPrintTreeIdle(session);
 
 	// From this point onward a late blocker must be recorded without starting a
 	// primary turn whose response print mode would never emit.

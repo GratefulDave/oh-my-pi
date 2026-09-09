@@ -4016,6 +4016,9 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 						}
 					}
 					await originalDispose();
+					if (agentKind === "main" && options.agentRegistry) {
+						await AgentLifecycleManager.forRegistry(agentRegistry).releaseOwnedBy(resolvedAgentId);
+					}
 				} finally {
 					unregisterUnlessParked();
 					unsubscribeCredentialDisabled?.();

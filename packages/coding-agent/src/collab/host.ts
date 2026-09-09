@@ -284,7 +284,13 @@ export class CollabHost {
 				);
 			}
 		}
-		this.#registryUnsubscribe = AgentRegistry.global().onChange(() => this.#scheduleAgentsBroadcast());
+		this.#registryUnsubscribe = AgentRegistry.global().onChange(() => {
+			this.#scheduleAgentsBroadcast();
+			this.#scheduleStateBroadcast();
+			if (!this.#ctx.session.isIdle && !this.#streamingInterval) {
+				this.#streamingInterval = setInterval(() => this.#scheduleStateBroadcast(), STREAMING_STATE_INTERVAL_MS);
+			}
+		});
 		this.#ctx.sessionManager.onEntryAppended = entry => {
 			if (isWireSessionEntry(entry)) this.#broadcast({ t: "entry", entry: shrinkForReplication(entry) });
 			// Model/thinking/title changes land as entries while idle; refresh
