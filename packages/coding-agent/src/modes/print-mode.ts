@@ -88,14 +88,13 @@ export function printableEvent(event: AgentSessionEvent): unknown {
 
 /** Parent prompt() can return while detached descendants still run. */
 async function waitForPrintTreeIdle(session: AgentSession): Promise<void> {
-	if (typeof session.subscribe !== "function") return;
-	const waitingForTerminal = session.isIdle === false;
-	if (!waitingForTerminal) {
-		if (typeof session.waitForIdle === "function") {
-			await session.waitForIdle();
-		}
-		return;
+	if (typeof session.waitForIdle === "function") {
+		await session.waitForIdle();
 	}
+	if (typeof session.waitForExtensionLifecycle === "function") {
+		await session.waitForExtensionLifecycle();
+	}
+	if (session.isIdle !== false || typeof session.subscribe !== "function") return;
 	const { promise, resolve } = Promise.withResolvers<void>();
 	const unsub = session.subscribe(event => {
 		if (event.type === "agent_end" && event.isTerminal !== false) {
@@ -103,7 +102,17 @@ async function waitForPrintTreeIdle(session: AgentSession): Promise<void> {
 			resolve();
 		}
 	});
+	if (typeof session.waitForExtensionLifecycle === "function") {
+		await session.waitForExtensionLifecycle();
+	}
+	if (session.isIdle !== false) {
+		unsub();
+		resolve();
+	}
 	await promise;
+	if (typeof session.waitForExtensionLifecycle === "function") {
+		await session.waitForExtensionLifecycle();
+	}
 }
 
 /**

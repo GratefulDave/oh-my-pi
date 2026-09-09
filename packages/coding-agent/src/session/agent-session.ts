@@ -5249,6 +5249,11 @@ export class AgentSession {
 		await this.#advisors.waitForPendingCardEvents();
 		await this.#waitForPostPromptRecovery();
 	}
+
+	/** Drain queued synthetic/extension `agent_start`/`agent_end` notifications. */
+	async waitForExtensionLifecycle(): Promise<void> {
+		await this.#extensionLifecycleChain;
+	}
 	/**
 	 * Prevent advisor notes from starting hidden primary turns while a headless
 	 * caller prints and drains the final primary response.
