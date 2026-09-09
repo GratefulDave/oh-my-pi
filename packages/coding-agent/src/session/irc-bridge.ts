@@ -41,6 +41,10 @@ export class IrcBridge {
 		this.#host = host;
 	}
 
+	#registry(): AgentRegistry {
+		return this.#host.agentRegistry?.() ?? AgentRegistry.global();
+	}
+
 	/** Whether an incoming peer message can interrupt a wait. */
 	hasInterrupts(): boolean {
 		return this.#interrupts.length > 0;
@@ -217,7 +221,7 @@ export class IrcBridge {
 		};
 		void this.#host.emitSessionEvent({ type: "irc_message", message: record });
 		if (streaming) {
-			const recipientParentId = AgentRegistry.global().get(msg.to)?.parentId;
+			const recipientParentId = this.#registry().get(msg.to)?.parentId;
 			if (recipientParentId === msg.from) {
 				this.#host.agent.steer({
 					role: "user",
@@ -287,7 +291,7 @@ export class IrcBridge {
 			};
 			void this.#host.emitSessionEvent({ type: "irc_message", message: record });
 			this.#asides.push(record);
-			const receipt = await IrcBus.forRegistry(this.#host.agentRegistry?.() ?? AgentRegistry.global()).send({
+			const receipt = await IrcBus.forRegistry(this.#registry()).send({
 				from: msg.to,
 				to: msg.from,
 				body,

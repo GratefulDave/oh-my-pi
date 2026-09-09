@@ -2627,6 +2627,7 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 		});
 
 		const wakeRegistry = session.agentRegistry ?? AgentRegistry.global();
+		const generation = wakeRegistry.generationOf(id);
 		const startedPayload = {
 			id,
 			agent: agent.name,
@@ -2637,7 +2638,7 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 			status: "started",
 			sessionFile,
 			index,
-			generation: wakeRegistry.generationOf(id),
+			generation,
 		} as const;
 		emitSubagentFrame(options.eventBus, options.subagentEventBus, TASK_SUBAGENT_LIFECYCLE_CHANNEL, startedPayload);
 
@@ -2691,7 +2692,7 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 					followUpTurn: true,
 					sessionFile,
 					startTime: turnStartTime,
-					generation: wakeRegistry.generationOf(id),
+					generation,
 				});
 				if (!aborted && !error) {
 					await relayWakeTurnOutput({
@@ -2960,6 +2961,7 @@ export async function runSubagentFollowUpTurn(options: FollowUpTurnOptions): Pro
 		maxRuntimeMs: options.maxRuntimeMs ?? 0,
 	});
 
+	const generation = registry.generationOf(id);
 	const startedPayload = {
 		id,
 		agent: agent.name,
@@ -2970,7 +2972,7 @@ export async function runSubagentFollowUpTurn(options: FollowUpTurnOptions): Pro
 		status: "started",
 		sessionFile,
 		index,
-		generation: registry.generationOf(id),
+		generation,
 	} as const;
 	emitSubagentFrame(options.eventBus, options.subagentEventBus, TASK_SUBAGENT_LIFECYCLE_CHANNEL, startedPayload);
 
@@ -3033,7 +3035,7 @@ export async function runSubagentFollowUpTurn(options: FollowUpTurnOptions): Pro
 			followUpTurn: true,
 			sessionFile,
 			startTime,
-			generation: registry.generationOf(id),
+			generation,
 		});
 	} finally {
 		registry.clearFinalizing(id);
@@ -3066,6 +3068,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 	// Set by the session's onFirstChatDispatch hook the first time the agent
 	// loop dispatches a chat request to the provider — the launch-complete boundary.
 	let firstChatDispatchAt: number | undefined;
+	let lifecycleGeneration: number | undefined;
 
 	// Check if already aborted
 	if (signal?.aborted) {
@@ -3639,6 +3642,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			}
 
 			// Emit lifecycle start event
+			lifecycleGeneration = registry.generationOf(id);
 			const startedPayload = {
 				id,
 				agent: agent.name,
@@ -3649,7 +3653,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				status: "started" as const,
 				sessionFile: subtaskSessionFile,
 				index,
-				generation: registry.generationOf(id),
+				generation: lifecycleGeneration,
 			};
 			emitSubagentFrame(options.eventBus, options.subagentEventBus, TASK_SUBAGENT_LIFECYCLE_CHANNEL, startedPayload);
 
@@ -3975,7 +3979,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			detached: options.detached,
 			sessionFile: subtaskSessionFile,
 			startTime,
-			generation: registry.generationOf(id),
+			generation: lifecycleGeneration,
 		});
 		registry.setHistory(id, { outputPath: result.outputPath });
 		return result;

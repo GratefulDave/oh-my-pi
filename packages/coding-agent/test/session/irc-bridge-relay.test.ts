@@ -101,4 +101,49 @@ describe("IrcBridge auto-reply bus", () => {
 		expect(reply?.body).toBe("still planning");
 		expect(IrcBus.global().unreadCount("peer")).toBe(0);
 	});
+
+	it("steers a streaming child when the parent is in the session registry", async () => {
+		const steered: string[] = [];
+		const registry = new AgentRegistry();
+		registry.register({
+			id: "child",
+			displayName: "child",
+			kind: "sub",
+			parentId: "parent",
+			session: null,
+			status: "running",
+		});
+		const host: IrcBridgeHost = {
+			agent: {
+				appendMessage: () => {},
+				steer: (message: { content: string }) => {
+					steered.push(message.content);
+				},
+				emitExternalEvent: () => {},
+			} as unknown as IrcBridgeHost["agent"],
+			sessionManager: {
+				appendCustomMessageEntry: () => {},
+			} as unknown as IrcBridgeHost["sessionManager"],
+			settings: Settings.isolated(),
+			isDisposed: () => false,
+			isStreaming: () => true,
+			planModeEnabled: () => false,
+			emitSessionEvent: async () => {},
+			wakeForIrc: () => {},
+			runEphemeralTurn: async () => ({ replyText: "" }),
+			agentRegistry: () => registry,
+		};
+		const bridge = new IrcBridge(host);
+
+		const outcome = await bridge.deliver(
+			{ id: "m2", from: "parent", to: "child", body: "stop that path", ts: Date.now() },
+			undefined,
+		);
+
+		expect(outcome).toBe("injected");
+		expect(steered).toHaveLength(1);
+		expect(steered[0]).toContain("parent");
+		expect(steered[0]).toContain("stop that path");
+	});
+
 });
