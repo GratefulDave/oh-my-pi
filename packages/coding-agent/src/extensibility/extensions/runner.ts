@@ -671,14 +671,21 @@ export class ExtensionRunner {
 				if (event.status === "started") {
 					if (!live) return;
 					const generations = owned.get(event.id) ?? [];
-					generations.push(registry.generationOf(event.id) ?? 0);
+					generations.push(event.generation ?? registry.generationOf(event.id) ?? 0);
 					owned.set(event.id, generations);
 				} else {
 					const generations = owned.get(event.id);
-					const startGen = generations?.[0];
-					if (startGen === undefined && !live) return;
-					generations?.shift();
-					if (generations && generations.length === 0) owned.delete(event.id);
+					if (event.generation !== undefined) {
+						const idx = generations?.indexOf(event.generation) ?? -1;
+						if (idx < 0) return;
+						generations?.splice(idx, 1);
+						if (generations && generations.length === 0) owned.delete(event.id);
+					} else {
+						const startGen = generations?.[0];
+						if (startGen === undefined && !live) return;
+						generations?.shift();
+						if (generations && generations.length === 0) owned.delete(event.id);
+					}
 				}
 			}
 			chain = chain.then(async () => {

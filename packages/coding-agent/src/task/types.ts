@@ -95,6 +95,11 @@ export interface SubagentLifecyclePayload {
 	parentToolCallId?: string;
 	index: number;
 	/**
+	 * Registry generation of this spawn. Settles must match the start
+	 * generation so a reused one-shot id cannot consume another owner's hold.
+	 */
+	generation?: number;
+	/**
 	 * Spawn runs as a detached background job: the parent turn keeps working
 	 * while this agent runs. Sync task spawns (parent blocked on the call) and
 	 * eval `agent()` bridge spawns (rendered inside their eval cell) leave this

@@ -2258,6 +2258,8 @@ interface FinalizeRunArgs {
 	followUpTurn?: boolean;
 	sessionFile?: string;
 	startTime: number;
+	/** Registry generation captured for this spawn's lifecycle frames. */
+	generation?: number;
 }
 
 /**
@@ -2426,6 +2428,7 @@ async function finalizeRunResult(args: FinalizeRunArgs): Promise<SingleResult> {
 		status: progress.status as "completed" | "failed" | "aborted",
 		sessionFile: args.sessionFile,
 		index,
+		generation: args.generation,
 	};
 	emitSubagentFrame(args.eventBus, args.subagentEventBus, TASK_SUBAGENT_LIFECYCLE_CHANNEL, settledPayload);
 
@@ -2623,6 +2626,7 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 			maxRuntimeMs,
 		});
 
+		const wakeRegistry = session.agentRegistry ?? AgentRegistry.global();
 		const startedPayload = {
 			id,
 			agent: agent.name,
@@ -2633,10 +2637,10 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 			status: "started",
 			sessionFile,
 			index,
+			generation: wakeRegistry.generationOf(id),
 		} as const;
 		emitSubagentFrame(options.eventBus, options.subagentEventBus, TASK_SUBAGENT_LIFECYCLE_CHANNEL, startedPayload);
 
-		const wakeRegistry = session.agentRegistry ?? AgentRegistry.global();
 		wakeRegistry.markFinalizing(id);
 		turnMonitor.setActiveSession(session);
 		const unsubscribeTurn = turnMonitor.attach(session);
@@ -2687,6 +2691,7 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 					followUpTurn: true,
 					sessionFile,
 					startTime: turnStartTime,
+					generation: wakeRegistry.generationOf(id),
 				});
 				if (!aborted && !error) {
 					await relayWakeTurnOutput({
@@ -2965,6 +2970,7 @@ export async function runSubagentFollowUpTurn(options: FollowUpTurnOptions): Pro
 		status: "started",
 		sessionFile,
 		index,
+		generation: registry.generationOf(id),
 	} as const;
 	emitSubagentFrame(options.eventBus, options.subagentEventBus, TASK_SUBAGENT_LIFECYCLE_CHANNEL, startedPayload);
 
@@ -3027,6 +3033,7 @@ export async function runSubagentFollowUpTurn(options: FollowUpTurnOptions): Pro
 			followUpTurn: true,
 			sessionFile,
 			startTime,
+			generation: registry.generationOf(id),
 		});
 	} finally {
 		registry.clearFinalizing(id);
@@ -3642,6 +3649,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				status: "started" as const,
 				sessionFile: subtaskSessionFile,
 				index,
+				generation: registry.generationOf(id),
 			};
 			emitSubagentFrame(options.eventBus, options.subagentEventBus, TASK_SUBAGENT_LIFECYCLE_CHANNEL, startedPayload);
 
@@ -3967,6 +3975,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			detached: options.detached,
 			sessionFile: subtaskSessionFile,
 			startTime,
+			generation: registry.generationOf(id),
 		});
 		registry.setHistory(id, { outputPath: result.outputPath });
 		return result;

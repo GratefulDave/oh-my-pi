@@ -1,5 +1,8 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
+import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import { IrcBus } from "@oh-my-pi/pi-coding-agent/irc/bus";
+import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { IrcBridge, type IrcBridgeHost } from "@oh-my-pi/pi-coding-agent/session/irc-bridge";
 import type { CustomMessage } from "@oh-my-pi/pi-coding-agent/session/messages";
 
@@ -40,5 +43,62 @@ describe("IrcBridge wake-relay marking", () => {
 		const record = woken[0][0] as CustomMessage;
 		expect(record.details).not.toHaveProperty("wakeRelay");
 		expect(record.content).toContain("is delivered to");
+	});
+});
+
+describe("IrcBridge auto-reply bus", () => {
+	afterEach(() => {
+		IrcBus.resetGlobalForTests();
+		AgentRegistry.resetGlobalForTests();
+	});
+
+	it("sends plan-mode auto-replies on the session registry bus", async () => {
+		const registry = new AgentRegistry();
+		registry.register({
+			id: "me",
+			displayName: "me",
+			kind: "main",
+			session: null,
+			status: "idle",
+		});
+		registry.register({
+			id: "peer",
+			displayName: "peer",
+			kind: "sub",
+			session: null,
+			status: "running",
+		});
+		const bus = IrcBus.forRegistry(registry);
+		const replyPromise = bus.wait("peer", { from: "me" }, 2000);
+		const host: IrcBridgeHost = {
+			agent: {
+				appendMessage: () => {},
+				steer: () => {},
+				emitExternalEvent: () => {},
+			} as unknown as IrcBridgeHost["agent"],
+			sessionManager: {
+				appendCustomMessageEntry: () => {},
+			} as unknown as IrcBridgeHost["sessionManager"],
+			settings: Settings.isolated(),
+			isDisposed: () => false,
+			isStreaming: () => false,
+			planModeEnabled: () => true,
+			emitSessionEvent: async () => {},
+			wakeForIrc: () => {},
+			runEphemeralTurn: async () => ({ replyText: "still planning" }),
+			agentRegistry: () => registry,
+		};
+		const bridge = new IrcBridge(host);
+
+		const outcome = await bridge.deliver(
+			{ id: "m1", from: "peer", to: "me", body: "status?", ts: Date.now() },
+			{ expectsReply: true },
+		);
+		expect(outcome).toBe("injected");
+
+		const reply = await replyPromise;
+		expect(reply?.replyTo).toBe("m1");
+		expect(reply?.body).toBe("still planning");
+		expect(IrcBus.global().unreadCount("peer")).toBe(0);
 	});
 });

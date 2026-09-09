@@ -25,6 +25,9 @@
 - `history://` and `agent://` resolve against the calling session's agent registry, so isolated SDK children remain readable while the process-global roster is empty.
 - Nested finalization holds no longer drop on the first clear, and clearing an unregistered hold still wakes the parent settle.
 - ACP and RPC hosts ignore non-terminal `agent_end` events so a parent waiting on live subagents is not reported complete.
+- Isolated SDK IRC auto-replies use the session registry bus, so awaited peer sends complete.
+- `subagent_lifecycle` settles match the spawn generation, so a reused one-shot id cannot complete another owner's run.
+- RPC keeps already-streamed messages across nonterminal `agent_end`.
 
 ### Fixed
 

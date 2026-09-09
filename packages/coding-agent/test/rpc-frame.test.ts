@@ -143,6 +143,30 @@ describe("RPC frame encoding", () => {
 		expect((replayed.messages as unknown[]).length).toBeGreaterThan(0);
 	});
 
+	it("keeps the active run snapshot across a nonterminal agent_end", () => {
+		const active = oversizedMessageHistory("active");
+		const encoder = new RpcFrameEncoder();
+		encoder.encode({ type: "agent_start" });
+		for (const message of active) encoder.encode({ type: "message_end", message });
+
+		expect(decode(encoder.encode({ type: "agent_end", messages: active, isTerminal: false }))).toEqual({
+			type: "agent_end",
+			messages: [],
+			messageCount: active.length,
+			isTerminal: false,
+		});
+		expect(decode(encoder.encode({ type: "agent_end", messages: active, isTerminal: true }))).toEqual({
+			type: "agent_end",
+			messages: [],
+			messageCount: active.length,
+			isTerminal: true,
+		});
+		const replayed = decode(encoder.encode({ type: "agent_end", messages: active }));
+		expect(replayed.messageCount).toBe(active.length);
+		expect(Array.isArray(replayed.messages)).toBe(true);
+		expect((replayed.messages as unknown[]).length).toBeGreaterThan(0);
+	});
+
 	it("bounds a single multi-byte message without losing its event discriminator", () => {
 		const encoded = encodeRpcFrame({
 			type: "message_end",

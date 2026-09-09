@@ -4228,6 +4228,91 @@ describe("ExtensionRunner", () => {
 			AgentRegistry.resetGlobalForTests();
 		});
 
+		it("drops another owner's settle for a reused one-shot id", async () => {
+			AgentRegistry.resetGlobalForTests();
+			AgentRegistry.global().register({
+				id: "Scout",
+				displayName: "Scout",
+				kind: "sub",
+				parentId: "Main",
+				session: null,
+				status: "running",
+			});
+			const firstGen = AgentRegistry.global().generationOf("Scout") ?? 0;
+
+			const seen: string[] = [];
+			const done = Promise.withResolvers<void>();
+			const extensionPath = path.join(extensionsDir, "subagent-lifecycle-generation.ts");
+			const extension: Extension = {
+				path: extensionPath,
+				resolvedPath: extensionPath,
+				handlers: new Map([
+					[
+						"subagent_lifecycle",
+						[
+							async (...args: unknown[]) => {
+								const event = args[0];
+								if (
+									event &&
+									typeof event === "object" &&
+									"status" in event &&
+									typeof event.status === "string"
+								) {
+									seen.push(event.status);
+									if (seen.length === 2) done.resolve();
+								}
+							},
+						],
+					],
+				]),
+				tools: new Map(),
+				assistantThinkingRenderers: [],
+				fileWriteFallbackHandlers: [],
+				fileDeleteFallbackHandlers: [],
+				messageRenderers: new Map(),
+				composerShapes: new Map(),
+				commands: new Map(),
+				flags: new Map(),
+				shortcuts: new Map(),
+			};
+			const runner = new ExtensionRunner(
+				[extension],
+				new ExtensionRuntime(),
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+			);
+			const eventBus = new EventBus();
+			runner.bindSubagentLifecycle(eventBus, undefined, "Main");
+			const frame = {
+				id: "Scout",
+				agent: "scout",
+				agentSource: "bundled" as const,
+				index: 0,
+			};
+			eventBus.emit("task:subagent:lifecycle", { ...frame, status: "started", generation: firstGen });
+			AgentRegistry.global().unregister("Scout");
+			AgentRegistry.global().register({
+				id: "Scout",
+				displayName: "Scout",
+				kind: "sub",
+				parentId: "Other",
+				session: null,
+				status: "running",
+			});
+			const secondGen = AgentRegistry.global().generationOf("Scout") ?? 0;
+			expect(secondGen).not.toBe(firstGen);
+			eventBus.emit("task:subagent:lifecycle", { ...frame, status: "completed", generation: secondGen });
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(seen).toEqual(["started"]);
+			eventBus.emit("task:subagent:lifecycle", { ...frame, status: "completed", generation: firstGen });
+			await done.promise;
+			expect(seen).toEqual(["started", "completed"]);
+			runner.unbindSubagentLifecycle();
+			AgentRegistry.resetGlobalForTests();
+		});
+
 		it("serializes lifecycle handler order across started and settle", async () => {
 			const order: string[] = [];
 			const holdStarted = Promise.withResolvers<void>();
