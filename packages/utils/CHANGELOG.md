@@ -10,6 +10,12 @@
 
 - `getStatsDbPath()` stays at the app config root under a named profile so `omp stats` shares one database across `~/.omp/agent` and `~/.omp/profiles/<name>/`.
 
+## [18.1.16] - 2026-09-09
+
+### Fixed
+
+- Fixed `$which` capturing `Bun.which` at import on Linux and Windows, so `Bun.which` stubs installed later (e.g. per-test spies) are honoured and PATH-only language servers no longer leak into test results.
+
 ## [18.1.13] - 2026-09-07
 
 ### Fixed
