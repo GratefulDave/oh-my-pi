@@ -29,6 +29,7 @@
 - `subagent_lifecycle` settles reuse the start generation, so a reused one-shot id cannot complete another owner's run.
 - RPC keeps already-streamed messages across nonterminal `agent_end`.
 - Autolearn, memory, and goal-mode listeners ignore nonterminal `agent_end`, and isolated SDK `hub cancel` releases through the session lifecycle manager.
+- A held parent `agent_end` is dropped if a new descendant starts before subscribers see it.
 
 ### Fixed
 

@@ -2323,16 +2323,18 @@ export class AgentSession {
 		this.#heldExtensionAgentEnd = false;
 		this.#emitRunState("idle");
 		const messages = [...this.agent.state.messages];
+		const live = (): boolean =>
+			this.#syntheticLifecycleGen === gen &&
+			!this.isStreaming &&
+			!this.#hasPendingAsyncWake() &&
+			!this.#hasLiveRunningDescendants();
 		this.#queueExtensionLifecycle(
 			async () => {
-				await this.#emitSessionEvent({ type: "agent_end", messages, isTerminal: true });
+				await this.#emitSessionEvent({ type: "agent_end", messages, isTerminal: true }, { live });
+				if (!live()) return;
 				await this.#emitAgentEndNotification(messages);
 			},
-			() =>
-				this.#syntheticLifecycleGen === gen &&
-				!this.isStreaming &&
-				!this.#hasPendingAsyncWake() &&
-				!this.#hasLiveRunningDescendants(),
+			live,
 			true,
 		);
 	}
@@ -2547,7 +2549,10 @@ export class AgentSession {
 	 */
 	#subscriberEmitGate: Promise<void> = Promise.resolve();
 
-	async #emitSessionEvent(event: AgentSessionEvent, options: { detachExtensions?: boolean } = {}): Promise<void> {
+	async #emitSessionEvent(
+		event: AgentSessionEvent,
+		options: { detachExtensions?: boolean; live?: () => boolean } = {},
+	): Promise<void> {
 		if (event.type === "tool_execution_update") {
 			// Returned background calls have no later tool result to persist their
 			// terminal frame. Keep the latest update for future focus rebuilds;
@@ -2580,6 +2585,7 @@ export class AgentSession {
 				await extensionEmit;
 			}
 			await previousGate;
+			if (options.live && !options.live()) return;
 			// Hold the wire-level agent_end until in-flight prompts unwind. Subscribers
 			// (rpc-mode, ACP, Cursor) treat agent_end as the "session is idle" signal;
 			// emitting while #promptInFlightCount > 0 lets a client fire its next
