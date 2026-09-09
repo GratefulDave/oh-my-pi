@@ -1752,6 +1752,13 @@ function createSubagentRunMonitor(args: RunMonitorArgs): SubagentRunMonitor {
 			}
 
 			case "agent_end":
+				// Nonterminal parent/child settles are scheduling pauses. Capturing
+				// them here would append the same assistant text again when the
+				// synthetic terminal end arrives with the full history.
+				if ((event as { isTerminal?: boolean }).isTerminal === false) {
+					flushProgress = true;
+					break;
+				}
 				// Extract final content from assistant messages only (not user prompts)
 				if (event.messages && Array.isArray(event.messages)) {
 					for (const msg of event.messages) {

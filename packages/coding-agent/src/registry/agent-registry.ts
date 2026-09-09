@@ -403,7 +403,7 @@ export class AgentRegistry {
 	/** Whether a ref's claimed running state is corroborated by its attached live session. */
 	isRunning(ref: AgentRef): boolean {
 		if (ref.status !== "running") return false;
-		return ref.session?.isStreaming === true;
+		return ref.session != null && !ref.session.isIdle;
 	}
 
 	/** Mirror a session's authoritative run-state notifications into its owned registry ref. */

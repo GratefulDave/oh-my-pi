@@ -30,6 +30,7 @@
 - RPC keeps already-streamed messages across nonterminal `agent_end`.
 - Autolearn, memory, and goal-mode listeners ignore nonterminal `agent_end`, and isolated SDK `hub cancel` releases through the session lifecycle manager.
 - A held parent `agent_end` is dropped if a new descendant starts before subscribers see it.
+- Nested subagent monitors ignore nonterminal `agent_end`, registry `isRunning` follows tree idle, and collab guests keep the working state while descendants run.
 
 ### Fixed
 

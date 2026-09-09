@@ -534,7 +534,7 @@ export class CollabHost {
 		const breakdown = this.#ctx.statusLine.getCachedContextBreakdown();
 		const tokens = breakdown.usedTokens ?? 0;
 		return {
-			isStreaming: session.isStreaming,
+			isStreaming: typeof session.isIdle === "boolean" ? !session.isIdle : session.isStreaming,
 			isAborting: session.isAborting,
 			queuedMessageCount: session.queuedMessageCount,
 			sessionName: session.sessionName,
@@ -555,7 +555,7 @@ export class CollabHost {
 		this.#scheduleStateBroadcast();
 		if (event.type === "agent_start" && !this.#streamingInterval) {
 			this.#streamingInterval = setInterval(() => this.#scheduleStateBroadcast(), STREAMING_STATE_INTERVAL_MS);
-		} else if (event.type === "agent_end" && this.#streamingInterval) {
+		} else if (event.type === "agent_end" && event.isTerminal !== false && this.#streamingInterval) {
 			clearInterval(this.#streamingInterval);
 			this.#streamingInterval = null;
 		}
