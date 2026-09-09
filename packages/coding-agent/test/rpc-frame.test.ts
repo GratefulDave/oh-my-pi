@@ -167,6 +167,17 @@ describe("RPC frame encoding", () => {
 		expect((replayed.messages as unknown[]).length).toBeGreaterThan(0);
 	});
 
+	it("keeps isTerminal false when an oversized nonterminal agent_end overflows", () => {
+		const messages = Array.from({ length: 40 }, (_, index) => ({
+			role: "assistant",
+			content: [{ type: "text", text: `${"x".repeat(64 * 1024)}-${index}` }],
+		}));
+		const decoded = decode(encodeRpcFrame({ type: "agent_end", messages, isTerminal: false }));
+		expect(decoded.type).toBe("agent_end");
+		expect(decoded.isTerminal).toBe(false);
+		expect(Buffer.byteLength(JSON.stringify(decoded), "utf8")).toBeLessThanOrEqual(MAX_RPC_FRAME_BYTES);
+	});
+
 	it("bounds a single multi-byte message without losing its event discriminator", () => {
 		const encoded = encodeRpcFrame({
 			type: "message_end",

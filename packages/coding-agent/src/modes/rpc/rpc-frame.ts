@@ -231,6 +231,8 @@ function overflowFrame(frame: object): object {
 			type: "agent_end",
 			messages: [],
 			messageCount: typeof frame.messageCount === "number" ? frame.messageCount : 0,
+			...(frame.isTerminal === false ? { isTerminal: false } : {}),
+			...(frame.willContinue === true ? { willContinue: true } : {}),
 		};
 	}
 	return {
