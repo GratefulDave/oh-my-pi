@@ -211,7 +211,7 @@ Handlers and tool `execute` receive `ctx` with:
 - `getContextUsage()`
 - `getAsyncJobSnapshot()` returns the current session's read-only async-job snapshot, or `null` when no session owns the context
 - `compact(...)`
-- `isIdle()`, `hasPendingMessages()`, `abort()`
+- `isIdle()` (false while streaming, tools in flight, or task children still run), `hasPendingMessages()`, `abort()`
 - `shutdown()`
 - `getSystemPrompt()`
 - `memory` (optional structured memory runtime — status/search/save across the configured backend)

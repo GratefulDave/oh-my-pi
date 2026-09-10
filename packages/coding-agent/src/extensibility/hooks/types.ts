@@ -186,7 +186,7 @@ export interface HookContext {
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined if no model is selected yet) */
 	model: Model | undefined;
-	/** Whether the agent is idle (not streaming) */
+	/** Whether the agent is idle (not streaming, no in-flight tools, no live child jobs) */
 	isIdle(): boolean;
 	/** Abort the current agent operation (fire-and-forget, does not wait) */
 	abort(): void;

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Extension `ctx.isIdle()` stays false while tools are in flight or task children still run, including under `hub wait`. Parent `agent_end` is tagged `willContinue` so Herdr does not paint idle mid-turn.
+
 ## [18.1.16] - 2026-09-09
 
 ### Added

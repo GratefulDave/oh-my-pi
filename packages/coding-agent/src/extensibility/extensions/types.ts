@@ -481,7 +481,7 @@ export interface ExtensionContext {
 	model: Model | undefined;
 	/** Read-only model query facade: list / current / resolve / family. */
 	models: ExtensionModelQuery;
-	/** Whether the agent is idle (not streaming) */
+	/** Whether the agent is idle (not streaming, no in-flight tools, no live child jobs) */
 	isIdle(): boolean;
 	/** Abort the current agent operation */
 	abort(): void;
