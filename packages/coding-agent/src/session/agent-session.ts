@@ -80,7 +80,12 @@ import { resetOpenAICodexHistoryAfterCompaction } from "@oh-my-pi/pi-ai/provider
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import { preferredDialect } from "@oh-my-pi/pi-catalog/identity";
 import { modelsAreEqual } from "@oh-my-pi/pi-catalog/models";
-import { type EditStore, isShellMinimizerEligible, PowerAssertion, type PowerAssertionOptions } from "@oh-my-pi/pi-natives";
+import {
+	type EditStore,
+	isShellMinimizerEligible,
+	PowerAssertion,
+	type PowerAssertionOptions,
+} from "@oh-my-pi/pi-natives";
 import {
 	$env,
 	escapeXmlText,
@@ -597,6 +602,7 @@ export class AgentSession {
 	#lastAppendOnlyResolution?: { enable: boolean; providerId: string | undefined };
 	#eventListeners: AgentSessionEventListener[] = [];
 	#activeToolExecutionUpdates = new Map<string, Extract<AgentSessionEvent, { type: "tool_execution_update" }>>();
+	#inFlightToolCallIds = new Set<string>();
 	#runStateListeners = new Set<(state: "running" | "idle") => void>();
 	#commandMetadataChangedListeners: CommandMetadataChangedListener[] = [];
 	#sessionChangeCallbacks = new Set<() => void>();
@@ -1146,6 +1152,7 @@ export class AgentSession {
 
 	#resetInFlight(): void {
 		this.#promptInFlightCount = 0;
+		this.#inFlightToolCallIds.clear();
 		this.yieldQueue.requestIdleFlush();
 		this.#releasePowerAssertion();
 		this.#flushPendingAgentEnd();
@@ -1575,6 +1582,7 @@ export class AgentSession {
 			agentKind: () => this.#agentKind,
 			isDisposed: () => this.#isDisposed,
 			isStreaming: () => this.isStreaming,
+			isHookIdle: () => this.isHookIdle(),
 			queuedMessageCount: () => this.queuedMessageCount,
 			planModeEnabled: () => this.#planModeState?.enabled === true,
 			model: () => this.model,
@@ -2267,6 +2275,24 @@ export class AgentSession {
 		return this.#hasPendingAsyncWake();
 	}
 
+	/** True while a tool call has started and not yet ended. */
+	hasInFlightTools(): boolean {
+		return this.#inFlightToolCallIds.size > 0;
+	}
+
+	/** Running owner-scoped jobs, including those a `hub wait` has suppressed. */
+	hasLiveChildJobs(): boolean {
+		const manager = this.#asyncJobManager;
+		if (!manager) return false;
+		const ownerFilter = this.#agentId ? { ownerId: this.#agentId } : undefined;
+		return manager.getRunningJobs(ownerFilter).length > 0;
+	}
+
+	/** Hook/extension idle: not streaming, no in-flight tools, no live children. */
+	isHookIdle(): boolean {
+		return !this.isStreaming && !this.hasInFlightTools() && !this.hasLiveChildJobs();
+	}
+
 	/**
 	 * Settle one generation of owner-scoped async work: wait for running owner
 	 * jobs to finish, deliver their queued results (which enqueue async-result
@@ -2445,7 +2471,6 @@ export class AgentSession {
 	}
 
 	#queuedExtensionEvents: Promise<void> = Promise.resolve();
-
 	#queueExtensionEvent(event: AgentSessionEvent): Promise<void> {
 		const emit = async () => {
 			await this.#emitExtensionEvent(event);
@@ -2466,12 +2491,15 @@ export class AgentSession {
 	#subscriberEmitGate: Promise<void> = Promise.resolve();
 
 	async #emitSessionEvent(event: AgentSessionEvent, options: { detachExtensions?: boolean } = {}): Promise<void> {
-		if (event.type === "tool_execution_update") {
+		if (event.type === "tool_execution_start") {
+			this.#inFlightToolCallIds.add(event.toolCallId);
+		} else if (event.type === "tool_execution_update") {
 			// Returned background calls have no later tool result to persist their
 			// terminal frame. Keep the latest update for future focus rebuilds;
 			// logical session transitions clear the cache.
 			this.#activeToolExecutionUpdates.set(event.toolCallId, event);
 		} else if (event.type === "tool_execution_end") {
+			this.#inFlightToolCallIds.delete(event.toolCallId);
 			this.#activeToolExecutionUpdates.delete(event.toolCallId);
 		}
 		if (event.type === "message_update") {
@@ -3599,7 +3627,7 @@ export class AgentSession {
 			// tool-use loop still gets prodded to keep the live HUD honest (issue #3651).
 			const hasToolCalls = msg.content.some(content => content.type === "toolCall");
 			if (hasToolCalls) {
-				await emitAgentEndNotification();
+				await emitAgentEndNotification({ willContinue: true });
 				return;
 			}
 			// When compaction queued recovery or hit a deliberate dead-end, skip the
@@ -3634,8 +3662,9 @@ export class AgentSession {
 			// the terminal stop: the async-result delivery continues the loop and
 			// the real stop settles later. Defer the session_stop hook pass until
 			// the session is fully idle (the todo reminder above defers the same
-			// way inside #checkTodoCompletion).
-			if (this.#hasPendingAsyncWake()) {
+			// way inside #checkTodoCompletion). `hub wait` suppresses delivery, so
+			// also hold while children still run or a tool is in flight.
+			if (this.#hasPendingAsyncWake() || this.hasLiveChildJobs() || this.hasInFlightTools()) {
 				await emitAgentEndNotification({ willContinue: true });
 				return;
 			}
@@ -5688,6 +5717,7 @@ export class AgentSession {
 		// still-cached background-task snapshot from the old conversation must not
 		// survive to be replayed by a focus rebuild in the reset session (#10447).
 		this.#activeToolExecutionUpdates.clear();
+		this.#inFlightToolCallIds.clear();
 	}
 
 	/**
@@ -6668,7 +6698,7 @@ export class AgentSession {
 
 			model: this.model ?? undefined,
 			models: createExtensionModelQuery(this.#modelRegistry, this.settings, () => this.model ?? undefined),
-			isIdle: () => !this.isStreaming,
+			isIdle: () => this.isHookIdle(),
 			abort: () => {
 				void this.abort();
 			},
@@ -9997,7 +10027,7 @@ export class AgentSession {
 			sessionManager: this.sessionManager,
 			modelRegistry: this.#modelRegistry,
 			model: this.model,
-			isIdle: () => !this.isStreaming,
+			isIdle: () => this.isHookIdle(),
 			hasQueuedMessages: () => this.queuedMessageCount > 0,
 			abort: () => {
 				this.agent.abort();

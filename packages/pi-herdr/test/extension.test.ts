@@ -38,7 +38,6 @@ import herdrExtension, {
 	HERDR_CONTROL_TOOLS,
 	type HerdrIdentity,
 	type HerdrState,
-	herdrActivityState,
 } from "../src/extension";
 
 interface CommandContext {
@@ -228,10 +227,13 @@ describe("pi-herdr extension", () => {
 		for (const name of HERDR_CONTROL_TOOLS) expect(harness.tools.get(name)?.defaultInactive).toBe(true);
 	});
 
-	test("keeps Herdr working while either main or subagent runs", () => {
-		expect(herdrActivityState(false, 0)).toBe("idle");
-		expect(herdrActivityState(true, 0)).toBe("working");
-		expect(herdrActivityState(false, 1)).toBe("working");
+	test("does not report pane agent state; stock herdr-omp owns that source", async () => {
+		const harness = createHarness({ getState: async () => ({ available: true, identity, reason: "available" }) });
+		await harness.events.get("session_start")?.({}, harness.ctx);
+		expect(harness.events.has("agent_start")).toBe(false);
+		expect(harness.events.has("agent_end")).toBe(false);
+		expect(harness.customEvents.has("task:subagent:lifecycle")).toBe(false);
+		expect(harness.requests.filter(request => request.method === "pane.report_agent")).toEqual([]);
 	});
 
 	test("detectHerdrEnv refuses non-Herdr sessions", () => {
@@ -323,49 +325,6 @@ describe("pi-herdr extension", () => {
 		await harness.events.get("session_start")?.({}, harness.ctx);
 		expect(harness.activeTools).toEqual(["herdr_status"]);
 		expect(harness.statuses.at(-1)).toEqual({ key: "herdr", value: "herdr:off" });
-	});
-
-	test("reports a stale root end as working until the live session becomes idle", async () => {
-		const harness = createHarness({ getState: async () => ({ available: true, identity, reason: "available" }) });
-		const sessionStart = harness.events.get("session_start");
-		const agentStart = harness.events.get("agent_start");
-		const agentEnd = harness.events.get("agent_end");
-		if (!sessionStart || !agentStart || !agentEnd) throw new Error("activity lifecycle handlers were not registered");
-
-		await sessionStart({}, harness.ctx);
-		harness.setIdle(false);
-		await agentStart({}, harness.ctx);
-		await agentEnd({}, harness.ctx);
-		harness.setIdle(true);
-		await agentEnd({}, harness.ctx);
-
-		expect(harness.requests.map(request => ({ method: request.method, state: request.params.state }))).toEqual([
-			{ method: "pane.report_agent", state: "idle" },
-			{ method: "pane.report_agent", state: "working" },
-			{ method: "pane.report_agent", state: "working" },
-			{ method: "pane.report_agent", state: "idle" },
-		]);
-	});
-
-	test("keeps reporting working until the final subagent terminal event", async () => {
-		const harness = createHarness({ getState: async () => ({ available: true, identity, reason: "available" }) });
-		const sessionStart = harness.events.get("session_start");
-		const agentEnd = harness.events.get("agent_end");
-		const subagentLifecycle = harness.customEvents.get("task:subagent:lifecycle");
-		if (!sessionStart || !agentEnd || !subagentLifecycle)
-			throw new Error("activity lifecycle handlers were not registered");
-
-		await sessionStart({}, harness.ctx);
-		await subagentLifecycle({ id: "subagent-1", status: "started" });
-		await agentEnd({}, harness.ctx);
-		await subagentLifecycle({ id: "subagent-1", status: "completed" });
-
-		expect(harness.requests.map(request => ({ method: request.method, state: request.params.state }))).toEqual([
-			{ method: "pane.report_agent", state: "idle" },
-			{ method: "pane.report_agent", state: "working" },
-			{ method: "pane.report_agent", state: "working" },
-			{ method: "pane.report_agent", state: "idle" },
-		]);
 	});
 
 	test("herdr wait_agent accepts either idle or done as a completion state", async () => {
