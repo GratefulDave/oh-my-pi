@@ -27,6 +27,7 @@ import {
 	Container,
 	clearRenderCache,
 	getComposerStyle,
+	getPaddingX,
 	Loader,
 	Markdown,
 	Spacer,
@@ -36,6 +37,7 @@ import {
 	Text,
 	type TUI,
 	visibleWidth,
+	wrapTextWithAnsi,
 } from "@oh-my-pi/pi-tui";
 import type { TerminalAppearanceRequestToken } from "@oh-my-pi/pi-tui/terminal";
 import { isInsideTerminalMultiplexer } from "@oh-my-pi/pi-tui/terminal-capabilities";
@@ -121,7 +123,8 @@ import { formatDuration } from "../slash-commands/helpers/format";
 import { STTController, type SttState } from "../stt";
 import { resolveCliEntryCmd } from "../subprocess/worker-client";
 import { discoverTitleSystemPromptFile, resolvePromptInput } from "../system-prompt";
-import { formatTaskId } from "../task/render";
+import { labelEchoesHandle } from "../task/label";
+import { agentTypeBadge, formatTaskId } from "../task/render";
 import type { ConfiguredThinkingLevel } from "../thinking";
 import { tinyTitleClient } from "../tiny/title-client";
 import { isMCPToolName } from "../tools/builtin-names";
@@ -195,7 +198,7 @@ import {
 } from "./components/tool-execution";
 import { TranscriptContainer } from "./components/transcript-container";
 import type { LspServerInfo as WelcomeLspServerInfo } from "./components/welcome";
-import { Composer, type ComposerStatusSnapshot } from "./composer";
+import { Composer, PINNED_HUD_TOGGLE_ID, type ComposerStatusSnapshot } from "./composer";
 import { writeComposerStatusCache, writeComposerWelcomeCache } from "./composer-cache";
 import { BtwController } from "./controllers/btw-controller";
 import { CleanseCommandController } from "./controllers/cleanse-command-controller";
@@ -561,104 +564,191 @@ function mergeToolCounts(target: Map<string, number>, counts: Record<string, num
 	}
 }
 
-const SUBAGENT_HUD_VISIBLE_LIMIT = 8;
-const SUBAGENT_OBSERVER_UI_COALESCE_MS = 100;
+/** Active subagent sessions the anchored HUD jump-lists, sync or detached. Slots follow registry order. */
+function isHudSubagent(session: ObservableSession): boolean {
+	return session.kind === "subagent" && session.status === "active";
+}
+
 /**
- * Build the anchored subagent HUD block. It mirrors the external pi-subagents
- * widget shape: an accent "Agents" header, a bounded set of live detached
- * subagent rows, and muted activity rows. Finished agents are intentionally
- * excluded here; their final snapshot is emitted into transcript scrollback
- * instead of sticking above the editor.
- * Only detached background spawns are listed: a sync task call blocks the
- * parent turn and its inline tool block already renders progress live, and
- * eval `agent()` spawns are rendered by their own eval cell tree.
+ * Anchored subagent HUD block with its visible session order, so click-to-focus
+ * can map a rendered row back to its agent. Row 0 is the leading blank, row 1
+ * the title; item rows follow in `order`; the overflow summary maps nowhere.
+ * The expander row (when `layoutPinnedHud` shows one) resolves to the toggle
+ * sentinel, which the click router handles before any registry lookup.
+ * Rendering delegates to the same `Text` mount as before, so output bytes are
+ * unchanged — only the row map is new. Long rows wrap inside `Text` (content
+ * is two cells narrower than the terminal), so the map is rebuilt per render
+ * from measured wrapped heights: continuation rows belong to the agent (or
+ * toggle) whose logical row started them.
+ */
+export class SubagentHudComponent implements Component {
+	readonly #text: Text;
+	readonly #lines: readonly string[];
+	readonly #order: readonly string[];
+	readonly #toggleLine: number | undefined;
+	#physicalOwner: (string | undefined)[] = [];
+	constructor(lines: readonly string[], order: readonly string[], toggleRow?: number) {
+		this.#text = new Text(lines.join("\n"), 1, 0);
+		this.#lines = lines;
+		this.#order = order;
+		this.#toggleLine = toggleRow;
+	}
+	render(width: number): readonly string[] {
+		const rows = this.#text.render(width);
+		this.#rebuildHitMap(width, rows.length);
+		return rows;
+	}
+	getClickAgentAtRow(row: number): string | undefined {
+		return row >= 0 && row < this.#physicalOwner.length ? this.#physicalOwner[row] : undefined;
+	}
+	// Native wrap splits paragraphs independently, so per-line wrapped
+	// heights compose exactly to the rendered row count. A length mismatch
+	// means the wrap contract drifted: fall back to one row per line (the
+	// old mapping) rather than misrouting clicks.
+	#rebuildHitMap(width: number, renderedRows: number): void {
+		const contentWidth = Math.max(1, width - getPaddingX(1) * 2);
+		const owner: (string | undefined)[] = [];
+		for (let index = 0; index < this.#lines.length; index++) {
+			const height = wrapTextWithAnsi(replaceTabs(this.#lines[index]!), contentWidth).length;
+			let id: string | undefined;
+			if (this.#toggleLine !== undefined && index === this.#toggleLine) id = PINNED_HUD_TOGGLE_ID;
+			else {
+				const orderIndex = index - 2;
+				id = orderIndex >= 0 && orderIndex < this.#order.length ? this.#order[orderIndex] : undefined;
+			}
+			for (let row = 0; row < height; row++) owner.push(id);
+		}
+		if (owner.length !== renderedRows) {
+			this.#physicalOwner = this.#lines.map((_line, index) => {
+				if (this.#toggleLine !== undefined && index === this.#toggleLine) return PINNED_HUD_TOGGLE_ID;
+				const orderIndex = index - 2;
+				return orderIndex >= 0 && orderIndex < this.#order.length ? this.#order[orderIndex] : undefined;
+			});
+			return;
+		}
+		this.#physicalOwner = owner;
+	}
+}
+
+const SUBAGENT_OBSERVER_UI_COALESCE_MS = 100;
+
+/** Item rows a collapsed jump list shows before the expander. */
+const SUBAGENT_HUD_COLLAPSED_LIMIT = 3;
+
+/** Pinned jump-list layout: painted item rows plus the expander row. */
+export interface PinnedHudLayout {
+	/** Item rows painted, in registry order. */
+	itemRows: number;
+	/** Expander direction, or undefined when the list fits without one. */
+	toggle: "expand" | "collapse" | undefined;
+	/** Viewport row of the expander within HUD lines (2 header rows + items). */
+	toggleRow: number | undefined;
+}
+
+/**
+ * Pinned jump-list layout for `runningTotal` live agents. Collapsed shows a
+ * few rows plus an expander; expanded shows every row plus a collapse row.
+ * Single source of truth for the renderer and the click row map, so painted
+ * rows and hit-testing can never disagree.
+ */
+export function layoutPinnedHud(runningTotal: number, expanded: boolean): PinnedHudLayout {
+	if (runningTotal <= SUBAGENT_HUD_COLLAPSED_LIMIT) {
+		return { itemRows: runningTotal, toggle: undefined, toggleRow: undefined };
+	}
+	if (!expanded) {
+		return { itemRows: SUBAGENT_HUD_COLLAPSED_LIMIT, toggle: "expand", toggleRow: 2 + SUBAGENT_HUD_COLLAPSED_LIMIT };
+	}
+	return { itemRows: runningTotal, toggle: "collapse", toggleRow: 2 + runningTotal };
+}
+
+/**
+ * Build the anchored subagent HUD block: a bold accent "Subagents" header plus
+ * a bounded set of running-agent rows in the same `Id ⟨role⟩: description` shape
+ * the inline task rows use (muted task preview when no description was given).
+ * Layout mirrors the Todos HUD exactly: unindented header, then
+ * `renderTreeList` rows (dim connectors) shifted right by one space.
+ * Every active subagent is listed — detached background spawns and sync task
+ * calls alike — so the pinned block doubles as a click jump list.
  * Returns an empty array when nothing is running so the container can clear.
  */
-export function renderSubagentHudLines(sessions: ObservableSession[], columns: number, spinnerFrame = 0): string[] {
-	const running = sessions.filter(
-		session => session.kind === "subagent" && session.status === "active" && session.detached === true,
-	);
+export function renderSubagentHudLines(sessions: ObservableSession[], columns: number, expanded = false): string[] {
+	const running = sessions.filter(isHudSubagent);
 	if (running.length === 0) return [];
-
-	const width = Math.max(TRUNCATE_LENGTHS.SHORT, columns);
-	// Activity frames are braille in every symbol preset (nerd's status frames
-	// are Nerd Font clock glyphs most terminals render as identical tofu).
-	const frames = theme.getSpinnerFrames("activity");
-	const frame = frames.length > 0 ? frames[spinnerFrame % frames.length] : theme.styledSymbol("status.done", "accent");
-	const visible = running.slice(0, SUBAGENT_HUD_VISIBLE_LIMIT);
-	const hiddenCount = running.length - visible.length;
-	const lines = ["", `${theme.fg("accent", "●")} ${theme.fg("accent", "Agents")}`];
-	visible.forEach((session, index) => {
-		const isLast = index === visible.length - 1 && hiddenCount === 0;
-		const connector = isLast ? theme.tree.last : theme.tree.branch;
-		const activityConnector = isLast ? "   " : `${theme.tree.vertical}  `;
-		const displayId = formatTaskId(session.id);
-		const agentLabel = replaceTabs(session.agent || session.progress?.agent || "agent");
-		const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
-		const rawDescription = session.description?.trim() || session.progress?.description?.trim() || "";
-		// Hide descriptions that only echo the id (e.g. the agent re-stated
-		// "AuthLoader" for id "AuthLoader-3") — they add no information.
-		const description =
-			rawDescription && normalize(rawDescription).length > 0 && normalize(displayId).includes(normalize(rawDescription))
-				? undefined
-				: rawDescription || undefined;
-		const taskPreview = session.progress?.task?.trim();
-		const label = description
-			? `${theme.fg("accent", theme.bold(displayId))}${theme.fg("accent", ":")} ${theme.fg(
-					"muted",
-					truncateToWidth(replaceTabs(description).replace(/\s*[\r\n]+\s*/g, " ↵ "), TRUNCATE_LENGTHS.SHORT),
-				)}`
-			: `${theme.fg("accent", theme.bold(displayId))}${
-					taskPreview
-						? ` ${theme.fg("muted", truncateToWidth(replaceTabs(taskPreview).replace(/\s*[\r\n]+\s*/g, " ↵ "), TRUNCATE_LENGTHS.SHORT))}`
-						: ""
-				}`;
-		const stats = formatSubagentHudStats(session);
-		const meta = stats ? ` ${theme.sep.dot} ${theme.fg("dim", stats)}` : "";
-		lines.push(
-			truncateToWidth(
-				`${theme.fg("dim", connector)} ${theme.fg("accent", frame)} ${theme.fg(
-					"accent",
-					`[${agentLabel}]`,
-				)} ${label}${meta}`,
-				width,
-			),
-		);
-		lines.push(
-			truncateToWidth(
-				`${theme.fg("dim", activityConnector)}${theme.tree.hook} ${theme.fg("dim", formatSubagentHudActivity(session))}`,
-				width,
-			),
-		);
-	});
-	if (hiddenCount > 0) {
-		lines.push(
-			truncateToWidth(theme.fg("dim", `… ${hiddenCount} more running — open Agent Hub for full list`), width),
-		);
-	}
-	return lines;
-}
-
-function formatSubagentHudStats(session: ObservableSession): string {
-	const progress = session.progress;
-	if (!progress) return "";
-	const parts: string[] = [];
-	if (progress.toolCount > 0)
-		parts.push(`${formatNumber(progress.toolCount).toLowerCase()} tool use${progress.toolCount === 1 ? "" : "s"}`);
-	if (progress.tokens > 0) parts.push(`${formatNumber(progress.tokens).toLowerCase()} tokens`);
-	if (progress.durationMs > 0) parts.push(formatDuration(progress.durationMs));
-	return parts.join(` ${theme.sep.dot} `);
-}
-
-function formatSubagentHudActivity(session: ObservableSession): string {
-	const progress = session.progress;
-	if (!progress) return "thinking…";
-	if (progress.currentTool) return progress.currentTool;
-	const recentOutput = progress.recentOutput.at(-1)?.trim();
-	if (recentOutput) return truncateToWidth(replaceTabs(recentOutput), TRUNCATE_LENGTHS.CONTENT);
-	const recentTool = progress.recentTools.at(-1)?.tool;
-	if (recentTool) return recentTool;
-	return "thinking…";
+	const layout = layoutPinnedHud(running.length, expanded);
+	const dot = theme.styledSymbol("status.done", "accent");
+	const items = running.slice(0, layout.itemRows);
+	const showModelBadge = isFeedModelBadgeEnabled();
+	const outerIndent = " ";
+	const rows = renderTreeList(
+		{
+			items,
+			expanded: true,
+			renderItem: (session, context) => {
+				const rowWidth = Math.max(0, columns - visibleWidth(outerIndent) - (context.prefixWidth ?? 0));
+				const role = session.agent ?? session.progress?.agent;
+				const displayId = truncateToWidth(
+					formatTaskId(session.id),
+					Math.max(0, rowWidth - visibleWidth(`${dot} `)),
+				);
+				const badge = truncateToWidth(
+					agentTypeBadge(role, theme),
+					Math.max(0, rowWidth - visibleWidth(`${dot} ${displayId}`)),
+				);
+				const titleBudget = Math.max(0, rowWidth - visibleWidth(`${dot} ${displayId}${badge}`));
+				const modelBadge = showModelBadge
+					? formatFeedModelBadge(
+							session.progress?.resolvedModelIdentity ?? session.progress?.resolvedModel,
+							session.progress?.resolvedThinkingLevel,
+							session.progress?.advisor,
+							theme,
+							Math.min(FEED_MODEL_BADGE_WIDTH, Math.max(0, titleBudget - 1)),
+						)
+					: "";
+				const modelLead = modelBadge ? `${modelBadge} ` : "";
+				let line = `${dot} ${modelLead}${theme.fg("accent", theme.bold(displayId))}${badge}`;
+				const description = session.description?.trim() || session.progress?.description?.trim();
+				const distinctDescription =
+					description && !labelEchoesHandle(session.id, description) ? description : undefined;
+				if (distinctDescription) {
+					const budget = Math.max(0, rowWidth - visibleWidth(line) - visibleWidth(": "));
+					const formatted = replaceTabs(distinctDescription).replace(/\s*[\r\n]+\s*/g, " ↵ ");
+					if (budget > 0) {
+						line += `${theme.fg("accent", ":")} ${theme.fg("accent", truncateToWidth(formatted, budget))}`;
+					}
+				} else {
+					// No spawn description: fall back to a muted task preview, same as
+					// the inline task rows when a row has no label.
+					const taskPreview = session.progress?.task?.trim();
+					if (taskPreview && !labelEchoesHandle(session.id, taskPreview)) {
+						const formatted = replaceTabs(taskPreview).replace(/\s*[\r\n]+\s*/g, " ↵ ");
+						const budget = Math.min(TRUNCATE_LENGTHS.SHORT, Math.max(0, rowWidth - visibleWidth(line) - 1));
+						if (budget > 0) line += ` ${theme.fg("muted", truncateToWidth(formatted, budget))}`;
+					}
+				}
+				return truncateToWidth(line, rowWidth, "");
+			},
+		},
+		theme,
+	);
+	const toggleRow =
+		layout.toggle === undefined
+			? []
+			: [
+					truncateToWidth(
+						`${outerIndent}${theme.fg(
+							"dim",
+							layout.toggle === "expand" ? `… ${running.length - layout.itemRows} more — expand` : "… show less",
+						)}`,
+						columns,
+						"",
+					),
+				];
+	return [
+		"",
+		truncateToWidth(theme.bold(theme.fg("accent", "Subagents")), columns),
+		...rows.map(line => truncateToWidth(`${outerIndent}${line}`, columns, "")),
+		...toggleRow,
+	];
 }
 
 function toSubagentHudSummaryRow(session: ObservableSession): SubagentHudSummaryRow {
@@ -683,6 +773,7 @@ function formatSubagentHudSummaryLabel(session: ObservableSession): string {
 		session.description?.trim() || session.progress?.description?.trim() || session.progress?.task?.trim();
 	return description ? `${displayId}: ${replaceTabs(description)}` : displayId;
 }
+
 
 const CTRL_L_APPEARANCE_RESPONSE_DEADLINE_MS = 2000;
 
@@ -946,6 +1037,54 @@ export class InteractiveMode implements InteractiveModeContext {
 	unfocusSession(): Promise<void> {
 		return this.#focusController.unfocus();
 	}
+	invalidatePendingFocus(): void {
+		this.#focusController.invalidatePendingFocus();
+	}
+	/**
+	 * Whether inline mouse capture is opted in. Never throws: the render hot
+	 * path reads this every frame, including in suites (or teardown races)
+	 * where the global singleton is uninitialized or the session carries it
+	 * dead — both fall back to off.
+	 */
+	#isMouseCaptureEnabled(): boolean {
+		try {
+			if (settings.get("tui.mouse") === true) return true;
+		} catch {
+			// Global singleton unavailable; try the mode's own settings below.
+		}
+		try {
+			return this.settings.get("tui.mouse") === true;
+		} catch {
+			return false;
+		}
+	}
+
+	resolveViewportClickCandidates(index: number): string[] {
+		return this.composer.viewportClickCandidates(index);
+	}
+
+	/** Flip the pinned jump list between its collapsed few and the full list, overriding the setting. */
+	togglePinnedHudExpanded(): void {
+		const mode = settings.get("display.pinnedAgents");
+		const expanded = this.#pinnedHudOverride ?? mode === "full";
+		this.#pinnedHudOverride = !expanded;
+		this.#renderSubagentList();
+		this.ui.requestRender();
+	}
+
+	/** Rebuild the pinned jump list for a `display.pinnedAgents` change. */
+	applyPinnedAgentsSetting(): void {
+		// An explicit settings change wins over click state: without the reset,
+		// reselecting the current value would keep showing the old override.
+		this.#pinnedHudOverride = undefined;
+		this.#renderSubagentList();
+		this.ui.requestRender();
+	}
+
+	setClickHoverId(id: string | undefined): void {
+		this.composer.setHoveredClickId(id);
+	}
+
 	clearTransientSessionUi(): void {
 		this.#hideSessionInfo();
 		if (this.loadingAnimation) {
@@ -986,6 +1125,8 @@ export class InteractiveMode implements InteractiveModeContext {
 	#emittedSubagentSummaryIds = new Set<string>();
 	#subagentSpinnerInterval: NodeJS.Timeout | undefined;
 	#subagentSpinnerFrame = 0;
+	/** Click override for the pinned jump-list density; undefined follows `display.pinnedAgents`. */
+	#pinnedHudOverride: boolean | undefined;
 	#eventBus?: EventBus;
 	#subagentEventBus?: EventBus;
 	#eventBusUnsubscribers: Array<() => void> = [];
@@ -1094,6 +1235,20 @@ export class InteractiveMode implements InteractiveModeContext {
 		setTerminalTextSizing(settings.get("tui.textSizing") && TERMINAL.supportsTextSizing);
 		// Keep generic pi-tui renderers aligned with the coding-agent setting.
 		applyHyperlinkSetting();
+		this.ui.setInlineMouseTrackingProvider(() => {
+			const on = this.#isMouseCaptureEnabled();
+			// Dropping capture must also drop the band: with reporting off no
+			// motion event will ever arrive to clear a mid-hover highlight.
+			// The controller cache goes too, or a re-enable plus motion over
+			// the same card would look unchanged and skip restoring the band.
+			if (!on) {
+				this.composer.setHoveredClickId(undefined);
+				// The provider can fire from a synchronous forced render before
+				// init reaches the controller block below.
+				this.#inputController?.clearHoverHighlight();
+			}
+			return on;
+		});
 		this.chatContainer = new TranscriptContainer();
 		this.pendingMessagesContainer = new AnchoredLiveContainer();
 		this.statusContainer = new StatusHudContainer(this);
@@ -3129,28 +3284,6 @@ export class InteractiveMode implements InteractiveModeContext {
 		return [...leadingLines, combinedLine];
 	}
 
-	/**
-	 * Anchored HUD of in-flight subagents, mirroring the Todos block above the
-	 * editor. Driven entirely by observer-registry change events, so rows appear
-	 * on spawn and the whole block clears itself once the last subagent leaves
-	 * the "active" state.
-	 */
-	#renderSubagentList(): void {
-		this.subagentContainer.clear();
-		const sessions = this.#observerRegistry.getSessions();
-		const hasActiveDetached = sessions.some(
-			session => session.kind === "subagent" && session.status === "active" && session.detached === true,
-		);
-		if (hasActiveDetached) {
-			this.#startSubagentSpinner();
-		} else {
-			this.#stopSubagentSpinner();
-		}
-		const lines = renderSubagentHudLines(sessions, this.ui.terminal.columns, this.#subagentSpinnerFrame);
-		if (lines.length === 0) return;
-		this.subagentContainer.addChild(new Text(lines.join("\n"), 1, 0));
-	}
-
 	#startSubagentSpinner(): void {
 		if (this.#subagentSpinnerInterval) return;
 		const frameCount = theme.getSpinnerFrames("activity").length;
@@ -3205,6 +3338,26 @@ export class InteractiveMode implements InteractiveModeContext {
 	#updateVibeModeStatus(): void {
 		this.statusLine.setVibeModeStatus(this.vibeModeEnabled ? { enabled: true } : undefined);
 		this.ui.requestRender();
+	}
+
+	/**
+	 * Anchored HUD of in-flight subagents, mirroring the Todos block above the
+	 * editor. Driven entirely by observer-registry change events, so rows appear
+	 * on spawn and the whole block clears itself once the last subagent leaves
+	 * the "active" state.
+	 */
+	#renderSubagentList(): void {
+		this.subagentContainer.clear();
+		const mode = settings.get("display.pinnedAgents");
+		if (mode === "off") return;
+		const sessions = this.#observerRegistry.getSessions();
+		const running = sessions.filter(isHudSubagent);
+		const expanded = this.#pinnedHudOverride ?? mode === "full";
+		const lines = renderSubagentHudLines(sessions, this.ui.terminal.columns, expanded);
+		if (lines.length === 0) return;
+		const layout = layoutPinnedHud(running.length, expanded);
+		const order = running.map(session => session.id);
+		this.subagentContainer.addChild(new SubagentHudComponent(lines, order, layout.toggleRow));
 	}
 
 	#vibeParentSession(): VibeParentSession {
