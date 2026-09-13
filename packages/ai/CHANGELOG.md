@@ -7,6 +7,12 @@
 - Fixed OpenAI Responses / Completions and xAI tool conversion 400ing the whole turn on MCP schemas whose root is an object plus a typeless exclusive-required `anyOf` (e.g. codebase-memory `check_index_coverage`). Flatten only the **tool root** — nested unions (e.g. `task.outputSchema`) stay intact so Grok still sees valid `task`/`edit` schemas.
 - SuperGrok (`xai-oauth` only): send `parallel_tool_calls: true` (api.x.ai defaults this off when the field is omitted — not an omp config), harvest extra `function_call`s that appear only on `response.completed.output`, and ingest Completions-shaped `tool_calls` on a Responses stream, including streams that never send a Responses terminal frame. OpenAI / Azure / Codex / OpenRouter / paid `xai` unchanged.
 
+## [18.1.20] - 2026-09-13
+
+### Fixed
+
+- Fixed Windows OAuth sign-in failing on every attempt after an upgrade when a previous run left a stale native callback registration behind; handlers registered by older binaries are now recognized as owned and rolled back instead of blocking recovery ([#11967](https://github.com/can1357/oh-my-pi/pull/11967) by [@H4vC](https://github.com/H4vC)).
+
 ## [18.1.19] - 2026-09-12
 
 ### Added
