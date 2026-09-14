@@ -38,7 +38,7 @@ Parsing comes from frontmatter via `parseAgentFields()` (`src/discovery/helpers.
 - `spawns` accepts `*`, CSV, or array
 - backward-compat behavior: if `spawns` missing but `tools` includes `task`, `spawns` becomes `*`
 - `output` is passed through as opaque schema data
-- `read-summarize: false` (normalized to `readSummarize`) forces the subagent's `read` tool to return verbatim file content instead of structural summaries — `runSubprocess` applies it as a `read.summarize.enabled: false` override on the subagent's isolated settings (`src/task/executor.ts`). `scout` and `librarian` ship with it disabled. Defaults to enabled when the field is absent.
+- `read-summarize: false` (normalized to `readSummarize`) forces the subagent's `read` tool to return verbatim file content instead of structural summaries — `runSubprocess` applies it as a `read.summarize.enabled: false` override on the subagent's isolated settings (`src/task/executor.ts`). `scout` ships with it disabled. Defaults to enabled when the field is absent.
 - `model` accepts one selector, CSV, or an array. Entries are tried in order after role aliases are expanded.
 - `thinking-level` / `thinking` selects the agent's configured effort. When `task.enableEffort` (default `false`) exposes it, a task item's coarse `effort` (`lo`, `med`, `hi`) takes precedence at launch. OMP maps that hint to the selected model's lowest, middle, or highest supported effort, then clamps it to `task.maxEffort` (default `max`). The ceiling is carried across retry-fallback model switches. If the selected model has no supported effort at or below the ceiling, the spawn fails; models without a controllable effort surface instead fall back to their normal selector.
 - `blocking: true` makes the parent wait for that agent even when async task execution is enabled
@@ -88,7 +88,7 @@ For a dispatch, set the agent name and task:
 
 ## Watch running agents
 
-After dispatch, press `Alt+A` to open [Agent Hub](./agent-hub.md). Its live roster shows each task agent's status, current activity, model, age, and usage. Select an agent to read its transcript and steer it directly; parked agents can be revived from the same view.
+After dispatch, press `Alt+A` to open [Agent Hub](./agent-hub.md). Its live roster shows each task agent's status, current activity, model, age, and usage. Select an agent to read its transcript and steer it directly; parked agents can be revived from the same view. Enable `tui.mouse` to click live task cards and jump-list rows instead, or watch the pinned `Subagents` block above the editor.
 
 ### `vibe_spawn` tier routing
 
@@ -114,7 +114,7 @@ Bundled agents are embedded at build time (`src/task/agents.ts`) using text impo
 
 `EMBEDDED_AGENT_DEFS` defines:
 
-- `scout`, `designer`, `reviewer`, `security-reviewer`, and `librarian` from prompt files
+- `scout`, `reviewer`, and `security-reviewer` from prompt files
 - `task` and `sonic` from the shared `task.md` body plus injected frontmatter; no bundled agent sets `prewalk` — the generic `task` agent's hand-off is armed by the `task.prewalk` setting (default off), or per agent via `/agents` / `task.agentPrewalk` / user agent frontmatter
 
 Loading path:
@@ -207,6 +207,19 @@ For task dispatch, model precedence is:
 3. the parent's active model, then its configured/default model fallback
 
 Role aliases in either of the first two sources are expanded through `modelRoles`. The shared eval bridge can also supply an invocation-local model override ahead of the settings override; the task wire schema does not expose that field.
+
+Service-tier precedence is independent of model selection: an exact, case-sensitive
+`task.agentServiceTierOverrides[agentName]` entry overrides `tier.subagent`; an absent entry preserves
+the global behavior. `inherit` snapshots the parent session's live per-family tiers (including
+`/fast` changes) for the next spawn. The child session resolves a concrete value against the model
+it finally settles on — after auth fallback and after patterns only the session can resolve, such as
+extension-registered models — and populates only that model's provider family when the family
+supports the value, so same-family retry fallbacks retain the tier and cross-family fallbacks never
+inherit it. The resolved map is persisted with the child's session, even when it is empty, so a
+parked agent revived after a restart keeps its per-agent tier instead of re-deriving
+`tier.subagent`. The entry is looked up by task/eval dispatch only; Vibe workers launched through
+the same executor keep `tier.subagent`. Service tiers are configuration-only; agent frontmatter and
+the task/eval wire formats do not expose a tier field or automatic Fast policy.
 
 Runtime output schema precedence is:
 

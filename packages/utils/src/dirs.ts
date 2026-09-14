@@ -107,7 +107,8 @@ function readProfileFromEnvSafe(): string | undefined {
 	}
 }
 
-function getBaseConfigRoot(): string {
+/** Profile-independent config root (~/.omp), shared by every omp profile. */
+export function getBaseConfigRoot(): string {
 	return path.join(os.homedir(), getConfigDirName());
 }
 
@@ -719,6 +720,11 @@ export function getBrowserRelayDir(): string {
 	return dirs.rootSubdir("browser-relay", "data");
 }
 
+/** Get the profile root for Chromium browsers the browser tool spawns via `app.path` (~/.omp/browser-profiles). */
+export function getBrowserProfilesDir(): string {
+	return dirs.rootSubdir("browser-profiles", "state");
+}
+
 /** Get DOCS_RS cache directory () */
 export function getDocsRsCacheDir(): string {
 	return dirs.rootSubdir("webcache", "cache");
@@ -1000,6 +1006,11 @@ export function getSecretPlaceholderKeyPath(): string {
 	const keyPath = dirs.agentSubdir(undefined, "secret-placeholder.key", "state");
 	adoptLegacyFile(path.join(dirs.agentDir, "secret-placeholder.key"), keyPath);
 	return keyPath;
+}
+
+/** Directory holding the per-model tiny-worker sockets and logs (~/.omp/run/tiny; XDG default: $XDG_STATE_HOME/omp/run/tiny). */
+export function getTinyWorkerRuntimeDir(): string {
+	return dirs.rootSubdir(path.join("run", "tiny"), "state");
 }
 
 /** Root directory containing every per-project daemon runtime scope (~/.omp/run/daemons; XDG default: $XDG_STATE_HOME/omp/run/daemons). */

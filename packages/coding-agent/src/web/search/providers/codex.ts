@@ -4,14 +4,7 @@
  * Uses the configured Codex Responses transport for proxy/API-key setups and
  * the official ChatGPT backend for OAuth logins.
  */
-import {
-	type AuthStorage,
-	type FetchImpl,
-	type Model,
-	type OAuthAccess,
-	withAuth,
-	withOAuthAccess,
-} from "@oh-my-pi/pi-ai";
+import { type AuthStorage, type FetchImpl, type Model, withAuth, withOAuthAccess } from "@oh-my-pi/pi-ai";
 import { resolveCodexResponsesUrl } from "@oh-my-pi/pi-ai/providers/openai-codex-responses";
 import { getBundledModels } from "@oh-my-pi/pi-catalog/models";
 import {
@@ -382,24 +375,6 @@ function extractTextSources(text: string): SearchSource[] {
 	return sources;
 }
 
-/**
- * Resolve a Codex bearer + accountId through {@link AuthStorage} — the single
- * refresh authority. Returns `null` when no OAuth credential is configured,
- * when the credential cannot be refreshed (broker error, revoked token, etc.),
- * or when the access token carries no `chatgpt_account_id` claim.
- */
-async function findCodexAuth(
-	authStorage: AuthStorage,
-	sessionId: string | undefined,
-	signal: AbortSignal | undefined,
-): Promise<{ access: OAuthAccess; accountId: string } | null> {
-	const access = await authStorage.getOAuthAccess("openai-codex", sessionId, { signal });
-	if (!access) return null;
-	const accountId = access.accountId ?? getCodexAccountId(access.accessToken);
-	if (!accountId) return null;
-	return { access, accountId };
-}
-
 function resolveCodexSearchTransport(modelRegistry: ModelRegistry | undefined, modelId: string): CodexSearchTransport {
 	const registryModel = modelRegistry?.find("openai-codex", modelId);
 	const bundledModel = getBundledCodexModels().find(model => model.id === modelId);
@@ -414,8 +389,8 @@ function resolveCodexSearchTransport(modelRegistry: ModelRegistry | undefined, m
 		baseUrl,
 		url,
 		headers: {
-			...(modelRegistry?.getProviderHeaders("openai-codex") ?? {}),
-			...(registryModel?.headers ?? {}),
+			...modelRegistry?.getProviderHeaders("openai-codex"),
+			...registryModel?.headers,
 		},
 		customEndpoint: url !== resolveCodexResponsesUrl(CODEX_BASE_URL),
 	};
@@ -791,7 +766,9 @@ export async function searchCodex(params: SearchParams): Promise<SearchResponse>
 			},
 		);
 	} else {
-		const seed = await findCodexAuth(params.authStorage, params.sessionId, params.signal);
+		const seed = await params.authStorage.getOAuthAccess("openai-codex", params.sessionId, {
+			signal: params.signal,
+		});
 		if (!seed) {
 			throw new Error(
 				"No Codex OAuth credentials found. Login with 'omp /login openai-codex' to enable Codex web search.",
@@ -805,9 +782,6 @@ export async function searchCodex(params: SearchParams): Promise<SearchResponse>
 				// A refreshed/rotated credential can carry a different bearer and
 				// ChatGPT account id than the seed used to select the first attempt.
 				const accountId = access.accountId ?? getCodexAccountId(access.accessToken);
-				if (!accountId) {
-					throw new Error("Codex OAuth credential is missing a ChatGPT account id");
-				}
 				return runCodexSearchCandidates({
 					auth: { accessToken: access.accessToken, accountId },
 					params,
@@ -817,7 +791,7 @@ export async function searchCodex(params: SearchParams): Promise<SearchResponse>
 					transport,
 				});
 			},
-			{ sessionId: params.sessionId, signal: params.signal, seed: seed.access },
+			{ sessionId: params.sessionId, signal: params.signal, seed },
 		);
 	}
 

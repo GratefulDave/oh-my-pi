@@ -3,8 +3,17 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as url from "node:url";
 import { glob } from "@oh-my-pi/pi-natives";
-import { hasFsCode, isEnoent, isEnotdir, stripWindowsExtendedLengthPathPrefix } from "@oh-my-pi/pi-utils";
+import {
+	hasFsCode,
+	isEnoent,
+	isEnotdir,
+	isWsl,
+	stripWindowsExtendedLengthPathPrefix,
+	windowsPathToWslMount,
+} from "@oh-my-pi/pi-utils";
+import type { Rule } from "../capability/rule";
 import type { Skill } from "../extensibility/skills";
+import type { AgentRegistry } from "../registry/agent-registry";
 import { InternalUrlRouter, type LocalProtocolOptions } from "../internal-urls";
 import { ToolAbortError, ToolError } from "./tool-errors";
 
@@ -20,11 +29,13 @@ export function isFilesystemSourcePath(value: string): boolean {
 // `-` in parseLineRangeChunk. Keep this fragment and LINE_RANGE_CHUNK_RE in sync.
 const RANGE_CHUNK_SRC = String.raw`L?\d+(?:(?:[-+]|\.\.)L?\d+|-|\.\.)?`;
 const RANGE_LIST_SRC = `${RANGE_CHUNK_SRC}(?:,${RANGE_CHUNK_SRC})*`;
-const FILE_LINE_RANGE_RE = new RegExp(`^(?:${RANGE_LIST_SRC}|raw|conflicts|img)$`, "i");
-const FILE_LINE_RANGE_ONLY_RE = new RegExp(`^${RANGE_LIST_SRC}$`, "i");
+// A tail selector: `-N` reads the last N lines. Keep in sync with TAIL_SELECTOR_RE.
+const TAIL_CHUNK_SRC = String.raw`-\d+`;
+const FILE_LINE_RANGE_RE = new RegExp(`^(?:${RANGE_LIST_SRC}|${TAIL_CHUNK_SRC}|raw|conflicts|img)$`, "i");
+const FILE_LINE_RANGE_ONLY_RE = new RegExp(`^(?:${RANGE_LIST_SRC}|${TAIL_CHUNK_SRC})$`, "i");
 const FILE_RAW_ONLY_RE = /^raw$/i;
 // Permissive selector chunk for internal URLs — accepts well-formed selectors
-// plus common malformed shapes (e.g. `:-N`) so the read tool peels the entire
+// plus common malformed shapes (e.g. `:-N-M`) so the read tool peels the entire
 // selector chain off before dispatching to a protocol handler.
 const INTERNAL_URL_SELECTOR_PART_RE = new RegExp(
 	String.raw`^(?:raw|conflicts|img|${RANGE_LIST_SRC}|-\d+(?:[-+]\d+)?)$`,
@@ -197,9 +208,24 @@ function windowsDriveAliasPath(filePath: string): string | undefined {
 	return tail ? `${drive}:\\${tail}` : `${drive}:\\`;
 }
 
-export function normalizeWindowsDriveAliasPath(filePath: string, platform: NodeJS.Platform = process.platform): string {
-	if (platform !== "win32") return filePath;
-	return windowsDriveAliasPath(filePath) ?? filePath;
+/**
+ * Reconcile a drive-alias path with the current host so filesystem reads land
+ * on the same bytes the user meant, in either translation direction:
+ *
+ * - On native Windows (`win32`), MSYS/WSL mount roots (`/c/...`, `/mnt/c/...`)
+ *   map to native drive paths (`C:\...`).
+ * - Under WSL, pasted Windows drive paths (`C:\...`, `C:/...`) map to their
+ *   `/mnt/<drive>/...` mount so the file resolves on the Linux side instead of
+ *   being `path.resolve`d into a nonexistent path under cwd (issue #10426).
+ */
+export function normalizeWindowsDriveAliasPath(
+	filePath: string,
+	platform: NodeJS.Platform = process.platform,
+	env: NodeJS.ProcessEnv = process.env,
+): string {
+	if (platform === "win32") return windowsDriveAliasPath(filePath) ?? filePath;
+	if (isWsl(platform, env)) return windowsPathToWslMount(filePath) ?? filePath;
+	return filePath;
 }
 
 /**
@@ -276,6 +302,20 @@ export function parseLineRanges(sel: string): [LineRange, ...LineRange[]] | null
 	return merged as [LineRange, ...LineRange[]];
 }
 
+const TAIL_SELECTOR_RE = /^-(\d+)$/;
+
+/**
+ * Parse a `-N` tail selector into its line count (`:-60` → 60 last lines).
+ * Returns `null` when `sel` is not tail-shaped; throws {@link ToolError} for `-0`.
+ */
+export function parseTailCount(sel: string): number | null {
+	const match = TAIL_SELECTOR_RE.exec(sel);
+	if (!match) return null;
+	const count = Number.parseInt(match[1]!, 10);
+	if (count < 1) throw new ToolError("Tail selector -0 is invalid; use :-N with N >= 1 to read the last N lines.");
+	return count;
+}
+
 /**
  * Extract the line-range component from a read-tool selector that may also
  * carry a verbatim/index display mode (`raw`, `conflicts`) — alone or compounded
@@ -316,8 +356,9 @@ export function splitPathAndSel(rawPath: string): { path: string; sel?: string }
 	let basePath = rawPath.slice(0, colon);
 	let sel = candidate;
 
-	// Allow a compound trailing selector: `path:1-50:raw` or `path:raw:1-50`.
-	// The two chunks must be one line-range plus one `raw`, in either order.
+	// Allow a compound trailing selector: `path:1-50:raw`, `path:raw:1-50`, or
+	// `path:raw:-60`. The two chunks must be one line-range (or tail) plus one
+	// `raw`, in either order.
 	const innerColon = basePath.lastIndexOf(":");
 	if (innerColon > 0) {
 		const innerCandidate = basePath.slice(innerColon + 1);
@@ -363,13 +404,11 @@ export async function probeLiteralPathExists(filePath: string, cwd: string): Pro
 
 /**
  * Async sibling of {@link splitPathAndSel} that prefers a literal filesystem
- * path over selector interpretation. Filenames whose tail matches the selector
- * grammar (e.g. `test:1-2`, `log:raw`) are legal on POSIX; without this the
- * strict splitter peels the tail and both `read` and `grep` refuse to open the
- * real file (issue #4618). The literal wins on a confirmed `lstat`, and also
- * on `"unknown"` (`EACCES` on a parent, transient I/O), so an unreachable
- * literal is never silently reinterpreted as `path + selector`. Only a
- * definitive `ENOENT`/`ENOTDIR` falls back to the strict split.
+ * path over selector interpretation. Selector-shaped tails may be POSIX
+ * filenames or NTFS alternate data streams, so a confirmed `lstat` always
+ * preserves the literal path. Ambiguous probe errors preserve the literal on
+ * POSIX, where colon filenames are valid, but fall back to the strict split on
+ * Windows, where only a confirmed alternate data stream can be literal.
  */
 export async function splitPathAndSelPreferringLiteral(
 	rawPath: string,
@@ -378,7 +417,7 @@ export async function splitPathAndSelPreferringLiteral(
 	const strict = splitPathAndSel(rawPath);
 	if (strict.sel === undefined) return strict;
 	const probe = await probeLiteralPathExists(rawPath, cwd);
-	return probe === "missing" ? strict : { path: rawPath };
+	return probe === "exists" || (probe === "unknown" && process.platform !== "win32") ? { path: rawPath } : strict;
 }
 
 /**
@@ -399,16 +438,14 @@ export function probeLiteralPathExistsSync(filePath: string, cwd: string): "exis
 }
 
 /**
- * Synchronous sibling of {@link splitPathAndSelPreferringLiteral}. Identical
- * literal-path precedence — a real file named `report:1-20` keeps its colon —
- * for callers that cannot await, such as the ACP event mapper's location
- * builder.
+ * Synchronous sibling of {@link splitPathAndSelPreferringLiteral}. It applies
+ * the same platform-specific handling for inconclusive literal-path probes.
  */
 export function splitPathAndSelPreferringLiteralSync(rawPath: string, cwd: string): { path: string; sel?: string } {
 	const strict = splitPathAndSel(rawPath);
 	if (strict.sel === undefined) return strict;
 	const probe = probeLiteralPathExistsSync(rawPath, cwd);
-	return probe === "missing" ? strict : { path: rawPath };
+	return probe === "exists" || (probe === "unknown" && process.platform !== "win32") ? { path: rawPath } : strict;
 }
 
 /**
@@ -419,10 +456,10 @@ export function splitPathAndSelPreferringLiteralSync(rawPath: string, cwd: strin
  * grammar. That rule is right for filesystem paths (a file named `a:1-50` is
  * legal) but wrong for internal URLs, where any trailing `:<chunk>` after the
  * scheme is unambiguously a read-tool selector — even if malformed (e.g.
- * `artifact://3:raw:-100`).
+ * `artifact://3:raw:-100-5`).
  *
  * This function iteratively peels selector-shaped chunks (well-formed plus
- * common malformed shapes like `:-N`) so the rest of the read tool can pass a
+ * common malformed shapes like `:-N-M`) so the rest of the read tool can pass a
  * clean URL to the protocol handler and surface selector errors via parseSel
  * instead of as misleading "host invalid" errors from the handler. Schemes
  * whose resource URIs may legitimately contain colons (`mcp://`) are skipped.
@@ -956,13 +993,17 @@ export async function splitDelimitedPathEntry(
 		return parts?.every(options.routedUrlPredicate) ? parts : null;
 	}
 	if (isInternalUrlPath(normalizedEntry)) return null;
-	// A real POSIX file may contain the delimiter and a selector-shaped tail
+	// A real POSIX file may contain a delimiter and a selector-shaped tail
 	// (`a;b:1-2`, `a b:1-2`). Preserve the raw entry whenever the full literal
 	// resolves — or is only ambiguous — so downstream literal-preferring
-	// splitters see it before delimiter expansion peels or splits (issue #4618
-	// reviewer feedback: delimited expansion ran before the literal check).
+	// splitters see it before delimiter expansion peels or splits (issue #4618).
 	if ((await probeLiteralPathExists(normalizedEntry, cwd)) !== "missing") return null;
-	const peeledEntry = splitPathAndSel(normalizedEntry).path;
+	const selectorSplit = splitPathAndSel(normalizedEntry);
+	const peeledEntry = selectorSplit.path;
+	// A range may instead target a literal file whose name combines delimiters
+	// with glob syntax (`a;b[1].md:1-2`). Check the exact peeled path before the
+	// search splitter interprets those characters and semicolon fan-out wins.
+	if (selectorSplit.sel !== undefined && (await probeLiteralPathExists(peeledEntry, cwd)) !== "missing") return null;
 	if (!hasGlobPathChars(peeledEntry) && (await delimitedPathPartResolves(normalizedEntry, cwd, splitter))) {
 		return null;
 	}
@@ -1466,8 +1507,13 @@ export interface ToolScopeOptions {
 	localProtocolOptions?: LocalProtocolOptions;
 	/** Calling session's loaded skills — lets skill:// resolve without process-global state. */
 	skills?: readonly Skill[];
+	/** Calling session's agent-scoped applicable rules — lets rule:// resolve without process-global state. */
+	rules?: readonly Rule[];
 	/** Calling session's session file — lets history:///agent:// resolve against the caller's root. */
 	sessionFile?: string;
+	/** Calling session's stable session-manager id — binds memory:// to the caller that has no session file. */
+	sessionId?: string;
+	agentRegistry?: AgentRegistry;
 	/** Materialize readable external URLs to local text files before scope derivation. */
 	resolveExternalUrl?: (rawPath: string) => Promise<ResolvedExternalSearchUrl | undefined>;
 }
@@ -1556,8 +1602,11 @@ export async function resolveToolSearchScope(opts: ToolScopeOptions): Promise<To
 			settings: opts.settings,
 			signal: opts.signal,
 			sessionFile: opts.sessionFile,
+			sessionId: opts.sessionId,
+			agentRegistry: opts.agentRegistry,
 			localProtocolOptions: opts.localProtocolOptions,
 			skills: opts.skills,
+			rules: opts.rules,
 			// Tool-scope resolution only needs `sourcePath`; skip content
 			// materialization so large artifacts (or any handler that separates
 			// path from content) stay searchable without OOM risk.

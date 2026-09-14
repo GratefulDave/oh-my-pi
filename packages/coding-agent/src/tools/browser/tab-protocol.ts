@@ -70,6 +70,8 @@ export type WorkerInitPayload =
 			 * previously force-killed the tab). Never set for first-time Electron attach.
 			 */
 			recover?: boolean;
+			/** Restore focus emulation when recycling an OMP-owned tab, never a borrowed user tab. */
+			emulateFocus?: boolean;
 			/**
 			 * Whether the worker may raise this tab before capturing a screenshot. Unset
 			 * behaves as `true`; the supervisor clears it for browsers we did not launch.
@@ -77,6 +79,7 @@ export type WorkerInitPayload =
 			activateForScreenshot?: boolean;
 	  };
 
+/** Result of one host tool requested by browser-run JavaScript. */
 export type ToolReply = { ok: true; value: unknown } | { ok: false; error: RunErrorPayload };
 
 export type WorkerInbound =

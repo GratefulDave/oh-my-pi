@@ -20,11 +20,16 @@ export const benchHelp = {
 } satisfies CommandMetadata;
 
 export const browserRelayHelp = {
-	description: "Run the local CDP relay that lets the browser tool drive your own Chrome tabs",
+	description: "Run the local CDP relay that lets the browser prelude drive your own Chrome tabs",
 } satisfies CommandMetadata;
 
 export const cleanseHelp = {
 	description: "Detect and fix project diagnostics with weighted parallel subagents",
+} satisfies CommandMetadata;
+
+export const collabHelp = {
+	description:
+		"List active local Collab host metadata without URLs; use collab link <instanceId|pid> to retrieve a control link (--view for view-only)",
 } satisfies CommandMetadata;
 
 export const commitHelp = { description: "Generate a commit message and update changelogs" } satisfies CommandMetadata;
@@ -126,5 +131,5 @@ export const usageHelp = {
 } satisfies CommandMetadata;
 
 export const worktreeHelp = {
-	description: "List or clear agent-managed git worktrees (~/.omp/wt)",
+	description: "Add, list, or clear git worktrees (clone-first when enabled)",
 } satisfies CommandMetadata;

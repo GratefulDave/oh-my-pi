@@ -481,7 +481,7 @@ export interface ExtensionContext {
 	model: Model | undefined;
 	/** Read-only model query facade: list / current / resolve / family. */
 	models: ExtensionModelQuery;
-	/** Whether the agent is idle (not streaming) */
+	/** Whether the agent is idle (not streaming, no in-flight tools, no live child jobs) */
 	isIdle(): boolean;
 	/** Abort the current agent operation */
 	abort(): void;
@@ -489,6 +489,14 @@ export interface ExtensionContext {
 	hasPendingMessages(): boolean;
 	/** Gracefully shutdown and exit. */
 	shutdown(): void;
+	/**
+	 * Whether the current project/workspace is trusted. OMP performs no
+	 * project-trust gating — project-level settings and extensions load
+	 * unconditionally — so this always returns `true`. Exposed for
+	 * compatibility with extensions authored against upstream Pi, whose
+	 * `SettingsManager` accepts a `projectTrusted` flag.
+	 */
+	isProjectTrusted(): boolean;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string[];
 	/** Return whether OMP's native Bash minimizer owns this command's output. */
@@ -1432,16 +1440,22 @@ export interface ExtensionAPI {
 	 * `deliverAs: "nextTurn"` keeps the message hidden from the editable pending-message UI.
 	 * If `triggerTurn` is also true while the current turn is still unwinding, the session schedules
 	 * an internal continuation that consumes the message on the next turn.
+	 *
+	 * `deliverAs: "aside"` injects the message at the next agent step boundary without interrupting
+	 * the in-flight tool batch; when the session is idle it starts a turn regardless of `triggerTurn`
+	 * (plan mode folds it into context instead).
 	 */
 	sendMessage<T = unknown>(
 		message: CustomMessagePayload<T>,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" | "aside" },
 	): void;
 
-	/** Send a user prompt: idle starts a turn; streaming queues as steer unless deliverAs is set. */
+	/** Send a user prompt: idle starts a turn; streaming queues as steer unless deliverAs is set.
+	 *  `deliverAs: "aside"` injects at the next step boundary without interrupting the in-flight tool
+	 *  batch while streaming; idle still starts a turn. */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: "steer" | "followUp" | "aside" },
 	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
@@ -1658,13 +1672,17 @@ export type SendMessageHandler = <T = unknown>(
 	 * `deliverAs: "nextTurn"` queues hidden custom context for the next turn.
 	 * When paired with `triggerTurn: true` during prompt teardown, the session schedules
 	 * an internal continuation without surfacing the message in the editable pending queue.
+	 * `deliverAs: "aside"` injects at the next step boundary without interrupting the in-flight
+	 * tool batch; idle starts a turn regardless of `triggerTurn` (plan mode folds into context).
 	 */
-	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" | "aside" },
 ) => void;
 
+/** `deliverAs: "aside"` injects at the next step boundary without interrupting the in-flight tool
+ *  batch while streaming; idle still starts a turn. */
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
-	options?: { deliverAs?: "steer" | "followUp" },
+	options?: { deliverAs?: "steer" | "followUp" | "aside" },
 ) => void;
 
 export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;

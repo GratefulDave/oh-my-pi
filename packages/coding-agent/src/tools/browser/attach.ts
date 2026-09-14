@@ -1,5 +1,7 @@
 import * as net from "node:net";
+import * as path from "node:path";
 import { Process, ProcessStatus } from "@oh-my-pi/pi-natives";
+import { getBrowserProfilesDir } from "@oh-my-pi/pi-utils";
 import type { Socket } from "bun";
 import type { Browser, Page } from "puppeteer-core";
 import { ToolError, throwIfAborted } from "../tool-errors";
@@ -141,6 +143,83 @@ function findCdpPortInArgs(args: string[]): number | null {
 	return null;
 }
 
+function findUserDataDirInArgs(args: string[] | undefined): string | null {
+	if (!args) return null;
+	let result: string | null = null;
+	const inlinePrefix = "--user-data-dir=";
+	for (let index = 0; index < args.length; index++) {
+		const arg = args[index]!;
+		if (arg.startsWith(inlinePrefix)) {
+			result = arg.length > inlinePrefix.length ? arg.slice(inlinePrefix.length) : null;
+			continue;
+		}
+		if (arg !== "--user-data-dir") continue;
+		const value = args[index + 1];
+		result = value !== undefined && value.length > 0 && !value.startsWith("--") ? value : null;
+		if (result !== null) index++;
+	}
+	return result;
+}
+
+/**
+ * Executable basenames of Chromium-family browsers (release channels and
+ * vendor suffixes included), as opposed to Electron apps that also speak CDP.
+ * Matched against the basename without `.exe`.
+ */
+const CHROMIUM_BROWSER_BASENAME =
+	/^(?:google[ -]chrome|chrome|chromium|microsoft[ -]edge|msedge|brave|vivaldi|opera|thorium|ungoogled[ -]chromium)(?:[ -](?:beta|dev|canary|unstable|stable|nightly|snapshot|browser|gx|for[ -]testing))*$/i;
+const CHROMIUM_FLATPAK_IDS: Record<string, true> = {
+	"com.google.Chrome": true,
+	"org.chromium.Chromium": true,
+	"io.github.ungoogled_software.ungoogled_chromium": true,
+};
+
+/**
+ * Launch argv for a spawned executable. Chrome 136+ silently ignores
+ * `--remote-debugging-port` when the default user-data-dir is in use: the
+ * browser opens as usual, nothing listens, and attach waits out its timeout.
+ * Chromium-family browsers therefore get a stable omp-owned profile under
+ * `~/.omp/browser-profiles/<exe slug>` unless the caller already picked one.
+ * That profile is also what lets a second instance start beside the user's
+ * running default-profile browser instead of handing off to it. Electron apps
+ * are left untouched: `--user-data-dir` would relocate their app data.
+ */
+export function resolveSpawnArgs(exe: string, appArgs: string[] | undefined, cwd = process.cwd()): string[] {
+	const args = appArgs ?? [];
+	const base = path.basename(exe).replace(/\.exe$/i, "");
+	if (!CHROMIUM_BROWSER_BASENAME.test(base) && !Object.hasOwn(CHROMIUM_FLATPAK_IDS, base)) return args;
+	const requestedProfile = findUserDataDirInArgs(args);
+	if (requestedProfile !== null) {
+		// Chromium accepts switch values as --name=value, not a separate argv
+		// item. Canonicalize both spellings so reuse and process launch agree.
+		const launchArgs: string[] = [];
+		for (let index = 0; index < args.length; index++) {
+			const arg = args[index]!;
+			if (arg === "--user-data-dir") {
+				if (args[index + 1] && !args[index + 1]!.startsWith("--")) index++;
+			} else if (!arg.startsWith("--user-data-dir=")) {
+				launchArgs.push(arg);
+			}
+		}
+		launchArgs.push(`--user-data-dir=${path.resolve(cwd, requestedProfile)}`);
+		return launchArgs;
+	}
+	const slug = base.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+	const hash = Bun.hash.wyhash(exe).toString(16).padStart(16, "0");
+	const launchArgs = [...args];
+	// A fresh profile otherwise opens the welcome tour and default-browser
+	// prompt as extra page targets, which attach may adopt instead of ours.
+	if (!args.includes("--no-first-run")) launchArgs.push("--no-first-run");
+	if (!args.includes("--no-default-browser-check")) launchArgs.push("--no-default-browser-check");
+	launchArgs.push(`--user-data-dir=${path.join(getBrowserProfilesDir(), `${slug}-${hash}`)}`);
+	return launchArgs;
+}
+
+function normalizeUserDataDir(userDataDir: string): string {
+	const normalized = path.resolve(userDataDir);
+	return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
 /** One-shot probe: returns true when `/json/version` answers 200 within the timeout. */
 async function probeCdpAt(port: number, signal?: AbortSignal): Promise<boolean> {
 	const status = await probeCdpStatus(`http://127.0.0.1:${port}/json/version`, { timeoutMs: 1500, signal });
@@ -148,27 +227,63 @@ async function probeCdpAt(port: number, signal?: AbortSignal): Promise<boolean> 
 }
 
 /**
- * If any running instance of `exe` was launched with `--remote-debugging-port`
- * and that endpoint actually answers, return it so attach can reuse it instead
- * of killing and respawning. Idempotent re-attaches are the common case.
+ * Return a reusable CDP endpoint for `exe`, or null when no instance is
+ * running. Refuse to replace an occupied instance unless the caller can
+ * launch an isolated profile.
  */
 export async function findReusableCdp(
 	exe: string,
-	signal?: AbortSignal,
+	options: { signal?: AbortSignal; appArgs?: string[] } = {},
 ): Promise<{ cdpUrl: string; pid: number } | null> {
-	const candidates = Process.fromPath(exe).filter(p => p.status() === ProcessStatus.Running);
-	for (const proc of candidates) {
+	const requestedUserDataDir = findUserDataDirInArgs(options.appArgs);
+	const normalizedRequestedUserDataDir =
+		requestedUserDataDir !== null && path.isAbsolute(requestedUserDataDir)
+			? normalizeUserDataDir(requestedUserDataDir)
+			: null;
+	const candidates = Process.fromPath(exe).filter(process => process.status() === ProcessStatus.Running);
+	const candidateArgs: string[][] = [];
+	let hasUnreadableCandidate = false;
+	for (const process of candidates) {
 		let args: string[];
 		try {
-			args = proc.args();
+			args = process.args();
 		} catch {
+			hasUnreadableCandidate = true;
+			continue;
+		}
+		candidateArgs.push(args);
+		const candidateProfile = findUserDataDirInArgs(args);
+		if (
+			requestedUserDataDir !== null &&
+			(normalizedRequestedUserDataDir === null ||
+				candidateProfile === null ||
+				!path.isAbsolute(candidateProfile) ||
+				normalizeUserDataDir(candidateProfile) !== normalizedRequestedUserDataDir)
+		) {
 			continue;
 		}
 		const port = findCdpPortInArgs(args);
 		if (port === null) continue;
-		if (await probeCdpAt(port, signal)) {
-			return { cdpUrl: `http://127.0.0.1:${port}`, pid: proc.pid };
+		if (await probeCdpAt(port, options.signal)) {
+			return { cdpUrl: `http://127.0.0.1:${port}`, pid: process.pid };
 		}
+	}
+	const canLaunchIsolatedProfile =
+		normalizedRequestedUserDataDir !== null &&
+		!hasUnreadableCandidate &&
+		candidateArgs.every(args => {
+			const existingUserDataDir = findUserDataDirInArgs(args);
+			return (
+				existingUserDataDir === null ||
+				(path.isAbsolute(existingUserDataDir) &&
+					normalizeUserDataDir(existingUserDataDir) !== normalizedRequestedUserDataDir)
+			);
+		});
+	if (!canLaunchIsolatedProfile && candidates.length > 0) {
+		const name = path.basename(exe);
+		throw new ToolError(
+			`Cannot launch ${name} because it is already running without a reusable CDP endpoint. Close ${name}, relaunch it with --remote-debugging-port, or pass app.cdp_url for an existing endpoint.`,
+		);
 	}
 	return null;
 }
@@ -255,20 +370,4 @@ export async function gracefulKillTreeOnce(pid: number, gracePeriodMs = 2000): P
 	const process = Process.fromPid(pid);
 	if (!process) return;
 	await process.terminate({ gracefulMs: gracePeriodMs, timeoutMs: 500 });
-}
-
-/**
- * Multi-process variant for attach: find every PID running `executablePath`
- * (single-instance apps may keep an orphan around) and tear them all down.
- */
-export async function killExistingByPath(executablePath: string, signal?: AbortSignal): Promise<number> {
-	const processes = Process.fromPath(executablePath);
-	if (!processes.length) return 0;
-	const results = await Promise.all(
-		processes.map(async process => {
-			throwIfAborted(signal);
-			return await process.terminate({ gracefulMs: 3000, timeoutMs: 1000 });
-		}),
-	);
-	return results.length;
 }

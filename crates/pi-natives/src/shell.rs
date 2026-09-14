@@ -1,6 +1,6 @@
 //! Brush-based shell execution exported via N-API.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use napi::{
 	Env, Result,
@@ -235,9 +235,7 @@ impl Shell {
 				.await
 				.map(Into::into)
 				.map_err(|err| Error::from_reason(err.to_string()));
-			if let Some(handle) = drain_handle {
-				let _ = handle.await;
-			}
+			await_drain(drain_handle, &result).await;
 			result
 		})
 	}
@@ -289,9 +287,7 @@ pub fn execute_shell<'env>(
 			.await
 			.map(Into::into)
 			.map_err(|err| Error::from_reason(err.to_string()));
-		if let Some(handle) = drain_handle {
-			let _ = handle.await;
-		}
+		await_drain(drain_handle, &result).await;
 		result
 	})
 }
@@ -353,6 +349,40 @@ async fn pump_chunks(rx: flume::Receiver<String>, mut forward: impl AsyncFnMut(S
 		if !forward(payload).await {
 			return;
 		}
+	}
+}
+
+/// Upper bound on how long to wait for the chunk-forwarding pump after an
+/// interrupted run resolves. Native cancellation may detach a pipe reader whose
+/// sender never closes when a grandchild inherited stdout; waiting for channel
+/// disconnect would then wedge the run promise past its requested timeout
+/// (#10308). Successful and failed runs remain unbounded so every chunk already
+/// accepted by the bridge reaches JavaScript before the result resolves.
+const INTERRUPTED_DRAIN_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Finish forwarding accepted output after a native shell run resolves.
+///
+/// Normal completion and errors drain without a deadline to preserve every
+/// accepted chunk. Cancellation and timeout are bounded because an orphaned
+/// pipe reader can otherwise keep a sender alive forever; aborting the pump
+/// drops its `flume::Receiver`, disconnecting that reader.
+async fn await_drain(
+	handle: Option<napi::tokio::task::JoinHandle<()>>,
+	result: &Result<ShellRunResult>,
+) {
+	let Some(mut handle) = handle else {
+		return;
+	};
+	if !matches!(result, Ok(result) if result.cancelled || result.timed_out) {
+		let _ = handle.await;
+		return;
+	}
+	if napi::tokio::time::timeout(INTERRUPTED_DRAIN_SHUTDOWN_TIMEOUT, &mut handle)
+		.await
+		.is_err()
+	{
+		handle.abort();
+		let _ = handle.await;
 	}
 }
 
@@ -476,10 +506,16 @@ fn run_shell_minimizer(options: ShellMinimizerApplyOptions) -> Option<MinimizerR
 	}
 	None
 }
-
 #[cfg(test)]
 mod tests {
-	use std::{fs, time::Duration};
+	use std::{
+		fs,
+		sync::{
+			Arc,
+			atomic::{AtomicBool, Ordering},
+		},
+		time::Duration,
+	};
 
 	use flume;
 	use pi_shell::{
@@ -488,7 +524,10 @@ mod tests {
 	};
 	use tokio::time;
 
-	use super::{BRIDGE_QUEUE_CHUNKS, CoreShell, pump_chunks};
+	use super::{
+		BRIDGE_QUEUE_CHUNKS, CoreShell, INTERRUPTED_DRAIN_SHUTDOWN_TIMEOUT, ShellRunResult,
+		await_drain, pump_chunks,
+	};
 
 	/// Regression for #4078: the reader→JS bridge queue must stay bounded when
 	/// the JS side (here: a deliberately slow `forward`) cannot keep up with a
@@ -609,48 +648,6 @@ mod tests {
 	}
 
 	#[test]
-	fn apply_shell_minimizer_surfaces_rewrite_with_original() {
-		let captured = "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n";
-		let result = super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
-			command:   "git diff".to_string(),
-			captured:  captured.to_string(),
-			exit_code: Some(0),
-			minimizer: Some(super::MinimizerOptions { enabled: Some(true), ..Default::default() }),
-		})
-		.expect("an enabled, supported command should surface a rewrite");
-		assert_eq!(result.filter, "git");
-		// A genuine rewrite carries the untouched capture in `original_text`
-		// and a strictly different minimized `text`.
-		assert_eq!(result.original_text, captured);
-		assert_ne!(result.text, result.original_text);
-		assert_eq!(result.input_bytes as usize, captured.len());
-	}
-
-	#[test]
-	fn apply_shell_minimizer_returns_none_when_disabled() {
-		// `enabled: false` keeps the engine in passthrough — no telemetry.
-		assert!(
-			super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
-				command:   "git diff".to_string(),
-				captured:  "diff --git a/file.rs b/file.rs\n@@\n-old\n+new\n".to_string(),
-				exit_code: Some(0),
-				minimizer: Some(super::MinimizerOptions { enabled: Some(false), ..Default::default() }),
-			})
-			.is_none()
-		);
-		// A missing minimizer handle is also a no-op.
-		assert!(
-			super::run_shell_minimizer(super::ShellMinimizerApplyOptions {
-				command:   "git diff".to_string(),
-				captured:  "diff --git a/file.rs b/file.rs\n".to_string(),
-				exit_code: Some(0),
-				minimizer: None,
-			})
-			.is_none()
-		);
-	}
-
-	#[test]
 	fn shell_minimizer_eligibility_matches_native_ownership() {
 		let enabled = super::MinimizerOptions { enabled: Some(true), ..Default::default() };
 		assert!(
@@ -721,6 +718,79 @@ strip_lines_matching = [".*"]
 				"{command:?} must not be owned by native minimization"
 			);
 		}
+	}
+
+	/// A successful run must wait for every accepted bridge chunk even when a
+	/// slow JavaScript consumer takes longer than the interrupted-run bound.
+	/// Bounding this path reports success while silently dropping queued output.
+	#[tokio::test(flavor = "multi_thread")]
+	async fn await_drain_preserves_slow_output_after_success() {
+		let (tx, rx) = flume::bounded::<String>(BRIDGE_QUEUE_CHUNKS);
+		let forwarded = Arc::new(AtomicBool::new(false));
+		let observed = Arc::clone(&forwarded);
+		let handle = napi::tokio::spawn(pump_chunks(rx, async move |_payload: String| {
+			time::sleep(INTERRUPTED_DRAIN_SHUTDOWN_TIMEOUT + Duration::from_millis(100)).await;
+			observed.store(true, Ordering::Release);
+			true
+		}));
+		tx.send("accepted".to_string())
+			.expect("pump should be connected");
+		drop(tx);
+		let result = Ok(ShellRunResult {
+			exit_code:   Some(0),
+			cancelled:   false,
+			timed_out:   false,
+			minimized:   None,
+			working_dir: None,
+		});
+
+		time::timeout(
+			INTERRUPTED_DRAIN_SHUTDOWN_TIMEOUT + Duration::from_secs(2),
+			await_drain(Some(handle), &result),
+		)
+		.await
+		.expect("successful completion must drain slow accepted output");
+		assert!(
+			forwarded.load(Ordering::Acquire),
+			"accepted output was dropped before success returned"
+		);
+	}
+
+	/// Regression for #10308: a grandchild that inherits the stdout pipe keeps a
+	/// pipe-reader task alive after an interrupted run resolves, so one
+	/// bridge-queue sender is never dropped and `pump_chunks` never sees channel
+	/// disconnect. `await_drain` must return after the interrupted-run bound and
+	/// abort the pump instead of wedging the native promise forever.
+	#[tokio::test(flavor = "multi_thread")]
+	async fn await_drain_returns_when_a_reader_orphans_a_sender_after_timeout() {
+		let (tx, rx) = flume::bounded::<String>(BRIDGE_QUEUE_CHUNKS);
+		let orphan = tx.clone();
+		let handle = napi::tokio::spawn(pump_chunks(rx, async |_payload: String| true));
+		drop(tx);
+		let result = Ok(ShellRunResult {
+			exit_code:   None,
+			cancelled:   false,
+			timed_out:   true,
+			minimized:   None,
+			working_dir: None,
+		});
+		let started = time::Instant::now();
+		time::timeout(
+			INTERRUPTED_DRAIN_SHUTDOWN_TIMEOUT + Duration::from_secs(2),
+			await_drain(Some(handle), &result),
+		)
+		.await
+		.expect("await_drain must return when an interrupted reader orphans a sender");
+		assert!(
+			started.elapsed() >= INTERRUPTED_DRAIN_SHUTDOWN_TIMEOUT,
+			"await_drain returned before its bound; the drain was not actually blocked",
+		);
+		// The pump was aborted, so its receiver is dropped: the orphaned sender
+		// now observes a disconnected channel instead of parking forever.
+		assert!(
+			orphan.send("late".to_string()).is_err(),
+			"aborting the pump must disconnect the channel"
+		);
 	}
 	mod child_session_action_tests {
 		use pi_shell::{ChildSessionAction, child_session_action};

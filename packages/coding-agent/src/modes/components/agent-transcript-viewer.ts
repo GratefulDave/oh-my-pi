@@ -23,17 +23,19 @@ import type { AgentLifecycleManager } from "../../registry/agent-lifecycle";
 import type { AgentRegistry, AgentStatus } from "../../registry/agent-registry";
 import type { FileEntry, SessionMessageEntry } from "../../session/session-entries";
 import { parseSessionEntries } from "../../session/session-loader";
-import { replaceTabs, shortenPath, truncateToWidth } from "../../tools/render-utils";
 import type { ObservableSession, SessionObserverRegistry } from "../session-observer-registry";
 import { getEditorTheme, theme } from "../theme/theme";
 import { matchesSelectDown, matchesSelectUp } from "../utils/keybinding-matchers";
 import type { AgentHubRemote } from "./agent-hub";
 import { ChatTranscriptBuilder } from "./chat-transcript-builder";
 import { DynamicBorder } from "./dynamic-border";
+import { sanitizeErrorLine } from "./error-block";
 import { formatContextUsage } from "./status-line/context-thresholds";
 
 export interface AgentTranscriptViewerDeps {
 	agentId: string;
+	/** Persisted entry to reveal on first paint when opened from an activity row. */
+	initialEntryId?: string;
 	registry: AgentRegistry;
 	/** Collab guest: read transcript from the host instead of a local file. */
 	remote?: AgentHubRemote;
@@ -63,18 +65,6 @@ export interface AgentTranscriptViewerDeps {
 const POLL_MS = 250;
 
 const SENTINEL_BYTES = 4096;
-
-/** Sanitize wire-delivered error text for a single TUI row: tabs → spaces,
- *  newlines collapsed, absolute paths shortened, truncated to `maxWidth`.
- *  `#remoteError` arrives as `String(err)` from the host — it can carry
- *  multi-line stacks and absolute host paths that would break the frame's
- *  1-row accounting and leak host filesystem layout to guests. */
-function sanitizeErrorLine(text: string, maxWidth: number): string {
-	const singleLine = replaceTabs(text)
-		.replace(/[\r\n]+/g, " ")
-		.replace(/\/[^\s'")\]]+/g, p => shortenPath(p));
-	return truncateToWidth(singleLine, Math.max(10, maxWidth));
-}
 
 interface LocalTranscriptSentinel {
 	offset: number;
@@ -158,8 +148,10 @@ export class AgentTranscriptViewer implements Component {
 	#model: string | undefined;
 	#pollTimer: NodeJS.Timeout | undefined;
 	#disposed = false;
+	#initialEntryId: string | undefined;
 
 	constructor(private readonly deps: AgentTranscriptViewerDeps) {
+		this.#initialEntryId = deps.initialEntryId;
 		this.#builder = new ChatTranscriptBuilder({
 			ui: deps.ui,
 			getTool: deps.getTool,
@@ -580,7 +572,16 @@ export class AgentTranscriptViewer implements Component {
 			: this.#builder.container.render(contentWidth);
 		this.#scrollView.setLines(contentLines);
 		this.#scrollView.setHeight(viewportHeight);
-		if (this.#followBottom) this.#scrollView.scrollToBottom();
+		if (this.#initialEntryId) {
+			const targetRow = this.#builder.rowForEntry(this.#initialEntryId);
+			if (targetRow !== undefined) {
+				this.#followBottom = false;
+				this.#scrollView.setScrollOffset(Math.max(0, targetRow - 1));
+				this.#initialEntryId = undefined;
+			}
+		} else if (this.#followBottom) {
+			this.#scrollView.scrollToBottom();
+		}
 
 		const lines: string[] = [];
 		lines.push(...new DynamicBorder().render(width));

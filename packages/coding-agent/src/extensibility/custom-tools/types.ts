@@ -89,7 +89,7 @@ export interface CustomToolContext {
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined if no model is selected yet) */
 	model: Model | undefined;
-	/** Whether the agent is idle (not streaming) */
+	/** Whether the agent is idle (not streaming, no in-flight tools, no live child jobs) */
 	isIdle(): boolean;
 	/** Whether there are queued messages waiting to be processed */
 	hasQueuedMessages(): boolean;

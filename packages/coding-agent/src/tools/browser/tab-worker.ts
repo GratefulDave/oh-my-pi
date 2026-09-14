@@ -250,10 +250,7 @@ interface TabApi {
 	scroll(deltaX: number, deltaY: number): Promise<void>;
 	drag(from: DragTarget, to: DragTarget): Promise<void>;
 	waitFor(selector: string, opts?: { timeout?: number }): Promise<ActionableHandle>;
-	evaluate<TResult, TArgs extends unknown[]>(
-		fn: string | ((...args: TArgs) => TResult | Promise<TResult>),
-		...args: TArgs
-	): Promise<TResult>;
+	evaluate<R, TArgs extends unknown[]>(fn: string | ((...args: TArgs) => R | Promise<R>), ...args: TArgs): Promise<R>;
 	scrollIntoView(selector: string): Promise<void>;
 	select(selector: string, ...values: string[]): Promise<string[]>;
 	uploadFile(selector: string, ...filePaths: string[]): Promise<void>;
@@ -1108,6 +1105,12 @@ export class WorkerCore {
 				await this.#claimRelayTarget(page);
 				this.#observeDialogs();
 				if (payload.dialogs) this.#applyDialogPolicy(payload.dialogs);
+			}
+			if (payload.mode === "headless" || payload.emulateFocus) {
+				// Background Chromium tabs stop producing frames, stalling rAF,
+				// IntersectionObserver, and input acknowledgements. Keep owned tabs
+				// interactive without raising a window; explicit settle-freeze still applies.
+				await this.#page.emulateFocusedPage(true);
 			}
 			if (payload.url) {
 				await this.#page.goto(payload.url, {

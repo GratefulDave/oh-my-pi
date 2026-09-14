@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import * as path from "node:path";
 import { nativeLibraryPathOverlay } from "@oh-my-pi/pi-coding-agent/subprocess/worker-client";
 import { tinyWorkerEnvOverlay } from "@oh-my-pi/pi-coding-agent/tiny/title-client";
+import { tinyWorkerEndpoint, tinyWorkerLogPath } from "@oh-my-pi/pi-coding-agent/tiny/title-protocol";
 
 describe("tinyWorkerEnvOverlay", () => {
 	it("maps non-default settings onto the worker env vars when neither is already set", () => {
@@ -11,8 +13,14 @@ describe("tinyWorkerEnvOverlay", () => {
 	});
 
 	it("lets a present env var win over the persisted setting", () => {
-		expect(tinyWorkerEnvOverlay({ PI_TINY_DEVICE: "cpu" }, "cuda", "fp16")).toEqual({ PI_TINY_DTYPE: "fp16" });
-		expect(tinyWorkerEnvOverlay({ PI_TINY_DTYPE: "q8" }, "cuda", "fp16")).toEqual({ PI_TINY_DEVICE: "cuda" });
+		expect(tinyWorkerEnvOverlay({ PI_TINY_DEVICE: "cpu" }, "cuda", "fp16")).toEqual({
+			PI_TINY_DEVICE: "cpu",
+			PI_TINY_DTYPE: "fp16",
+		});
+		expect(tinyWorkerEnvOverlay({ PI_TINY_DTYPE: "q8" }, "cuda", "fp16")).toEqual({
+			PI_TINY_DEVICE: "cuda",
+			PI_TINY_DTYPE: "q8",
+		});
 	});
 
 	it("omits a var when its setting is the default sentinel or unset", () => {
@@ -46,5 +54,27 @@ describe("nativeLibraryPathOverlay", () => {
 	it("stays out of the env on Linux when no dirs are advertised", () => {
 		expect(nativeLibraryPathOverlay({ LD_LIBRARY_PATH: "/inherited" }, "linux")).toEqual({});
 		expect(nativeLibraryPathOverlay({ OMP_NATIVE_LIBRARY_PATH: "" }, "linux")).toEqual({});
+	});
+});
+
+describe("tinyWorkerLogPath", () => {
+	// Regression: the log used to be `${endpoint}.log`, which on Windows turns
+	// the named-pipe endpoint (`\\.\pipe\omp-tiny-…`) into an unopenable file
+	// path and crashed `--smoke-test` with ENOENT.
+	it("stays under the runtime directory instead of deriving from the endpoint", () => {
+		const runtimeDir = "/runtime";
+		const logPath = tinyWorkerLogPath(runtimeDir, "lfm2.5-230m", "onnx");
+		// `path.join` is platform-native, so assert containment through
+		// `path.relative` rather than assuming the host's separator: on Windows
+		// the same call yields `\runtime\<name>.log`.
+		const relativeToRuntime = path.relative(runtimeDir, logPath);
+		expect(path.isAbsolute(relativeToRuntime)).toBe(false);
+		expect(relativeToRuntime.startsWith("..")).toBe(false);
+		expect(logPath.endsWith(".log")).toBe(true);
+		expect(logPath.includes(".sock")).toBe(false);
+		if (process.platform === "win32") {
+			expect(tinyWorkerEndpoint("/runtime", "lfm2.5-230m", "onnx").startsWith("\\\\.\\pipe\\")).toBe(true);
+			expect(logPath.startsWith("\\\\.\\pipe\\")).toBe(false);
+		}
 	});
 });

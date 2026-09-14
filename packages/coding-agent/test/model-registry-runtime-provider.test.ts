@@ -22,6 +22,7 @@ describe("ModelRegistry runtime provider registration", () => {
 	let modelsJsonPath: string;
 	let authStorage: AuthStorage;
 	let registry: ModelRegistry;
+	let fetchRequests: string[];
 
 	const sourceIds = ["ext://atomic", "ext://runtime", "ext://oauth"];
 
@@ -29,9 +30,13 @@ describe("ModelRegistry runtime provider registration", () => {
 	// online discovery path with deterministic, instant failures instead of real
 	// network. Provider fetches (dynamic + stencil.so) are caught and swallowed,
 	// leaving the registry with its bundled catalog plus runtime overlays.
-	const offlineFetch: FetchImpl = () => Promise.reject(new Error("network disabled in model-registry runtime test"));
+	const offlineFetch: FetchImpl = input => {
+		fetchRequests.push(String(input));
+		return Promise.reject(new Error("network disabled in model-registry runtime test"));
+	};
 
 	beforeEach(async () => {
+		fetchRequests = [];
 		tempDir = path.join(os.tmpdir(), `pi-test-model-registry-runtime-${Snowflake.next()}`);
 		fs.mkdirSync(tempDir, { recursive: true });
 		modelsJsonPath = path.join(tempDir, "models.json");
@@ -118,6 +123,18 @@ describe("ModelRegistry runtime provider registration", () => {
 		expect(registry.find(providerName, modelId)?.baseUrl).toBe(baseUrl);
 		expect(registry.find(providerName, modelId)?.headers?.[headerName]).toBe(headerValue);
 	}
+
+	test("does not discover ClinePass without credentials", async () => {
+		const peek = vi.spyOn(authStorage, "peekApiKey").mockResolvedValue(undefined);
+		try {
+			await registry.refresh("online");
+		} finally {
+			peek.mockRestore();
+		}
+
+		expect(fetchRequests).not.toContain("https://api.cline.bot/api/v1/ai/cline/recommended-models");
+		expect(registry.find("cline-pass", "kimi-k3")).toBeDefined();
+	});
 
 	test("validates provider config before mutating custom API state", () => {
 		const beforeAnthropicCount = registry.getAll().filter(model => model.provider === "anthropic").length;
@@ -213,7 +230,7 @@ describe("ModelRegistry runtime provider registration", () => {
 		modelHeaders["X-Model-Turn-ID"] = "model-turn-2";
 
 		const model = registry.find("runtime-provider", "runtime-model");
-		expect({ ...(model?.headers ?? {}) }).toEqual({
+		expect({ ...model?.headers }).toEqual({
 			"X-Request-ID": "request-2",
 			"X-Turn-ID": "turn-2",
 			"X-Message-ID": "message-2",
@@ -1361,5 +1378,51 @@ describe("ModelRegistry runtime provider registration", () => {
 		} finally {
 			warn.mockRestore();
 		}
+	});
+
+	test("resolves a configured provider base URL before any model is discovered", () => {
+		// `omp usage` constructs a registry and probes credentials immediately, so
+		// a discovery-only provider (no bundled rows) has no model to read a URL
+		// from yet. Deriving solely from discovered models returned `undefined`
+		// here, and the usage probe then sent a proxy-scoped key to the
+		// provider's canonical host.
+		const providerName = "charm-hyper";
+		fs.writeFileSync(
+			modelsJsonPath,
+			JSON.stringify({ providers: { [providerName]: { baseUrl: "https://gateway.internal" } } }),
+		);
+		const configured = new ModelRegistry(authStorage, modelsJsonPath, { fetch: offlineFetch });
+
+		// Cache-cold by construction: this provider bundles no rows.
+		expect(configured.getAll().some(model => model.provider === providerName)).toBe(false);
+		expect(configured.getProviderBaseUrl(providerName)).toBe("https://gateway.internal");
+	});
+
+	test("prefers a configured provider base URL over a model-level one", () => {
+		// The other half of the precedence contract, and the half a green suite
+		// cannot prove: every other `getProviderBaseUrl` caller in these tests
+		// stubs the method. `getProviderHeaders` is documented as provider-level
+		// "without including per-model overrides", so a provider-scoped accessor
+		// must not answer with some model's own baseUrl.
+		const providerName = "charm-hyper";
+		fs.writeFileSync(
+			modelsJsonPath,
+			JSON.stringify({
+				providers: {
+					[providerName]: {
+						baseUrl: "https://gateway.internal",
+						api: "openai-completions",
+						auth: "none",
+						models: [{ ...baseModel, id: "glm-5.3", baseUrl: "https://model-level.example/v1" }],
+					},
+				},
+			}),
+		);
+		const configured = new ModelRegistry(authStorage, modelsJsonPath, { fetch: offlineFetch });
+
+		// The model really does carry a different baseUrl, so this is a genuine
+		// conflict rather than a vacuous assertion.
+		expect(configured.find(providerName, "glm-5.3")?.baseUrl).toBe("https://model-level.example/v1");
+		expect(configured.getProviderBaseUrl(providerName)).toBe("https://gateway.internal");
 	});
 });

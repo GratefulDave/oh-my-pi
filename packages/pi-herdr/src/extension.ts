@@ -200,19 +200,6 @@ interface HerdrControlResult {
 	details: Record<string, unknown>;
 }
 
-interface SubagentLifecycleEvent {
-	id?: string;
-	status?: "started" | "completed" | "failed" | "aborted";
-}
-
-function isSubagentLifecycleEvent(value: unknown): value is SubagentLifecycleEvent {
-	return typeof value === "object" && value !== null;
-}
-
-export function herdrActivityState(mainActive: boolean, activeSubagentCount: number): "working" | "idle" {
-	return mainActive || activeSubagentCount > 0 ? "working" : "idle";
-}
-
 let state: HerdrState = { available: false, reason: HERDR_UNAVAILABLE_REASON };
 
 export default function herdrExtension(pi: ExtensionAPI): void {
@@ -227,116 +214,17 @@ export function createHerdrExtension(pi: ExtensionAPI, options: HerdrExtensionOp
 	const requireAvailable = async (): Promise<HerdrIdentity> => requireHerdr(getState);
 	const aliases = new Map<string, ManagedPane>();
 	const aliasOrder: string[] = [];
-	const activeSubagents = new Set<string>();
-	let currentSessionContext: ExtensionContext | undefined;
-	let reporterActive = false;
-	let activitySequence = Date.now();
-	let activityReporterEpoch = 0;
-	let activityInFlight = false;
-	let activityRetryTimer: NodeJS.Timeout | undefined;
-	let desiredActivity: { state: "working" | "idle"; retries: number } | undefined;
-
-	const clearActivityRetry = (): void => {
-		if (activityRetryTimer !== undefined) {
-			clearTimeout(activityRetryTimer);
-			activityRetryTimer = undefined;
-		}
-	};
-
-	const isCurrentReporter = (epoch: number): boolean =>
-		reporterActive && epoch === activityReporterEpoch && state.available && state.identity !== undefined;
-
-	const flushActivity = async (): Promise<void> => {
-		if (activityInFlight || !desiredActivity || !reporterActive || !state.available || !state.identity) return;
-
-		const report = desiredActivity;
-		const identity = state.identity;
-		const epoch = activityReporterEpoch;
-		activityInFlight = true;
-
-		try {
-			await request(identity, "pane.report_agent", {
-				pane_id: identity.paneId,
-				source: "herdr:omp",
-				agent: "omp",
-				state: report.state,
-				seq: ++activitySequence,
-			});
-		} catch {
-			if (isCurrentReporter(epoch) && desiredActivity === report) {
-				if (report.retries < 2) {
-					report.retries += 1;
-					activityRetryTimer = setTimeout(() => {
-						activityRetryTimer = undefined;
-						void flushActivity();
-					}, 50);
-					return;
-				}
-				desiredActivity = undefined;
-			}
-		} finally {
-			activityInFlight = false;
-		}
-
-		if (!isCurrentReporter(epoch)) {
-			if (reporterActive && desiredActivity) void flushActivity();
-			return;
-		}
-		if (desiredActivity === report) desiredActivity = undefined;
-		if (desiredActivity) void flushActivity();
-	};
-
-	const reportActivity = (): void => {
-		if (!reporterActive || !state.available || !state.identity) return;
-
-		desiredActivity = {
-			state: herdrActivityState(currentSessionContext?.isIdle() === false, activeSubagents.size),
-			retries: 0,
-		};
-		clearActivityRetry();
-		void flushActivity();
-	};
-
-	const prepareActivityReporter = async (ctx: ExtensionContext): Promise<void> => {
-		const activationEpoch = ++activityReporterEpoch;
-		reporterActive = false;
-		currentSessionContext = undefined;
-		desiredActivity = undefined;
-		activeSubagents.clear();
-		clearActivityRetry();
-
+	const activateSession = async (ctx: ExtensionContext): Promise<void> => {
 		reconstructAliases(ctx, aliases, aliasOrder);
 		await refreshHerdrActivation(pi, ctx, getState);
-		if (activationEpoch !== activityReporterEpoch) return;
-
-		currentSessionContext = ctx;
-		reporterActive = ctx.hasUI === true;
-		reportActivity();
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
-		await prepareActivityReporter(ctx);
+		await activateSession(ctx);
 	});
 
 	pi.on("session_switch", async (_event, ctx) => {
-		await prepareActivityReporter(ctx);
-	});
-
-	pi.on("agent_start", () => {
-		reportActivity();
-	});
-
-	pi.on("agent_end", () => {
-		reportActivity();
-	});
-
-	pi.events.on("task:subagent:lifecycle", event => {
-		if (!reporterActive || !isSubagentLifecycleEvent(event) || typeof event.id !== "string") return;
-		if (event.status === "started") activeSubagents.add(event.id);
-		else if (event.status === "completed" || event.status === "failed" || event.status === "aborted")
-			activeSubagents.delete(event.id);
-		else return;
-		reportActivity();
+		await activateSession(ctx);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {

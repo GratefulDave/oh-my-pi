@@ -106,11 +106,12 @@ import { createPersistedSubagentReviverFactory } from "./task/persisted-revive";
 import { createTelemetryExportConfig, initTelemetryExport, isTelemetryExportEnabled } from "./telemetry-export";
 import { concreteThinkingLevel, parseConfiguredThinkingLevel } from "./thinking";
 import type { LspStartupServerInfo } from "./tools";
+import { sanitizeDisplayWarnings } from "./tools/render-utils";
 import { getChangelogPath, resolveStartupChangelogForDisplay, type StartupChangelogSelection } from "./utils/changelog";
 import { EventBus } from "./utils/event-bus";
 
 type RunAcpMode = (createSession: AcpSessionFactory) => Promise<never>;
-type RunPrintMode = (session: AgentSession, options: PrintModeOptions) => Promise<void>;
+type RunPrintMode = (session: AgentSession, options: PrintModeOptions) => Promise<number>;
 type RunRpcMode = (
 	session: AgentSession,
 	setToolUIContext?: (uiContext: ExtensionUIContext, hasUI: boolean) => void,
@@ -155,7 +156,10 @@ async function checkForNewVersion(currentVersion: string): Promise<string | unde
 // Todo settings are caller-controlled in protocol modes. Do not host-default them:
 // embedders need project-level opt-outs for reminder/prelude prompt injection.
 const HOST_DEFAULTED_SETTING_PATHS: SettingPath[] = [
-	"task.isolation.mode",
+	"task.isolation.enabled",
+	"isolation.backend",
+	"worktree.clone",
+	"worktree.cleanSource",
 	"task.isolation.apply",
 	"task.isolation.merge",
 	"task.isolation.commits",
@@ -165,6 +169,7 @@ const HOST_DEFAULTED_SETTING_PATHS: SettingPath[] = [
 	"task.maxRecursionDepth",
 	"task.disabledAgents",
 	"task.agentModelOverrides",
+	"task.agentServiceTierOverrides",
 	"task.agentPrewalk",
 	"task.agentAdvisor",
 	// Memory subsystems are off-by-default for RPC/ACP hosts; embedders that want
@@ -177,6 +182,7 @@ const HOST_DEFAULTED_SETTING_PATHS: SettingPath[] = [
 	"advisor.enabled",
 	"advisor.syncBacklog",
 	"advisor.immuneTurns",
+	"advisor.maxNotesPerUpdate",
 	"tier.advisor",
 ];
 
@@ -320,7 +326,8 @@ export async function submitInteractiveInput(
 	mode: Pick<
 		InteractiveMode,
 		"markPendingSubmissionStarted" | "finishPendingSubmission" | "showError" | "checkShutdownRequested"
-	>,
+	> &
+		Partial<Pick<InteractiveMode, "loopPrompt" | "pauseLoop">>,
 	session: Pick<AgentSession, "prompt" | "promptCustomMessage" | "isStreaming">,
 	input: SubmittedUserInput,
 ): Promise<void> {
@@ -369,7 +376,18 @@ export async function submitInteractiveInput(
 				userInitiated: input.userInitiated,
 			});
 		} else {
-			await session.prompt(input.text, { images: input.images, streamingBehavior });
+			let forwarded = false;
+			try {
+				forwarded = await session.prompt(input.text, { images: input.images, streamingBehavior });
+			} catch (error: unknown) {
+				mode.showError(error instanceof Error ? error.message : "Unknown error occurred");
+			}
+			// Dispatch consumed the body locally (void custom command) or rejected
+			// instead of starting a turn: when it is the armed loop body, park the
+			// loop rather than resubmitting a failed or local-only body after
+			// every yield. A failed body degrades to idle like any other
+			// submission failure instead of error-looping.
+			if (!forwarded && mode.loopPrompt === input.text) mode.pauseLoop?.();
 		}
 	} catch (error: unknown) {
 		const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
@@ -563,67 +581,93 @@ async function runInteractiveMode(
 			mode.init({
 				suppressWelcomeIntro: resuming || setupScenes.length > 0 || playStartupSplash,
 				clearInitialTerminalHistory: true,
+				autoStartCollab: joinLink === undefined,
 				recentSessions: startupLease?.recentSessions,
 			}),
 		);
 		void startBackgroundModelDiscovery?.();
+
+		if (setupWizard && playStartupSplash) {
+			await setupWizard.runStartupSplash(mode);
+		}
+
+		if (setupWizard && setupScenes.length > 0) {
+			await setupWizard.runSetupWizard(mode, setupScenes);
+		}
+
+		// Consume failures immediately, but defer any banner until the transcript is stable.
+		const checkedVersionPromise = versionCheckPromise.catch(() => undefined);
+
+		// `init` already cleared native history before painting the startup frame.
+		// Replaying resumed transcript rows and repainting the viewport is enough;
+		// another clear would only archive the startup frame. In-process session
+		// replacements still request `clearTerminalHistory` at their own callsites.
+		await logger.time("InteractiveMode.renderInitialMessages", () =>
+			mode.renderInitialMessages({ preserveExistingChat: true }),
+		);
+		// A resolved version check must not insert its banner into a partial transcript.
+		checkedVersionPromise.then(newVersion => {
+			if (!settings.get("startup.checkUpdate")) {
+				return;
+			}
+			if (newVersion) {
+				mode.showNewVersionNotification(newVersion);
+			}
+		});
+
+		const advisorConfigWarnings = session.getAdvisorConfigWarnings();
+		if (advisorConfigWarnings.length > 0) {
+			// Pulled here, not pushed from SessionAdvisors: the constructor-time
+			// `emitNotice` fired before the UI subscribed and was silently lost.
+			mode.showWarning(`WATCHDOG.yml: ${sanitizeDisplayWarnings(advisorConfigWarnings).join("; ")}`);
+		}
+
+		for (const notify of notifs) {
+			if (!notify) {
+				continue;
+			}
+			if (notify.kind === "warn") {
+				mode.showWarning(notify.message);
+			} else if (notify.kind === "error") {
+				mode.showError(notify.message);
+			} else if (notify.kind === "info") {
+				mode.showStatus(notify.message);
+			}
+		}
+
+		// `omp join <link>`: dispatch through the same builtin path as a typed
+		// `/join` so collab guards and error rendering stay in one place.
+		if (joinLink !== undefined) {
+			await executeBuiltinSlashCommand(`/join ${joinLink}`, { ctx: mode });
+			// Join failure returns to the local session; success still needs the
+			// controller observing its eventual restoration without hosting replicas.
+			mode.collabController.autoStart();
+		}
+		// Keep guest mutations gated through setup dialogs and transcript replay,
+		// not just init. Only a successful outer startup opens the room for input.
+		mode.collabController.startupComplete();
 	} catch (error) {
-		mode.stop();
+		// Init publishes before startup dialogs, so any later startup failure
+		// must withdraw the room before restoring the terminal.
+		try {
+			await mode.collabController.shutdown("startup failed");
+		} catch (cleanupError) {
+			logger.warn("Failed to stop collaboration after startup failure", { error: String(cleanupError) });
+		} finally {
+			mode.stop();
+		}
 		throw error;
-	}
-
-	if (setupWizard && playStartupSplash) {
-		await setupWizard.runStartupSplash(mode);
-	}
-
-	if (setupWizard && setupScenes.length > 0) {
-		await setupWizard.runSetupWizard(mode, setupScenes);
-	}
-
-	// Consume failures immediately, but defer any banner until the transcript is stable.
-	const checkedVersionPromise = versionCheckPromise.catch(() => undefined);
-
-	// `init` already cleared native history before painting the startup frame.
-	// Replaying resumed transcript rows and repainting the viewport is enough;
-	// another clear would only archive the startup frame. In-process session
-	// replacements still request `clearTerminalHistory` at their own callsites.
-	await logger.time("InteractiveMode.renderInitialMessages", () =>
-		mode.renderInitialMessages({ preserveExistingChat: true }),
-	);
-	// A resolved version check must not insert its banner into a partial transcript.
-	checkedVersionPromise.then(newVersion => {
-		if (!settings.get("startup.checkUpdate")) {
-			return;
-		}
-		if (newVersion) {
-			mode.showNewVersionNotification(newVersion);
-		}
-	});
-
-	for (const notify of notifs) {
-		if (!notify) {
-			continue;
-		}
-		if (notify.kind === "warn") {
-			mode.showWarning(notify.message);
-		} else if (notify.kind === "error") {
-			mode.showError(notify.message);
-		} else if (notify.kind === "info") {
-			mode.showStatus(notify.message);
-		}
-	}
-
-	// `omp join <link>`: dispatch through the same builtin path as a typed
-	// `/join` so collab guards and error rendering stay in one place.
-	if (joinLink !== undefined) {
-		await executeBuiltinSlashCommand(`/join ${joinLink}`, { ctx: mode });
 	}
 
 	if (initialMessage !== undefined) {
 		session.maybeStartTitleGeneration(initialMessage);
 		try {
 			using _keepalive = new EventLoopKeepalive();
-			await session.prompt(initialMessage, { images: initialImages });
+			// `steer` covers the race where the user submits a prompt of their own
+			// before this dispatch runs (the composer accepts input as soon as the
+			// first turn starts): the CLI message queues into that turn instead of
+			// dying with AgentBusyError.
+			await session.prompt(initialMessage, { images: initialImages, streamingBehavior: "steer" });
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 			mode.showError(errorMessage);
@@ -634,7 +678,7 @@ async function runInteractiveMode(
 		session.maybeStartTitleGeneration(message);
 		try {
 			using _keepalive = new EventLoopKeepalive();
-			await session.prompt(message);
+			await session.prompt(message, { streamingBehavior: "steer" });
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 			mode.showError(errorMessage);
@@ -1182,6 +1226,7 @@ export async function buildSessionOptions(
 			}
 		} else if (resolved.model) {
 			options.model = resolved.model;
+			options.rebindModelAfterDiscovery = true;
 			// The recorded role must carry the effort the session actually starts
 			// at, or the first cycle back into `default` overrides it.
 			activeSettings.overrideModelRoles({
@@ -1215,6 +1260,7 @@ export async function buildSessionOptions(
 				: scopedModels.find(scopedModel => scopedModel.model.id.toLowerCase() === remembered.toLowerCase());
 			if (rememberedModel) {
 				options.model = rememberedModel.model;
+				options.rebindModelAfterDiscovery = true;
 				// Apply explicit thinking level from remembered role value
 				if (!parsed.thinking && rememberedSpec.explicitThinkingLevel && rememberedSpec.thinkingLevel) {
 					options.thinkingLevel = rememberedSpec.thinkingLevel;
@@ -1234,7 +1280,10 @@ export async function buildSessionOptions(
 		// deferring under an explicit CLI scope would let the saved default
 		// escape it — keep pinning the first scoped model there.
 		deferredDefaultRole = !options.model && Boolean(remembered) && !((parsed.models?.length ?? 0) > 0);
-		if (!options.model && !deferredDefaultRole) options.model = scopedModels[0].model;
+		if (!options.model && !deferredDefaultRole) {
+			options.model = scopedModels[0].model;
+			options.rebindModelAfterDiscovery = true;
+		}
 	} else if ((parsed.models?.length ?? 0) > 0 && !restoringSession) {
 		// A CLI `--models` scope that resolved to zero models at startup: its
 		// selectors name only models supplied by extension providers (or discovery)
@@ -2105,7 +2154,7 @@ export async function runRootCommand(
 				// Branch-only single-shot runner: keep print-mode code out of normal interactive startup.
 				stopStartupWatchdog();
 				const runPrintMode: RunPrintMode = (await import("./modes/print-mode")).runPrintMode;
-				await runPrintMode(session, {
+				const exitCode = await runPrintMode(session, {
 					mode,
 					messages: initialArgs.messages,
 					initialMessage,
@@ -2118,7 +2167,7 @@ export async function runRootCommand(
 				}
 				await session.dispose();
 				stopThemeWatcher();
-				await postmortem.quit(0);
+				await postmortem.quit(exitCode);
 			}
 		}
 	} catch (error) {

@@ -44,8 +44,16 @@ import type { AsyncJobSnapshotItem } from "../../session/agent-session";
 import type { AuthStorage, OAuthAccountIdentity } from "../../session/auth-storage";
 import type { CompactMode } from "../../session/compact-modes";
 import type { NewSessionOptions } from "../../session/session-entries";
+import {
+	cleanSourceCheckoutIfConfigured,
+	createSessionWorktree,
+	defaultSessionWorktreeBranch,
+	formatSessionWorktreeSummary,
+	type SessionWorktree,
+} from "../../session/session-worktree";
 import { formatShakeSummary, type ShakeMode, type ShakeResult } from "../../session/shake-types";
 import { formatActiveAccountLabel, limitMatchesActiveAccount } from "../../slash-commands/helpers/active-oauth-account";
+import { formatProviderName } from "../../slash-commands/helpers/format";
 import { outputMeta } from "../../tools/output-meta";
 import { resolveToCwd, stripOuterDoubleQuotes } from "../../tools/path-utils";
 import { replaceTabs, truncateToWidth } from "../../tools/render-utils";
@@ -58,6 +66,11 @@ import {
 import { copyToClipboard } from "../../utils/clipboard";
 import { openPath } from "../../utils/open";
 import { setSessionTerminalTitle } from "../../utils/title-generator";
+import { formatRemainingOnlyTotal, isUsedOnlyAbsoluteAmount } from "../usage-amounts";
+
+function formatCreditValue(value: number): string {
+	return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
 
 function showMarkdownPanel(ctx: InteractiveModeContext, title: string, markdown: string): void {
 	const block = new TranscriptBlock();
@@ -139,6 +152,24 @@ export class CommandController {
 			this.openInBrowser(filePath);
 		} catch (error: unknown) {
 			this.ctx.showError(`Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`);
+		}
+	}
+	async handleTraceCommand(): Promise<void> {
+		const sessionFile = this.ctx.session.sessionFile;
+		if (!sessionFile) {
+			this.ctx.showWarning("No session file yet — send a message first.");
+			return;
+		}
+		try {
+			// Lazy: the stats dashboard (server + sqlite) loads on demand only,
+			// matching src/cli/stats-cli.ts, to keep CLI startup fast.
+			const { formatStatsDashboardUrl, startServer } = await import("@oh-my-pi/omp-stats");
+			const { hostname, port } = await startServer();
+			const url = `${formatStatsDashboardUrl(hostname, port)}/#/traces?s=${encodeURIComponent(sessionFile)}`;
+			this.openInBrowser(url);
+			this.ctx.showStatus(`Trace: ${url}`);
+		} catch (error: unknown) {
+			this.ctx.showError(`Failed to open trace: ${error instanceof Error ? error.message : "Unknown error"}`);
 		}
 	}
 
@@ -327,6 +358,14 @@ export class CommandController {
 				providerSessionState: this.ctx.session.providerSessionState,
 			});
 			info += renderProviderSection(providerDetails, theme);
+			if (stats.routedModels !== undefined) {
+				const routed = Object.entries(stats.routedModels)
+					.sort(([aId, aCount], [bId, bCount]) => bCount - aCount || aId.localeCompare(bId))
+					.map(
+						([id, count]) => `${replaceTabs(sanitizeText(id))}${count > 1 ? theme.fg("dim", ` ×${count}`) : ""}`,
+					);
+				info += `${theme.fg("dim", "Served:")} ${routed.join(", ")}\n`;
+			}
 		}
 		info += `\n`;
 		info += `${theme.bold("Messages")}\n`;
@@ -355,13 +394,18 @@ export class CommandController {
 		}
 		info += `${theme.fg("dim", "Total:")} ${stats.tokens.total.toLocaleString()}\n`;
 
-		if (stats.cost > 0 || normalizedPremiumRequests > 0) {
+		if (stats.cost > 0 || normalizedPremiumRequests > 0 || stats.credits !== undefined) {
 			info += `\n${theme.bold("Cost")}\n`;
 			if (stats.cost > 0) {
 				info += `${theme.fg("dim", "Total:")} ${stats.cost.toFixed(4)}\n`;
 			}
 			if (normalizedPremiumRequests > 0) {
 				info += `${theme.fg("dim", "Premium Requests:")} ${normalizedPremiumRequests.toLocaleString()}\n`;
+			}
+			if (stats.credits !== undefined) {
+				info += `${theme.fg("dim", "Credits:")} ${formatCreditValue(stats.credits.cost)}\n`;
+				info += `${theme.fg("dim", "Committed Credits:")} ${formatCreditValue(stats.credits.committedCost)}\n`;
+				info += `${theme.fg("dim", "Committed ACU:")} ${formatCreditValue(stats.credits.acuCost)}\n`;
 			}
 		}
 
@@ -591,24 +635,7 @@ export class CommandController {
 			return;
 		}
 
-		const availableWidth = Math.max(40, (this.ctx.ui.terminal.columns ?? 100) - 2);
-		const currentProvider = this.ctx.session.model?.provider;
-		const activeAccount = currentProvider
-			? this.ctx.session.modelRegistry.authStorage.getOAuthAccountIdentity(
-					currentProvider,
-					this.ctx.session.sessionId,
-				)
-			: undefined;
-		const usageModelSelectors = this.ctx.session.getUsageReportingModelSelectors(usageReports);
-		const output = renderUsageReports(
-			usageReports,
-			theme,
-			Date.now(),
-			availableWidth,
-			provider => (provider === currentProvider ? activeAccount : undefined),
-			usageModelSelectors,
-		);
-		this.ctx.presentCommandOutput([new Spacer(1), new Text(output, 1, 0)]);
+		this.ctx.showUsageDashboard(usageReports);
 	}
 
 	async handleChangelogCommand(showFull = false): Promise<void> {
@@ -1008,6 +1035,12 @@ export class CommandController {
 			}
 		}
 		if (!(await this.ctx.session.newSession(options))) return;
+		// A focused subagent view keeps its own history: return to the main session
+		// first so the transcript below cannot rebuild from the subagent's surviving
+		// conversation, then drop any turn-scoped anchors (coalescing timers,
+		// in-flight dispatches) the session boundary orphaned.
+		if (this.ctx.focusedAgentId) await this.ctx.unfocusSession();
+		this.ctx.eventController.resetTranscriptAnchors();
 		this.ctx.resetObserverRegistry();
 		setSessionTerminalTitle(this.ctx.sessionManager.getSessionName(), this.ctx.sessionManager.getCwd());
 
@@ -1161,64 +1194,153 @@ export class CommandController {
 				this.ctx.showError(`Cannot create "${path.basename(resolvedPath)}": parent directory does not exist`);
 				return;
 			}
-			const confirmed = await this.ctx.showHookConfirm(
-				"Create directory?",
-				`"${path.basename(resolvedPath)}" does not exist. Create it?`,
-			);
-			if (!confirmed) return;
-			try {
-				await fs.mkdir(resolvedPath, { recursive: true });
-			} catch (err) {
-				this.ctx.showError(`Failed to create directory: ${err instanceof Error ? err.message : String(err)}`);
-				return;
-			}
 		}
+		const moved = await this.#withSessionMove(async () => {
+			if (!isDirectory) {
+				const confirmed = await this.ctx.showHookConfirm(
+					"Create directory?",
+					`"${path.basename(resolvedPath)}" does not exist. Create it?`,
+				);
+				if (!confirmed) return false;
+				try {
+					await fs.mkdir(resolvedPath, { recursive: true });
+				} catch (err) {
+					this.ctx.showError(`Failed to create directory: ${err instanceof Error ? err.message : String(err)}`);
+					return false;
+				}
+			}
+			return this.#relocateSession(resolvedPath);
+		});
+		if (moved) {
+			this.ctx.present([
+				new Spacer(1),
+				new Text(`${theme.fg("accent", `${theme.status.success} Moved to ${resolvedPath}`)}`, 1, 1),
+			]);
+		}
+	}
+
+	/**
+	 * `/wt [<branch>]` — fork the checkout into a new linked git worktree on
+	 * `branch` (default `wt/<timestamp>`), carrying uncommitted changes along,
+	 * then relocate the session there like `/move`.
+	 */
+	async handleWorktreeCommand(branch?: string): Promise<void> {
+		if (this.ctx.session.isStreaming) {
+			this.ctx.showWarning("Wait for the current response to finish or abort it before creating a worktree.");
+			return;
+		}
+		await this.#withSessionMove(async () => {
+			const branchName = branch?.trim() || defaultSessionWorktreeBranch();
+			const cwd = this.ctx.sessionManager.getCwd();
+			this.ctx.statusContainer.disposeChildren();
+			const loader = new Loader(
+				this.ctx.ui,
+				spinner => theme.fg("accent", spinner),
+				text => theme.fg("muted", text),
+				`Creating worktree on ${branchName}…`,
+				getSymbolTheme().spinnerFrames,
+			);
+			this.ctx.statusContainer.addChild(loader);
+			this.ctx.ui.requestRender();
+			let worktree: SessionWorktree;
+			try {
+				worktree = await createSessionWorktree(cwd, this.ctx.settings, branchName);
+			} catch (err) {
+				this.ctx.showError(`Worktree creation failed: ${err instanceof Error ? err.message : String(err)}`);
+				return false;
+			} finally {
+				loader.stop();
+				this.ctx.statusContainer.disposeChildren();
+			}
+			if (worktree.cloneError) {
+				logger.warn("worktree clone fell back to plain checkout", {
+					path: worktree.path,
+					error: worktree.cloneError,
+				});
+			}
+			if (!(await this.#relocateSession(worktree.path))) return false;
+			const cleanup = await cleanSourceCheckoutIfConfigured(cwd, this.ctx.settings);
+			if (cleanup.errorMessage !== undefined) {
+				this.ctx.showWarning(`Worktree created, but cleaning source checkout failed: ${cleanup.errorMessage}`);
+			}
+			this.ctx.present([
+				new Spacer(1),
+				new Text(
+					`${theme.fg("accent", `${theme.status.success} ${formatSessionWorktreeSummary(worktree, cleanup.cleaned)}`)}`,
+					1,
+					1,
+				),
+			]);
+			return true;
+		});
+	}
+
+	/** Save source settings before acquiring the gate for a complete relocation operation. */
+	async #withSessionMove(operation: () => Promise<boolean>): Promise<boolean> {
 		try {
 			await this.ctx.settings.flush();
 		} catch (err) {
 			this.ctx.showError(`Failed to save pending settings: ${err instanceof Error ? err.message : String(err)}`);
-			return;
+			return false;
 		}
+
+		return this.ctx.withBtwSessionMove(operation);
+	}
+
+	/** Relocate only while #withSessionMove holds the BTW gate; false means no successful move. */
+	async #relocateSession(resolvedPath: string): Promise<boolean> {
+		if (resolvedPath === path.resolve(this.ctx.sessionManager.getCwd())) return false;
 
 		const previousState = this.ctx.sessionManager.captureState();
 		try {
 			await this.ctx.session.moveSession(resolvedPath);
 		} catch (err) {
 			this.ctx.showError(`Move failed: ${err instanceof Error ? err.message : String(err)}`);
-			return;
+			return false;
 		}
 		let applied = false;
 		try {
 			applied = await this.ctx.applyCwdChange(resolvedPath);
 		} catch (error) {
 			await this.#restoreAfterMoveFailure(previousState, error);
-			return;
+			return false;
 		}
 		if (!applied) {
 			await this.#restoreAfterMoveFailure(previousState);
-			return;
+			return false;
 		}
 
 		this.ctx.updateEditorBorderColor();
 		await this.ctx.reloadTodos();
 		this.ctx.ui.requestRender();
-
-		this.ctx.present([
-			new Spacer(1),
-			new Text(`${theme.fg("accent", `${theme.status.success} Moved to ${resolvedPath}`)}`, 1, 1),
-		]);
+		return true;
 	}
 
 	async handleRenameCommand(title: string): Promise<void> {
+		const session = this.ctx.session;
+		const sessionManager = this.ctx.sessionManager;
+		const sessionId = sessionManager.getSessionId();
+		const signal = session.titleGenerationSignal;
+		let titleRevision = sessionManager.titleRevision;
+		const isCurrent = () =>
+			this.ctx.session === session &&
+			this.ctx.sessionManager === sessionManager &&
+			!signal.aborted &&
+			sessionManager.getSessionId() === sessionId &&
+			sessionManager.titleRevision === titleRevision;
 		try {
-			const stored = await this.ctx.sessionManager.setSessionName(title, "user");
+			const persistence = sessionManager.setSessionName(title, "user");
+			titleRevision = sessionManager.titleRevision;
+			const stored = await persistence;
+			if (!isCurrent()) return;
 			if (!stored) {
 				this.ctx.showError("Session name cannot be empty.");
 				return;
 			}
-			const name = this.ctx.sessionManager.getSessionName()!;
+			const name = sessionManager.getSessionName()!;
 			this.ctx.showStatus(`Session renamed to "${name}".`);
 		} catch (err) {
+			if (!isCurrent()) return;
 			this.ctx.showError(`Rename failed: ${err instanceof Error ? err.message : String(err)}`);
 		}
 	}
@@ -1231,6 +1353,20 @@ export class CommandController {
 			return;
 		}
 
+		if (shouldPersistCwd) {
+			await this.#withSessionMove(() => this.#executeBashCommand(command, excludeFromContext, isDeferred, true));
+		} else {
+			await this.#executeBashCommand(command, excludeFromContext, isDeferred, false);
+		}
+	}
+
+	/** Returns whether shell execution committed a cwd relocation, not whether the shell command succeeded. */
+	async #executeBashCommand(
+		command: string,
+		excludeFromContext: boolean,
+		isDeferred: boolean,
+		shouldPersistCwd: boolean,
+	): Promise<boolean> {
 		this.ctx.bashComponent = new BashExecutionComponent(command, this.ctx.ui, excludeFromContext);
 
 		if (isDeferred) {
@@ -1265,10 +1401,12 @@ export class CommandController {
 				this.ctx.bashComponent.setComplete(result.exitCode, result.cancelled, {
 					output: result.output,
 					truncation: meta?.truncation,
+					images: result.images,
+					showImages: this.ctx.settings.get("terminal.showImages"),
 				});
 			}
 			try {
-				if (shouldPersistCwd) await this.#applyBashResultCwd(result);
+				if (shouldPersistCwd) return await this.#applyBashResultCwd(result);
 			} catch (error) {
 				this.ctx.showError(
 					`Bash command completed, but OMP failed to update its working directory: ${
@@ -1281,37 +1419,19 @@ export class CommandController {
 				this.ctx.bashComponent.setComplete(undefined, false);
 			}
 			this.ctx.showError(`Bash command failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+		} finally {
+			this.ctx.bashComponent = undefined;
+			this.ctx.ui.requestRender();
 		}
-
-		this.ctx.bashComponent = undefined;
-		this.ctx.ui.requestRender();
+		return false;
 	}
 
-	async #moveInteractiveCwd(resolvedPath: string): Promise<void> {
-		const previousState = this.ctx.sessionManager.captureState();
-		await this.ctx.sessionManager.moveTo(resolvedPath);
-		let applied = false;
-		try {
-			applied = await this.ctx.applyCwdChange(resolvedPath);
-		} catch (error) {
-			await this.#restoreAfterMoveFailure(previousState, error);
-			return;
-		}
-		if (!applied) {
-			await this.#restoreAfterMoveFailure(previousState);
-			return;
-		}
-
-		this.ctx.updateEditorBorderColor();
-		await this.ctx.reloadTodos();
-	}
-
-	async #applyBashResultCwd(result: BashResult): Promise<void> {
-		if (result.cancelled || result.exitCode !== 0 || !result.workingDir) return;
-		if (!path.isAbsolute(result.workingDir)) return;
+	async #applyBashResultCwd(result: BashResult): Promise<boolean> {
+		if (result.cancelled || result.exitCode !== 0 || !result.workingDir) return false;
+		if (!path.isAbsolute(result.workingDir)) return false;
 
 		const resolvedPath = path.resolve(result.workingDir);
-		if (resolvedPath === path.resolve(this.ctx.sessionManager.getCwd())) return;
+		if (resolvedPath === path.resolve(this.ctx.sessionManager.getCwd())) return false;
 
 		let isDirectory = false;
 		try {
@@ -1319,9 +1439,9 @@ export class CommandController {
 		} catch {
 			isDirectory = false;
 		}
-		if (!isDirectory) return;
+		if (!isDirectory) return false;
 
-		await this.#moveInteractiveCwd(resolvedPath);
+		return this.#relocateSession(resolvedPath);
 	}
 
 	async handlePythonCommand(code: string, excludeFromContext = false): Promise<void> {
@@ -1500,6 +1620,10 @@ export class CommandController {
 			this.ctx.showWarning("Wait for the current response to finish or abort it before handing off.");
 			return;
 		}
+		if (this.ctx.session.isCompacting) {
+			this.ctx.showWarning("Wait for context compaction to finish or cancel it before handing off.");
+			return;
+		}
 
 		const entries = this.ctx.sessionManager.getEntries();
 		const messageCount = entries.filter(e => e.type === "message").length;
@@ -1567,10 +1691,33 @@ export class CommandController {
 				this.ctx.showError(`Handoff failed: ${message}`);
 			}
 		} finally {
-			handoffLoader.stop();
-			this.ctx.statusContainer.disposeChildren();
+			this.#finishHandoffUi(handoffLoader);
 		}
 		this.ctx.ui.requestRender(true, { clearScrollback: true });
+	}
+
+	#finishHandoffUi(handoffLoader: Loader): void {
+		handoffLoader.stop();
+		// A retry/compaction event may replace the handoff overlay while transcript
+		// replay yields. Preserve it only while it still owns the status row; a
+		// reference to a loader disposed earlier must not retain the handoff overlay.
+		const maintenanceLoader = this.ctx.autoCompactionLoader ?? this.ctx.retryLoader;
+		if (maintenanceLoader && this.ctx.statusContainer.children.includes(maintenanceLoader)) return;
+		this.ctx.statusContainer.disposeChildren();
+		// `disposeChildren()` disposed any working loader mounted by a delayed
+		// `agent_start` during transcript replay, which stops its animation timer.
+		// Drop the now-frozen reference so the reconciler below never reattaches it
+		// (`ensureLoadingAnimation()` only re-adds an existing instance, never
+		// restarts it).
+		if (this.ctx.loadingAnimation) {
+			this.ctx.loadingAnimation.stop();
+			this.ctx.loadingAnimation = undefined;
+		}
+		if (this.ctx.session.isStreaming) {
+			// A new turn won the race with handoff cleanup; mount a fresh, running
+			// loader for it now that the stale reference is cleared.
+			this.ctx.ensureLoadingAnimation();
+		}
 	}
 }
 
@@ -1602,13 +1749,6 @@ function truncateJobLabel(label: string, maxWidth: number): string {
 	}
 
 	return `${out}…`;
-}
-
-function formatProviderName(provider: string): string {
-	return provider
-		.split(/[-_]/g)
-		.map(part => (part ? part[0].toUpperCase() + part.slice(1) : ""))
-		.join(" ");
 }
 
 function formatNumber(value: number, maxFractionDigits = 1): string {
@@ -1756,19 +1896,6 @@ function padColumn(text: string, width: number): string {
 
 type AggregateDisplayStatus = NonNullable<UsageLimit["status"]> | "neutral";
 
-function isUsedOnlyAbsoluteAmount(limit: UsageLimit): boolean {
-	const amount = limit.amount;
-	return (
-		amount.unit !== "percent" &&
-		amount.unit !== "unknown" &&
-		amount.used !== undefined &&
-		Number.isFinite(amount.used) &&
-		amount.limit === undefined &&
-		amount.remaining === undefined &&
-		resolveUsedFraction(limit) === undefined
-	);
-}
-
 function resolveAggregateStatus(limits: UsageLimit[]): AggregateDisplayStatus {
 	const hasOk = limits.some(limit => limit.status === "ok");
 	const hasWarning = limits.some(limit => limit.status === "warning");
@@ -1804,6 +1931,12 @@ function formatAggregateAmount(limits: UsageLimit[]): string {
 	}
 
 	if (limits.length > 0 && limits.every(isUsedOnlyAbsoluteAmount)) return "";
+
+	// Prepaid balances have no total to divide by. `totalRemainingOnly`
+	// collapses account-wide pools seen once per stored key and sums only
+	// genuinely distinct ones, so a multi-key provider is never double-counted.
+	const remaining = formatRemainingOnlyTotal(limits);
+	if (remaining !== undefined) return remaining;
 
 	// Count unique accounts from limit scopes — not limits.length.
 	const uniqueAccountIds = new Set(
