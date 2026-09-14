@@ -7,6 +7,12 @@
 - Fixed OpenAI Responses / Completions and xAI tool conversion 400ing the whole turn on MCP schemas whose root is an object plus a typeless exclusive-required `anyOf` (e.g. codebase-memory `check_index_coverage`). Flatten only the **tool root** — nested unions (e.g. `task.outputSchema`) stay intact so Grok still sees valid `task`/`edit` schemas.
 - SuperGrok (`xai-oauth` only): send `parallel_tool_calls: true` (api.x.ai defaults this off when the field is omitted — not an omp config), harvest extra `function_call`s that appear only on `response.completed.output`, and ingest Completions-shaped `tool_calls` on a Responses stream, including streams that never send a Responses terminal frame. OpenAI / Azure / Codex / OpenRouter / paid `xai` unchanged.
 
+## [18.1.22] - 2026-09-14
+
+### Fixed
+
+- 400-request debug dumps now redact provider-specific auth headers (`x-goog-api-key`, `x-amz-security-token`, and any header whose name carries a key/token/secret), not just a fixed allow-list, so a shared dump can no longer leak a live API key ([#12007](https://github.com/can1357/oh-my-pi/issues/12007)).
+
 ## [18.1.20] - 2026-09-13
 
 ### Fixed
