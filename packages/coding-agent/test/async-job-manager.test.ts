@@ -823,6 +823,47 @@ describe("AsyncJobManager", () => {
 		await expect(reap).resolves.toBe(true);
 		expect(manager.getJob("hung-1")?.status).toBe("cancelled");
 	});
+
+	test("onJobChange fires registered then settled on complete", async () => {
+		const manager = new AsyncJobManager({});
+		const changes: Array<{ id: string; change: "registered" | "settled"; status: string }> = [];
+		manager.onJobChange((job, change) => {
+			changes.push({ id: job.id, change, status: job.status });
+		});
+
+		const jobId = manager.register("task", "scout", async () => "done", {
+			id: "job-lifecycle-1",
+			ownerId: "Main",
+			agentId: "ScoutA",
+		});
+
+		expect(changes).toEqual([{ id: jobId, change: "registered", status: "running" }]);
+
+		await manager.waitForAll();
+		expect(changes).toEqual([
+			{ id: jobId, change: "registered", status: "running" },
+			{ id: jobId, change: "settled", status: "completed" },
+		]);
+	});
+
+	test("onJobChange fires settled on cancel", async () => {
+		const manager = new AsyncJobManager({});
+		const changes: Array<"registered" | "settled"> = [];
+		manager.onJobChange((_job, change) => {
+			changes.push(change);
+		});
+
+		const gate = Promise.withResolvers<string>();
+		const jobId = manager.register("task", "hung", async () => await gate.promise, {
+			id: "job-cancel-lifecycle",
+			ownerId: "Main",
+		});
+		expect(manager.cancel(jobId)).toBe(true);
+		gate.resolve("late");
+		await manager.waitForAll();
+		expect(changes).toEqual(["registered", "settled"]);
+		expect(manager.getJob(jobId)?.status).toBe("cancelled");
+	});
 });
 
 describe("AsyncJobManager smart poll-wait escalation", () => {

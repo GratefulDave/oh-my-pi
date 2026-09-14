@@ -695,6 +695,12 @@ export interface DiscoverExtensionPathOptions {
 	includeAmbientHooks?: boolean;
 }
 
+/** Herdr installs one reporter file per agent; two paths → two seq streams. */
+const HERDR_REPORTER_FILES: Record<string, true> = {
+	"herdr-omp-agent-state.ts": true,
+	"herdr-agent-state.ts": true,
+};
+
 export async function discoverExtensionPaths(
 	configuredPaths: string[],
 	cwd: string,
@@ -703,6 +709,7 @@ export async function discoverExtensionPaths(
 ): Promise<string[]> {
 	const allPaths: string[] = [];
 	const seen = new Set<string>();
+	const herdrReporterSeen = new Set<string>();
 	const disabled = new Set(disabledExtensionIds ?? []);
 	const loadOptions = disabledExtensionIds ? { cwd, disabledExtensions: disabledExtensionIds } : { cwd };
 
@@ -710,6 +717,14 @@ export async function discoverExtensionPaths(
 
 	const addPath = (extPath: string): void => {
 		const resolved = path.resolve(extPath);
+		const base = path.basename(resolved);
+		// Herdr-managed reporters use a fixed --source (herdr:omp / herdr:pi).
+		// A profile copy plus an explicit `extensions:` path loads two modules,
+		// independent seq, and Herdr keeps the first idle.
+		if (HERDR_REPORTER_FILES[base]) {
+			if (herdrReporterSeen.has(base)) return;
+			herdrReporterSeen.add(base);
+		}
 		if (!seen.has(resolved)) {
 			seen.add(resolved);
 			allPaths.push(extPath);

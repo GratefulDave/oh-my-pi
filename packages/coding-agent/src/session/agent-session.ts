@@ -139,6 +139,7 @@ import type {
 	SessionBeforeSwitchResult,
 	SessionBeforeTreeResult,
 	SessionStopEventResult,
+	SubagentLifecycleEvent,
 	ToolExecutionEndEvent,
 	ToolExecutionStartEvent,
 	ToolExecutionUpdateEvent,
@@ -689,6 +690,8 @@ export class AgentSession {
 	readonly #asyncJobManager: AsyncJobManager | undefined;
 	/** Clears this session's owner delivery sink registration; set when a manager + agent id exist. */
 	#unregisterAsyncDeliverySink: (() => void) | undefined;
+	/** Clears the async job → `subagent_lifecycle` bridge; set with the delivery sink. */
+	#unregisterJobChange: (() => void) | undefined;
 	/**
 	 * Async-delivery generation, bumped on every session transition that evicts
 	 * this owner's jobs (see {@link AgentSession.#cancelOwnAsyncJobs}). Stamped
@@ -1710,6 +1713,27 @@ export class AgentSession {
 				isStale: entry => entry.epoch !== this.#asyncDeliveryEpoch || manager.isDeliverySuppressed(entry.jobId),
 				build: buildAsyncResultBatchMessage,
 			});
+			if (this.#agentKind === "main") {
+				this.#unregisterJobChange = manager.onJobChange((job, change) => {
+					const status: SubagentLifecycleEvent["status"] =
+						change === "registered"
+							? "started"
+							: job.status === "failed"
+								? "failed"
+								: job.status === "cancelled"
+									? "aborted"
+									: "completed";
+					const event: SubagentLifecycleEvent = {
+						type: "subagent_lifecycle",
+						id: job.agentId ?? job.id,
+						agent: job.label || job.type,
+						agentSource: "bundled",
+						status,
+						index: 0,
+					};
+					void this.#extensionRunner?.emit(event);
+				});
+			}
 		}
 		this.agent.setAssistantMessageEventInterceptor((message, assistantMessageEvent) => {
 			const event: AgentEvent = {
@@ -4625,6 +4649,8 @@ export class AgentSession {
 		// dead-letter rather than enqueue a follow-up into a disposing session.
 		this.#unregisterAsyncDeliverySink?.();
 		this.#unregisterAsyncDeliverySink = undefined;
+		this.#unregisterJobChange?.();
+		this.#unregisterJobChange = undefined;
 		const manager = this.#ownedAsyncJobManager;
 		// The shutdown reason is reserved for the top-level session that OWNS the
 		// manager — the genuine process/handled-shutdown path — so the task

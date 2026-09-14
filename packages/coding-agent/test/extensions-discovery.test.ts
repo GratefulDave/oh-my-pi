@@ -244,6 +244,21 @@ describe("extensions discovery", () => {
 		).resolves.toEqual([]);
 	});
 
+	it("keeps one herdr-omp reporter when a profile copy and extensions: path both exist", async () => {
+		const profileDir = path.join(tempDir.path(), "profile-extensions");
+		const userDir = path.join(tempDir.path(), "user-extensions");
+		fs.mkdirSync(profileDir, { recursive: true });
+		fs.mkdirSync(userDir, { recursive: true });
+		const profileReporter = path.join(profileDir, "herdr-omp-agent-state.ts");
+		const userReporter = path.join(userDir, "herdr-omp-agent-state.ts");
+		fs.writeFileSync(profileReporter, extensionCode);
+		fs.writeFileSync(userReporter, extensionCode);
+
+		await expect(
+			discoverExtensionPaths([profileReporter, userReporter], tempDir.path(), undefined, { ambient: false }),
+		).resolves.toEqual([profileReporter]);
+	});
+
 	it("discovers a symlinked extension package directory", async () => {
 		const packageDir = path.join(tempDir.path(), "linked-package");
 		const sourceDir = path.join(packageDir, "src");

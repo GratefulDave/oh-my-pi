@@ -66,7 +66,7 @@ import type { AsyncJobSnapshot } from "../../session/agent-session";
 import type { CompactMode } from "../../session/compact-modes";
 import type { CustomMessage, CustomMessagePayload } from "../../session/messages";
 import type { ReadonlySessionManager, SessionManager } from "../../session/session-manager";
-import type { TaskToolDetails } from "../../task/types";
+import type { SubagentLifecyclePayload, TaskToolDetails } from "../../task/types";
 import type {
 	BashToolDetails,
 	BashToolInput,
@@ -785,6 +785,9 @@ export type {
 	TurnStartEvent,
 } from "../shared-events";
 
+/** Fired when a descendant task/eval agent starts or settles. Parent-session only. */
+export type SubagentLifecycleEvent = SubagentLifecyclePayload & { type: "subagent_lifecycle" };
+
 /** Fired when a message starts (user, assistant, or toolResult) */
 export interface MessageStartEvent {
 	type: "message_start";
@@ -1090,6 +1093,7 @@ export type ExtensionEvent =
 	| BeforeAgentStartEvent
 	| AgentStartEvent
 	| AgentEndEvent
+	| SubagentLifecycleEvent
 	| SessionStopEvent
 	| TurnStartEvent
 	| TurnEndEvent
@@ -1279,6 +1283,7 @@ export interface ExtensionAPI {
 	on(event: "before_agent_start", handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>): void;
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;
+	on(event: "subagent_lifecycle", handler: ExtensionHandler<SubagentLifecycleEvent>): void;
 	on(event: "session_stop", handler: ExtensionHandler<SessionStopEvent, SessionStopEventResult>): void;
 	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
 	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent>): void;
