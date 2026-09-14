@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Extension `ctx.isIdle()` stays false while tools are in flight or task children still run, including under `hub wait`. Parent `agent_end` is tagged `willContinue` so Herdr does not paint idle mid-turn.
+- Extension `ctx.isIdle()` stays false while tools are in flight or task children still run, including under `hub wait`. Parent `agent_end` is tagged `willContinue` so Herdr does not paint idle mid-turn. Parent extensions now receive `subagent_lifecycle` when a background job is registered or settles, including children that only publish on the observability bus.
 
 ## [18.1.21] - 2026-09-14
 

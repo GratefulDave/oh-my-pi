@@ -239,6 +239,7 @@ export class AsyncJobManager {
 	readonly #evictionTimers = new Map<string, NodeJS.Timeout>();
 	readonly #pollEscalation = new Map<string | undefined, PollEscalationState>();
 	readonly #deliverySinks = new Map<string, AsyncJobDeliverySink>();
+	readonly #jobChangeListeners = new Set<(job: AsyncJob, change: "registered" | "settled") => void>();
 	readonly #onJobComplete: AsyncJobManagerOptions["onJobComplete"];
 	readonly #maxRunningJobs: number;
 	readonly #retentionMs: number;
@@ -363,6 +364,7 @@ export class AsyncJobManager {
 				job.resultText = text;
 				this.#enqueueDelivery(id, text);
 				this.#scheduleEviction(id);
+				this.#notifyJobChange(job, "settled");
 			} catch (error) {
 				if (error instanceof AsyncJobError && error.structured) job.structured = error.structured;
 				if (job.status === "cancelled") {
@@ -375,10 +377,11 @@ export class AsyncJobManager {
 				job.errorText = errorText;
 				this.#enqueueDelivery(id, errorText);
 				this.#scheduleEviction(id);
+				this.#notifyJobChange(job, "settled");
 			}
 		})();
-
 		this.#jobs.set(id, job);
+		this.#notifyJobChange(job, "registered");
 		return id;
 	}
 
@@ -395,6 +398,7 @@ export class AsyncJobManager {
 		job.status = "cancelled";
 		job.abortController.abort();
 		this.#scheduleEviction(id);
+		this.#notifyJobChange(job, "settled");
 		return true;
 	}
 
@@ -404,6 +408,26 @@ export class AsyncJobManager {
 
 	getRunningJobs(filter?: AsyncJobFilter): AsyncJob[] {
 		return this.#filterJobs(this.#jobs.values(), filter).filter(job => job.status === "running");
+	}
+
+	/** Subscribe to register and terminal status changes. */
+	onJobChange(listener: (job: AsyncJob, change: "registered" | "settled") => void): () => void {
+		this.#jobChangeListeners.add(listener);
+		return () => this.#jobChangeListeners.delete(listener);
+	}
+
+	#notifyJobChange(job: AsyncJob, change: "registered" | "settled"): void {
+		for (const listener of this.#jobChangeListeners) {
+			try {
+				listener(job, change);
+			} catch (error) {
+				logger.warn("Async job change listener failed", {
+					jobId: job.id,
+					change,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
 	}
 
 	getRecentJobs(limit = 10, filter?: AsyncJobFilter): AsyncJob[] {
@@ -555,12 +579,12 @@ export class AsyncJobManager {
 	cancelAll(filter?: AsyncJobFilter, reason?: unknown): void {
 		this.#cancelJobs(filter, reason);
 	}
-
 	#cancelJobs(filter?: AsyncJobFilter, reason?: unknown): void {
 		for (const job of this.getRunningJobs(filter)) {
 			job.status = "cancelled";
 			job.abortController.abort(reason);
 			this.#scheduleEviction(job.id);
+			this.#notifyJobChange(job, "settled");
 		}
 	}
 

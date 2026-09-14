@@ -305,6 +305,7 @@ Cancelable pre-events:
 - `after_provider_response`
 - `context`
 - `agent_start` / `agent_end` — agent loop lifecycle notification; `agent_end` remains notification-only
+- `subagent_lifecycle` — parent-session only; fired when a descendant task/eval agent starts or settles (`started` / `completed` / `failed` / `aborted`). Frames are forwarded from the session-tree observability bus, including children that never publish on the parent session bus. Herdr's OMP reporter uses this to keep the pane `working` while descendants run after the parent loop has settled.
 - `session_stop` — main-session stop hook, awaited before settle; may continue with `{ continue: true, additionalContext }` or `{ decision: "block", reason }`; capped at 8 consecutive continuations, never fires for task/subagent sessions, and defers until agent-owned background jobs are fully idle (`#hasPendingAsyncWake` in `session/agent-session.ts`)
 - `turn_start` / `turn_end`
 - `message_start` / `message_update` / `message_end` — lifecycle notifications; `message_end` receives a detached message snapshot, so use `tool_result` or `context` when an extension needs to change provider context
