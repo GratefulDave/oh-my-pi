@@ -7,6 +7,16 @@
 - Fixed OpenAI Responses / Completions and xAI tool conversion 400ing the whole turn on MCP schemas whose root is an object plus a typeless exclusive-required `anyOf` (e.g. codebase-memory `check_index_coverage`). Flatten only the **tool root** — nested unions (e.g. `task.outputSchema`) stay intact so Grok still sees valid `task`/`edit` schemas.
 - SuperGrok (`xai-oauth` only): send `parallel_tool_calls: true` (api.x.ai defaults this off when the field is omitted — not an omp config), harvest extra `function_call`s that appear only on `response.completed.output`, and ingest Completions-shaped `tool_calls` on a Responses stream, including streams that never send a Responses terminal frame. OpenAI / Azure / Codex / OpenRouter / paid `xai` unchanged.
 
+## [18.2.0] - 2026-09-15
+
+### Added
+
+- Assistant turns from Anthropic-compatible hosts (direct, or via OpenRouter's `reasoning_details`) carry `upstreamModel`, the serving model id recovered from the signed thinking block, so callers can detect a router substituting a different model than requested.
+
+### Fixed
+
+- Fixed OpenCode Go window-limit 429s (`5-hour`/`Weekly`/`Monthly usage limit reached. Resets in …`) not pinning the exhausted credential to the server-stated reset; the window phrasing is now covered by a regression test over the rotation classifier. ([#12091](https://github.com/can1357/oh-my-pi/pull/12091) by [@H4vC](https://github.com/H4vC))
+
 ## [18.1.22] - 2026-09-14
 
 ### Fixed
