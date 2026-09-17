@@ -1,3 +1,4 @@
+import { type IrcMessage, type IrcDeliveryReceipt } from "@oh-my-pi/pi-tui/tools/hub";
 /**
  * IrcBus - Process-global mailbox bus for agent-to-agent messaging.
  *
@@ -38,31 +39,6 @@ export interface IrcMessageActivityPayload {
 }
 interface EventBusSessionSource {
 	eventBus?: EventBus;
-}
-
-export interface IrcMessage {
-	id: string;
-	/** Sender agent id. */
-	from: string;
-	/** Recipient agent id (resolved; "all" is expanded by the tool, not stored). */
-	to: string;
-	body: string;
-	ts: number;
-	/** Message id being answered. */
-	replyTo?: string;
-	/**
-	 * Automated wake-turn relay of a woken subagent's stop output (task executor
-	 * `relayWakeTurnOutput`). Relays are answers, never wake sources: the
-	 * recipient's own wake-turn relay must skip them or two idle peers
-	 * ping-pong forever.
-	 */
-	wakeRelay?: boolean;
-}
-
-export interface IrcDeliveryReceipt {
-	to: string;
-	outcome: "injected" | "woken" | "revived" | "failed";
-	error?: string;
 }
 
 interface IrcWaiter {
