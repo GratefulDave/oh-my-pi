@@ -7,6 +7,16 @@
 - Fixed OpenAI Responses / Completions and xAI tool conversion 400ing the whole turn on MCP schemas whose root is an object plus a typeless exclusive-required `anyOf` (e.g. codebase-memory `check_index_coverage`). Flatten only the **tool root** — nested unions (e.g. `task.outputSchema`) stay intact so Grok still sees valid `task`/`edit` schemas.
 - SuperGrok (`xai-oauth` only): send `parallel_tool_calls: true` (api.x.ai defaults this off when the field is omitted — not an omp config), harvest extra `function_call`s that appear only on `response.completed.output`, and ingest Completions-shaped `tool_calls` on a Responses stream, including streams that never send a Responses terminal frame. OpenAI / Azure / Codex / OpenRouter / paid `xai` unchanged.
 
+## [18.2.4] - 2026-09-17
+
+### Added
+
+- Added the `judgment` module for typed questions over JSON state, including choice, yes/no, and score judgments through the `Judge` interface.
+- Added `TypeSafeJudge` support with TypeSafe System One authentication, credential rotation on unauthorized responses, and retry-aware backoff.
+- Added `TextJudge` and `chatTextBackend` for model-based judgments, with structured state rendering and safeguards that prevent embedded requests from being executed.
+- Added automatic format-correction retries to `TextJudge` when models return malformed output.
+- Added the `guardState` option to `TextBackend` to control whether safety guidance is included in prompts.
+
 ## [18.2.3] - 2026-09-17
 
 ### Added
