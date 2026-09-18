@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed a crash when the subagent HUD summarized settled agents (`formatDuration is not defined`).
+
 ## [18.2.5] - 2026-09-17
 
 ### Breaking Changes
