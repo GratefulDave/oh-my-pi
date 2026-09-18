@@ -44,6 +44,7 @@ import { isInsideTerminalMultiplexer } from "@oh-my-pi/pi-tui/terminal-capabilit
 import {
 	$env,
 	adjustHsv,
+	formatDuration,
 	formatNumber,
 	getProjectDir,
 	hsvToRgb,
