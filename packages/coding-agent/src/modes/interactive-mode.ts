@@ -44,8 +44,6 @@ import { isInsideTerminalMultiplexer } from "@oh-my-pi/pi-tui/terminal-capabilit
 import {
 	$env,
 	adjustHsv,
-	formatDuration,
-	formatNumber,
 	getProjectDir,
 	hsvToRgb,
 	isEnoent,
@@ -395,8 +393,34 @@ function parseGoalSubcommand(args: string): { sub: GoalSubcommand | undefined; r
 	return { sub: undefined, rest: trimmed };
 }
 
-function formatContextTokenCount(value: number): string {
-	return formatNumber(Math.max(0, Math.round(value))).toLowerCase();
+function compactCount(value: number): string {
+	const n = Math.max(0, Math.round(value));
+	if (n < 1_000) return String(n);
+	if (n < 10_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+	if (n < 1_000_000) return `${Math.round(n / 1_000)}k`;
+	if (n < 10_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
+	if (n < 1_000_000_000) return `${Math.round(n / 1_000_000)}m`;
+	if (n < 10_000_000_000) return `${(n / 1_000_000_000).toFixed(1).replace(/\.0$/, "")}b`;
+	return `${Math.round(n / 1_000_000_000)}b`;
+}
+
+function formatHudSummaryDuration(ms: number): string {
+	if (!Number.isFinite(ms) || ms <= 0) return "0s";
+	if (ms < 1_000) return `${Math.floor(ms)}ms`;
+	if (ms < 60_000) return `${(ms / 1_000).toFixed(1)}s`;
+	if (ms < 3_600_000) {
+		const mins = Math.floor(ms / 60_000);
+		const secs = Math.floor((ms % 60_000) / 1_000);
+		return secs > 0 ? `${mins}m${secs}s` : `${mins}m`;
+	}
+	if (ms < 86_400_000) {
+		const hours = Math.floor(ms / 3_600_000);
+		const mins = Math.floor((ms % 3_600_000) / 60_000);
+		return mins > 0 ? `${hours}h${mins}m` : `${hours}h`;
+	}
+	const days = Math.floor(ms / 86_400_000);
+	const hours = Math.floor((ms % 86_400_000) / 3_600_000);
+	return hours > 0 ? `${days}d${hours}h` : `${days}d`;
 }
 
 /**
@@ -770,9 +794,9 @@ export function renderSubagentHudLines(sessions: ObservableSession[], columns: n
 
 function toSubagentHudSummaryRow(session: ObservableSession): SubagentHudSummaryRow {
 	const tokens = session.progress?.tokens ?? 0;
-	const tokenLabel = tokens > 0 ? `${formatNumber(tokens).toLowerCase()} tokens` : "0 tokens";
+	const tokenLabel = tokens > 0 ? `${compactCount(tokens)} tokens` : "0 tokens";
 	const durationMs = session.progress?.durationMs ?? 0;
-	const durationLabel = durationMs > 0 ? formatDuration(durationMs) : "0s";
+	const durationLabel = formatHudSummaryDuration(durationMs);
 	return {
 		id: session.id,
 		roleLabel: session.agent ?? session.progress?.agent ?? "task",
@@ -4339,8 +4363,8 @@ export class InteractiveMode implements InteractiveModeContext {
 		if (!contextUsage) {
 			return "Approve and keep context";
 		}
-		const tokens = formatContextTokenCount(contextUsage.tokens);
-		const contextWindow = formatContextTokenCount(contextUsage.contextWindow);
+		const tokens = compactCount(contextUsage.tokens);
+		const contextWindow = compactCount(contextUsage.contextWindow);
 		return `Approve and keep context (~${tokens} / ${contextWindow})`;
 	}
 

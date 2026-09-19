@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed settled subagent HUD summaries crashing with `TranscriptBlock is not defined` when agents completed.
+
 ## [18.2.5] - 2026-09-17
 
 ### Added
