@@ -7,6 +7,22 @@
 - Fixed OpenAI Responses / Completions and xAI tool conversion 400ing the whole turn on MCP schemas whose root is an object plus a typeless exclusive-required `anyOf` (e.g. codebase-memory `check_index_coverage`). Flatten only the **tool root** — nested unions (e.g. `task.outputSchema`) stay intact so Grok still sees valid `task`/`edit` schemas.
 - SuperGrok (`xai-oauth` only): send `parallel_tool_calls: true` (api.x.ai defaults this off when the field is omitted — not an omp config), harvest extra `function_call`s that appear only on `response.completed.output`, and ingest Completions-shaped `tool_calls` on a Responses stream, including streams that never send a Responses terminal frame. OpenAI / Azure / Codex / OpenRouter / paid `xai` unchanged.
 
+## [18.2.8] - 2026-09-21
+
+### Added
+
+- Added support for text embeddings, document reranking, video generation, image generation across multiple providers, audio speech synthesis, and audio transcription services.
+- Added support for the System One judgment API, including configurable request headers for proxy routing and custom authentication.
+
+### Changed
+
+- Updated API response cost reporting to use aggregate usage totals.
+- Model list responses now optionally include a model kind.
+
+### Fixed
+
+- Fixed detection of Claude usage-limit errors.
+
 ## [18.2.7] - 2026-09-21
 
 ### Breaking Changes
