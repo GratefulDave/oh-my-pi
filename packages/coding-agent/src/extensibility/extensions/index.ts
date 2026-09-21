@@ -13,6 +13,7 @@ export {
 	loadExtensions,
 } from "./loader";
 export * from "./runner";
+export { bindSubagentLifecycle } from "./subagent-lifecycle-bridge";
 // Type guards
 export * from "./types";
 export * from "./wrapper";

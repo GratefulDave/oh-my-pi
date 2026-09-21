@@ -195,4 +195,23 @@ describe("AgentSession hook idle while children run", () => {
 		expect(agentEndWillContinueFlags()).toEqual([undefined]);
 		expect(extensionRunner.emitSessionStop).toHaveBeenCalledTimes(1);
 	});
+
+	it("emits subagent_lifecycle started when a job is registered", () => {
+		const job = registerGatedJob("Main");
+		const events = emit.mock.calls
+			.map(call => call[0] as { type?: string; status?: string; id?: string })
+			.filter(event => event.type === "subagent_lifecycle");
+		expect(events).toEqual([expect.objectContaining({ type: "subagent_lifecycle", status: "started", id: job.id })]);
+	});
+
+	it("emits subagent_lifecycle completed when an owned job settles", async () => {
+		const job = registerGatedJob("Main");
+		job.resolve();
+		await manager.waitForAll();
+		const statuses = emit.mock.calls
+			.map(call => call[0] as { type?: string; status?: string })
+			.filter(event => event.type === "subagent_lifecycle")
+			.map(event => event.status);
+		expect(statuses).toEqual(["started", "completed"]);
+	});
 });

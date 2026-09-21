@@ -1,10 +1,10 @@
 import { beforeAll, describe, expect, it } from "bun:test";
-import { getThemeByName, setThemeInstance } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { getThemeByName, setThemeInstance } from "@oh-my-pi/pi-tui/theme";
 import {
 	buildSubagentHudSummaryBlock,
 	type SubagentHudSummaryDetails,
-} from "@oh-my-pi/pi-coding-agent/modes/utils/transcript-render-helpers";
-import type { CustomMessage } from "@oh-my-pi/pi-coding-agent/session/messages";
+} from "@oh-my-pi/pi-tui/chat/transcript-render-helpers";
+import type { CustomMessage } from "@oh-my-pi/pi-tui/chat/messages";
 
 let ansi = {
 	accent: "",

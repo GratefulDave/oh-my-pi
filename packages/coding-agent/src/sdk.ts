@@ -94,6 +94,7 @@ import { discoverCustomToolPaths, loadCustomTools, type ToolPathWithSource } fro
 import type { CustomTool, CustomToolContext, CustomToolSessionEvent } from "./extensibility/custom-tools/types";
 import {
 	bindPreparedExtensions,
+	bindSubagentLifecycle,
 	discoverAndLoadExtensions,
 	discoverExtensionPaths,
 	EXTENSION_HANDLER_TIMEOUT_MS,
@@ -2888,12 +2889,15 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			() => (hasSession ? session.getAsyncJobSnapshot() : null),
 		);
 
+		if (agentKind === "main") {
+			disposeCallbacks.add(bindSubagentLifecycle(extensionRunner, [eventBus, subagentEventBus]));
+		}
+
 		credentialDisabledTarget = extensionRunner;
 		for (const event of startupCredentialDisabledEvents.splice(0)) {
 			// Discard return: any handler error is routed through runner.onError listeners.
 			void extensionRunner.emitCredentialDisabled(event);
 		}
-
 		const getSessionContext = () => ({
 			sessionManager,
 			modelRegistry,
