@@ -126,3 +126,5 @@ skills:
   - diagram-design
   - omp-fork-upstream-sync
   - lex-fork-maintainability
+shellMinimizer:
+  gainTelemetry: true
