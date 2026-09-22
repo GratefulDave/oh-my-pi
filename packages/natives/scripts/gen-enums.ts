@@ -61,6 +61,12 @@ function restoreRequiredDeclarations(dts: string): string {
 	return restored;
 }
 
+/**
+ * The release sentinel answers "which build is this addon?", so it must stay a
+ * raw passthrough: a stub there would report presence for an addon that has it
+ * not, defeating the loader's own staleness diagnosis.
+ */
+const VERSION_SENTINEL_NAME_RE = /^__piNativesV/;
 interface EnumExport {
 	name: string;
 	entries: string[];
@@ -123,7 +129,12 @@ function buildGeneratedBlock(dts: string): string {
 		if (lines.length > 0) lines.push("");
 		lines.push("// functions");
 		for (const name of functions) {
-			lines.push(`export const ${name} = nativeBindings.${name};`);
+			// `missingNativeExport` returns `undefined` on a current addon and a
+			// throwing stub on a stale one, so capability probes
+			// (`typeof native.x === "function"`) keep their meaning and only the
+			// stale case gains an actionable failure. See `loader-state.js`.
+			const fallback = VERSION_SENTINEL_NAME_RE.test(name) ? "" : ` ?? missingNativeExport("${name}")`;
+			lines.push(`export const ${name} = nativeBindings.${name}${fallback};`);
 		}
 	}
 	if (enums.length > 0) {
