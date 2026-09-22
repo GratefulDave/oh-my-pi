@@ -2217,13 +2217,16 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		toolSession.customToolPaths = customToolPaths;
 
 		// Load extensions. Four paths:
-		//   1. `preloadedExtensions` (CLI): caller already loaded — reuse the
-		//      Extension instances. Shallow-clone `extensions` so the inline
-		//      push below cannot mutate the caller's array. `runtime` is shared
-		//      so flag values set pre-creation flow into the live session.
-		//   2. `preloadedPreparedExtensions` (subagent): caller imported modules;
-		//      re-bind their factories to THIS session's ExtensionAPI without
-		//      evaluating the same module graph again.
+		//   1. `preloadedExtensions` (CLI main session): caller already loaded —
+		//      reuse the Extension instances. Shallow-clone `extensions` so the
+		//      inline push below cannot mutate the caller's array. `runtime` is
+		//      shared so flag values set pre-creation flow into the live session.
+		//      Subagents must not take this path. Parent-bound instances close
+		//      over the parent ExtensionAPI, so a child `agent_end` hits the
+		//      parent's Herdr reporter and publishes idle (or a conflicting
+		//      session ref Herdr drops) while descendants are still running.
+		//   2. `preloadedPreparedExtensions` (subagent): re-bind factories to
+		//      THIS session's ExtensionAPI without re-evaluating the module graph.
 		//   3. `preloadedExtensionPaths`: compatibility fallback for callers that
 		//      only have paths; imports and binds them for this session.
 		//   4. No preload: run the full session discovery.
@@ -2231,7 +2234,10 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		// the flag and pre-resolved the result already reflects that choice.
 		let extensionPaths: string[];
 		let extensionsResult: LoadExtensionsResult;
-		if (!restrictToolNames && options.preloadedExtensions) {
+		const childPrepared = isSubagentSession
+			? (options.preloadedPreparedExtensions ?? options.preloadedExtensions?.preparedExtensions)
+			: undefined;
+		if (!isSubagentSession && !restrictToolNames && options.preloadedExtensions) {
 			extensionsResult = {
 				...options.preloadedExtensions,
 				extensions: [...options.preloadedExtensions.extensions],
@@ -2241,10 +2247,10 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			extensionPaths = extensionsResult.extensions
 				.map(ext => ext.resolvedPath)
 				.filter(p => !p.startsWith("<inline"));
-		} else if (restrictToolNames || options.preloadedPreparedExtensions) {
+		} else if (restrictToolNames || childPrepared || options.preloadedPreparedExtensions) {
 			// Restricted children retain parent hooks, not ambient discovery, new
 			// extension inputs, or parent-bound instances. Tool admission stays clamped.
-			const preparedExtensions = options.preloadedPreparedExtensions ?? [];
+			const preparedExtensions = childPrepared ?? options.preloadedPreparedExtensions ?? [];
 			extensionPaths = preparedExtensions.map(prepared => prepared.path);
 			extensionsResult = await logger.time(
 				"bindPreparedExtensions",
@@ -2313,7 +2319,10 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		// Process provider registrations queued during extension loading.
 		// This must happen before the runner is created so that models registered by
 		// extensions are available for model selection on session resume / fallback.
-		if (!restrictToolNames) {
+		// Subagent sessions share the parent's registry. Rebinding factories must
+		// not prune async-registered providers (syncExtensionSources drops any
+		// source the child set does not repeat) or register a second copy.
+		if (!isSubagentSession && !restrictToolNames) {
 			const activeExtensionSources = extensionsResult.extensions.map(extension => extension.path);
 			modelRegistry.syncExtensionSources(activeExtensionSources);
 			const preloadedExtensionSources = options.preloadedExtensions
@@ -2324,7 +2333,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 				modelRegistry.clearSourceRegistrations(sourceId);
 			}
 		}
-		if (extensionsResult.runtime.pendingProviderRegistrations.length > 0) {
+		if (!isSubagentSession && extensionsResult.runtime.pendingProviderRegistrations.length > 0) {
 			for (const { name, config, sourceId } of extensionsResult.runtime.pendingProviderRegistrations) {
 				modelRegistry.registerProvider(name, config, sourceId);
 			}

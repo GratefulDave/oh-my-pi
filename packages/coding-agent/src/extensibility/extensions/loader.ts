@@ -632,21 +632,30 @@ export async function discoverExtensionPaths(
 ): Promise<string[]> {
 	const allPaths: string[] = [];
 	const seen = new Set<string>();
-	const herdrReporterSeen = new Set<string>();
+	const herdrReporterOrigin = new Map<string, "ambient" | "explicit">();
 	const disabled = new Set(disabledExtensionIds ?? []);
 	const loadOptions = disabledExtensionIds ? { cwd, disabledExtensions: disabledExtensionIds } : { cwd };
 
 	const isDisabledName = (name: string): boolean => disabled.has(`extension-module:${name}`);
 
-	const addPath = (extPath: string): void => {
+	const addPath = (extPath: string, origin: "ambient" | "explicit" = "ambient"): void => {
 		const resolved = path.resolve(extPath);
 		const base = path.basename(resolved);
-		// Herdr-managed reporters use a fixed --source (herdr:omp / herdr:pi).
-		// A profile copy plus an explicit `extensions:` path loads two modules,
-		// independent seq, and Herdr keeps the first idle.
+		// Herdr-managed reporters use a fixed source (herdr:omp / herdr:pi).
+		// Two copies publish independent seq streams and Herdr keeps the first idle.
+		// An explicit `extensions:` path replaces an earlier ambient profile copy;
+		// two explicit paths keep the first.
 		if (HERDR_REPORTER_FILES[base]) {
-			if (herdrReporterSeen.has(base)) return;
-			herdrReporterSeen.add(base);
+			const previous = herdrReporterOrigin.get(base);
+			if (previous === "explicit" || (previous === "ambient" && origin !== "explicit")) return;
+			if (previous === "ambient") {
+				const idx = allPaths.findIndex(candidate => path.basename(path.resolve(candidate)) === base);
+				if (idx >= 0) {
+					seen.delete(path.resolve(allPaths[idx]));
+					allPaths.splice(idx, 1);
+				}
+			}
+			herdrReporterOrigin.set(base, origin);
 		}
 		if (!seen.has(resolved)) {
 			seen.add(resolved);
@@ -654,10 +663,10 @@ export async function discoverExtensionPaths(
 		}
 	};
 
-	const addPaths = (paths: string[]) => {
+	const addPaths = (paths: string[], origin: "ambient" | "explicit" = "ambient") => {
 		for (const extPath of paths) {
 			if (isDisabledName(getExtensionNameFromPath(extPath))) continue;
-			addPath(extPath);
+			addPath(extPath, origin);
 		}
 	};
 
@@ -714,12 +723,12 @@ export async function discoverExtensionPaths(
 		}
 
 		if (stat?.isDirectory()) {
-			addPaths(resolveExtensionDirectory(resolved, CONFIGURED_EXTENSION_DIRECTORY_OPTIONS).files);
+			addPaths(resolveExtensionDirectory(resolved, CONFIGURED_EXTENSION_DIRECTORY_OPTIONS).files, "explicit");
 			continue;
 		}
 
 		if (!isDisabledName(getExtensionNameFromPath(resolved))) {
-			addPath(resolved);
+			addPath(resolved, "explicit");
 		}
 	}
 

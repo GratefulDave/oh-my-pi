@@ -8,8 +8,8 @@
  * MUST clone the caller's `extensions` array before mutating it — otherwise
  * the caller's array accumulates session-local wrappers it never authored.
  *
- * Subagent forwarding is a separate path (`preloadedExtensionPaths`) which
- * reloads extensions per session so each session's `ExtensionAPI` is its own.
+ * Subagent sessions rebind prepared factories onto their own ExtensionAPI.
+ * They must not reuse the parent's bound instances.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
@@ -17,6 +17,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import { loadExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 import type { LoadExtensionsResult } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { createAgentSession } from "@oh-my-pi/pi-coding-agent/sdk";
 import type { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
@@ -79,6 +80,50 @@ describe("createAgentSession preloadedExtensions isolation (issue #2190)", () =>
 			// caller's array (and its identity) must be untouched.
 			expect(preloaded.extensions).toBe(beforeArrayRef);
 			expect(preloaded.extensions.length).toBe(beforeLength);
+		} finally {
+			await session.dispose();
+		}
+	});
+
+	it("rebinds extension factories for a subagent instead of reusing parent instances", async () => {
+		const extensionPath = path.join(sharedDir, "bind-count.ts");
+		const counterPath = path.join(sharedDir, "bind-count.txt");
+		fs.writeFileSync(
+			extensionPath,
+			`import * as fs from "node:fs";
+			export default function () {
+				const current = fs.existsSync(${JSON.stringify(counterPath)})
+					? Number(fs.readFileSync(${JSON.stringify(counterPath)}, "utf8"))
+					: 0;
+				fs.writeFileSync(${JSON.stringify(counterPath)}, String(current + 1));
+			}`,
+		);
+		const parent = await loadExtensions([extensionPath], sharedDir);
+		const before = Number(fs.readFileSync(counterPath, "utf8"));
+		const { session } = await createAgentSession({
+			cwd: sharedDir,
+			agentDir: sharedDir,
+			sessionManager: SessionManager.inMemory(),
+			modelRegistry,
+			settings: Settings.isolated(),
+			taskDepth: 1,
+			parentTaskPrefix: "Main",
+			agentId: "Child",
+			preloadedExtensions: parent,
+			preloadedPreparedExtensions: parent.preparedExtensions,
+			enableLsp: false,
+			enableMCP: false,
+			skipPythonPreflight: true,
+			skills: [],
+			rules: [],
+			preloadedCustomToolPaths: [],
+			contextFiles: [],
+			promptTemplates: [],
+			slashCommands: [],
+			toolNames: ["read"],
+		});
+		try {
+			expect(Number(fs.readFileSync(counterPath, "utf8"))).toBe(before + 1);
 		} finally {
 			await session.dispose();
 		}

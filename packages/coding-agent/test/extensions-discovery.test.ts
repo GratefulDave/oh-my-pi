@@ -310,6 +310,26 @@ describe("extensions discovery", () => {
 		).resolves.toEqual([profileReporter]);
 	});
 
+	it("prefers an explicit herdr reporter over an ambient profile copy", async () => {
+		const previousAgentDir = getAgentDir();
+		const profileAgent = path.join(tempDir.path(), "profile-agent");
+		const profileReporter = path.join(profileAgent, "extensions", "herdr-omp-agent-state.ts");
+		const explicitReporter = path.join(tempDir.path(), "explicit", "herdr-omp-agent-state.ts");
+		fs.mkdirSync(path.dirname(profileReporter), { recursive: true });
+		fs.mkdirSync(path.dirname(explicitReporter), { recursive: true });
+		fs.writeFileSync(profileReporter, extensionCode);
+		fs.writeFileSync(explicitReporter, extensionCode);
+		setAgentDir(profileAgent);
+		try {
+			const paths = await discoverExtensionPaths([explicitReporter], tempDir.path());
+			expect(paths.filter(candidate => path.basename(candidate) === "herdr-omp-agent-state.ts")).toEqual([
+				explicitReporter,
+			]);
+		} finally {
+			setAgentDir(previousAgentDir);
+		}
+	});
+
 	it("discovers a symlinked extension package directory", async () => {
 		const packageDir = path.join(tempDir.path(), "linked-package");
 		const sourceDir = path.join(packageDir, "src");

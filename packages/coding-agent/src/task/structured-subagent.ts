@@ -472,8 +472,9 @@ function buildExecutorOptions(
 		promptTemplates: session.promptTemplates,
 		rules: session.rules,
 		// Root policy and module paths have separate jobs: the live policy drives
-		// recursive sub-discovery; preloaded paths only avoid re-scanning/reusing
-		// parent-bound extension instances while constructing the child.
+		// recursive sub-discovery; prepared factories rebind onto the child
+		// ExtensionAPI. Never forward parent-bound Extension instances —
+		// `preloadedExtensions` is main-session reuse only.
 		extensionRoots: session.effectiveExtensionRoots?.bind(session),
 		preloadedExtensionPaths: restrictToolNames ? [] : session.extensionPaths,
 		preloadedPreparedExtensions: session.preparedExtensions,

@@ -1,3 +1,16 @@
 {
-  "hooks": {}
+  "hooks": {
+    "SubagentStop": [
+      {
+        "_managed_by": "library",
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /Users/davidandrews/PycharmProjects/the-library/hooks/claude/subagent-reap-scratchpad.mjs"
+          }
+        ]
+      }
+    ]
+  }
 }

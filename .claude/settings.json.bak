@@ -1,13 +1,13 @@
 {
   "hooks": {
-    "UserPromptSubmit": [
+    "PreToolUse": [
       {
         "_managed_by": "library",
-        "matcher": "",
+        "matcher": "Task|Agent",
         "hooks": [
           {
             "type": "command",
-            "command": "node /Users/davidandrews/PycharmProjects/the-library/hooks/claude/code-intel-userpromptsubmit.mjs"
+            "command": "node /Users/davidandrews/PycharmProjects/the-library/hooks/claude/caveman-task-inject-pretooluse.mjs"
           }
         ]
       }

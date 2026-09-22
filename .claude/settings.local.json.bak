@@ -1,12 +1,16 @@
 {
   "enabledMcpjsonServers": [
-    "chrome-devtools",
-    "context7",
     "context-mode",
     "auggie",
     "linear",
     "grep-app",
     "ast-grep",
-    "codemap"
-  ]
+    "codemap",
+    "codebase-memory"
+  ],
+  "permissions": {
+    "allow": [
+      "Bash(node *)"
+    ]
+  }
 }
