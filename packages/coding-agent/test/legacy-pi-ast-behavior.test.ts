@@ -346,5 +346,4 @@ describe("legacy Pi Babel AST behavior baseline", () => {
 			`const value = require(${JSON.stringify(requireTarget)});`,
 		);
 	});
-
 });

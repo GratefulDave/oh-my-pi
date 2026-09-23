@@ -221,7 +221,11 @@ import { SkillMessageComponent } from "@oh-my-pi/pi-tui/chat/skill-message";
 import { StatusLineComponent } from "@oh-my-pi/pi-tui/status-line";
 import { statusLineHost } from "./status-line-host";
 import { SPINNER_ADVANCE_MS as SPINNER_RENDER_INTERVAL_MS } from "@oh-my-pi/pi-tui/components/loader";
-import { sharedSpinnerFrame, stopSharedSpinnerTicker, type ToolExecutionHandle } from "@oh-my-pi/pi-tui/chat/tool-execution";
+import {
+	sharedSpinnerFrame,
+	stopSharedSpinnerTicker,
+	type ToolExecutionHandle,
+} from "@oh-my-pi/pi-tui/chat/tool-execution";
 import { TranscriptContainer } from "@oh-my-pi/pi-tui/chrome/transcript-container";
 import type { LspServerInfo as WelcomeLspServerInfo } from "@oh-my-pi/pi-tui/prompt/welcome";
 import { Composer, PINNED_HUD_TOGGLE_ID, type ComposerStatusSnapshot } from "@oh-my-pi/pi-tui/prompt/composer";
@@ -921,7 +925,6 @@ function formatSubagentHudSummaryLabel(session: ObservableSession): string {
 		session.description?.trim() || session.progress?.description?.trim() || session.progress?.task?.trim();
 	return description ? `${displayId}: ${replaceTabs(description)}` : displayId;
 }
-
 
 const CTRL_L_APPEARANCE_RESPONSE_DEADLINE_MS = 2000;
 

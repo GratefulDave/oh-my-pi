@@ -63,14 +63,7 @@ describe("classifyAgentType", () => {
 	});
 
 	it("classifies profile-dir transcripts relative to that profile's sessions root", () => {
-		const project = path.join(
-			path.dirname(getAgentDir()),
-			"profiles",
-			"grok",
-			"agent",
-			"sessions",
-			"--work--pi",
-		);
+		const project = path.join(path.dirname(getAgentDir()), "profiles", "grok", "agent", "sessions", "--work--pi");
 		const session = path.join(project, "1700000000000_abc");
 		expect(classifyAgentType(path.join(project, "1700000000000_abc.jsonl"))).toBe("main");
 		expect(classifyAgentType(path.join(session, "AuthLoader.jsonl"))).toBe("subagent");

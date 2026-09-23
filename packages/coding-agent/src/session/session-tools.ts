@@ -1973,7 +1973,6 @@ export class SessionTools {
 			this.#mcpManagerToolNames = previousMcpManagerToolNames;
 		};
 
-
 		const extensionRunner = this.#host.extensionRunner();
 		const managerTools = deduplicateMCPToolsByName(mcpTools).map(customTool => {
 			const wrapped = wrapToolWithMetaNotice(

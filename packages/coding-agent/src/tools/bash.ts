@@ -398,7 +398,6 @@ export interface BashToolInput {
 	pty?: boolean;
 }
 
-
 export interface BashToolOptions {}
 
 type ManagedBashJobCompletion =
@@ -1478,4 +1477,3 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 		});
 	}
 }
-

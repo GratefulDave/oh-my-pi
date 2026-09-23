@@ -1392,7 +1392,6 @@ export class SelectorController {
 			return;
 		}
 
-
 		const done = () => {
 			overlayHandle?.hide();
 			selector?.dispose();

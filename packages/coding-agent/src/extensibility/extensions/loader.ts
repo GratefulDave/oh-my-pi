@@ -580,7 +580,6 @@ const CONFIGURED_EXTENSION_DIRECTORY_OPTIONS = {
 	},
 };
 
-
 async function discoverHooksInPackageRoot(root: string): Promise<string[]> {
 	const hooks: string[] = [];
 	for (const hookType of ["pre", "post"]) {

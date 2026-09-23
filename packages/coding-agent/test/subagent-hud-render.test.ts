@@ -118,7 +118,6 @@ describe("subagent HUD lines", () => {
 		expect(out.indexOf("mcp__context_mode_ctx_execute:3")).toBeLessThan(out.indexOf("bash:2"));
 	});
 
-
 	describe("model badges", () => {
 		beforeEach(async () => {
 			resetSettingsForTest();

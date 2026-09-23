@@ -917,9 +917,7 @@ export async function listAgentDirs(): Promise<string[]> {
 
 	const agentParent = path.dirname(agentDir);
 	const configRoot =
-		path.basename(path.dirname(agentParent)) === "profiles"
-			? path.dirname(path.dirname(agentParent))
-			: agentParent;
+		path.basename(path.dirname(agentParent)) === "profiles" ? path.dirname(path.dirname(agentParent)) : agentParent;
 
 	const agentDirs = [path.join(configRoot, "agent")];
 	const profilesDir = path.join(configRoot, "profiles");
