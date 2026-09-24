@@ -27,7 +27,7 @@ import { createInMemoryAuthStorage } from "./helpers/agent-session-setup";
  * 4. A job owned by a different agent does not hold this session idle.
  */
 const sharedAuthStorage = createInMemoryAuthStorage();
-sharedAuthStorage.setRuntimeApiKey("anthropic", "test-key");
+sharedAuthStorage.keys.setRuntime("anthropic", "test-key");
 const sharedModelRegistry = new ModelRegistry(sharedAuthStorage);
 
 afterAll(() => {
