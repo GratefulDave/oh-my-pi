@@ -390,8 +390,8 @@ export class AsyncJobManager {
 					job.status = "completed";
 					job.resultText = text;
 					this.#enqueueDelivery(id, text);
+					this.#notifyJobChange(job, "settled");
 				}
-				this.#notifyJobChange(job, "settled");
 			} catch (error) {
 				job.endTime = Date.now();
 				if (error instanceof AsyncJobError && error.structured) job.structured = error.structured;
@@ -400,8 +400,8 @@ export class AsyncJobManager {
 				if (job.status !== "cancelled") {
 					job.status = "failed";
 					this.#enqueueDelivery(id, errorText);
+					this.#notifyJobChange(job, "settled");
 				}
-				this.#notifyJobChange(job, "settled");
 			}
 			if (this.#releasedForegroundJobs.has(id)) this.#discardForegroundJob(id);
 			else this.#scheduleEviction(id);
