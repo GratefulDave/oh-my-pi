@@ -940,7 +940,7 @@ async function loadDefaultAgentExtensionsForProfile(settings: Settings): Promise
 		agentDir: defaultAgentDir,
 		cwd: settings.getCwd(),
 	});
-	return defaultSettings.get("extensions") ?? [];
+	return cfgExtensions.get(defaultSettings) ?? [];
 }
 
 /**
