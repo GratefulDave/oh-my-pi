@@ -13,6 +13,12 @@
 
 - Bash Minimizer gain dashboard in `omp stats` — shows bash minimizer token-savings alongside existing snapcompact savings with stacked time series, top-filter breakdown, project selector, and missed-command tuning table ([#3691](https://github.com/can1357/oh-my-pi/pull/3691)).
 
+## [18.4.1] - 2026-09-28
+
+### Fixed
+
+- Fixed `/trace` and `omp stats` dashboards failing to load after operating-system temporary-file cleanup ([#13487](https://github.com/can1357/oh-my-pi/pull/13487) by [@Peter-Tam](https://github.com/Peter-Tam)).
+
 ## [18.4.0] - 2026-09-28
 
 ### Changed
