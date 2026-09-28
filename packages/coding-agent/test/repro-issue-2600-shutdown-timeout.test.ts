@@ -155,7 +155,6 @@ describe("issue #2600 - session_shutdown handler timeout", () => {
 			cleanup();
 		}
 	});
-
 	it("session_shutdown cap is independent from the generic handler cap", async () => {
 		const { runner, hangExtensionPath, cleanup } = await buildRunnerWithHangingShutdown();
 		try {

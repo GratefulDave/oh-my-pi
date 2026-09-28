@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+## [18.4.0] - 2026-09-28
+
+### Breaking Changes
+
+- Changed `LimitsApi.rotate()` to return a `CredentialRotation` object (`{ switched, afterSiblingWait? }`) instead of a boolean. Check `.switched` explicitly, since the returned object is always truthy.
+
+### Added
+
+- Added image metadata to hosted OpenAI image-generation results, including the model used and each generated image’s dimensions and quality.
+
+### Changed
+
+- Redesigned the browser page displayed during OAuth login.
+
+### Fixed
+
+- Fixed Anthropic accounts remaining blocked after quota resets, including for broker-connected clients, while preserving independent authentication and model-limit restrictions.
+- Fixed concurrent usage refreshes repeatedly probing providers after failures, reducing unnecessary usage-endpoint requests.
+- Fixed Gemini and Antigravity usage and cost reporting when upstream responses omit prompt-token counts or report more cached tokens than prompt tokens.
+- Fixed credential failover after authentication errors so stored credentials rotate through every distinct sibling instead of stopping after one attempt; rotation can also wait briefly for a temporarily blocked healthy sibling to become available.
+- Fixed native judge responses without token counts producing invalid usage and cost values.
+- Fixed Cursor usage, cost, and context accounting to include final input, cache, reasoning, and output metrics, improving compaction and handoff sizing.
+- Fixed Cursor MCP tool calls routed through external executors being returned as text instead of tool calls.
+- Fixed Cursor shell-tool timeouts being displayed in milliseconds rather than seconds.
+- Fixed fetch requests over Unix sockets when `PI_PROXY` is configured.
+- Fixed Ollama chat turns being recorded with zero cost; usage is now priced using the model’s cost information.
+- Fixed Anthropic requests failing after native compaction when per-message effort settings were present; effort controls are now handled correctly with compaction.
+
 ## [18.3.5] - 2026-09-27
 
 ### Breaking Changes
@@ -5831,3 +5859,4 @@ Older entries are archived in [packages/ai/CHANGELOG.md@c821261d1018](https://gi
 Older entries are archived in [packages/ai/CHANGELOG.md@8a9097246135](https://github.com/can1357/oh-my-pi/blob/8a9097246135bd572ff96fb552121fe1194d2906/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@1f7329fc2c7c](https://github.com/can1357/oh-my-pi/blob/1f7329fc2c7c366b38731738e0db9c170f9bb348/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@d58593a30902](https://github.com/can1357/oh-my-pi/blob/d58593a3090258473304608d68ffd1f620e6b695/packages/ai/CHANGELOG.md).
+Older entries are archived in [packages/ai/CHANGELOG.md@dfbf3cc34eeb](https://github.com/can1357/oh-my-pi/blob/dfbf3cc34eeb5653580f51bfbcae558a9840f697/packages/ai/CHANGELOG.md).

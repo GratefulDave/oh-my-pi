@@ -527,6 +527,7 @@ function buildExecutorOptions(
 		modelRegistry: session.modelRegistry,
 		preloadedExtensions: session.getPreloadedExtensions?.(),
 		settings: session.settings,
+		inheritedSessionAgents: session.getSessionAgents?.(),
 		mcpManager: enableMCP ? (session.mcpManager ?? MCPManager.instance()) : undefined,
 		enableMCP,
 		customTools: request.customTools,

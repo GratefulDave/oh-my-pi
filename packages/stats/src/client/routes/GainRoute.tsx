@@ -1,334 +1,313 @@
-import type { ChartOptions } from "chart.js";
 import { useMemo, useState } from "react";
-import { Line } from "react-chartjs-2";
 import { getGainDashboardStats } from "../api";
-import { buildSharedPlugins, buildSharedScales, CHART_THEMES, lineDatasetStyle } from "../components/chart-shared";
+import { Chart, type ChartSeries, Legend } from "../charts";
 import { formatBytes, formatCompact, formatInteger, formatPercent } from "../data/formatters";
-import { useResource } from "../data/useResource";
-import type {
-	GainDashboardStats,
-	GainMissedCommand,
-	GainSourceTotals,
-	GainTimeSeriesPoint,
-	GainTopFilter,
-	TimeRange,
-} from "../types";
-import { AsyncBoundary, DataTable, Panel } from "../ui";
-import type { DataTableColumn } from "../ui/DataTable";
-import { useSystemTheme } from "../useSystemTheme";
+import { useQuery } from "../data/query";
+import { bucketAxis, rangeMeta } from "../data/range";
+import { densify } from "../data/series";
+import type { GainMissedCommand, GainSource, GainSourceTotals, GainTopFilter, TimeRange } from "../types";
+import {
+	Card,
+	ChartSkeleton,
+	type Column,
+	EmptyState,
+	MeterCell,
+	PageHeader,
+	QueryView,
+	Stat,
+	StatGrid,
+	Table,
+} from "../ui";
 
 export interface GainRouteProps {
 	active: boolean;
 	range: TimeRange;
-	refreshTrigger: number;
 }
 
-export function GainRoute({ active, range, refreshTrigger }: GainRouteProps) {
-	const [project, setProject] = useState<string | null>(null);
+const DAY_MS = 86_400_000;
 
-	const {
-		data: stats,
-		error,
-		loading,
-	} = useResource(["gain", range, refreshTrigger, project], signal => getGainDashboardStats(range, project, signal), {
-		pollMs: 30_000,
-		enabled: active,
-	});
+const SOURCE_LABEL: Record<GainSource, string> = { snapcompact: "Snapcompact" };
+
+/** The server buckets gain by UTC calendar day (`YYYY-MM-DD`). */
+const DAY_LABEL = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+
+interface SourceRow extends GainSourceTotals {
+	source: GainSource;
+	/** Share of all saved tokens (0-1). */
+	share: number;
+}
+
+export function GainRoute({ active, range }: GainRouteProps) {
+	const [project, setProject] = useState<string | null>(null);
+	const gain = useQuery(["gain", range, project], () => getGainDashboardStats(range, project), { enabled: active });
+	const meta = rangeMeta(range);
+	const data = gain.data;
+
+	const series = useMemo(() => {
+		const points = (data?.timeSeries ?? []).map(p => ({ ...p, timestamp: Date.parse(`${p.date}T00:00:00Z`) }));
+		const buckets = bucketAxis(
+			range,
+			points.map(p => p.timestamp),
+			DAY_MS,
+		);
+		const daily = densify(points, buckets, p => p.snapcompact);
+		let running = 0;
+		const cumulative = daily.map(v => (running += v));
+		return { buckets, daily, cumulative };
+	}, [data, range]);
+
+	const sourceRows = useMemo((): SourceRow[] => {
+		if (!data) return [];
+		const total = data.overall.savedTokens;
+		return (Object.keys(data.bySource) as GainSource[]).map(source => ({
+			...data.bySource[source],
+			source,
+			share: total > 0 ? data.bySource[source].savedTokens / total : 0,
+		}));
+	}, [data]);
+
+	const projects = data?.projects ?? [];
+	// Keep the chosen project selectable even when the current range never saw it.
+	const projectOptions = project !== null && !projects.includes(project) ? [project, ...projects] : projects;
+	const scope = project ? ` for ${project}` : "";
+
+	const chartSeries: ChartSeries[] = [
+		{ key: "daily", label: "Saved per day", color: "var(--chart-primary)", values: series.daily },
+		{
+			key: "cumulative",
+			label: "Cumulative",
+			color: "var(--chart-secondary)",
+			values: series.cumulative,
+			kind: "line",
+			axis: "right",
+		},
+	];
 
 	return (
-		<div className="stats-route-container space-y-6">
-			<AsyncBoundary loading={loading} error={error} data={stats}>
-				{stats && (
+		<div className="page">
+			<PageHeader
+				title="Gain"
+				description={`Tokens snapcompact kept out of context${scope} in ${meta.windowLabel}.`}
+				actions={
+					projectOptions.length > 0 && (
+						<select
+							className="input"
+							aria-label="Project"
+							value={project ?? ""}
+							onChange={e => setProject(e.target.value || null)}
+							style={{ maxWidth: 320 }}
+						>
+							<option value="">All projects</option>
+							{projectOptions.map(p => (
+								<option key={p} value={p}>
+									{p}
+								</option>
+							))}
+						</select>
+					)
+				}
+			/>
+
+			<QueryView
+				query={gain}
+				skeleton={<ChartSkeleton height={96} />}
+				isEmpty={stats => stats.overall.hits === 0 && stats.timeSeries.length === 0}
+				empty={
+					<Card>
+						<EmptyState
+							title={`No savings recorded${scope} in ${meta.windowLabel}`}
+							hint={
+								range === "all"
+									? "Savings appear here once snapcompact compacts tool output."
+									: "Try a longer range."
+							}
+						/>
+					</Card>
+				}
+			>
+				{({ overall, topFilters, missedCommands }) => (
 					<>
-						<GainProjectSelector projects={stats.projects} selected={project} onChange={setProject} />
-						<GainOverallPanel overall={stats.overall} />
-						<GainBySourcePanel bySource={stats.bySource} />
-						<GainTimeSeriesPanel timeSeries={stats.timeSeries} />
-						<GainTopFiltersPanel topFilters={stats.topFilters} />
-						<GainMissedCommandsPanel missedCommands={stats.missedCommands} />
+						<div data-stale={gain.stale}>
+							<StatGrid min={180}>
+								<Stat
+									label="Saved tokens"
+									value={formatCompact(overall.savedTokens)}
+									hint={formatInteger(overall.savedTokens)}
+									spark={series.daily}
+								/>
+								<Stat label="Saved bytes" value={formatBytes(overall.savedBytes)} />
+								<Stat
+									label="Reduction"
+									title="Saved bytes ÷ original bytes, when the original size is known"
+									value={overall.reductionPercent !== null ? formatPercent(overall.reductionPercent) : "–"}
+									hint={overall.reductionPercent === null ? "original size not recorded" : undefined}
+								/>
+								<Stat label="Hits" value={formatInteger(overall.hits)} />
+								<Stat
+									label="Saved per hit"
+									value={overall.hits > 0 ? formatCompact(overall.savedTokens / overall.hits) : "–"}
+									hint="tokens"
+								/>
+							</StatGrid>
+						</div>
+
+						<Card
+							index={1}
+							title="Savings over time"
+							description="Tokens saved per UTC day, with the running total"
+							actions={<Legend items={chartSeries.map(s => ({ key: s.key, label: s.label, color: s.color }))} />}
+							stale={gain.stale}
+						>
+							<Chart
+								slots={series.buckets.length}
+								tickLabel={i => DAY_LABEL.format(series.buckets[i])}
+								series={chartSeries}
+								height={260}
+								formatTooltip={formatInteger}
+								formatRight={formatCompact}
+							/>
+						</Card>
+
+						<Card index={2} title="By source" description="Savings per subsystem" flush stale={gain.stale}>
+							<Table rows={sourceRows} rowKey={row => row.source} columns={SOURCE_COLUMNS} />
+						</Card>
+
+						<Card
+							index={3}
+							title="Top filters"
+							description="Bash minimizer filters with the highest token savings"
+							flush
+							stale={gain.stale}
+						>
+							<Table
+								rows={topFilters}
+								rowKey={row => row.filter}
+								columns={TOP_FILTER_COLUMNS}
+								empty="No minimizer filter data yet"
+							/>
+						</Card>
+
+						<Card
+							index={4}
+							title="Missed commands"
+							description="Eligible commands the minimizer did not save — write a filter for the top entries"
+							flush
+							stale={gain.stale}
+						>
+							<Table
+								rows={missedCommands}
+								rowKey={row => row.command}
+								columns={MISSED_COLUMNS}
+								empty="No missed commands in this range/project"
+							/>
+						</Card>
 					</>
 				)}
-			</AsyncBoundary>
+			</QueryView>
 		</div>
 	);
 }
 
-// ---------------------------------------------------------------------------
-// Project selector
-// ---------------------------------------------------------------------------
-
-function GainProjectSelector({
-	projects,
-	selected,
-	onChange,
-}: {
-	projects: string[];
-	selected: string | null;
-	onChange: (p: string | null) => void;
-}) {
-	if (projects.length === 0) return null;
-	return (
-		<div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-			<span className="stats-text-secondary" style={{ fontSize: "0.875rem", whiteSpace: "nowrap" }}>
-				Project
+const SOURCE_COLUMNS: Column<SourceRow>[] = [
+	{
+		key: "source",
+		header: "Source",
+		sort: row => row.source,
+		render: row => <span className="cell-primary">{SOURCE_LABEL[row.source]}</span>,
+	},
+	{
+		key: "tokens",
+		header: "Saved tokens",
+		align: "right",
+		sort: row => row.savedTokens,
+		render: row => (
+			<span title={formatInteger(row.savedTokens)}>
+				<MeterCell value={row.share} max={1} display={formatCompact(row.savedTokens)} />
 			</span>
-			<select
-				className="stats-select"
-				value={selected ?? ""}
-				onChange={e => onChange(e.target.value || null)}
-				style={{ maxWidth: "480px", flex: 1 }}
-			>
-				<option value="">All projects</option>
-				{projects.map(p => (
-					<option key={p} value={p}>
-						{p}
-					</option>
-				))}
-			</select>
-		</div>
-	);
-}
-
-// ---------------------------------------------------------------------------
-// Overall metrics panel
-// ---------------------------------------------------------------------------
-
-function GainOverallPanel({ overall }: { overall: GainSourceTotals }) {
-	return (
-		<Panel title="Overall Gain" subtitle="Aggregate savings across all sources">
-			<div className="stats-metric-primary-grid">
-				<div className="stats-metric-card primary">
-					<div className="stats-metric-label">Saved Tokens</div>
-					<div className="stats-metric-value">{formatCompact(overall.savedTokens)}</div>
-				</div>
-				<div className="stats-metric-card primary">
-					<div className="stats-metric-label">Saved Bytes</div>
-					<div className="stats-metric-value">{formatBytes(overall.savedBytes)}</div>
-				</div>
-				<div className="stats-metric-card primary">
-					<div className="stats-metric-label">Reduction</div>
-					<div className="stats-metric-value">
-						{overall.reductionPercent !== null ? formatPercent(overall.reductionPercent) : "—"}
-					</div>
-				</div>
-				<div className="stats-metric-card primary">
-					<div className="stats-metric-label">Total Hits</div>
-					<div className="stats-metric-value">{formatInteger(overall.hits)}</div>
-				</div>
-			</div>
-		</Panel>
-	);
-}
-
-// ---------------------------------------------------------------------------
-// By-source breakdown panel
-// ---------------------------------------------------------------------------
-
-function SourceCard({ title, totals }: { title: string; totals: GainSourceTotals }) {
-	return (
-		<div className="stats-metric-card secondary" style={{ flex: 1 }}>
-			<div className="stats-metric-label" style={{ fontWeight: 600, marginBottom: 8 }}>
-				{title}
-			</div>
-			<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-				<div>
-					<div className="stats-metric-label">Saved Tokens</div>
-					<div className="stats-metric-value" style={{ fontSize: "1rem" }}>
-						{formatCompact(totals.savedTokens)}
-					</div>
-				</div>
-				<div>
-					<div className="stats-metric-label">Saved Bytes</div>
-					<div className="stats-metric-value" style={{ fontSize: "1rem" }}>
-						{formatBytes(totals.savedBytes)}
-					</div>
-				</div>
-				<div>
-					<div className="stats-metric-label">Hits</div>
-					<div className="stats-metric-value" style={{ fontSize: "1rem" }}>
-						{formatInteger(totals.hits)}
-					</div>
-				</div>
-				<div>
-					<div className="stats-metric-label">Reduction</div>
-					<div className="stats-metric-value" style={{ fontSize: "1rem" }}>
-						{totals.reductionPercent !== null ? formatPercent(totals.reductionPercent) : "—"}
-					</div>
-				</div>
-			</div>
-		</div>
-	);
-}
-
-function GainBySourcePanel({ bySource }: { bySource: GainDashboardStats["bySource"] }) {
-	return (
-		<Panel title="By Source" subtitle="Savings breakdown per subsystem">
-			<div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-				<SourceCard title="Bash Minimizer" totals={bySource.minimizer} />
-				<SourceCard title="Snapcompact" totals={bySource.snapcompact} />
-			</div>
-		</Panel>
-	);
-}
-
-// ---------------------------------------------------------------------------
-// Time series chart (stacked area, daily)
-// ---------------------------------------------------------------------------
-
-function formatGainDateLabel(date: string): string {
-	const [, , month, day] = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(date) ?? [];
-	if (!month || !day) return date;
-	const monthIndex = Number(month) - 1;
-	const dayNumber = Number(day);
-	if (!Number.isInteger(monthIndex) || !Number.isInteger(dayNumber)) return date;
-	const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-	return `${monthNames[monthIndex] ?? month} ${dayNumber}`;
-}
-
-// Stable colours matching the plan: blue/green from Tailwind palette
-const GAIN_COLORS = {
-	minimizer: "rgb(59, 130, 246)",
-	snapcompact: "rgb(34, 197, 94)",
-} as const;
-
-function GainTimeSeriesPanel({ timeSeries }: { timeSeries: GainTimeSeriesPoint[] }) {
-	const theme = useSystemTheme();
-	const chartTheme = CHART_THEMES[theme];
-
-	const { data, options } = useMemo(() => {
-		const labels = timeSeries.map(p => formatGainDateLabel(p.date));
-		const chartData = {
-			labels,
-			datasets: [
-				{
-					label: "Bash Minimizer",
-					data: timeSeries.map(p => p.minimizer),
-					...lineDatasetStyle(GAIN_COLORS.minimizer),
-				},
-				{
-					label: "Snapcompact",
-					data: timeSeries.map(p => p.snapcompact),
-					...lineDatasetStyle(GAIN_COLORS.snapcompact),
-				},
-			],
-		};
-
-		const { sharedScaleBase, yScale } = buildSharedScales({
-			chartTheme,
-			formatY: n => formatCompact(n),
-		});
-
-		const chartOptions = {
-			responsive: true,
-			maintainAspectRatio: false,
-			plugins: buildSharedPlugins({
-				chartTheme,
-				showLegend: true,
-				defaultLabel: "Tokens Saved",
-				formatValue: formatCompact,
-			}),
-			scales: {
-				x: { ...sharedScaleBase, stacked: true },
-				y: { ...yScale, stacked: true },
-			},
-		};
-
-		return { data: chartData, options: chartOptions };
-	}, [timeSeries, chartTheme]);
-
-	return (
-		<Panel title="Savings Over Time" subtitle="Daily token savings by source">
-			<div style={{ height: 240 }}>
-				{timeSeries.length === 0 ? (
-					<div className="stats-table-empty">No time series data yet</div>
-				) : (
-					<Line data={data} options={options as ChartOptions<"line">} />
-				)}
-			</div>
-		</Panel>
-	);
-}
-
-// ---------------------------------------------------------------------------
-// Top filters table
-// ---------------------------------------------------------------------------
-
-const TOP_FILTER_COLUMNS: DataTableColumn<GainTopFilter>[] = [
-	{
-		key: "filter",
-		header: "Filter / Command",
-		render: item => <code style={{ fontSize: "0.85em" }}>{item.filter}</code>,
-	},
-	{
-		key: "savedTokens",
-		header: "Saved Tokens",
-		numeric: true,
-		render: item => formatCompact(item.savedTokens),
-	},
-	{
-		key: "savedBytes",
-		header: "Saved Bytes",
-		numeric: true,
-		render: item => formatBytes(item.savedBytes),
-	},
-	{
-		key: "hits",
-		header: "Hits",
-		numeric: true,
-		render: item => formatInteger(item.hits),
-	},
-];
-
-function GainTopFiltersPanel({ topFilters }: { topFilters: GainTopFilter[] }) {
-	return (
-		<Panel title="Top Filters" subtitle="Bash minimizer filters with the highest token savings">
-			<DataTable
-				columns={TOP_FILTER_COLUMNS}
-				data={topFilters}
-				keyExtractor={item => item.filter}
-				emptyText="No minimizer filter data yet"
-			/>
-		</Panel>
-	);
-}
-// ---------------------------------------------------------------------------
-// Missed commands table — the tuning surface
-// ---------------------------------------------------------------------------
-
-const MISSED_COLUMNS: DataTableColumn<GainMissedCommand>[] = [
-	{
-		key: "command",
-		header: "Command (missed)",
-		render: item => (
-			<code style={{ fontSize: "0.8em", wordBreak: "break-all", whiteSpace: "pre-wrap" }}>{item.command}</code>
 		),
 	},
 	{
-		key: "hits",
-		header: "Hits",
-		numeric: true,
-		render: item => formatInteger(item.hits),
+		key: "share",
+		header: "Share",
+		align: "right",
+		sort: row => row.share,
+		render: row => <span className="num muted">{formatPercent(row.share)}</span>,
 	},
 	{
-		key: "inputBytes",
-		header: "Input Bytes",
-		numeric: true,
-		render: item => formatBytes(item.inputBytes),
+		key: "bytes",
+		header: "Saved bytes",
+		align: "right",
+		sort: row => row.savedBytes,
+		render: row => <span className="num">{formatBytes(row.savedBytes)}</span>,
+	},
+	{
+		key: "hits",
+		header: "Hits",
+		align: "right",
+		sort: row => row.hits,
+		render: row => <span className="num">{formatInteger(row.hits)}</span>,
+	},
+	{
+		key: "reduction",
+		header: "Reduction",
+		align: "right",
+		sort: row => row.reductionPercent ?? -1,
+		render: row => (
+			<span className="num">{row.reductionPercent !== null ? formatPercent(row.reductionPercent) : "–"}</span>
+		),
 	},
 ];
 
-function GainMissedCommandsPanel({ missedCommands }: { missedCommands: GainMissedCommand[] }) {
-	return (
-		<Panel
-			title="Missed Commands"
-			subtitle="Eligible commands the minimizer did not save — write a filter for the top entries"
-		>
-			<DataTable
-				columns={MISSED_COLUMNS}
-				data={missedCommands}
-				keyExtractor={item => item.command}
-				emptyText="No missed commands in this range/project"
-			/>
-		</Panel>
-	);
-}
+const TOP_FILTER_COLUMNS: Column<GainTopFilter>[] = [
+	{
+		key: "filter",
+		header: "Filter / Command",
+		sort: row => row.filter,
+		render: row => <code style={{ fontSize: "0.85em" }}>{row.filter}</code>,
+	},
+	{
+		key: "savedTokens",
+		header: "Saved tokens",
+		align: "right",
+		sort: row => row.savedTokens,
+		render: row => <span className="num">{formatCompact(row.savedTokens)}</span>,
+	},
+	{
+		key: "savedBytes",
+		header: "Saved bytes",
+		align: "right",
+		sort: row => row.savedBytes,
+		render: row => <span className="num">{formatBytes(row.savedBytes)}</span>,
+	},
+	{
+		key: "hits",
+		header: "Hits",
+		align: "right",
+		sort: row => row.hits,
+		render: row => <span className="num">{formatInteger(row.hits)}</span>,
+	},
+];
+
+const MISSED_COLUMNS: Column<GainMissedCommand>[] = [
+	{
+		key: "command",
+		header: "Command (missed)",
+		sort: row => row.command,
+		wrap: true,
+		render: row => <code style={{ fontSize: "0.8em", wordBreak: "break-all" }}>{row.command}</code>,
+	},
+	{
+		key: "hits",
+		header: "Hits",
+		align: "right",
+		sort: row => row.hits,
+		render: row => <span className="num">{formatInteger(row.hits)}</span>,
+	},
+	{
+		key: "inputBytes",
+		header: "Input bytes",
+		align: "right",
+		sort: row => row.inputBytes,
+		render: row => <span className="num">{formatBytes(row.inputBytes)}</span>,
+	},
+];
