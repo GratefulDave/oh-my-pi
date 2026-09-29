@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [18.4.3] - 2026-09-28
+
+### Added
+
+- Added Command Code usage limits (5-hour, weekly, and credit balance) to /usage and the status line ([#13666](https://github.com/can1357/oh-my-pi/pull/13666) by [@riicodespretty](https://github.com/riicodespretty))
+
+### Changed
+
+- Reduced per-token CPU and allocations while streaming: the leaked-thinking scanner used for OpenAI-compatible and custom endpoints no longer allocates per character, chat-completions and Bedrock look up a delta's content block in constant time, Google, Gemini CLI, Codex, and chat-completions streams skip raw SSE line capture unless an `onSseEvent` listener is attached, and event streams drain backlogs without `Array#shift` ([#13650](https://github.com/can1357/oh-my-pi/pull/13650) by [@H4vC](https://github.com/H4vC)).
+
 ## [18.4.2] - 2026-09-28
 
 ### Fixed
@@ -5886,3 +5896,4 @@ Older entries are archived in [packages/ai/CHANGELOG.md@8a9097246135](https://gi
 Older entries are archived in [packages/ai/CHANGELOG.md@1f7329fc2c7c](https://github.com/can1357/oh-my-pi/blob/1f7329fc2c7c366b38731738e0db9c170f9bb348/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@d58593a30902](https://github.com/can1357/oh-my-pi/blob/d58593a3090258473304608d68ffd1f620e6b695/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@dfbf3cc34eeb](https://github.com/can1357/oh-my-pi/blob/dfbf3cc34eeb5653580f51bfbcae558a9840f697/packages/ai/CHANGELOG.md).
+Older entries are archived in [packages/ai/CHANGELOG.md@689a3418cb45](https://github.com/can1357/oh-my-pi/blob/689a3418cb45d54a459cde2e1abf3f66f50e47a4/packages/ai/CHANGELOG.md).

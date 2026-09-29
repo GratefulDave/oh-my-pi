@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [18.4.3] - 2026-09-28
+
 ### Fixed
 
 - Recorded `write`/`read` calls against `xd://<tool>` under the inner tool name so MCP, codemap, and LSP no longer vanish from `omp stats` as `write`.
