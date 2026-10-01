@@ -3903,7 +3903,7 @@ export function harvestResponsesTerminalOutputToolCalls(
 	for (const item of items) {
 		if (item.type === "function_call") {
 			if (!item.call_id || alreadyHasResponsesToolCall(output, item.call_id, item.id)) continue;
-			const args = item.arguments ? parseStreamingJson(item.arguments) : parseStreamingJson("{}");
+			const args = item.arguments ? parseToolCallArguments(item.arguments) : parseToolCallArguments("{}");
 			const toolCall: ToolCall = {
 				type: "toolCall",
 				id: encodeResponsesToolCallId(item.call_id, item.id),
