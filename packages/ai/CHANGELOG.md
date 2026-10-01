@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Tool calls whose final argument JSON is cut off or followed by trailing text are no longer executed from an auto-closed preview. OpenAI Completions, Anthropic, Bedrock, Responses, Codex, Devin, Ollama, Apple, Cursor, GitLab Duo, and the in-band JSON dialects now give such a call the existing parse-error arguments, so the tool is not run and the model receives the parse error and can resend the call ([#13868](https://github.com/can1357/oh-my-pi/pull/13868) by [@alphastorm](https://github.com/alphastorm))
+
+## [18.4.9] - 2026-10-01
+
+### Fixed
+
+- Fixed rejected HTTP 400 requests from consuming unbounded disk space by automatically cleaning up old request logs and enforcing a size limit.
+- Fixed unnecessary credential and session updates that could trigger needless authentication reloads in other running processes.
+- Fixed context-overflow recovery for Strata requests that exceed the model context limit but return no usage information.
+
 ## [18.4.6] - 2026-10-01
 
 ### Fixed
@@ -5940,3 +5952,4 @@ Older entries are archived in [packages/ai/CHANGELOG.md@dfbf3cc34eeb](https://gi
 Older entries are archived in [packages/ai/CHANGELOG.md@689a3418cb45](https://github.com/can1357/oh-my-pi/blob/689a3418cb45d54a459cde2e1abf3f66f50e47a4/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages\ai\CHANGELOG.md@07e9197a3012](https://github.com/can1357/oh-my-pi/blob/07e9197a3012f58c459f1faabeb324decc21f41d/packages\ai\CHANGELOG.md).
 Older entries are archived in [packages\ai\CHANGELOG.md@cd762117522c](https://github.com/can1357/oh-my-pi/blob/cd762117522cc4122cd45b8d2d14de5f7be5133b/packages\ai\CHANGELOG.md).
+Older entries are archived in [packages/ai/CHANGELOG.md@edb740cbad49](https://github.com/can1357/oh-my-pi/blob/edb740cbad499dbc96f8b5b46ebf78f70d6af4d0/packages/ai/CHANGELOG.md).
