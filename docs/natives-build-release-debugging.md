@@ -7,7 +7,7 @@ Every release addon is built by Bazel (`rules_rust` + `crate_universe` + hermeti
 It follows the architecture terms from `docs/natives-architecture.md`:
 
 - **build-time artifact production** (Bazel `//:natives-<target>` or the Cargo-backed `host` target via `scripts/bazel-natives.ts`)
-- **embedded addon manifest generation** (`scripts/embed-native.ts`)
+- **embedded addon manifest + archive generation** (`scripts/embed-native.ts`, in memory during binary compilation)
 - **runtime addon loading** (`native/index.js`, `native/loader-state.js`)
 
 ## Implementation files
@@ -51,9 +51,9 @@ Root `BUILD.bazel` instantiates one `native_addon` per Bazel-built `(platform, a
 
 Notes:
 
-- Windows ARM64 cross-builds from Linux like win32-x64 (msvc toolchain with an aarch64 xwin splat); `release_smoke_win32_arm64` runs the resulting binary on `windows-11-arm`. A Windows ARM64 dev host can still build `host` through Cargo/N-API.
+- Windows ARM64 cross-builds from Linux like win32-x64 (msvc toolchain with an aarch64 xwin splat); `release_smoke` runs the resulting binary on `windows-11-arm`. A Windows ARM64 dev host can still build `host` through Cargo/N-API.
 - musl addons **intentionally reuse** the plain `linux-<arch>` filenames — the loader never sees gnu and musl side by side; release jobs keep them in separate invocations/dest dirs (`scripts/bazel-natives.ts` hard-errors on a basename collision within one run).
-- Darwin addons cross-build from Linux too (`//bazel/toolchains/darwin`, below); mac hosts build them with the host Xcode toolchain instead. `release_smoke_darwin` runs the release binaries on a `macos-15` runner.
+- Darwin addons cross-build from Linux too (`//bazel/toolchains/darwin`, below); mac hosts build them with the host Xcode toolchain instead. `release_smoke` runs the release binaries on `macos-15-intel` and `macos-15`.
 - Aggregates: `//:natives-all` (every addon; linux hosts cross-build all of them) and `//:natives-darwin-all`.
 
 ### 2) `native_addon` rule (`bazel/defs.bzl`)
@@ -194,7 +194,7 @@ Single source of truth for cache wiring, emitted as a bazelrc fragment (its `rc`
 
 ### Release binary builds and publishing
 
-Binary builds are build-only and run in parallel with the test fan-out. `release_binary` builds every binary on Linux (bun cross-compiles darwin and win32) and needs only the two addon jobs, whose workflow artifacts supply its addons. The darwin legs then sign with `scripts/ci-macos-sign.sh` (rcodesign: Developer ID + notarization when the `APPLE_*` secrets exist, ad hoc otherwise; see `docs/macos-signing-notarization.md`). `release_smoke_darwin` runs both darwin binaries on `macos-15` (x86_64 under Rosetta, whose AVX2 support needs macOS 15) and `release_smoke_win32_arm64` runs the win32-arm64 binary on `windows-11-arm` before publishing.
+Binary builds are build-only and run in parallel with the test fan-out. `release_binary` builds every binary on one `ubuntu-22.04` image (bun cross-compiles every target) and needs only the two addon jobs, whose workflow artifacts supply its addons. The darwin legs then sign with `scripts/ci-macos-sign.sh` (rcodesign: Developer ID + notarization when the `APPLE_*` secrets exist, ad hoc otherwise; see `docs/macos-signing-notarization.md`). Before publishing, the `release_smoke` matrix downloads each binary on its own platform and runs `--version` and `--smoke-test`: `ubuntu-22.04` / `ubuntu-24.04-arm` for linux (musl inside an Alpine container), `macos-15-intel` / `macos-15` for darwin (after `codesign --verify --strict`), `windows-2025` / `windows-11-arm` for win32.
 
 ## Debugging playbook
 
@@ -273,15 +273,17 @@ Runtime x64 candidate order also includes the unsuffixed default filename after 
 
 ## Embed lifecycle (`embed-native.ts`)
 
-1. **Init**: compute the platform tag from host values, overridable with `TARGET_PLATFORM` and `TARGET_ARCH` for cross-target archives.
+`compileCodingAgent` (`packages/coding-agent/scripts/compile-binary.ts`) calls `embeddedAddonFiles()` for the binary's target and hands the result to `Bun.build({ files })`. Nothing under `native/` is written; the checked-in `embedded-addon.js` stays the null stub.
+
+1. **Init**: the platform tag comes from the compile target (`CROSS_TARGET` for local builds, the release matrix entry for release builds, else the host).
 2. **Candidate set**:
    - x64 looks for `modern` and `baseline` files;
    - non-x64 looks for one default file.
 3. **Validate availability**: at least one expected file must exist in `packages/natives/native`.
-4. **Validate release and generate archive + manifest**: every available addon must contain the current version stamp or legacy version sentinel. Write `native/embedded-addons.<platform>-<arch>.tar.gz` containing those files and `native/embedded-addon.js` with package version, archive metadata, and sizes.
+4. **Validate release and generate archive + manifest**: every available addon must contain the current version stamp or legacy version sentinel. Build an in-memory `native/embedded-addons.<platform>-<arch>.tar.gz` containing those files and an in-memory `native/embedded-addon.js` replacement with package version, archive metadata, and sizes.
 5. **Runtime extraction ready** for compiled mode.
 
-`--reset` writes the null manifest stub (`embeddedAddon = null`) without validating addon availability, and deletes any existing `embedded-addons.*.tar.gz` archives from `native/`.
+The overrides stay in memory on purpose: `Bun.build` shares the runtime's directory cache and does not re-read it on a miss, so a build process that imported pi-natives before writing an archive to `native/` could not resolve it.
 
 ## Dev workflow vs shipped/compiled behavior
 
@@ -348,7 +350,7 @@ Generated declarations currently include exports from these Rust modules:
 | x64 machine loads baseline when modern expected                        | `PI_NATIVE_VARIANT=baseline`, no AVX2 detected, or modern file unavailable                  | Check env and filenames in `native/`                              | Build and ship the modern target (`bun scripts/bazel-natives.ts linux-x64-modern --dest packages/natives/native`)                    |
 | gnu addon overwritten by musl (or vice versa)                          | Both built into one dest — they share canonical basenames by design                         | Compare `bazel-bin/natives-<t>/` sources vs installed file        | Separate invocations with separate `--dest` dirs (release matrix already does this)                                                  |
 | Compiled binary fails after upgrade                                    | Stale extracted cache, embedded archive mismatch, or embedded manifest version mismatch     | Inspect `<getNativesDir()>/<version>` and loader error list       | Delete versioned cache for the package version; regenerate embedded archive/manifest during packaging                                |
-| `gen:native` fails with `No native addons found`                       | Required platform artifact was not built before embedding                                   | Check expected list in error text                                 | Build at least one expected artifact for the target, then rerun `gen:native`                                                         |
+| Binary build fails with `No native addons found`                       | Required platform artifact was not built before embedding                                   | Check expected list in error text                                 | Build at least one expected artifact for the target, then rerun the binary build                                                     |
 
 ## Operational commands
 
@@ -365,12 +367,8 @@ bazelisk build //:natives-darwin-arm64
 # Regenerate TS typedefs + enum exports (napi CLI, only on Rust API changes)
 bun --cwd=packages/natives run build:bindings
 
-# Generate embedded addon manifest from built native files
-bun run gen:native
-# Output archive: packages/natives/native/embedded-addons.<platform>-<arch>.tar.gz
-
-# Reset embedded manifest to null stub
-bun run gen:native:reset
+# Compile a standalone binary embedding the host addon (CROSS_TARGET=<id> for another target)
+bun --cwd=packages/coding-agent run build
 ```
 
 ## Orchestrator-side content-addressed build cache (robomp)
