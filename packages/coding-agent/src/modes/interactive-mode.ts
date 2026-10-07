@@ -4285,6 +4285,7 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.#reconcileTodosWithSubagents();
 			this.#syncTodoHudState(this.#todoPhasesOwner ?? this.session);
 			this.#renderTodoList();
+			this.#renderToolCounter();
 		} else if (this.#getActiveSubagentDescriptions().join("\n") !== this.#todoHudSubagentKey) {
 			// Progress-only ticks (10 Hz while subagents run) cannot change the
 			// todo phases or their persisted visibility — re-syncing would also
@@ -4293,9 +4294,6 @@ export class InteractiveMode implements InteractiveModeContext {
 			// descriptions change.
 			this.#renderTodoList();
 		}
-		this.#syncTodoHudState(this.#todoPhasesOwner ?? this.session);
-		this.#renderTodoList();
-		this.#renderToolCounter();
 		this.#renderSubagentList();
 
 		const sessions = this.#observerRegistry.getSessions();
