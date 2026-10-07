@@ -10,6 +10,13 @@
 
 - `getStatsDbPath()` stays at the app config root under a named profile so `omp stats` shares one database across `~/.omp/agent` and `~/.omp/profiles/<name>/`.
 
+## [18.8.1] - 2026-10-07
+
+### Added
+
+- Added `PI_NATIVES_DIR` support to `getNativesDir()` for configuring the native addon directory.
+- Added `ZipPackage` for lazily reading ZIP-based document packages with a total decompressed-size limit, along with `DocxImage.readBytes()` for accessing raw DOCX image data.
+
 ## [18.8.0] - 2026-10-07
 
 ### Added
