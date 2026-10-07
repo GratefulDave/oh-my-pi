@@ -85,6 +85,13 @@ line showing current tool / recent output / last tool, (c) on-settle emitting a
 diff `interactive-mode.ts` carefully. The spinner and settle-detection logic lives inside
 `#renderSubagentList()` and the session update handler; upstream may refactor those methods.
 
+**Known merge trap (v18.8.0)**: upstream restructured `#flushObserverUiSync()` so todo-HUD
+state sync runs only inside the `#observerUiSyncNeedsTodoReconcile` branch (progress ticks
+must not re-arm the todo auto-clear timer). The fork's `#renderToolCounter()` call must live
+inside that same branch — a merge that re-adds `this.#syncTodoHudState(...)` /
+`this.#renderTodoList()` / `this.#renderToolCounter()` unconditionally after the if/else
+reintroduces a never-firing auto-clear. Checker `P3d` asserts this structurally.
+
 ---
 
 ### Patch 4: `status-line.ts` — `metaColor` option
