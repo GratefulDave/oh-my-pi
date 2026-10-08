@@ -1,12 +1,6 @@
 {
   "enabledMcpjsonServers": [
-    "context-mode",
-    "auggie",
-    "linear",
-    "grep-app",
-    "ast-grep",
-    "codemap",
-    "codebase-memory"
+    "linear"
   ],
   "permissions": {
     "allow": [

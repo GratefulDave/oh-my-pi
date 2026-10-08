@@ -272,23 +272,25 @@ describe("ExtensionUiController editor UI", () => {
 		const harness = makeHarness();
 		const events: string[] = [];
 		let coreEnabled = false;
-		harness.editor.onSpaceHoldStart = () => events.push("core-start");
-		harness.editor.onSpaceHoldEnd = () => events.push("core-end");
-		harness.editor.sttHoldEnabled = () => coreEnabled;
+		harness.editor.spaceHold.handler = {
+			enabled: () => coreEnabled,
+			onStart: () => events.push("core-start"),
+			onEnd: () => events.push("core-end"),
+		};
 		const ui = await harness.init();
 		const unsubscribe = ui.onSpaceHold({
 			onStart: () => events.push("extension-start"),
 			onEnd: () => events.push("extension-end"),
 		});
 
-		expect(harness.editor.sttHoldEnabled?.()).toBe(true);
-		harness.editor.onSpaceHoldStart?.();
-		harness.editor.onSpaceHoldEnd?.();
+		expect(harness.editor.spaceHold.handler?.enabled()).toBe(true);
+		harness.editor.spaceHold.handler?.onStart();
+		harness.editor.spaceHold.handler?.onEnd();
 		expect(events).toEqual(["extension-start", "extension-end"]);
 
 		coreEnabled = true;
-		harness.editor.onSpaceHoldStart?.();
-		harness.editor.onSpaceHoldEnd?.();
+		harness.editor.spaceHold.handler?.onStart();
+		harness.editor.spaceHold.handler?.onEnd();
 		expect(events).toEqual([
 			"extension-start",
 			"extension-end",
@@ -299,9 +301,9 @@ describe("ExtensionUiController editor UI", () => {
 		]);
 
 		unsubscribe();
-		expect(harness.editor.sttHoldEnabled?.()).toBe(true);
-		harness.editor.onSpaceHoldStart?.();
-		harness.editor.onSpaceHoldEnd?.();
+		expect(harness.editor.spaceHold.handler?.enabled()).toBe(true);
+		harness.editor.spaceHold.handler?.onStart();
+		harness.editor.spaceHold.handler?.onEnd();
 		expect(events).toEqual([
 			"extension-start",
 			"extension-end",

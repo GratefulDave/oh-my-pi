@@ -972,7 +972,10 @@ describe("InteractiveMode subagent observer UI sync", () => {
 		}
 
 		await Promise.resolve();
-		vi.runAllTimers();
+		// Advance past the 100ms observer coalesce window but under the next
+		// 80ms spinner tick started by the flush — runAllTimers would loop on the
+		// repeating subagent spinner interval forever.
+		vi.advanceTimersByTime(150);
 		await Promise.resolve();
 
 		const hud = Bun.stripANSI(mode.subagentContainer.render(120).join("\n"));

@@ -26,7 +26,7 @@ export interface GainRouteProps {
 
 const DAY_MS = 86_400_000;
 
-const SOURCE_LABEL: Record<GainSource, string> = { snapcompact: "Snapcompact" };
+const SOURCE_LABEL: Record<GainSource, string> = { minimizer: "Bash minimizer", snapcompact: "Snapcompact" };
 
 /** The server buckets gain by UTC calendar day (`YYYY-MM-DD`). */
 const DAY_LABEL = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" });

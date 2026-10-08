@@ -33,7 +33,7 @@ import {
 	cfgStatusLineLeftSegments,
 	cfgSpellingAutocomplete,
 } from "@oh-my-pi/pi-coding-agent/modes/settings";
-import { cfgExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/settings";
+import { cfgExtensionHandlersToolCallTimeoutMs, cfgExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/settings";
 import {
 	cfgProvidersMaxInFlightRequests,
 	cfgPowerSleepPrevention,
@@ -1363,8 +1363,8 @@ describe("Settings", () => {
 	describe("get()", () => {
 		it("returns the extension tool_call timeout default so dispatch can run", () => {
 			const isolated = Settings.isolated();
-			expect(isolated.get("extensionHandlers.toolCallTimeoutMs")).toBe(30_000);
-			expect(isolated.isConfigured("extensionHandlers.toolCallTimeoutMs")).toBe(false);
+			expect(cfgExtensionHandlersToolCallTimeoutMs.get(isolated)).toBe(30_000);
+			expect(cfgExtensionHandlersToolCallTimeoutMs.isConfigured(isolated)).toBe(false);
 		});
 
 		it("resolves overrides, schema defaults, and falsey values", () => {
@@ -1551,7 +1551,13 @@ describe("Settings", () => {
 			await Bun.write(path.join(projectDir, ".omp", "settings.json"), JSON.stringify({ disabledProviders: [] }));
 
 			const settings = await Settings.init({ cwd: projectDir, agentDir });
-			expect(settings.get("disabledProviders")).toEqual(["claude", "claude-plugins", "codex", "gemini", "opencode"]);
+			expect(cfgDisabledProviders.get(settings)).toEqual([
+				"claude",
+				"claude-plugins",
+				"codex",
+				"gemini",
+				"opencode",
+			]);
 		});
 
 		it("filters model allow-list and disabled providers by current path prefix", async () => {

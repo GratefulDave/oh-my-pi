@@ -15,14 +15,7 @@ const DEFAULT_MAX_TOKENS = 128_000;
  * former 372000 hard capacity (#5705).
  */
 const GPT_5_6_CONTEXT_WINDOW = 372_000;
-/**
- * OpenAI enabled a 1M-token window for subscription Codex on GPT-5.6
- * luna/sol/terra (2026-08-16), but the Codex model registry still reports the
- * stale 272000 — so the reported value must be floored, not just defaulted
- * (openai/codex#38917; Codex CLI override `model_context_window = 1000000`).
- */
-const GPT_5_6_1M_CONTEXT_WINDOW = 1_000_000;
-const CODEX_GPT_5_6_1M_SLUGS: ReadonlySet<string> = new Set(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]);
+
 /**
  * Codex advertises worker-mode SKUs under a `-wm` suffix (`gpt-5.6-luna-wm`).
  *
@@ -33,7 +26,7 @@ const CODEX_GPT_5_6_1M_SLUGS: ReadonlySet<string> = new Set(["gpt-5.6-luna", "gp
  * ChatGPT account rejects. The compatibility rule, scoped to Codex discovery:
  * a `-wm` slug whose plain counterpart exists in the bundled Codex catalog is
  * ALSO registered under its plain id. Both listings derive their base-model
- * metadata (1M-window floor, daybreak pricing, context fallback) from the
+ * metadata (daybreak pricing, context fallback) from the
  * canonical plain slug — the suffix is a routing variant, not a different
  * model, so the `-wm` row no longer keeps stale backend-parsed capability
  * values while its plain listing is enriched.
@@ -377,24 +370,19 @@ function buildNormalizedCodexModel(
 	accountId: string | undefined,
 ): NormalizedCodexModel {
 	// Codex discovery historically omitted `context_window` for GPT-5.6-family
-	// SKUs (#5705); luna/sol/terra additionally floor the reported value because
-	// the registry still declares the pre-1M 272000 window. Keyed on the
-	// canonical slug so a safe `gpt-5.6-luna-wm` row gets the same floor as its
-	// plain listing.
+	// SKUs (#5705). Keyed on the canonical slug so a safe `gpt-5.6-luna-wm`
+	// row gets the same fallback as its plain listing.
 	const identity = classifyModel("openai-codex", canonicalSlug, { lenient: true });
 	const revision = identity.revision === undefined ? undefined : parseRevision(identity.revision);
 	const gpt56 = parseRevision("5.6");
-	const fallbackContextWindow =
-		identity.class === "openai" &&
+	const contextWindow =
+		parsed.contextWindow ??
+		(identity.class === "openai" &&
 		revision !== undefined &&
 		gpt56 !== undefined &&
 		compareRevision(revision, gpt56) === 0
 			? GPT_5_6_CONTEXT_WINDOW
-			: DEFAULT_CONTEXT_WINDOW;
-	const reportedContextWindow = parsed.contextWindow ?? fallbackContextWindow;
-	const contextWindow = CODEX_GPT_5_6_1M_SLUGS.has(canonicalSlug)
-		? Math.max(reportedContextWindow, GPT_5_6_1M_CONTEXT_WINDOW)
-		: reportedContextWindow;
+			: DEFAULT_CONTEXT_WINDOW);
 	const maxTokens = Math.min(DEFAULT_MAX_TOKENS, contextWindow);
 	return {
 		priority: parsed.priority,

@@ -1,4 +1,5 @@
 import type { Component, OverlayHandle, TUI } from "@oh-my-pi/pi-tui";
+import type { SpaceHoldHandler } from "@oh-my-pi/pi-tui/space-hold";
 import { Container, Spacer, Text } from "@oh-my-pi/pi-tui";
 import type { CollabUiRequestDraft, CollabUiSelectItem } from "@oh-my-pi/pi-wire";
 import type { CollabHost } from "../../collab/host";
@@ -93,9 +94,7 @@ export class ExtensionUiController {
 	#spaceHoldCoreActive = false;
 	#spaceHoldBinding:
 		| {
-				start: (() => void) | undefined;
-				end: (() => void) | undefined;
-				enabled: (() => boolean) | undefined;
+				core: SpaceHoldHandler | undefined;
 		  }
 		| undefined;
 	#composerShapeDisposers: Array<() => void> = [];
@@ -1245,30 +1244,27 @@ export class ExtensionUiController {
 
 	addExtensionSpaceHoldListener(handlers: { onStart(): void; onEnd(): void }): () => void {
 		if (this.#spaceHoldHandlers.size === 0) {
-			const start = this.ctx.editor.onSpaceHoldStart;
-			const end = this.ctx.editor.onSpaceHoldEnd;
-			const enabled = this.ctx.editor.sttHoldEnabled;
-			this.#spaceHoldBinding = { start, end, enabled };
-			this.ctx.editor.onSpaceHoldStart = () => {
-				this.#spaceHoldCoreActive = enabled?.() ?? false;
-				if (this.#spaceHoldCoreActive) start?.();
-				for (const handler of this.#spaceHoldHandlers) handler.onStart();
+			const core = this.ctx.editor.spaceHold.handler;
+			this.#spaceHoldBinding = { core };
+			this.ctx.editor.spaceHold.handler = {
+				enabled: () => (core?.enabled() ?? false) || this.#spaceHoldHandlers.size > 0,
+				onStart: () => {
+					this.#spaceHoldCoreActive = core?.enabled() ?? false;
+					if (this.#spaceHoldCoreActive) core?.onStart();
+					for (const handler of this.#spaceHoldHandlers) handler.onStart();
+				},
+				onEnd: () => {
+					if (this.#spaceHoldCoreActive) core?.onEnd();
+					this.#spaceHoldCoreActive = false;
+					for (const handler of this.#spaceHoldHandlers) handler.onEnd();
+				},
 			};
-			this.ctx.editor.onSpaceHoldEnd = () => {
-				if (this.#spaceHoldCoreActive) end?.();
-				this.#spaceHoldCoreActive = false;
-				for (const handler of this.#spaceHoldHandlers) handler.onEnd();
-			};
-			this.ctx.editor.sttHoldEnabled = () => (enabled?.() ?? false) || this.#spaceHoldHandlers.size > 0;
 		}
 		this.#spaceHoldHandlers.add(handlers);
 		return () => {
 			this.#spaceHoldHandlers.delete(handlers);
 			if (this.#spaceHoldHandlers.size !== 0 || !this.#spaceHoldBinding) return;
-			const { start, end, enabled } = this.#spaceHoldBinding;
-			this.ctx.editor.onSpaceHoldStart = start;
-			this.ctx.editor.onSpaceHoldEnd = end;
-			this.ctx.editor.sttHoldEnabled = enabled;
+			this.ctx.editor.spaceHold.handler = this.#spaceHoldBinding.core;
 			this.#spaceHoldCoreActive = false;
 			this.#spaceHoldBinding = undefined;
 		};

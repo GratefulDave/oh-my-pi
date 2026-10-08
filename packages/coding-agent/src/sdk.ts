@@ -301,6 +301,7 @@ import { normalizePromptPath } from "./utils/prompt-path";
 import { buildNamedToolChoice } from "./utils/tool-choice";
 import { VibeSessionRegistry } from "./vibe/runtime";
 import { registerLocalInferenceApi } from "./tiny/local-inference-api";
+import { shutdownTinyTitleClient } from "./tiny/title-client";
 import { buildWorkspaceTree, type WorkspaceTree } from "./workspace-tree";
 
 import {
@@ -549,7 +550,8 @@ export interface CreateAgentSessionOptions {
 	getApiKey?: AgentOptions["getApiKey"];
 	/**
 	 * Session whose stored credential affinities are copied into this session
-	 * before any child credential operation.
+	 * before any child credential operation: explicit pins always, automatic
+	 * affinity only for providers this session's own transcript has not pinned.
 	 * @internal
 	 */
 	credentialSourceSessionId?: string;
@@ -1869,7 +1871,17 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 	}
 	const providerSessionId = options.providerSessionId ?? sessionManager.getSessionId();
 	if (options.credentialSourceSessionId) {
-		modelRegistry.authStorage.sessions.inherit(options.credentialSourceSessionId, providerSessionId);
+		// A revived or resumed child already pins, in its own transcript, the accounts that
+		// hold its conversation cache. Inheriting the parent's automatic sticky for those
+		// providers would make seedCredentialPins defer to it (a live sticky for another
+		// account wins) and cold-miss the child's whole prefix. An explicit parent pin is
+		// the user's choice and still reaches the child.
+		const ownPins = sessionManager.getCredentialPins();
+		modelRegistry.authStorage.sessions.inherit(
+			options.credentialSourceSessionId,
+			providerSessionId,
+			(provider, explicit) => explicit || !ownPins.has(provider),
+		);
 	}
 	// From here on the session resolves every key through its pools; see
 	// SessionAccountPoolScope. A startup failure leaves no session to lift them.
@@ -4986,52 +4998,58 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 
 		{
 			const originalDispose = session.dispose.bind(session);
-			let disposeCall: Promise<void> | undefined;
-			session.dispose = (disposeOptions = {}) => {
-				if (disposeCall) return disposeCall;
-				disposeCall = (async () => {
-					try {
-						// Reject new session work (eval starts) the moment disposal
-						// begins — the lifecycle await below opens an async gap before
-						// AgentSession.dispose() would otherwise set its guards.
-						session.beginDispose();
-						if (agentKind === "main") {
-							// Top-level teardown owns the global agent lifecycle: park timers,
-							// adopted subagent sessions, revivers. Tear it down while shared
-							// resources (kernels, MCP, LSP) are still live. Subagent disposal
-							// must NOT touch the global lifecycle.
-							const vibeRegistry = VibeSessionRegistry.global();
-							const vibeParentSession = {
-								getAgentId: () => resolvedAgentId,
-								getSessionId: () => sessionManager.getSessionId(),
-								getSessionFile: () => sessionManager.getSessionFile() ?? null,
-								sessionManager,
-								asyncJobManager: scopedAsyncJobManager,
-								settings,
-								getActiveModelString,
-							};
-							await Promise.all([
-								vibeRegistry.suspendScope(vibeRegistry.ownerScope(vibeParentSession), scopedAsyncJobManager),
-								AgentLifecycleManager.global().dispose(),
-							]);
-						}
-						await originalDispose(disposeOptions);
-					} finally {
-						unregisterUnlessParked();
-						unsubscribeCredentialDisabled();
-						unbindSessionEffects?.();
-						restoreProviderToggles?.();
-						unsubscribeMcpNotifications?.();
-						unregisterMcpPostmortem?.();
-						for (const callback of disposeCallbacks) callback();
-						disposeCallbacks.clear();
-						// Drop refs so the process-global postmortem list doesn't retain
-						// the bridge closure past explicit dispose.
-						unsubscribeMcpNotifications = undefined;
-						unregisterMcpPostmortem = undefined;
+			let tinyClientReleased = false;
+			session.dispose = async (disposeOptions = {}) => {
+				try {
+					// Reject new session work (eval starts) the moment disposal
+					// begins — the lifecycle await below opens an async gap before
+					// AgentSession.dispose() would otherwise set its guards.
+					session.beginDispose();
+					if (agentKind === "main") {
+						// Top-level teardown owns the global agent lifecycle: park timers,
+						// adopted subagent sessions, revivers. Tear it down while shared
+						// resources (kernels, MCP, LSP) are still live. Subagent disposal
+						// must NOT touch the global lifecycle.
+						const vibeRegistry = VibeSessionRegistry.global();
+						const vibeParentSession = {
+							getAgentId: () => resolvedAgentId,
+							getSessionId: () => sessionManager.getSessionId(),
+							getSessionFile: () => sessionManager.getSessionFile() ?? null,
+							sessionManager,
+							asyncJobManager: scopedAsyncJobManager,
+							settings,
+							getActiveModelString,
+						};
+						await vibeRegistry.suspendScope(vibeRegistry.ownerScope(vibeParentSession), scopedAsyncJobManager);
+						await AgentLifecycleManager.global().dispose();
 					}
-				})();
-				return disposeCall;
+					await originalDispose(disposeOptions);
+				} finally {
+					// The tiny-model client is a process singleton shared by every session.
+					// Only the session that owns process state drops its connections, once:
+					// that fails every request still in flight, and a repeat dispose must not
+					// cancel requests other sessions made since.
+					if (bindsProcessState && !tinyClientReleased) {
+						tinyClientReleased = true;
+						try {
+							await shutdownTinyTitleClient();
+						} catch (error) {
+							logger.warn("Session dispose: tiny-model client shutdown failed", { error: String(error) });
+						}
+					}
+					unregisterUnlessParked();
+					unsubscribeCredentialDisabled();
+					unbindSessionEffects?.();
+					restoreProviderToggles?.();
+					unsubscribeMcpNotifications?.();
+					unregisterMcpPostmortem?.();
+					for (const callback of disposeCallbacks) callback();
+					disposeCallbacks.clear();
+					// Drop refs so the process-global postmortem list doesn't retain
+					// the bridge closure past explicit dispose.
+					unsubscribeMcpNotifications = undefined;
+					unregisterMcpPostmortem = undefined;
+				}
 			};
 		}
 
@@ -5065,15 +5083,17 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			}
 		}
 
-		// Broker-shared language servers: one server per project, multiplexed
-		// across omp instances by the LSP mux daemon. Session-level because the
-		// flag lives in module state consulted on every client cold-start.
-		// Re-applied live on `lsp.shared` changes: servers cold-started after the
-		// change use the new mode; already-running clients keep their transport
-		// until they exit or idle out.
-		setSharedLspEnabled(enableLsp && cfgLspShared.get(settings));
-		if (enableLsp) {
-			cfgLspShared.listen(session, shared => setSharedLspEnabled(shared));
+		// Broker-shared language servers (see lsp/mux/protocol.ts). The flag is
+		// module state read on every client cold start, so only a session that binds
+		// process state may set it. A subagent or helper session (usually
+		// enableLsp=false) must not switch the parent's later cold starts to private
+		// servers. Re-applied live on `lsp.shared` changes; running clients keep
+		// their transport until they exit or idle out.
+		if (bindsProcessState) {
+			setSharedLspEnabled(enableLsp && cfgLspShared.get(settings));
+			if (enableLsp) {
+				cfgLspShared.listen(session, shared => setSharedLspEnabled(shared));
+			}
 		}
 
 		// Start LSP warmup in the background so startup does not block on language server initialization.

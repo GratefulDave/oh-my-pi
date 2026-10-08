@@ -13,11 +13,6 @@ declare module "*.rb" {
 	export default content;
 }
 
-declare module "*.js" {
-	const content: string;
-	export default content;
-}
-
 interface HTMLElementTagNameMap {
 	strike: HTMLElement;
 }

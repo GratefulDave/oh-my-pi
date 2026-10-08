@@ -133,9 +133,16 @@ export interface VariantCollapseTable {
 	/** Revision-templated families, instantiated against live ids. */
 	templates?: readonly VariantFamilyTemplate[];
 	/**
-	 * Provider-scoped selector aliases: short native-CLI names and dotted
-	 * upstream spellings → logical model id. Unlike family members and
-	 * `extraAliases` these are deliberately invisible to the bare-id lookup
+	 * Retired upstream ids remapped to their replacement (`gpt-5.6-luna` →
+	 * `gpt-6-luna`). Unlike `providerAliases` these register in the forward
+	 * index, so a bare selector naming the retired id resolves too — the id is
+	 * gone upstream, so there is no live model for it to shadow.
+	 */
+	retiredAliases?: Readonly<Record<string, string>>;
+	/**
+	 * Provider-scoped selector aliases: `provider → { alias → logical id }`.
+	 * Unlike family members, `extraAliases`, and `retiredAliases` these are
+	 * deliberately invisible to the bare-id lookup
 	 * ({@link resolveBareVariantSelector}) and to the reverse index — a generic
 	 * label like `gpt` or `opus` only means something once a provider is
 	 * named, and must never hijack an unqualified selector or re-key config.
@@ -318,10 +325,15 @@ function instantiateTemplates(table: VariantCollapseTable, ids: Iterable<string>
 
 /** Provider id → reviewed collapse table, built once from the compiled vocabulary. */
 function buildCompiledTables(): Readonly<Record<string, VariantCollapseTable>> {
-	const { variantFamilies, providerAliases } = collapseVocabulary();
+	const { variantFamilies, providerAliases, retiredAliases } = collapseVocabulary();
 	const tables: Record<
 		string,
-		{ families: EffortVariantFamily[]; templates?: VariantFamilyTemplate[]; providerAliases?: Record<string, string> }
+		{
+			families: EffortVariantFamily[];
+			templates?: VariantFamilyTemplate[];
+			providerAliases?: Record<string, string>;
+			retiredAliases?: Record<string, string>;
+		}
 	> = {};
 	for (const compiled of variantFamilies) {
 		const table = (tables[compiled.provider] ??= { families: [] });
@@ -331,9 +343,13 @@ function buildCompiledTables(): Readonly<Record<string, VariantCollapseTable>> {
 			table.families.push(compiledFamily(compiled));
 		}
 	}
-	for (const [provider, aliases] of Object.entries(providerAliases)) {
+	for (const [provider, aliases] of Object.entries(providerAliases ?? {})) {
 		tables[provider] ??= { families: [] };
 		tables[provider].providerAliases = aliases;
+	}
+	for (const [provider, aliases] of Object.entries(retiredAliases ?? {})) {
+		tables[provider] ??= { families: [] };
+		tables[provider].retiredAliases = aliases;
 	}
 	return tables;
 }
@@ -1264,6 +1280,10 @@ function getAliasIndex(table: VariantCollapseTable): VariantAliasIndex {
 	if (cached instanceof VariantAliasIndex) return cached;
 	const index = new VariantAliasIndex(table.templates);
 	for (const family of table.families) index.addFamily(family);
+	for (const alias in table.retiredAliases) {
+		const target = table.retiredAliases[alias];
+		if (target !== undefined) index.add(alias, target);
+	}
 	for (const alias in table.providerAliases) {
 		const target = table.providerAliases[alias];
 		if (target !== undefined && alias !== target) index.providerScoped.set(alias.toLowerCase(), target);

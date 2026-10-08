@@ -3,16 +3,6 @@
     "context-mode": {
       "command": "/Users/davidandrews/.local/bin/context-mode-mcp"
     },
-    "auggie": {
-      "command": "/Users/davidandrews/.local/bin/auggie-mcp",
-      "args": [
-        "--mcp",
-        "--mcp-auto-workspace"
-      ],
-      "env": {
-        "PATH": "/Users/davidandrews/.local/bin:/usr/local/bin:/usr/bin:/bin"
-      }
-    },
     "linear": {
       "command": "npx",
       "args": [
@@ -64,27 +54,6 @@
         {
           "type": "BeforeTool",
           "command": "/Users/davidandrews/PycharmProjects/the-library/hooks/gemini/rtk-hook-antigravity.sh"
-        }
-      ]
-    },
-    "lib:context-mode-gemini-hooks": {
-      "pattern": "context-mode-gemini-hooks",
-      "hooks": [
-        {
-          "type": "BeforeTool",
-          "command": "/Users/davidandrews/PycharmProjects/the-library/hooks/gemini/context-mode-wrapper.sh"
-        },
-        {
-          "type": "AfterTool",
-          "command": "/Users/davidandrews/PycharmProjects/the-library/hooks/gemini/context-mode-wrapper.sh"
-        },
-        {
-          "type": "PreCompress",
-          "command": "/Users/davidandrews/PycharmProjects/the-library/hooks/gemini/context-mode-wrapper.sh"
-        },
-        {
-          "type": "SessionStart",
-          "command": "/Users/davidandrews/PycharmProjects/the-library/hooks/gemini/context-mode-wrapper.sh"
         }
       ]
     }

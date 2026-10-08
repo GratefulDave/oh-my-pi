@@ -33,6 +33,7 @@ import { MAIN_AGENT_RULE_NAME } from "../../capability/rule";
 import type { ModelRegistry } from "../../config/model-registry";
 import { type Settings, withActiveSettings } from "../../config/settings";
 import { buildMinimizerOptions } from "../../exec/bash-executor";
+import { cfgShellMinimizer } from "../../exec/settings";
 import type { LocalProtocolOptions } from "../../internal-urls/local-protocol";
 import type { MemoryRuntimeContext } from "../../memory-backend";
 import { type Theme, theme } from "@oh-my-pi/pi-tui/theme";
@@ -1397,7 +1398,7 @@ export class ExtensionRunner {
 			isBashMinimizerEligible: command =>
 				isShellMinimizerEligible({
 					command,
-					minimizer: this.settings ? buildMinimizerOptions(this.settings.getGroup("shellMinimizer")) : undefined,
+					minimizer: this.settings ? buildMinimizerOptions(cfgShellMinimizer.get(this.settings)) : undefined,
 				}).catch(() => false),
 			runEphemeralTurn: runEphemeralTurn
 				? async options => {

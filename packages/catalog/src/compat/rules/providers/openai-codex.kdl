@@ -18,6 +18,16 @@ provider "openai-codex" {
 			limits
 			supports-tools #false
 		}
+		// Subscription backend accepts gpt-6.1-sol but Codex discovery does not
+		// enumerate it yet; author the row so roles resolve to the real id.
+		model "gpt-6.1-sol" name="GPT-6.1 Sol" {
+			reasoning #true
+			input "text" "image"
+			cost input=2.0 output=10.0 cache-read=0.2 cache-write=0
+			limits context=272000 max-tokens=128000
+			thinking-mode "effort"
+			thinking-efforts "low" "medium" "high" "xhigh" "max"
+		}
 	}
 
 	models "gpt-image-2" {
@@ -201,9 +211,11 @@ provider "openai-codex" {
 			cache-write 5.0
 		}
 	}
-	// OpenAI enabled a 1M window for subscription Codex GPT-5.6 (2026-08-16);
-	// the Codex model registry still reports the stale 272000 figure.
+	// OMP serves subscription Codex at the 272K prompt window; the registry's
+	// advertised 1M figure is not honored on this surface.
 	models "gpt-5.6-luna" "gpt-5.6-sol" "gpt-5.6-terra" {
-		context-window-floor 1000000
+		limits-patch {
+			context-window 272000
+		}
 	}
 }

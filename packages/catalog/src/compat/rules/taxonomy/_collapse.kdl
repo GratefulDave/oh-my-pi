@@ -657,6 +657,37 @@ collapse {
 	// Retired id: the Codex image model was relabeled to what the backend runs
 	// (gpt-image-2-codex); keep saved `openai-codex/gpt-image-1` roles resolving.
 	provider-alias "openai-codex" "gpt-image-1" "gpt-image-2"
+	// Retired first-party GPT-5.6 SKUs: profiles still naming them resolve to
+	// the GPT-6 successor on the same provider, bare selectors included — the
+	// 5.6 ids are gone upstream, so there is no live model for them to shadow.
+	retired-alias "openai" "gpt-5.6-luna" "gpt-6-luna"
+	retired-alias "openai" "gpt-5.6-sol" "gpt-6-sol"
+	retired-alias "openai-codex" "gpt-5.6-luna" "gpt-6-luna"
+	retired-alias "openai-codex" "gpt-5.6-sol" "gpt-6-sol"
+	retired-alias "github-copilot" "gpt-5.6-luna" "gpt-6-luna"
+	retired-alias "github-copilot" "gpt-5.6-sol" "gpt-6-sol"
+	retired-alias "azure" "gpt-5.6-luna" "gpt-6-luna"
+	retired-alias "azure" "gpt-5.6-sol" "gpt-6-sol"
+	retired-alias "commandcode" "gpt-5.6-luna" "gpt-6-luna"
+	retired-alias "commandcode" "gpt-5.6-sol" "gpt-6-sol"
+	retired-alias "opencode-zen" "gpt-5.6-luna" "gpt-6-luna"
+	retired-alias "opencode-zen" "gpt-5.6-sol" "gpt-6-sol"
+	retired-alias "zenmux" "gpt-5.6-luna" "gpt-6-luna"
+	retired-alias "zenmux" "gpt-5.6-sol" "gpt-6-sol"
+	retired-alias "vercel-ai-gateway" "gpt-5.6-luna" "gpt-6-luna"
+	retired-alias "vercel-ai-gateway" "gpt-5.6-sol" "gpt-6-sol"
+	retired-alias "kilo" "openai/gpt-5.6-luna" "openai/gpt-6-luna"
+	retired-alias "kilo" "openai/gpt-5.6-sol" "openai/gpt-6-sol"
+	retired-alias "nanogpt" "openai/gpt-5.6-luna" "openai/gpt-6-luna"
+	retired-alias "nanogpt" "openai/gpt-5.6-sol" "openai/gpt-6-sol"
+	retired-alias "openrouter" "openai/gpt-5.6-luna" "openai/gpt-6-luna"
+	retired-alias "openrouter" "openai/gpt-5.6-sol" "openai/gpt-6-sol"
+	retired-alias "venice" "openai-gpt-5.6-luna" "openai-gpt-6-luna"
+	retired-alias "venice" "openai-gpt-5.6-sol" "openai-gpt-6-sol"
+	// Providers without gpt-6.1-sol in their roster: keep the new selector
+	// resolving to the previous generation rather than failing.
+	retired-alias "zenmux" "openai/gpt-6.1-sol" "openai/gpt-6-sol"
+	retired-alias "venice" "openai-gpt-61-sol" "openai-gpt-6-sol"
 	// Retired rich-lane ids: AvailableModels discovery named Grok 4.5/4.6 lanes
 	// after the unprefixed model name before they adopted these family ids
 	// (#14164). Family `aliases` (not `provider-alias`) so saved selectors and

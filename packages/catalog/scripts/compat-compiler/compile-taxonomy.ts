@@ -182,6 +182,7 @@ function parseCollapse(node: KdlNodeView): CompiledCollapse {
 		effortFamilies: [],
 		variantFamilies: [],
 		providerAliases: {},
+		retiredAliases: {},
 	};
 	const suffixes = new Set<string>();
 	const familyKeys = new Set<string>();
@@ -191,14 +192,15 @@ function parseCollapse(node: KdlNodeView): CompiledCollapse {
 			case "variant-family":
 				collapse.variantFamilies.push(parseVariantFamily(child));
 				break;
-			case "provider-alias": {
+			case "provider-alias":
+			case "retired-alias": {
 				validateProps(child, []);
 				const args = positionalStrings(child);
 				if (args.length !== 3 || args.some(value => !value) || child.children) malformed(child);
 				const [provider, alias, logical] = args;
 				const key = provider.toLowerCase();
-				collapse.providerAliases[key] ??= {};
-				const aliases = collapse.providerAliases[key];
+				const table = child.name === "provider-alias" ? collapse.providerAliases : collapse.retiredAliases;
+				const aliases = (table[key] ??= {});
 				if (alias in aliases) malformed(child);
 				aliases[alias] = logical;
 				break;

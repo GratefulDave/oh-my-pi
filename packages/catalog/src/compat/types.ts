@@ -160,8 +160,10 @@ export interface CompiledCollapse {
 	effortFamilies: CompiledEffortFamily[];
 	/** Reviewed per-provider variant families (hand-curated routing). */
 	variantFamilies: CompiledVariantFamily[];
-	/** Provider-scoped selector aliases: `provider → { alias → logical id }`. */
+	/** Provider-scoped selector aliases: `provider → { alias → logical id }`. Invisible to bare-id lookups. */
 	providerAliases: Record<string, Record<string, string>>;
+	/** Retired model ids remapped to their replacement: `provider → { retired id → replacement id }`. Visible to bare-id lookups. */
+	retiredAliases: Record<string, Record<string, string>>;
 }
 
 /** The discovery vocabulary. */
