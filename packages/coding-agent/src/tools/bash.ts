@@ -68,6 +68,7 @@ import {
 	cfgBashAutoBackgroundThresholdMs,
 	cfgBashDirenv,
 	cfgBashDirenvLoadTimeoutMs,
+	cfgBashGitGuard,
 	cfgBashInterceptorEnabled,
 	cfgBashInterceptorPatterns,
 	cfgBashPatterns,
@@ -913,6 +914,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 						sessionKey: `${this.session.getSessionId?.() ?? ""}:async:${jobId}`,
 						timeout: options.timeoutMs,
 						signal: runSignal,
+						gitGuard: cfgBashGitGuard.get(this.session.settings),
 						// Bound to the job's own signal: the job outlives the call that started it.
 						filesystem: this.#urlFilesystem(runSignal, options.approvalTier).shellFilesystem(),
 						artifactPath,
@@ -1605,6 +1607,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					sessionKey: this.session.getSessionId?.() ?? undefined,
 					timeout: timeoutMs,
 					signal,
+					gitGuard: cfgBashGitGuard.get(this.session.settings),
 					filesystem: this.#urlFilesystem(signal, approvalTier).shellFilesystem(),
 					artifactPath,
 					artifactId,
