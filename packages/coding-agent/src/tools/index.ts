@@ -131,6 +131,7 @@ export * from "./ida";
 export * from "./essential-tools";
 export * from "./eval";
 export * from "./eval-backends";
+export * from "./file-mutation-queue";
 export * from "./file-write-fallback";
 export * from "./gh";
 export * from "./glob";
@@ -439,20 +440,7 @@ export interface ToolSession {
 	getPreloadedExtensions?: () => LoadExtensionsResult | undefined;
 	/** Agent output manager for unique agent:// IDs across task invocations */
 	agentOutputManager?: AgentOutputManager;
-	/**
-	 * Async job manager scoped to this session.
-	 *
-	 * - Top-level session that constructed one: its own manager.
-	 * - Subagent (`parentTaskPrefix` set): the parent's manager, so background
-	 *   bash/task work and `onJobComplete` deliveries flow into the conversation
-	 *   that spawned it.
-	 * - Secondary in-process top-level session that found a singleton already
-	 *   installed (issue #1923): `undefined`. Tools refuse async work rather
-	 *   than silently route completions into the owning session's `yieldQueue`.
-	 *
-	 * Tools MUST use this instead of `AsyncJobManager.instance()` so a secondary
-	 * session never borrows the owning session's manager by accident.
-	 */
+	/** Manager of this session's root, shared only with that root's subagents. */
 	asyncJobManager?: AsyncJobManager;
 	/** MCP manager visible to subagents without relying on the process-global singleton. */
 	mcpManager?: MCPManager;

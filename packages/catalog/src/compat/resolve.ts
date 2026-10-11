@@ -795,6 +795,7 @@ function resolveOpenAIResponsesPolicy(
 			(LOCAL_OPENAI_COMPAT_PROVIDERS[backendProvider] === true || hasLocalLoopbackBaseUrl(baseUrl)),
 		supportsObfuscationOptOut: isOpenAIUrl || provider === "openai",
 		storeResponses: false,
+		connectionBoundNativeHistory: false,
 		officialEndpoint: isOfficialOpenAIEndpoint(provider, baseUrl),
 		harmonyLeakMitigation: false,
 		rejectRootObjectUnion: false,
@@ -857,6 +858,7 @@ function pickResponsesOnly(compat: ResolvedOpenAIResponsesCompat): ResponsesOnly
 		supportsImageDetailOriginal: compat.supportsImageDetailOriginal,
 		supportsObfuscationOptOut: compat.supportsObfuscationOptOut,
 		storeResponses: compat.storeResponses,
+		connectionBoundNativeHistory: compat.connectionBoundNativeHistory,
 		supportsAllTurnsReasoningContext: compat.supportsAllTurnsReasoningContext,
 		supportsConfigurationUpdate: compat.supportsConfigurationUpdate,
 		supportsSteering: compat.supportsSteering,
@@ -913,6 +915,11 @@ function resolveAnthropicPolicy(
 		escapeBuiltinToolNames: false,
 		injectClaudeCodeInstruction: true,
 		stripImageInput: false,
+		// Unset means "canonical Anthropic image contract"; the request builder
+		// owns those numbers. The keys must exist for a KDL rule or a
+		// user-authored `compat` block to override them.
+		maxImageDimension: undefined,
+		maxImagePayloadBytes: undefined,
 		thinkingLoopGuard: undefined,
 		// Present as keys so models.yml `compat` can set them; unset unless a rule assigns them.
 		stripThinkingHistory: undefined,
