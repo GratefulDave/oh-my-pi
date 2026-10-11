@@ -2,41 +2,72 @@
 
 ## [Unreleased]
 
+## [18.9.2] - 2026-10-11
+
 ### Breaking Changes
 
-- Removed the `retainTextSignature` option from `consumeGoogleStream` and `streamGoogleGenAI`; every Google route now keeps text reply signatures ([#15152](https://github.com/can1357/oh-my-pi/pull/15152) by [@will-bogusz](https://github.com/will-bogusz))
-- Custom `SessionsApi` implementations must now implement `permits(provider, sessionId, credentialId)` ([#15135](https://github.com/can1357/oh-my-pi/pull/15135) by [@will-bogusz](https://github.com/will-bogusz))
+- Renamed `TypeSafeJudge` to `NativeJudge` and `TypeSafeApiError` to `JudgmentApiError`, including their associated option types. `JUDGMENT_ROUTES` has been removed; use `isJudgmentApi` or create a judge for catalog models with `createNativeJudge(model, { apiKey })`.
 
 ### Added
 
-- Exported `matchesReplacementCredential` and `isSameOAuthAccount`, which tell whether storing a credential replaces an existing account row and whether two credentials belong to the same account ([#14901](https://github.com/can1357/oh-my-pi/pull/14901) by [@will-bogusz](https://github.com/will-bogusz))
-- Added `AuthStorage.sessions.permits(provider, sessionId, credentialId)`, which tells whether a stored account may serve a session restricted to an account pool ([#15135](https://github.com/can1357/oh-my-pi/pull/15135) by [@will-bogusz](https://github.com/will-bogusz))
+- Added native judge support for OpenAI’s Decisions API and Cloudflare Workers AI decision models, including the `openai-decisions` and `workers-ai-systemone` APIs. The auth gateway’s System One route supports both providers.
+- Added `createNativeJudge(model, { apiKey, headers, fetch })` for creating judges from catalog models with their configured request model IDs and question limits.
+- Added Cloudflare Workers AI authentication with `loginCloudflareWorkersAi`, storing the API token and account ID; logging in again with the same token replaces the existing credential.
+- Added automatic question batching to `NativeJudge` for endpoints with question limits, with up to four concurrent batches and merged answers and usage reporting. Usage from successful batches is reported through partial-usage callbacks and both session and auth-gateway usage ledgers, even if another batch fails.
 
 ### Changed
 
-- Changed Devin chat turns to sample with the native Devin CLI's settings and no synthetic stop patterns; explicit temperature, topP and stop sequences still apply ([#10234](https://github.com/can1357/oh-my-pi/pull/10234) by [@will-bogusz](https://github.com/will-bogusz)).
-- When a session moves to another host serving the same model (Kimi K3, DeepSeek V4, GLM 5+, MiniMax M3), the model's earlier reasoning now reaches the new host in its reasoning field instead of as `<think>` text inside earlier replies, which the model could start imitating in its own replies. Only reasoning the stream parser confirmed as the model's own trace moves; summaries and turns recorded before this change keep the `<think>` text ([#15123](https://github.com/can1357/oh-my-pi/pull/15123) by [@will-bogusz](https://github.com/will-bogusz)).
-- Added the `parentSessionId` and `minimizeEffort` stream options: a side request branched from a conversation reuses its prompt cache, and can run at the model's lowest effort where a per-message control carries the change (Anthropic per-message effort, OpenAI `configuration_update`) without losing that cache
+- Improved Anthropic prompt caching for long conversations, reducing memory usage while selecting cache breakpoints.
 
 ### Fixed
 
-- Fixed custom OpenAI-compatible Responses streams truncating reasoning when a proxy omits the summary index after a completed section, and running custom tools such as `apply_patch` with empty input when the final item repeats `input: ""` ([#11863](https://github.com/can1357/oh-my-pi/pull/11863) by [@moodiness](https://github.com/moodiness))
-- Fixed Codex WebSocket prewarm to accept an optional service tier and send the model/tier routing hint consistently with normal requests, preserving omitted and explicit service-tier requests ([#15022](https://github.com/can1357/oh-my-pi/pull/15022) by [@xiangnan0811](https://github.com/xiangnan0811)).
-- Fixed the OAuth sign-in result page breaking or rendering injected markup when a provider error or callback value contains `</script>` or `$` replacement sequences ([#15037](https://github.com/can1357/oh-my-pi/pull/15037) by [@BAKocska](https://github.com/BAKocska)).
-- Fixed Anthropic requests failing with 400 "All tools cannot be deferred" when a conversation that had no tools gains them (`omp -p --no-tools`, then `omp -c`), or a resumed session keeps none of its earlier tools ([#15233](https://github.com/can1357/oh-my-pi/pull/15233) by [@will-bogusz](https://github.com/will-bogusz))
-- Fixed Anthropic requests failing with HTTP 400 `At least one of the image dimensions exceed max allowed size: 8000 pixels` when a tall screenshot sat in history; every image now respects the host's per-side image limit instead of only requests carrying more than 20 images ([#10633](https://github.com/can1357/oh-my-pi/pull/10633) by [@aktanazat](https://github.com/aktanazat)).
-- Fixed Anthropic requests failing with HTTP 400 `image exceeds 10 MB maximum` when a dense screenshot sat in history; oversized image payloads are now re-encoded down to the host's byte limit, at full resolution when re-encoding alone is enough ([#10633](https://github.com/can1357/oh-my-pi/pull/10633) by [@aktanazat](https://github.com/aktanazat)).
-- An Anthropic-compatible endpoint that rejects `cache_control` with a 400 no longer fails the turn. The request is replayed without prompt-cache breakpoints, the rejection is remembered for the rest of the session per endpoint and model, the prompt-cache betas are dropped alongside it, and the turn reports `prompt-cache` in `disabledFeatures`. An endpoint that takes the field but refuses `ttl`/`scope` sends the same 400, so a request that asked for either is first replayed with every breakpoint intact and those options removed; that succeeding keeps 5m caching on for the session and reports `prompt-cache-retention` instead ([#11812](https://github.com/can1357/oh-my-pi/pull/11812) by [@camjac251](https://github.com/camjac251)).
-- LiteLLM proxy logs now group requests by omp conversation instead of showing a separate session for each request ([#8836](https://github.com/can1357/oh-my-pi/issues/8836), [#15096](https://github.com/can1357/oh-my-pi/pull/15096) by [@occ](https://github.com/occ)).
-- Fixed Gemini answers echoing fenced `thinking` blocks on Google, Vertex, Antigravity and Gemini CLI: a model's own earlier thinking (Gemini, and gpt-oss on Antigravity) went back as visible text instead of as thoughts ([#15152](https://github.com/can1357/oh-my-pi/pull/15152) by [@will-bogusz](https://github.com/will-bogusz))
-- Fixed Gemini text replies losing their signature on Google, Vertex, Antigravity, Gemini CLI and Factory Droid, so the next request sends it back as Google's own clients do ([#15152](https://github.com/can1357/oh-my-pi/pull/15152) by [@will-bogusz](https://github.com/will-bogusz))
-- Fixed Cursor models losing the reasoning Cursor's server recorded for their earlier turns: a turn now keeps those records, signed and redacted reasoning included, and sends them back unchanged to the same model on the same route, also after a resume ([#15154](https://github.com/can1357/oh-my-pi/pull/15154) by [@will-bogusz](https://github.com/will-bogusz))
-- Fixed omp failing to start, select an account, or log in when an `auth.accountPolicies` entry names a disabled, logged-out, or broker-hidden account; that policy, like a mistyped selector, is now skipped with a log warning ([#14233](https://github.com/can1357/oh-my-pi/pull/14233) by [@will-bogusz](https://github.com/will-bogusz))
-- Fixed Factory Droid Claude turns with thinking off replaying earlier thinking blocks, which Snowflake rejects, and Sonnet 5.5 Off now matching droid's between-tools thinking at high effort ([#15116](https://github.com/can1357/oh-my-pi/pull/15116) by [@will-bogusz](https://github.com/will-bogusz))
-- Fixed Anthropic requests sending the thinking-binding-controls beta on thinking-off turns that carry no thinking binding ([#15116](https://github.com/can1357/oh-my-pi/pull/15116) by [@will-bogusz](https://github.com/will-bogusz))
-- Fixed side requests on GPT-6 Responses and Codex models missing the conversation's prompt cache after a reasoning-effort change: they now keep its request-level effort and replay its `configuration_update` items
-- Fixed Codex side requests never reading the conversation's prompt cache: they now send its session headers, which the backend routes cache affinity by, while keeping their own request identity
-- Fixed GPT-6 models in `pro` reasoning mode receiving `configuration_update` items, which that mode rejects; their effort changes stay on the request-level effort
+- Fixed Devin-routed OpenAI models returning `invalid_argument` on every turn after an existing session was switched from `openai-codex`.
+
+## [18.9.1] - 2026-10-11
+
+### Added
+
+- Added `compat.supportsThinkingBindingControls` for Bedrock Converse: setting it to `false` stops prefix-bound Claude requests from sending `thinking.block_binding`, the `thinking-binding-controls-2026-08-01` beta and the `/input_transformations` response path, for gateways or regions that reject them ([#15316](https://github.com/can1357/oh-my-pi/pull/15316) by [@harshaygadekar](https://github.com/harshaygadekar))
+
+### Fixed
+
+- Fixed Bedrock Claude Fable 5.1 requests with thinking off and a forced tool choice sending the forced choice next to adaptive thinking; the choice now falls back to `auto` ([#15316](https://github.com/can1357/oh-my-pi/pull/15316) by [@harshaygadekar](https://github.com/harshaygadekar))
+
+## [18.9.0] - 2026-10-11
+
+### Breaking Changes
+
+- Removed the `retainTextSignature` option from `consumeGoogleStream` and `streamGoogleGenAI`; Google routes now consistently preserve text reply signatures.
+- Custom `SessionsApi` implementations must implement `permits(provider, sessionId, credentialId)`.
+
+### Added
+
+- Exported `matchesReplacementCredential` and `isSameOAuthAccount` to help identify credential replacement and account ownership.
+- Added `AuthStorage.sessions.permits(provider, sessionId, credentialId)` for checking whether a stored account may serve a session restricted to an account pool.
+- Added `judgeQuestions()` for loading judge questions from JSON with inferred choice labels and answer types, plus `renderQuestion()` for templated instructions.
+
+### Changed
+
+- Devin chat turns now use the native Devin CLI sampling settings by default, while continuing to honor explicitly configured temperature, top-p, and stop sequences.
+- Added `parentSessionId` and `minimizeEffort` stream options. Branched side requests can reuse a conversation's prompt cache, and supported models can run them at their lowest effort without losing cache reuse.
+- Improved cross-host continuation for supported models so confirmed prior reasoning is preserved as reasoning context rather than exposed as `<think>` text in replies.
+
+### Fixed
+
+- Fixed Anthropic subscription quota not appearing in `/usage` when an OAuth token is supplied through `ANTHROPIC_API_KEY`.
+- Fixed custom OpenAI-compatible Responses streams truncating reasoning and incorrectly invoking custom tools with empty input.
+- Fixed Codex WebSocket prewarming so optional service tiers and model routing are handled consistently with normal requests.
+- Fixed OAuth sign-in result pages breaking or rendering injected markup when provider errors or callback values contain special characters.
+- Fixed Anthropic requests failing when tools are added to a conversation or when resumed sessions no longer include earlier tools.
+- Fixed Anthropic requests rejecting tall or oversized historical screenshots by resizing or re-encoding images to the host's limits.
+- Improved compatibility with Anthropic-compatible endpoints that reject prompt-cache options by retrying without unsupported caching features and reporting the disabled capability.
+- LiteLLM proxy logs now group requests by omp conversation instead of displaying a separate session for each request.
+- Fixed Gemini-family integrations echoing prior thinking as visible fenced `thinking` blocks; thinking is now restored as model reasoning across Google, Vertex, Antigravity, Gemini CLI, and Factory Droid routes.
+- Fixed Gemini-family integrations losing text reply signatures needed for subsequent requests across Google, Vertex, Antigravity, Gemini CLI, and Factory Droid routes.
+- Fixed Cursor integrations losing previously recorded reasoning, including signed and redacted reasoning, when continuing or resuming a conversation.
+- Fixed invalid `auth.accountPolicies` entries referring to unavailable accounts from preventing startup, account selection, or login; such entries are now skipped with a warning.
+- Fixed Factory Droid Claude turns with thinking disabled from replaying unsupported earlier thinking blocks, and aligned high-effort Sonnet 5.5 thinking behavior with the native client.
+- Fixed side requests for GPT-6 Responses and Codex models from losing prompt-cache context or applying unsupported reasoning-effort configuration changes.
 
 ## [18.8.9] - 2026-10-10
 
@@ -6202,3 +6233,4 @@ Older entries are archived in [packages/ai/CHANGELOG.md@bac7e83b5b0e](https://gi
 Older entries are archived in [packages/ai/CHANGELOG.md@a20cc0d04b64](https://github.com/can1357/oh-my-pi/blob/a20cc0d04b64f4a68fcc559cbd258743d984c50e/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@d22e34333695](https://github.com/can1357/oh-my-pi/blob/d22e34333695d3dd9de7741ff45903681dba4606/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@0dd6aff5f282](https://github.com/can1357/oh-my-pi/blob/0dd6aff5f2821aec1e5b54c6a458e323667a949b/packages/ai/CHANGELOG.md).
+Older entries are archived in [packages/ai/CHANGELOG.md@592e894eb29e](https://github.com/can1357/oh-my-pi/blob/592e894eb29ed3db2ee2dae71ec7d72ac13c64c8/packages/ai/CHANGELOG.md).
