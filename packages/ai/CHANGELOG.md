@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed JSON Schema dereferencing rewriting literal values in `const`, `enum`, `default`, examples, and custom annotations, or treating property names as schema keywords ([#15927](https://github.com/can1357/oh-my-pi/pull/15927) by [@jchanghong023](https://github.com/jchanghong023)).
+- Fixed Anthropic requests hanging forever on Bun 1.3 when the upstream accepted the request but never sent headers: aborting the request (including the first-event timeout) now fails it, so the turn retries instead of waiting until the user interrupts it ([#16010](https://github.com/can1357/oh-my-pi/pull/16010) by [@ca-io-systems](https://github.com/ca-io-systems))
+- Fixed the auth gateway's `POST /v1/chat/completions` streams being dropped (`terminated`) after ~255 s without upstream output, e.g. while xAI generates a large tool call's arguments, which arrive only when complete; the stream now sends an SSE `: keepalive` comment every 15 s ([#15940](https://github.com/can1357/oh-my-pi/pull/15940) by [@radkawar](https://github.com/radkawar))
+- Fixed Anthropic models with mid-conversation system messages (e.g. Claude Opus 5.5) receiving `@file` mention contents and hidden extension messages as a trailing `system` message instead of ending the request on the user's turn ([#15881](https://github.com/can1357/oh-my-pi/issues/15881))
+
+## [18.11.2] - 2026-10-16
+
 ### Breaking Changes
 
 - `resolveGatewayApiKey` and `buildGatewayApiKeyResolver` (`@oh-my-pi/pi-ai/auth-gateway`) take the request's route options (`{ storage, client? }`) instead of an `AuthStorage`, their resolver callback receives the resolved credential, and `resolveGatewayAccount` takes that credential ([#15900](https://github.com/can1357/oh-my-pi/pull/15900) by [@alphastorm](https://github.com/alphastorm))
@@ -9,6 +18,7 @@
 ### Added
 
 - Added scoped clients to `startAuthGateway` (`clients`, `setClients`): each client bearer is limited to its own models and OAuth accounts, with no fallback to other accounts or API keys, and request log lines name the client and the credential a request started on ([#5098](https://github.com/can1357/oh-my-pi/issues/5098), [#15900](https://github.com/can1357/oh-my-pi/pull/15900) by [@alphastorm](https://github.com/alphastorm))
+- Added experimental native image judgments for TypeSafe Jev's `jev-latest`, `jev-preview`, `jev-1.13.0`, and `jev-1.14.0`, plus OpenRouter's `typesafe/jev-1.13`, `typesafe/jev-1.14`, and `~typesafe/jev-latest` models; images outside Jev's documented size bounds fall through to a vision chat judge instead of failing ([#15887](https://github.com/can1357/oh-my-pi/pull/15887) by [@anatoli-tsinovoy](https://github.com/anatoli-tsinovoy))
 
 ### Fixed
 
@@ -6324,3 +6334,4 @@ Older entries are archived in [packages/ai/CHANGELOG.md@a20cc0d04b64](https://gi
 Older entries are archived in [packages/ai/CHANGELOG.md@d22e34333695](https://github.com/can1357/oh-my-pi/blob/d22e34333695d3dd9de7741ff45903681dba4606/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@0dd6aff5f282](https://github.com/can1357/oh-my-pi/blob/0dd6aff5f2821aec1e5b54c6a458e323667a949b/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@592e894eb29e](https://github.com/can1357/oh-my-pi/blob/592e894eb29ed3db2ee2dae71ec7d72ac13c64c8/packages/ai/CHANGELOG.md).
+Older entries are archived in [packages/ai/CHANGELOG.md@aa43b0057f82](https://github.com/can1357/oh-my-pi/blob/aa43b0057f82cb167459f8e6b41c5ec9f4e0f91d/packages/ai/CHANGELOG.md).
