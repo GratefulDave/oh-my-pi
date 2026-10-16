@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [18.11.3] - 2026-10-16
+
 ### Fixed
 
 - Fixed JSON Schema dereferencing rewriting literal values in `const`, `enum`, `default`, examples, and custom annotations, or treating property names as schema keywords ([#15927](https://github.com/can1357/oh-my-pi/pull/15927) by [@jchanghong023](https://github.com/jchanghong023)).
@@ -6335,3 +6337,4 @@ Older entries are archived in [packages/ai/CHANGELOG.md@d22e34333695](https://gi
 Older entries are archived in [packages/ai/CHANGELOG.md@0dd6aff5f282](https://github.com/can1357/oh-my-pi/blob/0dd6aff5f2821aec1e5b54c6a458e323667a949b/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@592e894eb29e](https://github.com/can1357/oh-my-pi/blob/592e894eb29ed3db2ee2dae71ec7d72ac13c64c8/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@aa43b0057f82](https://github.com/can1357/oh-my-pi/blob/aa43b0057f82cb167459f8e6b41c5ec9f4e0f91d/packages/ai/CHANGELOG.md).
+Older entries are archived in [packages/ai/CHANGELOG.md@0595d346917d](https://github.com/can1357/oh-my-pi/blob/0595d346917d152ea2b710332817de599f749626/packages/ai/CHANGELOG.md).
