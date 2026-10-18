@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [18.12.1] - 2026-10-17
+
+### Fixed
+
+- Fixed every request failing behind a TLS-inspecting proxy that refuses compressed uploads: a 400/403/415 whose body is not JSON, or the Anthropic API's "request body is not valid JSON" after a proxy drops `Content-Encoding`, now resends the body uncompressed and stops compressing for that host ([#16108](https://github.com/can1357/oh-my-pi/pull/16108) by [@alphastorm](https://github.com/alphastorm))
+
 ## [18.12.0] - 2026-10-17
 
 ### Breaking Changes
@@ -6369,3 +6375,4 @@ Older entries are archived in [packages/ai/CHANGELOG.md@592e894eb29e](https://gi
 Older entries are archived in [packages/ai/CHANGELOG.md@aa43b0057f82](https://github.com/can1357/oh-my-pi/blob/aa43b0057f82cb167459f8e6b41c5ec9f4e0f91d/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@0595d346917d](https://github.com/can1357/oh-my-pi/blob/0595d346917d152ea2b710332817de599f749626/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@50ec66f75d57](https://github.com/can1357/oh-my-pi/blob/50ec66f75d57ad55838a9fe4da5e66f29af4d73c/packages/ai/CHANGELOG.md).
+Older entries are archived in [packages/ai/CHANGELOG.md@bb602d67c9b6](https://github.com/can1357/oh-my-pi/blob/bb602d67c9b685535bbf8ef1a1cc9de3c944ede4/packages/ai/CHANGELOG.md).
