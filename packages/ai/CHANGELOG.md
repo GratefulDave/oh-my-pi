@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [18.12.3] - 2026-10-19
+
+### Added
+
+- Added `validateToolArguments(tool, call, { keepUnknownRootKeys: true })` to keep unknown root keys that a closed schema would otherwise drop during argument repair ([#16317](https://github.com/can1357/oh-my-pi/issues/16317))
+
+### Fixed
+
+- Fixed Claude streams that a gateway cut off before `message_delta` failing the turn instead of being retried ([#16341](https://github.com/can1357/oh-my-pi/pull/16341) by [@lz-lunzi](https://github.com/lz-lunzi))
+- Fixed Gemini pairing parallel same-name tool results with the wrong call when history stores them out of call order (sessions from before 18.4.2, SDK-built contexts) ([#16259](https://github.com/can1357/oh-my-pi/pull/16259) by [@will-bogusz](https://github.com/will-bogusz))
+- Fixed Factory Droid Gemini dropping calls to tools with names over 64 characters (most MCP tools) and their results from later requests, so the model called the tool again; such names now shorten to 64 characters ([#16283](https://github.com/can1357/oh-my-pi/pull/16283) by [@will-bogusz](https://github.com/will-bogusz))
+- Fixed Factory Droid Gemini requests failing with 400 "For schema with items, schema type should be ARRAY" when a tool parameter accepts a string or a list, as the default `task` tool's `model` field does ([#16249](https://github.com/can1357/oh-my-pi/pull/16249) by [@will-bogusz](https://github.com/will-bogusz))
+- Fixed `PI_REQ_DEBUG=1` request dumps writing your API key, bearer token and response cookies to disk in plain text: credential headers now read `[redacted]`, as in rejected-request dumps ([#16293](https://github.com/can1357/oh-my-pi/pull/16293) by [@will-bogusz](https://github.com/will-bogusz))
+- Fixed finalized signed reasoning disappearing from displayed thinking when no deltas streamed ([#16227](https://github.com/can1357/oh-my-pi/issues/16227))
+
 ## [18.12.2] - 2026-10-18
 
 ### Added
@@ -6388,3 +6403,4 @@ Older entries are archived in [packages/ai/CHANGELOG.md@aa43b0057f82](https://gi
 Older entries are archived in [packages/ai/CHANGELOG.md@0595d346917d](https://github.com/can1357/oh-my-pi/blob/0595d346917d152ea2b710332817de599f749626/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@50ec66f75d57](https://github.com/can1357/oh-my-pi/blob/50ec66f75d57ad55838a9fe4da5e66f29af4d73c/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@bb602d67c9b6](https://github.com/can1357/oh-my-pi/blob/bb602d67c9b685535bbf8ef1a1cc9de3c944ede4/packages/ai/CHANGELOG.md).
+Older entries are archived in [packages/ai/CHANGELOG.md@5eb78e90fa4e](https://github.com/can1357/oh-my-pi/blob/5eb78e90fa4ec4318b9520302f1977fa58c48745/packages/ai/CHANGELOG.md).
