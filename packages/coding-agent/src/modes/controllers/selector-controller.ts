@@ -119,12 +119,9 @@ import { createExtensionDashboardRuntime } from "../components/extensions/dashbo
 import { HistorySearchComponent } from "@oh-my-pi/pi-tui/overlays/history-search";
 import type { LoginDialogComponent as LoginDialogComponentType } from "@oh-my-pi/pi-tui/overlays/login-dialog";
 import type { LogoutAccountSelectorComponent as LogoutAccountSelectorComponentType } from "@oh-my-pi/pi-tui/overlays/logout-account-selector";
-import type {
-	ModelHubComponent as ModelHubComponentType,
-	ModelRoleSelectionScope,
-} from "@oh-my-pi/pi-tui/overlays/model-hub";
+import { ModelHubComponent, type ModelRoleSelectionScope } from "@oh-my-pi/pi-tui/overlays/model-hub";
 import { createModelBrowserSource } from "../model-browser-source";
-import type { ModelPickerComponent as ModelPickerComponentType } from "@oh-my-pi/pi-tui/overlays/model-picker";
+import { ModelPickerComponent } from "@oh-my-pi/pi-tui/overlays/model-picker";
 import type { OAuthSelectorComponent as OAuthSelectorComponentType } from "@oh-my-pi/pi-tui/overlays/oauth-selector";
 import { PluginSelectorComponent } from "@oh-my-pi/pi-tui/overlays/plugin-selector";
 import { type ResetUsageAccount, ResetUsageSelectorComponent } from "@oh-my-pi/pi-tui/overlays/reset-usage-selector";
@@ -162,19 +159,6 @@ import {
 	cfgTreeFilterMode,
 } from "../settings";
 import { cfgTaskAgentModelOverrides } from "../../task/settings";
-
-interface ModelOverlayModules {
-	ModelHubComponent: typeof ModelHubComponentType;
-	ModelPickerComponent: typeof ModelPickerComponentType;
-}
-
-/** Synchronous first-use boundary for model overlays; key callbacks require immediate mounting. */
-function loadModelOverlayComponents(): ModelOverlayModules {
-	return {
-		ModelHubComponent: require("@oh-my-pi/pi-tui/overlays/model-hub.js").ModelHubComponent,
-		ModelPickerComponent: require("@oh-my-pi/pi-tui/overlays/model-picker.js").ModelPickerComponent,
-	};
-}
 
 interface ProviderAuthUiModules {
 	PASTE_CODE_LOGIN_PROVIDERS: typeof PasteCodeLoginProviders;
@@ -837,7 +821,6 @@ export class SelectorController {
 			closeOpenMenu("model-picker-select");
 			if (this.#focusOpenMenu("model-picker")) return;
 		}
-		const { ModelPickerComponent } = loadModelOverlayComponents();
 		const viewed = this.ctx.viewSession;
 		const currentContextTokens = viewed.getContextUsage()?.tokens ?? 0;
 		const current = viewed.model;
@@ -948,7 +931,6 @@ export class SelectorController {
 	 */
 	#showModelHub(hubOptions: { initialProviderId?: string }): void {
 		if (this.#focusOpenMenu("model-hub")) return;
-		const { ModelHubComponent } = loadModelOverlayComponents();
 		const { scopedModels } = this.ctx.session;
 		// When no CLI --models scope is active, apply the in-session enabledModels filter
 		// so the model hub respects the active profile set by /pm use.
