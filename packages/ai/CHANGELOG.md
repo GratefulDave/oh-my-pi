@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [18.12.5] - 2026-10-21
+
+### Added
+
+- Added OpenAI 12-hour prompt caching for GPT-5.6+ on the Responses API: `cacheRetention: "long"` now requests `prompt_cache_options.ttl: "12h"` (instead of the ignored legacy `prompt_cache_retention: "24h"`), and `promptCache.ttl` accepts `"12h"`
+
+### Fixed
+
+- Fixed every OpenAI Codex request failing with HTTP 404 `{"detail":"Not Found"}` on personal ChatGPT accounts whose token is not region-pinned ([#16493](https://github.com/can1357/oh-my-pi/issues/16493))
+
 ## [18.12.4] - 2026-10-20
 
 ### Added
@@ -6433,3 +6443,4 @@ Older entries are archived in [packages/ai/CHANGELOG.md@50ec66f75d57](https://gi
 Older entries are archived in [packages/ai/CHANGELOG.md@bb602d67c9b6](https://github.com/can1357/oh-my-pi/blob/bb602d67c9b685535bbf8ef1a1cc9de3c944ede4/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@5eb78e90fa4e](https://github.com/can1357/oh-my-pi/blob/5eb78e90fa4ec4318b9520302f1977fa58c48745/packages/ai/CHANGELOG.md).
 Older entries are archived in [packages/ai/CHANGELOG.md@47e6af055a17](https://github.com/can1357/oh-my-pi/blob/47e6af055a17862bc1cab6b5ebedd3db75ac2573/packages/ai/CHANGELOG.md).
+Older entries are archived in [packages/ai/CHANGELOG.md@7a5f1425b9bd](https://github.com/can1357/oh-my-pi/blob/7a5f1425b9bd79c3c74ae1d8946782b0494c8aa9/packages/ai/CHANGELOG.md).
